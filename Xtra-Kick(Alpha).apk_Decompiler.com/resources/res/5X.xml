@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" xmlns:aapt="http://schemas.android.com/aapt" android:layout_width="match_parent" android:layout_height="wrap_content">
+    <LinearLayout android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
+        <LinearLayout android:orientation="vertical" android:id="@+id/menuQuality" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/quality"/>
+            <TextView android:textColor="?attr/secondaryTextColor" android:id="@+id/qualityValue" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        </LinearLayout>
+        <LinearLayout android:orientation="vertical" android:id="@+id/menuSpeed" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/playback_speed"/>
+            <TextView android:textColor="?attr/secondaryTextColor" android:id="@+id/speedValue" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        </LinearLayout>
+        <TextView android:id="@+id/menuViewerList" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/viewer_list"/>
+        <TextView android:id="@+id/menuVodGames" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/vod_games"/>
+        <TextView android:id="@+id/menuDownload" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/download"/>
+        <TextView android:id="@+id/menuBookmark" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <TextView android:id="@+id/menuTimer" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/sleep_timer"/>
+        <TextView android:id="@+id/menuRatio" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/aspect_ratio"/>
+        <TextView android:id="@+id/menuVolume" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/volume"/>
+        <TextView android:id="@+id/menuSubtitles" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <TextView android:id="@+id/menuRestart" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/restart_player"/>
+        <TextView android:id="@+id/menuChatBar" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <TextView android:id="@+id/menuChatToggle" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <TextView android:id="@+id/menuReloadEmotes" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/reload_emotes"/>
+        <TextView android:id="@+id/menuChatDisconnect" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <TextView android:id="@+id/menuMediaPlaylistTags" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/show_media_playlist_tags"/>
+        <TextView android:id="@+id/menuMultivariantPlaylistTags" android:background="?attr/selectableItemBackground" android:padding="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/show_multivariant_playlist_tags"/>
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

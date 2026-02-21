@@ -1,0 +1,10 @@
+package e;
+
+public final class e {
+    private e() {
+    }
+
+    public /* synthetic */ e(int i10) {
+        this();
+    }
+}

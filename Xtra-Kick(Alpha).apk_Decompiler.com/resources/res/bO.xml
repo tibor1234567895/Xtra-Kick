@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" xmlns:aapt="http://schemas.android.com/aapt">
+    <PreferenceCategory android:title="@string/settings_ui" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/languageEntries" android:title="@string/language" android:key="ui_language" android:summary="%s" android:defaultValue="auto" android:entryValues="@array/language" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/cutoutmodeEntries" android:title="@string/ignore_cutouts" android:key="ui_cutoutmode" android:summary="%s" android:defaultValue="0" android:entryValues="@array/cutoutmodeValues" app:iconSpaceReserved="false"/>
+    <Preference android:title="@string/theme" android:key="theme_settings" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/rounduserimage" android:key="ui_rounduserimage" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/truncated_view_counts" android:key="ui_truncateviewcount" android:defaultValue="false" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/show_uptime" android:key="ui_uptime" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/show_tags" android:key="ui_tags" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/broadcastersCount" android:key="ui_broadcasterscount" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/use_gamepager" android:key="ui_gamepager" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/followedEntries" android:title="@string/startonfollowed" android:key="ui_startonfollowed" android:summary="%s" android:defaultValue="1" android:entryValues="@array/miscValues" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/spinnerFollowedEntries" android:title="@string/default_follow_tab" android:key="ui_follow_default_page" android:summary="%s" android:defaultValue="0" android:entryValues="@array/spinnerFollowedValues" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/use_followpager" android:key="ui_followpager" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/spinnerSavedEntries" android:title="@string/default_saved_tab" android:key="ui_saved_default_page" android:summary="%s" android:defaultValue="0" android:entryValues="@array/spinnerSavedValues" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/use_savedpager" android:key="ui_savedpager" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/show_vod_time_left" android:key="ui_bookmark_time_left" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/followButtonEntries" android:title="@string/follow_button" android:key="ui_follow_button" android:summary="%s" android:defaultValue="0" android:entryValues="@array/miscValues" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/show_scrolltop" android:key="ui_scrolltop" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/portraitColumnCount" android:title="@string/portrait_column_count" android:key="columnsPortrait" android:summary="%s" android:defaultValue="@string/portraitColumns" android:entryValues="@array/portraitColumnCount" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/landscapeColumnCount" android:title="@string/landscape_column_count" android:key="columnsLandscape" android:summary="%s" android:defaultValue="@string/landscapeColumns" android:entryValues="@array/landscapeColumnCount" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/compactStreamsEntries" android:title="@string/compact_streams_title" android:key="compactStreamsV2" android:summary="@string/compact_streams_description" android:defaultValue="disabled" android:entryValues="@array/compactStreamsValues" app:iconSpaceReserved="false"/>
+    <PreferenceCategory android:title="@string/settings_chat" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/bold_usernames" android:key="chat_boldnames" android:defaultValue="false" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/randomcolor" android:key="chat_randomcolor" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/animated_emotes" android:key="animatedGifEmotes" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/zerowidth" android:key="chat_zerowidth" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/timestamps" android:key="chat_timestamps" android:defaultValue="false" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/timestampEntries" android:title="@string/timestamp_format" android:key="chat_timestamp_format" android:summary="%s" android:defaultValue="0" android:entryValues="@array/timestampValues" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/chatFirstMsgEntries" android:title="@string/chat_firstmsg_visibility" android:key="chat_firstmsg_visibility" android:summary="%s" android:defaultValue="0" android:entryValues="@array/miscValues" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/show_usernotice" android:key="chat_show_usernotice" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/show_clearmsg" android:key="chat_show_clearmsg" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/show_clearchat" android:key="chat_show_clearchat" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/imageLibraryEntries" android:title="@string/image_library" android:key="chat_image_library" android:summary="%s" android:defaultValue="0" android:entryValues="@array/imageLibraryValues" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/imageQualityEntries" android:title="@string/image_quality" android:key="chat_image_quality" android:summary="%s" android:defaultValue="4" android:entryValues="@array/imageQualityValues" app:iconSpaceReserved="false"/>
+    <SeekBarPreference android:max="1000" android:title="@string/message_limit" android:key="chat_limit" android:defaultValue="600" app:iconSpaceReserved="false" app:min="1" app:showSeekBarValue="true"/>
+    <SwitchPreferenceCompat android:title="@string/recentMsg_enable" android:key="chat_recent" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SeekBarPreference android:max="800" android:title="@string/recentMsg_limit" android:key="chat_recent_limit" android:defaultValue="100" app:iconSpaceReserved="false" app:min="1" app:showSeekBarValue="true"/>
+    <SeekBarPreference android:max="100" android:title="@string/landscape_chat_width" android:key="chatWidth" android:defaultValue="30" app:iconSpaceReserved="false" app:showSeekBarValue="true"/>
+    <SwitchPreferenceCompat android:title="@string/enable_stv" android:key="chat_enable_stv" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/keep_chat_open" android:key="player_keep_chat_open" android:defaultValue="false" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/auto_switch_raids" android:key="chat_raids_auto_switch" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/disable_chat" android:key="chat_disable" android:defaultValue="false" app:iconSpaceReserved="false"/>
+    <PreferenceCategory android:title="@string/settings_player" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/player_doubletap" android:key="player_doubletap" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <Preference android:title="@string/player_buttons" android:key="player_button_settings" app:iconSpaceReserved="false"/>
+    <Preference android:title="@string/player_menu" android:key="player_menu_settings" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/backgroundPlaybackEntries" android:title="@string/background_playback" android:key="player_background_playback" android:summary="%s" android:entryValues="@array/backgroundPlaybackValues" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/disable_background_video" android:key="player_disable_background_video" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/use_background_audio_track" android:key="player_use_background_audio_track" android:defaultValue="false" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/keep_screen_on_when_paused" android:key="player_keep_screen_on_when_paused" android:defaultValue="false" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/playerSeekEntries" android:title="@string/rewind" android:key="playerRewind" android:summary="@string/seconds_full" android:defaultValue="10000" android:entryValues="@array/playerSeekValues" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/playerSeekEntries" android:title="@string/forward" android:key="playerForward" android:summary="@string/seconds_full" android:defaultValue="10000" android:entryValues="@array/playerSeekValues" app:iconSpaceReserved="false"/>
+    <Preference android:title="@string/buffer_settings" android:key="buffer_settings" app:iconSpaceReserved="false"/>
+    <ListPreference android:entries="@array/playerQualityEntries" android:title="@string/player_defaultquality" android:key="player_defaultquality" android:summary="%s" android:defaultValue="saved" android:entryValues="@array/playerQualityValues" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/save_video_positions" android:key="player_use_videopositions" android:defaultValue="true" app:iconSpaceReserved="false"/>
+    <Preference android:title="@string/clear_video_positions" android:key="clear_video_positions" app:iconSpaceReserved="false"/>
+    <Preference android:title="@string/admin_settings" android:key="admin_settings" app:iconSpaceReserved="false"/>
+    <SeekBarPreference android:max="20" android:title="@string/download_limit" android:key="download_concurrent_limit" android:defaultValue="10" app:iconSpaceReserved="false" app:min="1" app:showSeekBarValue="true"/>
+    <PreferenceCategory android:title="@string/settings_debug" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/show_copy_fullmsg" android:key="debug_chat_fullmsg" android:defaultValue="false" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/debug_secondview" android:key="debug_secondview" android:defaultValue="false" app:iconSpaceReserved="false"/>
+    <SwitchPreferenceCompat android:title="@string/show_playlist_tags" android:key="debug_player_menu_playlist_tags" android:defaultValue="false" app:iconSpaceReserved="false"/>
+</androidx.preference.PreferenceScreen>

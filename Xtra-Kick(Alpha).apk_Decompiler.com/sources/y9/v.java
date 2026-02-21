@@ -1,0 +1,22 @@
+package y9;
+
+public enum v {
+    DOWNLOAD_ADDED,
+    DOWNLOAD_QUEUED,
+    DOWNLOAD_STARTED,
+    DOWNLOAD_WAITING_ON_NETWORK,
+    DOWNLOAD_PROGRESS_CHANGED,
+    DOWNLOAD_COMPLETED,
+    DOWNLOAD_ERROR,
+    DOWNLOAD_PAUSED,
+    DOWNLOAD_RESUMED,
+    DOWNLOAD_CANCELLED,
+    DOWNLOAD_REMOVED,
+    DOWNLOAD_DELETED,
+    DOWNLOAD_BLOCK_UPDATED;
+
+    /* access modifiers changed from: public */
+    static {
+        new u(0);
+    }
+}

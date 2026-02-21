@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" xmlns:aapt="http://schemas.android.com/aapt" android:id="@+id/coordinatorLayout" android:layout_width="match_parent" android:layout_height="match_parent">
+    <com.google.android.material.appbar.AppBarLayout android:id="@+id/appBar" android:background="?attr/primaryColor" android:layout_width="match_parent" android:layout_height="wrap_content">
+        <androidx.appcompat.widget.Toolbar android:id="@+id/toolbar" android:layout_width="match_parent" android:layout_height="wrap_content" app:layout_scrollFlags="5">
+            <ImageView android:id="@+id/menu" style="@style/MenuButton"/>
+            <ImageView android:id="@+id/search" style="@style/Search"/>
+            <ImageButton android:id="@+id/followButton" android:visibility="gone" style="@style/FollowButton"/>
+        </androidx.appcompat.widget.Toolbar>
+        <Spinner android:id="@+id/spinner" android:visibility="gone" style="@style/MediaSpinner"/>
+    </com.google.android.material.appbar.AppBarLayout>
+    <FrameLayout android:id="@+id/fragmentContainer" android:layout_width="match_parent" android:layout_height="match_parent" app:layout_behavior="@string/appbar_scrolling_view_behavior"/>
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

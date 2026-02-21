@@ -1,0 +1,23 @@
+package k5;
+
+import android.graphics.ImageDecoder;
+import b5.n;
+import b5.p;
+import d5.o0;
+import java.io.InputStream;
+import w5.a;
+
+public final class d0 implements p {
+
+    /* renamed from: a  reason: collision with root package name */
+    public final c f9145a = new c();
+
+    public final /* bridge */ /* synthetic */ boolean a(Object obj, n nVar) {
+        InputStream inputStream = (InputStream) obj;
+        return true;
+    }
+
+    public final o0 b(Object obj, int i10, int i11, n nVar) {
+        return this.f9145a.c(ImageDecoder.createSource(a.b((InputStream) obj)), i10, i11, nVar);
+    }
+}

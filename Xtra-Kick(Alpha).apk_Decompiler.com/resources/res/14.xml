@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" xmlns:aapt="http://schemas.android.com/aapt" android:id="@+id/nav_graph" app:startDestination="@+id/rootTopFragment">
+    <fragment android:label="GamesFragment" android:name="com.github.andreyasadchy.xtra.ui.games.GamesFragment" android:id="@+id/rootGamesFragment">
+        <argument android:name="tags" android:defaultValue="@null" app:argType="string[]" app:nullable="true"/>
+    </fragment>
+    <fragment android:label="TopFragment" android:name="com.github.andreyasadchy.xtra.ui.top.TopFragment" android:id="@+id/rootTopFragment">
+        <argument android:name="tags" android:defaultValue="@null" app:argType="string[]" app:nullable="true"/>
+    </fragment>
+    <fragment android:label="GamesFragment" android:name="com.github.andreyasadchy.xtra.ui.games.GamesFragment" android:id="@+id/gamesFragment">
+        <argument android:name="tags" android:defaultValue="@null" app:argType="string[]" app:nullable="true"/>
+    </fragment>
+    <action android:id="@+id/action_global_gamesFragment" app:destination="@+id/gamesFragment"/>
+    <fragment android:label="TopFragment" android:name="com.github.andreyasadchy.xtra.ui.top.TopFragment" android:id="@+id/topFragment">
+        <argument android:name="tags" android:defaultValue="@null" app:argType="string[]" app:nullable="true"/>
+    </fragment>
+    <action android:id="@+id/action_global_topFragment" app:destination="@+id/topFragment"/>
+    <fragment android:label="FollowPagerFragment" android:name="com.github.andreyasadchy.xtra.ui.follow.FollowPagerFragment" android:id="@+id/followPagerFragment"/>
+    <fragment android:label="FollowMediaFragment" android:name="com.github.andreyasadchy.xtra.ui.follow.FollowMediaFragment" android:id="@+id/followMediaFragment"/>
+    <fragment android:label="SavedPagerFragment" android:name="com.github.andreyasadchy.xtra.ui.saved.SavedPagerFragment" android:id="@+id/savedPagerFragment"/>
+    <fragment android:label="SavedMediaFragment" android:name="com.github.andreyasadchy.xtra.ui.saved.SavedMediaFragment" android:id="@+id/savedMediaFragment"/>
+    <fragment android:label="SearchPagerFragment" android:name="com.github.andreyasadchy.xtra.ui.search.SearchPagerFragment" android:id="@+id/searchPagerFragment"/>
+    <action android:id="@+id/action_global_searchPagerFragment" app:destination="@+id/searchPagerFragment"/>
+    <fragment android:label="TagSearchFragment" android:name="com.github.andreyasadchy.xtra.ui.search.tags.TagSearchFragment" android:id="@+id/tagSearchFragment">
+        <argument android:name="gameId" android:defaultValue="0" app:argType="integer"/>
+        <argument android:name="gameSlug" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="gameName" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="boxArt" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="getGameTags" android:defaultValue="false" app:argType="boolean"/>
+    </fragment>
+    <action android:id="@+id/action_global_tagSearchFragment" app:destination="@+id/tagSearchFragment"/>
+    <fragment android:label="GamePagerFragment" android:name="com.github.andreyasadchy.xtra.ui.games.GamePagerFragment" android:id="@+id/gamePagerFragment">
+        <argument android:name="gameId" android:defaultValue="0" app:argType="integer"/>
+        <argument android:name="gameSlug" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="gameName" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="boxArt" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="tags" android:defaultValue="@null" app:argType="string[]" app:nullable="true"/>
+        <argument android:name="updateLocal" android:defaultValue="false" app:argType="boolean"/>
+        <argument android:name="channelId" android:defaultValue="0" app:argType="integer"/>
+        <argument android:name="channelLogin" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+    </fragment>
+    <action android:id="@+id/action_global_gamePagerFragment" app:destination="@+id/gamePagerFragment"/>
+    <fragment android:label="GameMediaFragment" android:name="com.github.andreyasadchy.xtra.ui.games.GameMediaFragment" android:id="@+id/gameMediaFragment">
+        <argument android:name="gameId" android:defaultValue="0" app:argType="integer"/>
+        <argument android:name="gameSlug" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="gameName" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="boxArt" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="tags" android:defaultValue="@null" app:argType="string[]" app:nullable="true"/>
+        <argument android:name="updateLocal" android:defaultValue="false" app:argType="boolean"/>
+        <argument android:name="channelId" android:defaultValue="0" app:argType="integer"/>
+        <argument android:name="channelLogin" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+    </fragment>
+    <action android:id="@+id/action_global_gameMediaFragment" app:destination="@+id/gameMediaFragment"/>
+    <fragment android:label="ChannelPagerFragment" android:name="com.github.andreyasadchy.xtra.ui.channel.ChannelPagerFragment" android:id="@+id/channelPagerFragment">
+        <argument android:name="channelId" android:defaultValue="0" app:argType="integer"/>
+        <argument android:name="channelLogin" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="channelName" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="channelLogo" android:defaultValue="@null" app:argType="string" app:nullable="true"/>
+        <argument android:name="updateLocal" android:defaultValue="false" app:argType="boolean"/>
+        <argument android:name="streamId" android:defaultValue="0" app:argType="integer"/>
+    </fragment>
+    <action android:id="@+id/action_global_channelPagerFragment" app:destination="@+id/channelPagerFragment"/>
+</navigation>

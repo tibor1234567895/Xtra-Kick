@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="broadcasters">
+        <item quantity="one">%d broadcaster</item>
+        <item quantity="other">%d broadcasters</item>
+    </plurals>
+    <plurals name="exo_controls_fastforward_by_amount_description">
+        <item quantity="one">Avanzar %d segundo</item>
+        <item quantity="other">Avanzar %d segundos</item>
+    </plurals>
+    <plurals name="exo_controls_rewind_by_amount_description">
+        <item quantity="one">Retroceder %d segundo</item>
+        <item quantity="other">Retroceder %d segundos</item>
+    </plurals>
+    <plurals name="hours">
+        <item quantity="one">%d hora</item>
+        <item quantity="other">%d horas</item>
+    </plurals>
+    <plurals name="minutes">
+        <item quantity="one">%d minuto</item>
+        <item quantity="other">%d minutos</item>
+    </plurals>
+    <plurals name="mtrl_badge_content_description">
+        <item quantity="one">%d notificación nueva</item>
+        <item quantity="other">%d notificaciones nuevas</item>
+    </plurals>
+    <plurals name="viewers">
+        <item quantity="one">%s espectador</item>
+        <item quantity="other">@string/viewers_count</item>
+    </plurals>
+    <plurals name="views">
+        <item quantity="one">%s vista</item>
+        <item quantity="other">@string/views</item>
+    </plurals>
+</resources>

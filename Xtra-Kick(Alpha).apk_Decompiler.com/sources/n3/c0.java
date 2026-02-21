@@ -1,0 +1,7 @@
+package n3;
+
+public enum c0 {
+    ITEM_TO_PLACEHOLDER,
+    PLACEHOLDER_TO_ITEM,
+    PLACEHOLDER_POSITION_CHANGE
+}

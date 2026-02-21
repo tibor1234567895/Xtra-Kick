@@ -1,0 +1,1 @@
+task ':appcompat:appcompat:writeVersionFile' property 'version'
