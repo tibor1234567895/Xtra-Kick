@@ -237,8 +237,8 @@ class MainActivity : AppCompatActivity() {
                                         prefs.getString(C.GQL_CLIENT_ID_WEB, "kimne78kx3ncx6brgo4mv6wki5h1ko"),
                                         tokenPrefs().getString(C.GQL_TOKEN_WEB, null)?.takeIf { it.isNotBlank() }?.let { TwitchApiHelper.addTokenPrefixGQL(it) },
                                         TwitchApiHelper.getHelixHeaders(this@MainActivity),
-                                        this@MainActivity.tokenPrefs().getString(C.USER_ID, null),
-                                        this@MainActivity.tokenPrefs().getString(C.USERNAME, null),
+                                        this@MainActivity.tokenPrefs().getString(C.KICK_USER_ID, null),
+                                        this@MainActivity.tokenPrefs().getString(C.KICK_USER_LOGIN, null),
                                         this@MainActivity
                                     )
                                 }
@@ -866,8 +866,7 @@ class MainActivity : AppCompatActivity() {
         }
         navController.setGraph(navController.navInflater.inflate(R.navigation.nav_graph).also {
             val startOnFollowed = prefs.getString(C.UI_STARTONFOLLOWED, "1")?.toIntOrNull() ?: 1
-            val isLoggedIn = !TwitchApiHelper.getGQLHeaders(this, true)[C.HEADER_TOKEN].isNullOrBlank() ||
-                    !TwitchApiHelper.getHelixHeaders(this)[C.HEADER_TOKEN].isNullOrBlank()
+            val isLoggedIn = com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(this)
             val defaultItem = tabList.find { it.split(':')[1] != "0" }?.split(':')[0] ?: "1"
             when {
                 (isLoggedIn && startOnFollowed < 2) || (!isLoggedIn && startOnFollowed == 0) || defaultItem == "2" -> {
@@ -1084,6 +1083,38 @@ class MainActivity : AppCompatActivity() {
                     putString(C.UI_THEME_ROUNDED_CORNERS, "2")
                 }
                 putInt(C.SETTINGS_VERSION, 12)
+            }
+        }
+        if (version < 13) {
+            val currentKickRedirect = prefs.getString(C.KICK_REDIRECT_URI, null)
+            val currentKickScopes = prefs.getString(C.KICK_SCOPES, null)
+            val legacyUserId = tokenPrefs().getString(C.USER_ID, null)
+            val legacyUserLogin = tokenPrefs().getString(C.USERNAME, null)
+            val currentKickUserId = tokenPrefs().getString(C.KICK_USER_ID, null)
+            val currentKickUserLogin = tokenPrefs().getString(C.KICK_USER_LOGIN, null)
+            prefs.edit {
+                if (currentKickRedirect.isNullOrBlank() || currentKickRedirect == "xtra://kick-auth/callback") {
+                    putString(C.KICK_REDIRECT_URI, "https://localhost/callback")
+                }
+                if (currentKickScopes.isNullOrBlank()) {
+                    putString(C.KICK_SCOPES, "user:read chat:write")
+                }
+                putString(C.API_LOGIN, C.KICK)
+                putInt(C.SETTINGS_VERSION, 13)
+            }
+            tokenPrefs().edit {
+                if (currentKickUserId.isNullOrBlank()) {
+                    putString(C.KICK_USER_ID, legacyUserId)
+                }
+                if (currentKickUserLogin.isNullOrBlank()) {
+                    putString(C.KICK_USER_LOGIN, legacyUserLogin)
+                }
+                remove(C.TOKEN)
+                remove(C.GQL_HEADERS)
+                remove(C.GQL_TOKEN)
+                remove(C.GQL_TOKEN2)
+                remove(C.GQL_TOKEN_WEB)
+                remove(C.INTEGRITY_EXPIRATION)
             }
         }
     }

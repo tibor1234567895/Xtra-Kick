@@ -255,9 +255,11 @@
     </string-array>
 
     <string-array name="loginApiEntries">
-        <item>@string/both</item>
-        <item>GQL</item>
-        <item>Helix</item>
+        <item>@string/api_kick</item>
+    </string-array>
+
+    <string-array name="loginApiValues">
+        <item>3</item>
     </string-array>
 
     <string-array name="timestampEntries">

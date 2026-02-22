@@ -122,6 +122,7 @@ dependencies {
     ksp(libs.hilt.extension.compiler)
 
     implementation(libs.coroutines)
+    testImplementation("junit:junit:4.13.2")
 }
 
 ksp {

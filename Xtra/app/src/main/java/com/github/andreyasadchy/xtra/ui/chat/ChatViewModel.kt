@@ -178,9 +178,7 @@ class ChatViewModel @Inject constructor(
             if (applicationContext.prefs().getBoolean(C.CHAT_RECENT, true)) {
                 loadRecentMessages(networkLibrary, channelLogin, channelId)
             }
-            val isLoggedIn = !applicationContext.tokenPrefs().getString(C.USERNAME, null).isNullOrBlank() &&
-                    (!TwitchApiHelper.getGQLHeaders(applicationContext, true)[C.HEADER_TOKEN].isNullOrBlank() ||
-                            !TwitchApiHelper.getHelixHeaders(applicationContext)[C.HEADER_TOKEN].isNullOrBlank())
+            val isLoggedIn = com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(applicationContext)
             if (isLoggedIn) {
                 loadUserEmotes(channelId)
             }
@@ -906,8 +904,8 @@ class ChatViewModel @Inject constructor(
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
         val enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false)
         val accountId = applicationContext.tokenPrefs().getString(C.USER_ID, null)
-        val accountLogin = applicationContext.tokenPrefs().getString(C.USERNAME, null)
-        val isLoggedIn = !accountLogin.isNullOrBlank() && (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() || !helixHeaders[C.HEADER_TOKEN].isNullOrBlank())
+        val accountLogin = applicationContext.tokenPrefs().getString(C.KICK_USER_LOGIN, null)
+        val isLoggedIn = com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(applicationContext)
         val usePubSub = applicationContext.prefs().getBoolean(C.CHAT_PUBSUB_ENABLED, true)
         val showUserNotice = applicationContext.prefs().getBoolean(C.CHAT_SHOW_USERNOTICE, true)
         val showClearMsg = applicationContext.prefs().getBoolean(C.CHAT_SHOW_CLEARMSG, true)
@@ -1836,6 +1834,20 @@ class ChatViewModel @Inject constructor(
     private fun sendMessage(message: CharSequence, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, accountId: String?, channelId: String?, useApiChatMessages: Boolean, enableIntegrity: Boolean, replyId: String? = null) {
         try {
             viewModelScope.launch {
+                if (isKickPreferred()) {
+                    val accessToken = applicationContext.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)
+                    val broadcasterId = channelId?.toIntOrNull()
+                    if (!accessToken.isNullOrBlank() && broadcasterId != null) {
+                        runCatching {
+                            kickRepository.sendChatMessage(accessToken, broadcasterId, message.toString())
+                        }.onFailure {
+                            onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, it.message)))
+                        }
+                    } else {
+                        onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, "missing kick auth scope")))
+                    }
+                    return@launch
+                }
                 if (useApiChatMessages) {
                     if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                         graphQLRepository.sendMessage(networkLibrary, gqlHeaders, channelId, message.toString(), replyId).also { response ->

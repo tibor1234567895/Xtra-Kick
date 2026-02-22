@@ -10,6 +10,8 @@ import com.github.andreyasadchy.xtra.model.kick.KickMessagesData
 import com.github.andreyasadchy.xtra.model.kick.KickMessagesEnvelope
 import com.github.andreyasadchy.xtra.model.kick.KickSubcategoriesResponse
 import com.github.andreyasadchy.xtra.model.kick.KickSubcategory
+import com.github.andreyasadchy.xtra.model.kick.auth.KickChatSendRequest
+import com.github.andreyasadchy.xtra.model.kick.auth.KickChatSendResponse
 import com.github.andreyasadchy.xtra.model.ui.Game
 import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.model.ui.User
@@ -19,6 +21,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Request
 import java.io.IOException
 import java.net.URLEncoder
@@ -59,6 +62,31 @@ class KickRepository @Inject constructor(
 
     suspend fun getRecentMessages(channelOrChatroomId: String): KickMessagesData {
         return get<KickMessagesEnvelope>("https://kick.com/api/v2/channels/${urlEncode(channelOrChatroomId)}/messages").data ?: KickMessagesData()
+    }
+
+    suspend fun sendChatMessage(accessToken: String, broadcasterUserId: Int, content: String): KickChatSendResponse = withContext(Dispatchers.IO) {
+        val body = json.encodeToString(
+            KickChatSendRequest.serializer(),
+            KickChatSendRequest(
+                broadcasterUserId = broadcasterUserId,
+                content = content,
+            )
+        )
+        okHttpClient.newCall(
+            Request.Builder()
+                .url("https://api.kick.com/public/v1/chat")
+                .header("User-Agent", "okhttp/5.0.0")
+                .header("Accept", "application/json")
+                .header("Authorization", "Bearer $accessToken")
+                .header("Content-Type", "application/json")
+                .post(body.toRequestBody())
+                .build()
+        ).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("Kick chat send failed (${response.code})")
+            }
+            json.decodeFromString<KickChatSendResponse>(response.body.string())
+        }
     }
 
     fun toStream(item: KickLivestream, gameId: String? = null, gameSlug: String? = null, gameName: String? = null): Stream {

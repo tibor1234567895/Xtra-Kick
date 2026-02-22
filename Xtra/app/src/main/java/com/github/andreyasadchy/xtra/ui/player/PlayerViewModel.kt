@@ -707,8 +707,9 @@ class PlayerViewModel @Inject constructor(
         if (_isFollowing.value == null) {
             viewModelScope.launch {
                 try {
-                    if (!channelId.isNullOrBlank()) {
-                        if (setting == 0 && !userId.isNullOrBlank() && userId != channelId) {
+                    val followId = channelId ?: channelLogin
+                    if (!followId.isNullOrBlank()) {
+                        if (setting == 0 && !channelId.isNullOrBlank() && !userId.isNullOrBlank() && userId != channelId) {
                             try {
                                 if (gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
                                 val follower = graphQLRepository.loadQueryFollowingUser(
@@ -728,7 +729,7 @@ class PlayerViewModel @Inject constructor(
                                 _isFollowing.value = following
                             }
                         } else {
-                            _isFollowing.value = localFollowsChannel.getFollowByUserId(channelId) != null
+                            _isFollowing.value = localFollowsChannel.getFollowByUserId(followId) != null
                         }
                     }
                 } catch (e: Exception) {
@@ -741,8 +742,9 @@ class PlayerViewModel @Inject constructor(
     fun saveFollowChannel(userId: String?, channelId: String?, channelLogin: String?, channelName: String?, setting: Int, notificationsEnabled: Boolean, startedAt: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                if (!channelId.isNullOrBlank()) {
-                    if (setting == 0 && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
+                val followId = channelId ?: channelLogin
+                if (!followId.isNullOrBlank()) {
+                    if (setting == 0 && !channelId.isNullOrBlank() && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
                         val errorMessage = graphQLRepository.loadFollowUser(networkLibrary, gqlHeaders, channelId).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
@@ -757,19 +759,19 @@ class PlayerViewModel @Inject constructor(
                             _isFollowing.value = true
                             follow.value = Pair(true, null)
                             if (notificationsEnabled) {
-                                startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let {
-                                    shownNotificationsRepository.saveList(listOf(ShownNotification(channelId, it)))
+                                startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { started ->
+                                    shownNotificationsRepository.saveList(listOf(ShownNotification(followId, started)))
                                 }
                             }
                         }
                     } else {
-                        localFollowsChannel.saveFollow(LocalFollowChannel(channelId, channelLogin, channelName))
+                        localFollowsChannel.saveFollow(LocalFollowChannel(followId, channelLogin, channelName))
                         _isFollowing.value = true
                         follow.value = Pair(true, null)
-                        notificationUsersRepository.saveUser(NotificationUser(channelId))
+                        notificationUsersRepository.saveUser(NotificationUser(followId))
                         if (notificationsEnabled) {
-                            startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let {
-                                shownNotificationsRepository.saveList(listOf(ShownNotification(channelId, it)))
+                            startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { started ->
+                                shownNotificationsRepository.saveList(listOf(ShownNotification(followId, started)))
                             }
                         }
                     }
@@ -780,11 +782,12 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun deleteFollowChannel(userId: String?, channelId: String?, setting: Int, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun deleteFollowChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                if (!channelId.isNullOrBlank()) {
-                    if (setting == 0 && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
+                val followId = channelId ?: channelLogin
+                if (!followId.isNullOrBlank()) {
+                    if (setting == 0 && !channelId.isNullOrBlank() && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
                         val errorMessage = graphQLRepository.loadUnfollowUser(networkLibrary, gqlHeaders, channelId).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
@@ -800,10 +803,10 @@ class PlayerViewModel @Inject constructor(
                             follow.value = Pair(false, null)
                         }
                     } else {
-                        localFollowsChannel.getFollowByUserId(channelId)?.let { localFollowsChannel.deleteFollow(it) }
+                        localFollowsChannel.getFollowByUserId(followId)?.let { localFollowsChannel.deleteFollow(it) }
                         _isFollowing.value = false
                         follow.value = Pair(false, null)
-                        notificationUsersRepository.deleteUser(NotificationUser(channelId))
+                        notificationUsersRepository.deleteUser(NotificationUser(followId))
                     }
                 }
             } catch (e: Exception) {

@@ -743,10 +743,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             }
                         }
                     }
-                    if (!requireContext().tokenPrefs().getString(C.USERNAME, null).isNullOrBlank() &&
-                        (!TwitchApiHelper.getGQLHeaders(requireContext(), true)[C.HEADER_TOKEN].isNullOrBlank() ||
-                                !TwitchApiHelper.getHelixHeaders(requireContext())[C.HEADER_TOKEN].isNullOrBlank())
-                    ) {
+                    if (com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(requireContext())) {
                         if (prefs.getBoolean(C.PLAYER_CHATBARTOGGLE, false) && !prefs.getBoolean(C.CHAT_DISABLE, false)) {
                             toggleChatInput.visibility = View.VISIBLE
                             toggleChatInput.setOnClickListener { toggleChatBar() }
@@ -1044,6 +1041,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                             viewModel.deleteFollowChannel(
                                                 requireContext().tokenPrefs().getString(C.USER_ID, null),
                                                 requireArguments().getString(KEY_CHANNEL_ID),
+                                                requireArguments().getString(KEY_CHANNEL_LOGIN),
                                                 setting,
                                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
                                                 TwitchApiHelper.getGQLHeaders(requireContext(), true),
@@ -1926,7 +1924,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             !requireContext().prefs().getBoolean(C.CHAT_PUBSUB_ENABLED, true) ||
                             (requireContext().prefs().getBoolean(C.CHAT_POINTS_COLLECT, true) &&
                                     !requireContext().tokenPrefs().getString(C.USER_ID, null).isNullOrBlank() &&
-                                    !TwitchApiHelper.getGQLHeaders(requireContext(), true)[C.HEADER_TOKEN].isNullOrBlank()),
+                                    com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(requireContext())),
                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
                     helixHeaders = TwitchApiHelper.getHelixHeaders(requireContext()),
                     gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext()),
@@ -2436,6 +2434,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         "unfollow" -> viewModel.deleteFollowChannel(
                             requireContext().tokenPrefs().getString(C.USER_ID, null),
                             requireArguments().getString(KEY_CHANNEL_ID),
+                            requireArguments().getString(KEY_CHANNEL_LOGIN),
                             prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
                             TwitchApiHelper.getGQLHeaders(requireContext(), true),

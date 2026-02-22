@@ -154,6 +154,8 @@
     <string name="token_random_deviceid">Random device ID</string>
     <string name="api_helix_client_id">Helix client ID</string>
     <string name="api_gql_client_id">GQL client ID</string>
+    <string name="api_kick_client_id">Kick client ID</string>
+    <string name="api_kick_client_secret">Kick client secret</string>
     <string name="playback_speed">Playback speed</string>
     <string name="quality">Quality</string>
     <string name="saved_value">Saved value</string>
@@ -389,6 +391,8 @@
     <string name="api_login">Get token for selected APIs</string>
     <string name="api_helix_redirect">Helix redirect URL</string>
     <string name="api_gql_redirect">GQL redirect URL</string>
+    <string name="api_kick_redirect">Kick redirect URL</string>
+    <string name="api_kick_scopes">Kick scopes</string>
     <string name="api_settings">API settings</string>
     <string name="streams">Streams</string>
     <string name="game_streams">Game streams</string>
@@ -472,6 +476,8 @@
     <string name="api_user_login">Account login</string>
     <string name="api_helix_token">Helix token</string>
     <string name="api_gql_token">GQL token</string>
+    <string name="api_kick_access_token">Kick access token</string>
+    <string name="api_kick_refresh_token">Kick refresh token</string>
     <string name="api_validate_tokens">Validate tokens on startup</string>
     <string name="followed_only">Followed only</string>
     <string name="debug_api_commands">Use API chat commands</string>
@@ -622,6 +628,9 @@
     <string name="api_gql">GQL</string>
     <string name="api_gql_persisted_query">GQL persisted query</string>
     <string name="api_kick">Kick</string>
+    <string name="kick_not_implemented_action">This account action is not implemented for Kick yet.</string>
+    <string name="kick_oauth_not_configured">Kick login is not configured. Set Kick client ID in API token settings.</string>
+    <string name="integrity_token_twitch_only">Integrity token debug flow is Twitch-only and disabled for Kick login.</string>
     <string name="show_stv_badges">Show 7TV badges</string>
     <string name="show_stv_personal_emotes">Show 7TV personal emotes</string>
     <string name="stv_live_updates">7TV live emote updates</string>

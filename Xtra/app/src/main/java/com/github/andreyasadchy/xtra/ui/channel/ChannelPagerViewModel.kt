@@ -306,8 +306,9 @@ class ChannelPagerViewModel @Inject constructor(
         if (_isFollowing.value == null) {
             viewModelScope.launch {
                 try {
-                    if (!channelId.isNullOrBlank()) {
-                        if (setting == 0 && !userId.isNullOrBlank() && userId != channelId) {
+                    val followId = channelId ?: channelLogin
+                    if (!followId.isNullOrBlank()) {
+                        if (setting == 0 && !channelId.isNullOrBlank() && !userId.isNullOrBlank() && userId != channelId) {
                             try {
                                 if (gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
                                 val follower = graphQLRepository.loadQueryFollowingUser(
@@ -329,8 +330,8 @@ class ChannelPagerViewModel @Inject constructor(
                                 _notificationsEnabled.value = notificationUsersRepository.getByUserId(channelId) != null
                             }
                         } else {
-                            _isFollowing.value = localFollowsChannel.getFollowByUserId(channelId) != null
-                            _notificationsEnabled.value = notificationUsersRepository.getByUserId(channelId) != null
+                            _isFollowing.value = localFollowsChannel.getFollowByUserId(followId) != null
+                            _notificationsEnabled.value = notificationUsersRepository.getByUserId(followId) != null
                         }
                     }
                 } catch (e: Exception) {
@@ -343,8 +344,9 @@ class ChannelPagerViewModel @Inject constructor(
     fun saveFollowChannel(userId: String?, channelId: String?, channelLogin: String?, channelName: String?, setting: Int, notificationsEnabled: Boolean, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                if (!channelId.isNullOrBlank()) {
-                    if (setting == 0 && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
+                val followId = channelId ?: channelLogin
+                if (!followId.isNullOrBlank()) {
+                    if (setting == 0 && !channelId.isNullOrBlank() && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
                         val errorMessage = graphQLRepository.loadFollowUser(networkLibrary, gqlHeaders, channelId).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
@@ -366,14 +368,14 @@ class ChannelPagerViewModel @Inject constructor(
                             }
                         }
                     } else {
-                        localFollowsChannel.saveFollow(LocalFollowChannel(channelId, channelLogin, channelName))
+                        localFollowsChannel.saveFollow(LocalFollowChannel(followId, channelLogin, channelName))
                         _isFollowing.value = true
                         follow.value = Pair(true, null)
-                        notificationUsersRepository.saveUser(NotificationUser(channelId))
+                        notificationUsersRepository.saveUser(NotificationUser(followId))
                         _notificationsEnabled.value = true
                         if (notificationsEnabled) {
-                            _stream.value?.startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let {
-                                shownNotificationsRepository.saveList(listOf(ShownNotification(channelId, it)))
+                            _stream.value?.startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { startedAt ->
+                                shownNotificationsRepository.saveList(listOf(ShownNotification(followId, startedAt)))
                             }
                         }
                     }
@@ -384,11 +386,12 @@ class ChannelPagerViewModel @Inject constructor(
         }
     }
 
-    fun deleteFollowChannel(userId: String?, channelId: String?, setting: Int, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun deleteFollowChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                if (!channelId.isNullOrBlank()) {
-                    if (setting == 0 && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
+                val followId = channelId ?: channelLogin
+                if (!followId.isNullOrBlank()) {
+                    if (setting == 0 && !channelId.isNullOrBlank() && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
                         val errorMessage = graphQLRepository.loadUnfollowUser(networkLibrary, gqlHeaders, channelId).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
@@ -405,10 +408,10 @@ class ChannelPagerViewModel @Inject constructor(
                             _notificationsEnabled.value = false
                         }
                     } else {
-                        localFollowsChannel.getFollowByUserId(channelId)?.let { localFollowsChannel.deleteFollow(it) }
+                        localFollowsChannel.getFollowByUserId(followId)?.let { localFollowsChannel.deleteFollow(it) }
                         _isFollowing.value = false
                         follow.value = Pair(false, null)
-                        notificationUsersRepository.deleteUser(NotificationUser(channelId))
+                        notificationUsersRepository.deleteUser(NotificationUser(followId))
                         _notificationsEnabled.value = false
                     }
                 }

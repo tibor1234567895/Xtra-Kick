@@ -82,9 +82,7 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
                     }
                 }
                 if (!requireContext().prefs().getBoolean(C.CHAT_DISABLE, false)) {
-                    val isLoggedIn = !requireContext().tokenPrefs().getString(C.USERNAME, null).isNullOrBlank() &&
-                            (!TwitchApiHelper.getGQLHeaders(requireContext(), true)[C.HEADER_TOKEN].isNullOrBlank() ||
-                                    !TwitchApiHelper.getHelixHeaders(requireContext())[C.HEADER_TOKEN].isNullOrBlank())
+                    val isLoggedIn = com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(requireContext())
                     if (isLoggedIn && requireContext().prefs().getBoolean(C.PLAYER_MENU_CHAT_BAR, true)) {
                         menuChatBar.visibility = View.VISIBLE
                         if (requireContext().prefs().getBoolean(C.KEY_CHAT_BAR_VISIBLE, true)) {

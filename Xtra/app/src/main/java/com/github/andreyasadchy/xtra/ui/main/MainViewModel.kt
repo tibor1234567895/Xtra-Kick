@@ -34,10 +34,12 @@ import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.ui.download.StreamDownloadWorker
 import com.github.andreyasadchy.xtra.ui.download.VideoDownloadWorker
 import com.github.andreyasadchy.xtra.ui.login.LoginActivity
+import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
 import com.github.andreyasadchy.xtra.util.TwitchApiHelper
 import com.github.andreyasadchy.xtra.util.getByteArrayCronetCallback
+import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.tokenPrefs
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -59,6 +61,7 @@ import org.chromium.net.apihelpers.RedirectHandlers
 import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.io.File
 import java.io.FileOutputStream
+import java.net.URLEncoder
 import java.util.Timer
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
@@ -833,55 +836,76 @@ class MainViewModel @Inject constructor(
     fun validate(networkLibrary: String?, gqlHeaders: Map<String, String>, gqlWebClientId: String?, gqlWebToken: String?, helixHeaders: Map<String, String>, accountId: String?, accountLogin: String?, activity: Activity) {
         viewModelScope.launch {
             try {
-                val helixToken = helixHeaders[C.HEADER_TOKEN]
-                if (!helixToken.isNullOrBlank()) {
-                    val response = authRepository.validate(networkLibrary, helixToken)
-                    if (response.clientId.isNotBlank() && response.clientId == helixHeaders[C.HEADER_CLIENT_ID]) {
-                        if ((!response.userId.isNullOrBlank() && response.userId != accountId) || (!response.login.isNullOrBlank() && response.login != accountLogin)) {
-                            activity.tokenPrefs().edit {
-                                putString(C.USER_ID, response.userId?.takeIf { it.isNotBlank() } ?: accountId)
-                                putString(C.USERNAME, response.login?.takeIf { it.isNotBlank() } ?: accountLogin)
-                            }
-                        }
-                    } else {
+                val accessToken = activity.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)
+                if (accessToken.isNullOrBlank()) {
+                    return@launch
+                }
+                val now = System.currentTimeMillis() / 1000L
+                val expiresAt = activity.tokenPrefs().getLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L)
+                val clientId = activity.prefs().getString(C.KICK_CLIENT_ID, null)
+                val clientSecret = activity.prefs().getString(C.KICK_CLIENT_SECRET, null)
+                val refreshToken = activity.tokenPrefs().getString(C.KICK_REFRESH_TOKEN, null)
+                var activeToken = accessToken
+                val shouldRefresh = expiresAt > 0L && expiresAt <= now + 30L
+                if (!shouldRefresh && !clientId.isNullOrBlank() && !clientSecret.isNullOrBlank()) {
+                    val introspect = authRepository.introspectKickToken(
+                        networkLibrary,
+                        formBody(
+                            "client_id" to clientId,
+                            "client_secret" to clientSecret,
+                            "token" to accessToken,
+                        ),
+                    )
+                    if (!introspect.active) {
                         throw IllegalStateException("401")
                     }
                 }
-                val gqlToken = gqlHeaders[C.HEADER_TOKEN]
-                if (!gqlToken.isNullOrBlank()) {
-                    val response = authRepository.validate(networkLibrary, gqlToken)
-                    if (response.clientId.isNotBlank() && (response.clientId == gqlHeaders[C.HEADER_CLIENT_ID] || response.clientId == gqlWebClientId)) {
-                        if ((!response.userId.isNullOrBlank() && response.userId != accountId) || (!response.login.isNullOrBlank() && response.login != accountLogin)) {
-                            activity.tokenPrefs().edit {
-                                putString(C.USER_ID, response.userId?.takeIf { it.isNotBlank() } ?: accountId)
-                                putString(C.USERNAME, response.login?.takeIf { it.isNotBlank() } ?: accountLogin)
-                            }
-                        }
-                    } else {
+                if (shouldRefresh) {
+                    if (refreshToken.isNullOrBlank() || clientId.isNullOrBlank() || clientSecret.isNullOrBlank()) {
                         throw IllegalStateException("401")
+                    }
+                    val refresh = authRepository.refreshKickToken(
+                        networkLibrary,
+                        formBody(
+                            "grant_type" to "refresh_token",
+                            "refresh_token" to refreshToken,
+                            "client_id" to clientId,
+                            "client_secret" to clientSecret,
+                        ),
+                    )
+                    val newAccess = refresh.accessToken?.takeIf { it.isNotBlank() } ?: throw IllegalStateException("401")
+                    activeToken = newAccess
+                    activity.tokenPrefs().edit {
+                        putString(C.KICK_ACCESS_TOKEN, newAccess)
+                        putString(C.KICK_REFRESH_TOKEN, refresh.refreshToken ?: refreshToken)
+                        putLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, now + (refresh.expiresIn ?: 0L))
+                        putString(C.KICK_TOKEN_TYPE, refresh.tokenType)
                     }
                 }
-                if (!gqlWebToken.isNullOrBlank() && gqlWebToken != gqlToken) {
-                    val response = authRepository.validate(networkLibrary, gqlWebToken)
-                    if (response.clientId.isNotBlank() && response.clientId == gqlWebClientId) {
-                        if ((!response.userId.isNullOrBlank() && response.userId != accountId) || (!response.login.isNullOrBlank() && response.login != accountLogin)) {
-                            activity.tokenPrefs().edit {
-                                putString(C.USER_ID, response.userId?.takeIf { it.isNotBlank() } ?: accountId)
-                                putString(C.USERNAME, response.login?.takeIf { it.isNotBlank() } ?: accountLogin)
-                            }
-                        }
-                    } else {
-                        throw IllegalStateException("401")
-                    }
+                val user = authRepository.getKickCurrentUser(networkLibrary, activeToken).data.firstOrNull()
+                val loginName = user?.name ?: user?.channelSlug ?: user?.id
+                activity.tokenPrefs().edit {
+                    putString(C.KICK_USER_ID, user?.id)
+                    putString(C.KICK_USER_LOGIN, loginName)
+                    putString(C.USER_ID, user?.id)
+                    putString(C.USERNAME, loginName)
                 }
             } catch (e: Exception) {
                 if (e is IllegalStateException && e.message == "401") {
                     Toast.makeText(activity, R.string.token_expired, Toast.LENGTH_LONG).show()
-                    (activity as? MainActivity)?.logoutResultLauncher?.launch(Intent(activity, LoginActivity::class.java))
+                    AuthStateHelper.clearKickAuth(activity)
+                    AuthStateHelper.clearLegacyTwitchAuth(activity)
+                    (activity as? MainActivity)?.loginResultLauncher?.launch(Intent(activity, LoginActivity::class.java))
                 }
             }
         }
         TwitchApiHelper.checkedValidation = true
+    }
+
+    private fun formBody(vararg pairs: Pair<String, String?>): String {
+        return pairs.filter { !it.second.isNullOrBlank() }.joinToString("&") {
+            "${URLEncoder.encode(it.first, Charsets.UTF_8.name())}=${URLEncoder.encode(it.second, Charsets.UTF_8.name())}"
+        }
     }
 
     fun checkUpdates(networkLibrary: String?, url: String, lastChecked: Long) {

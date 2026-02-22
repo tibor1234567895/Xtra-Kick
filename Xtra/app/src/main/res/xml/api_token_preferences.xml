@@ -2,9 +2,9 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <ListPreference
-        android:defaultValue="0"
+        android:defaultValue="3"
         android:entries="@array/loginApiEntries"
-        android:entryValues="@array/miscValues"
+        android:entryValues="@array/loginApiValues"
         android:key="api_login"
         android:summary="%s"
         android:title="@string/api_login"
@@ -12,25 +12,33 @@
         app:singleLineTitle="false" />
 
     <EditTextPreference
-        android:defaultValue="ilfexgv3nnljz3isbm257gzwrzr7bi"
-        android:key="helix_client_id"
-        android:title="@string/api_helix_client_id"
+        android:defaultValue=""
+        android:key="kick_client_id"
+        android:title="@string/api_kick_client_id"
         app:useSimpleSummaryProvider="true"
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
     <EditTextPreference
-        android:defaultValue="https://localhost"
-        android:key="helix_redirect"
-        android:title="@string/api_helix_redirect"
+        android:defaultValue=""
+        android:key="kick_client_secret"
+        android:title="@string/api_kick_client_secret"
         app:useSimpleSummaryProvider="true"
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
     <EditTextPreference
-        android:defaultValue="kd1unb4b3q4t58fwlpcbzcbnm76a8fp"
-        android:key="gql_client_id2"
-        android:title="@string/api_gql_client_id"
+        android:defaultValue="https://localhost/callback"
+        android:key="kick_redirect_uri"
+        android:title="@string/api_kick_redirect"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <EditTextPreference
+        android:defaultValue="user:read chat:write"
+        android:key="kick_scopes"
+        android:title="@string/api_kick_scopes"
         app:useSimpleSummaryProvider="true"
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
@@ -40,32 +48,26 @@
         app:iconSpaceReserved="false" />
 
     <EditTextPreference
-        android:key="user_id"
+        android:key="kick_user_id"
         android:title="@string/api_user_id"
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
     <EditTextPreference
-        android:key="username"
+        android:key="kick_user_login"
         android:title="@string/api_user_login"
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
     <EditTextPreference
-        android:key="token"
-        android:title="@string/api_helix_token"
+        android:key="kick_access_token"
+        android:title="@string/api_kick_access_token"
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
     <EditTextPreference
-        android:key="gql_token2"
-        android:title="@string/api_gql_token"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <EditTextPreference
-        android:key="gql_token_web"
-        android:title="@string/api_web_gql_token"
+        android:key="kick_refresh_token"
+        android:title="@string/api_kick_refresh_token"
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 

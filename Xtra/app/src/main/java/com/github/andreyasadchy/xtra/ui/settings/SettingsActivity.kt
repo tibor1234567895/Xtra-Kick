@@ -1191,52 +1191,42 @@ class SettingsActivity : AppCompatActivity() {
     class ApiTokenSettingsFragment : MaterialPreferenceFragment() {
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.api_token_preferences, rootKey)
-            findPreference<EditTextPreference>("user_id")?.apply {
+            findPreference<EditTextPreference>(C.KICK_USER_ID)?.apply {
                 isPersistent = false
-                text = requireContext().tokenPrefs().getString(C.USER_ID, null)
+                text = requireContext().tokenPrefs().getString(C.KICK_USER_ID, null)
                 setOnPreferenceChangeListener { _, newValue ->
                     requireContext().tokenPrefs().edit {
-                        putString(C.USER_ID, newValue.toString())
+                        putString(C.KICK_USER_ID, newValue.toString())
                     }
                     true
                 }
             }
-            findPreference<EditTextPreference>("username")?.apply {
+            findPreference<EditTextPreference>(C.KICK_USER_LOGIN)?.apply {
                 isPersistent = false
-                text = requireContext().tokenPrefs().getString(C.USERNAME, null)
+                text = requireContext().tokenPrefs().getString(C.KICK_USER_LOGIN, null)
                 setOnPreferenceChangeListener { _, newValue ->
                     requireContext().tokenPrefs().edit {
-                        putString(C.USERNAME, newValue.toString())
+                        putString(C.KICK_USER_LOGIN, newValue.toString())
                     }
                     true
                 }
             }
-            findPreference<EditTextPreference>("token")?.apply {
+            findPreference<EditTextPreference>(C.KICK_ACCESS_TOKEN)?.apply {
                 isPersistent = false
-                text = requireContext().tokenPrefs().getString(C.TOKEN, null)
+                text = requireContext().tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)
                 setOnPreferenceChangeListener { _, newValue ->
                     requireContext().tokenPrefs().edit {
-                        putString(C.TOKEN, newValue.toString())
+                        putString(C.KICK_ACCESS_TOKEN, newValue.toString())
                     }
                     true
                 }
             }
-            findPreference<EditTextPreference>("gql_token2")?.apply {
+            findPreference<EditTextPreference>(C.KICK_REFRESH_TOKEN)?.apply {
                 isPersistent = false
-                text = requireContext().tokenPrefs().getString(C.GQL_TOKEN2, null)
+                text = requireContext().tokenPrefs().getString(C.KICK_REFRESH_TOKEN, null)
                 setOnPreferenceChangeListener { _, newValue ->
                     requireContext().tokenPrefs().edit {
-                        putString(C.GQL_TOKEN2, newValue.toString())
-                    }
-                    true
-                }
-            }
-            findPreference<EditTextPreference>("gql_token_web")?.apply {
-                isPersistent = false
-                text = requireContext().tokenPrefs().getString(C.GQL_TOKEN_WEB, null)
-                setOnPreferenceChangeListener { _, newValue ->
-                    requireContext().tokenPrefs().edit {
-                        putString(C.GQL_TOKEN_WEB, newValue.toString())
+                        putString(C.KICK_REFRESH_TOKEN, newValue.toString())
                     }
                     true
                 }
@@ -1508,7 +1498,7 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
             findPreference<Preference>("get_integrity_token")?.setOnPreferenceClickListener {
-                IntegrityDialog.show(childFragmentManager)
+                Toast.makeText(requireContext(), R.string.integrity_token_twitch_only, Toast.LENGTH_LONG).show()
                 true
             }
             val httpEngine = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7

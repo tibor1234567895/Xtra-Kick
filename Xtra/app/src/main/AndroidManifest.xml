@@ -55,7 +55,23 @@
         <activity
             android:name=".ui.login.LoginActivity"
             android:configChanges="orientation|screenSize"
-            android:windowSoftInputMode="adjustResize" />
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="localhost"
+                    android:pathPrefix="/callback" />
+                <data
+                    android:scheme="https"
+                    android:host="127.0.0.1"
+                    android:pathPrefix="/callback" />
+            </intent-filter>
+        </activity>
 
         <service
             android:name=".ui.player.ExoPlayerService"

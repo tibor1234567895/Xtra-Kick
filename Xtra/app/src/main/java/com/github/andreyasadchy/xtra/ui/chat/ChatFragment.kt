@@ -127,10 +127,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 val channelId = args.getString(KEY_CHANNEL_ID)
                 val channelLogin = args.getString(KEY_CHANNEL_LOGIN)
                 val isLive = args.getBoolean(KEY_IS_LIVE)
-                val accountLogin = requireContext().tokenPrefs().getString(C.USERNAME, null)
-                val isLoggedIn = !accountLogin.isNullOrBlank() &&
-                        (!TwitchApiHelper.getGQLHeaders(requireContext(), true)[C.HEADER_TOKEN].isNullOrBlank() ||
-                                !TwitchApiHelper.getHelixHeaders(requireContext())[C.HEADER_TOKEN].isNullOrBlank())
+                val accountLogin = requireContext().tokenPrefs().getString(C.KICK_USER_LOGIN, null)
+                val isLoggedIn = com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(requireContext())
                 val chatUrl = args.getString(KEY_CHAT_URL)
                 if (isLive || (args.getString(KEY_VIDEO_ID) != null && args.getInt(KEY_START_TIME) != -1) || chatUrl != null) {
                     val enableMessaging = isLive && isLoggedIn
