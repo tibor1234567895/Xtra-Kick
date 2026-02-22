@@ -630,6 +630,46 @@ class PlayerRepository @Inject constructor(
         Pair(set.id, parseStvEmotes(set.emotes, useWebp, Emote.CHANNEL_STV))
     }
 
+    suspend fun loadStvKickEmotes(networkLibrary: String?, userId: String, useWebp: Boolean): Pair<String?, List<Emote>> = withContext(Dispatchers.IO) {
+        val response = when {
+            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                val response = suspendCoroutine { continuation ->
+                    httpEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${userId}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                    }.build().start()
+                }
+                json.decodeFromString<StvChannelResponse>(String(response.second))
+            }
+            networkLibrary == "Cronet" && cronetEngine != null -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
+                    cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${userId}", request.callback, cronetExecutor).apply {
+                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                    }.build().start()
+                    val response = request.future.get().responseBody as String
+                    json.decodeFromString<StvChannelResponse>(response)
+                } else {
+                    val response = suspendCoroutine { continuation ->
+                        cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${userId}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
+                            addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                        }.build().start()
+                    }
+                    json.decodeFromString<StvChannelResponse>(String(response.second))
+                }
+            }
+            else -> {
+                okHttpClient.newCall(Request.Builder().apply {
+                    url("https://7tv.io/v3/users/kick/${userId}")
+                    header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                }.build()).execute().use { response ->
+                    json.decodeFromString<StvChannelResponse>(response.body.string())
+                }
+            }
+        }
+        val set = response.emoteSet
+        Pair(set.id, parseStvEmotes(set.emotes, useWebp, Emote.CHANNEL_STV))
+    }
+
     private fun parseStvEmotes(response: List<StvResponse>, useWebp: Boolean, source: Int): List<Emote> {
         return response.mapNotNull { emote ->
             emote.name?.takeIf { it.isNotBlank() }?.let { name ->

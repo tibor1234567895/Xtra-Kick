@@ -8,6 +8,7 @@ import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.repository.datasource.FollowedStreamsDataSource
 import com.github.andreyasadchy.xtra.util.C
@@ -24,6 +25,7 @@ class FollowedStreamsViewModel @Inject constructor(
     private val localFollowsChannel: LocalFollowChannelRepository,
     private val graphQLRepository: GraphQLRepository,
     private val helixRepository: HelixRepository,
+    private val kickRepository: KickRepository,
 ) : ViewModel() {
 
     val flow = Pager(
@@ -40,6 +42,7 @@ class FollowedStreamsViewModel @Inject constructor(
             graphQLRepository = graphQLRepository,
             helixHeaders = TwitchApiHelper.getHelixHeaders(applicationContext),
             helixRepository = helixRepository,
+            kickRepository = kickRepository,
             enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             apiPref = (applicationContext.prefs().getString(C.API_PREFS_FOLLOWED_STREAMS, null) ?: C.DEFAULT_API_PREFS_FOLLOWED_STREAMS).split(',').mapNotNull {
                 val split = it.split(':')

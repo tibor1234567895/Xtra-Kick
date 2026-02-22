@@ -17,6 +17,8 @@ Run commands from `Xtra/`:
 - `./gradlew lint`: run Android Lint checks.
 - `./gradlew testDebugUnitTest`: run JVM unit tests.
 - `./gradlew clean`: clear Gradle build outputs.
+- Post-build install shortcut (Termux, unique filename): `APK=~/storage/downloads/app-debug-$(date +%Y%m%d-%H%M%S).apk && cp -f app/build/outputs/apk/debug/app-debug.apk "$APK" && termux-open "$APK"`.
+- If available, run `termux-media-scan "$APK"` before `termux-open` to reduce stale-package parse errors on some devices.
 
 CI uses Java 21 and Gradle wrapper, so keep local environment aligned.
 

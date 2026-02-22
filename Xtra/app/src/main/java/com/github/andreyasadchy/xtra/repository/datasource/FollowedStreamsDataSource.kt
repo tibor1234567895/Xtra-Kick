@@ -5,6 +5,7 @@ import androidx.paging.PagingState
 import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.util.C
 
@@ -15,6 +16,7 @@ class FollowedStreamsDataSource(
     private val graphQLRepository: GraphQLRepository,
     private val helixHeaders: Map<String, String>,
     private val helixRepository: HelixRepository,
+    private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
     private val networkLibrary: String?,
@@ -47,26 +49,24 @@ class FollowedStreamsDataSource(
                 }
                 (it as? LoadResult.Page)?.data?.let { list.addAll(it) }
             }
-            val result = if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() || !helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                try {
-                    loadFromApi(apiPref.getOrNull(0), params)
-                } catch (e: Exception) {
+            val result = run {
+                val apisToTry = (apiPref + C.KICK).distinct()
+                var loadedResult: LoadResult<Int, Stream>? = null
+                for (pref in apisToTry) {
                     try {
-                        loadFromApi(apiPref.getOrNull(1), params)
-                    } catch (e: Exception) {
-                        try {
-                            loadFromApi(apiPref.getOrNull(2), params)
-                        } catch (e: Exception) {
-                            null
-                        }
+                        loadedResult = loadFromApi(pref, params)
+                        break
+                    } catch (_: Exception) {
+
                     }
-                }?.let {
-                    if (it is LoadResult.Error && it.throwable.message == "failed integrity check") {
-                        return it
-                    }
-                    it as? LoadResult.Page
                 }
-            } else null
+                loadedResult
+            }?.let {
+                if (it is LoadResult.Error && it.throwable.message == "failed integrity check") {
+                    return it
+                }
+                it as? LoadResult.Page
+            }
             result?.data?.forEach { stream ->
                 val item = list.find { it.channelId == stream.channelId }
                 if (item == null) {
@@ -88,6 +88,7 @@ class FollowedStreamsDataSource(
             C.GQL -> if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) gqlQueryLoad(params) else throw Exception()
             C.GQL_PERSISTED_QUERY -> if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) gqlLoad(params) else throw Exception()
             C.HELIX -> if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) helixLoad(params) else throw Exception()
+            C.KICK -> kickLoad()
             else -> throw Exception()
         }
     }
@@ -280,6 +281,35 @@ class FollowedStreamsDataSource(
                 )
             } else null
         }
+        return LoadResult.Page(
+            data = list,
+            prevKey = null,
+            nextKey = null
+        )
+    }
+
+    private suspend fun kickLoad(): LoadResult<Int, Stream> {
+        val list = mutableListOf<Stream>()
+        localFollowsChannel.loadFollows().forEach { follow ->
+            val login = follow.userLogin?.takeIf { it.isNotBlank() }
+            val id = follow.userId?.takeIf { it.isNotBlank() }
+            val channel = try {
+                when {
+                    !login.isNullOrBlank() -> kickRepository.getChannel(login)
+                    !id.isNullOrBlank() -> kickRepository.getChannel(id)
+                    else -> null
+                }
+            } catch (_: Exception) {
+                null
+            }
+            channel?.livestream?.let {
+                val stream = kickRepository.toStream(channel)
+                if (list.none { item -> item.channelId == stream.channelId }) {
+                    list.add(stream)
+                }
+            }
+        }
+        list.sortByDescending { it.viewerCount ?: 0 }
         return LoadResult.Page(
             data = list,
             prevKey = null,

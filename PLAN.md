@@ -66,6 +66,17 @@ Related ViewModels updated to inject `KickRepository`.
 - Existing Twitch websocket/IRC path remains as fallback.
 - Kick chat message sending/auth path is NOT implemented in MVP (read-only chat behavior).
 
+### 3.6 Followed streams + chatroom-id hardening
+- Added Kick backend support to followed streams data flow:
+  - `FollowedStreamsDataSource` can now load live Kick streams from locally followed channels.
+  - Fallback API selection now iterates all enabled followed-stream backends, including Kick.
+  - `FollowedStreamsViewModel` now injects `KickRepository`.
+- Updated default followed-stream API preference to include Kick first:
+  - `C.DEFAULT_API_PREFS_FOLLOWED_STREAMS = "3:1,0:1,1:1,2:1"`
+- Hardened Kick chat polling to resolve and use `chatroom.id` when available:
+  - `ChatViewModel` now resolves chat ID via channel slug before loading/polling messages.
+  - Falls back to channel ID if chatroom resolution fails.
+
 ## 4. Current Blocker
 Build could not be fully verified in this environment because Android SDK is not configured:
 - Gradle error: missing `ANDROID_HOME` / `local.properties` (`sdk.dir`)
@@ -98,10 +109,11 @@ Build could not be fully verified in this environment because Android SDK is not
 - Better search quality (if Kick exposes stable search endpoint later)
 - Improve chat badge mapping (currently basic set/version mapping)
 - Later phase: Kick auth/login, follow/subscription/notifications parity
-- Use `chatroom.id` consistently for message polling if channel-id behavior changes.
 
 ### 5.4 Not Converted Yet (Known Gaps)
-- Following pages (followed streams/channels/games/videos) are still Twitch-first behavior.
+- Following pages are still partial:
+  - followed streams now has Kick live lookup for locally followed channels (no Kick account follow sync).
+  - followed channels/games/videos remain Twitch-first behavior.
 - Videos/clips flows remain mostly Twitch paths.
 - Account actions (follow/unfollow via Kick account, notification toggles on Kick backend) are not implemented.
 - Chat write features (send message, reply, channel points interactions) remain Twitch-specific.

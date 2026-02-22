@@ -316,7 +316,7 @@ class ChatViewModel @Inject constructor(
             if (!channelId.isNullOrBlank()) {
                 viewModelScope.launch {
                     try {
-                        val response = playerRepository.loadStvEmotes(networkLibrary, channelId, useWebp)
+                        val response = loadStvChannelEmotes(networkLibrary, channelId, channelLogin, useWebp)
                         val setId = response.first
                         val emotes = response.second
                         if (emotes.isNotEmpty()) {
@@ -623,9 +623,8 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val list = if (isKickPreferred() && !channelId.isNullOrBlank()) {
-                    kickRepository.getRecentMessages(channelId).messages
-                        .map { kickRepository.toChatMessage(it) }
-                        .filter { !it.message.isNullOrBlank() || !it.systemMsg.isNullOrBlank() }
+                    val kickMessageSources = resolveKickMessageSources(channelId, channelLogin)
+                    fetchKickMessages(kickMessageSources)
                         .onEach { message ->
                             message.id?.let { id ->
                                 synchronized(kickMessageIds) {
@@ -633,7 +632,6 @@ class ChatViewModel @Inject constructor(
                                 }
                             }
                         }
-                        .sortedBy { it.timestamp }
                         .toMutableList()
                 } else {
                     val recentList = mutableListOf<ChatMessage>()
@@ -700,6 +698,110 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    private suspend fun resolveKickChatId(channelId: String, channelLogin: String): String {
+        return try {
+            kickRepository.getChannel(channelLogin).let { channel ->
+                kickRepository.getChatId(channel).takeIf { !it.isNullOrBlank() } ?: channelId
+            }
+        } catch (_: Exception) {
+            channelId
+        }
+    }
+
+    private suspend fun resolveKickMessageSources(channelId: String, channelLogin: String): List<String> {
+        return LinkedHashSet<String>().apply {
+            add(channelId)
+            add(channelLogin)
+            add(resolveKickChatId(channelId, channelLogin))
+        }.filter { it.isNotBlank() }
+    }
+
+    private suspend fun loadStvChannelEmotes(networkLibrary: String?, channelId: String, channelLogin: String?, useWebp: Boolean): Pair<String?, List<Emote>> {
+        return if (isKickPreferred()) {
+            val kickUserId = try {
+                channelLogin?.let { login ->
+                    kickRepository.getChannel(login).userId?.toString()
+                }
+            } catch (_: Exception) {
+                null
+            }
+            playerRepository.loadStvKickEmotes(networkLibrary, kickUserId ?: channelId, useWebp)
+        } else {
+            playerRepository.loadStvEmotes(networkLibrary, channelId, useWebp)
+        }
+    }
+
+    private fun addKickInlineEmotes(rawMessage: String?): Boolean {
+        if (rawMessage.isNullOrBlank()) return false
+        val parsed = KICK_INLINE_EMOTE_REGEX.findAll(rawMessage).mapNotNull { match ->
+            val id = match.groupValues.getOrNull(1)?.trim()
+            val name = match.groupValues.getOrNull(2)?.trim()
+            if (!id.isNullOrBlank() && !name.isNullOrBlank()) {
+                Emote(
+                    name = name,
+                    url1x = "https://files.kick.com/emotes/${id}/fullsize",
+                    url2x = "https://files.kick.com/emotes/${id}/fullsize",
+                    url3x = "https://files.kick.com/emotes/${id}/fullsize",
+                    url4x = "https://files.kick.com/emotes/${id}/fullsize",
+                    format = "gif",
+                    isAnimated = true
+                )
+            } else null
+        }.toList()
+        if (parsed.isEmpty()) return false
+        val added = mutableListOf<Emote>()
+        synchronized(thirdPartyEmotes) {
+            parsed.forEach { emote ->
+                if (thirdPartyEmotes.none { it.name == emote.name }) {
+                    thirdPartyEmotes.add(emote)
+                    added.add(emote)
+                }
+            }
+        }
+        if (added.isEmpty()) return false
+        synchronized(autoCompleteList) {
+            autoCompleteList.addAll(added.filter { it !in autoCompleteList })
+        }
+        synchronized(allEmotes) {
+            allEmotes.addAll(added.mapNotNull { it.name }.filter { it !in allEmotes })
+        }
+        return true
+    }
+
+    private suspend fun fetchKickMessages(messageSources: List<String>): List<ChatMessage> {
+        var lastError: Exception? = null
+        for (source in messageSources) {
+            try {
+                val messages = kickRepository.getRecentMessages(source).messages
+                    .map { kickRepository.toChatMessage(it) }
+                    .filter { !it.message.isNullOrBlank() || !it.systemMsg.isNullOrBlank() }
+                    .sortedBy { it.timestamp }
+                var newKickEmotesAdded = false
+                messages.forEach { message ->
+                    if (addKickInlineEmotes(message.fullMsg)) {
+                        newKickEmotesAdded = true
+                    }
+                }
+                if (newKickEmotesAdded) {
+                    synchronized(thirdPartyEmotes) {
+                        thirdPartyEmotes.sortBy { it.source }
+                    }
+                    if (!reloadMessages.value) {
+                        reloadMessages.value = true
+                    }
+                    thirdPartyEmotesUpdated.emit(Unit)
+                }
+                return messages
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        if (lastError != null) {
+            throw lastError
+        }
+        return emptyList()
+    }
+
     private fun startKickChat(channelId: String, channelLogin: String, channelName: String?) {
         stopLiveChat()
         synchronized(kickMessageIds) {
@@ -707,14 +809,12 @@ class ChatViewModel @Inject constructor(
         }
         addChatter(channelName)
         kickChatJob = viewModelScope.launch {
+            val kickMessageSources = resolveKickMessageSources(channelId, channelLogin)
             onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_join).format(channelLogin)))
             delay(1500)
-            while (isActive) {
+            while (kickChatJob?.isActive == true) {
                 try {
-                    kickRepository.getRecentMessages(channelId).messages
-                        .map { kickRepository.toChatMessage(it) }
-                        .filter { !it.message.isNullOrBlank() || !it.systemMsg.isNullOrBlank() }
-                        .sortedBy { it.timestamp }
+                    fetchKickMessages(kickMessageSources)
                         .forEach { message ->
                             val key = message.id ?: "${message.timestamp}:${message.userName}:${message.message}"
                             val shouldEmit = synchronized(kickMessageIds) {
@@ -2956,6 +3056,7 @@ class ChatViewModel @Inject constructor(
     }
 
     companion object {
+        private val KICK_INLINE_EMOTE_REGEX = Regex("\\[emote:(\\d+):([^\\]]+)]")
         private var savedEmoteSets: List<String>? = null
         private var savedUserEmotes: List<TwitchEmote>? = null
         private var savedGlobalBadges: List<TwitchBadge>? = null

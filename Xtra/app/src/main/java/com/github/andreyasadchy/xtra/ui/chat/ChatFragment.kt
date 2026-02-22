@@ -714,6 +714,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            // Sync adapter with the current backing list in case messages arrived
+                            // before this lifecycle collector was active.
+                            adapter?.notifyDataSetChanged()
                             viewModel.newMessage.collect { result ->
                                 val message = result.first
                                 val lastIndex = result.second
@@ -876,7 +879,11 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         if (channelLogin != null) {
             viewModel.startLiveChat(requireArguments().getString(KEY_CHANNEL_ID), channelLogin)
             if (requireContext().prefs().getBoolean(C.CHAT_RECENT, true)) {
-                viewModel.loadRecentMessages(requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), channelLogin)
+                viewModel.loadRecentMessages(
+                    requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
+                    channelLogin,
+                    requireArguments().getString(KEY_CHANNEL_ID)
+                )
             }
         }
         viewModel.autoReconnect = true
