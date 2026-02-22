@@ -2,6 +2,7 @@ package com.github.andreyasadchy.xtra.model.kick
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 @Serializable
 class KickLivestreamsResponse(
@@ -61,6 +62,11 @@ class KickChannelResponse(
     val followersCount: Int? = null,
     @SerialName("banner_image")
     val bannerImage: KickBanner? = null,
+    @SerialName("subscriber_badges")
+    val subscriberBadges: List<KickChannelBadge>? = null,
+    @SerialName("founder_badges")
+    val founderBadges: List<KickChannelBadge>? = null,
+    val badges: List<KickChannelBadge>? = null,
     val chatroom: KickChatroom? = null,
     val livestream: KickChannelLivestream? = null,
     val user: KickUser? = null,
@@ -110,6 +116,38 @@ class KickBanner(
 @Serializable
 class KickChatroom(
     val id: Long? = null,
+    val badges: List<KickChannelBadge>? = null,
+    @SerialName("subscriber_badges")
+    val subscriberBadges: List<KickChannelBadge>? = null,
+    @SerialName("founder_badges")
+    val founderBadges: List<KickChannelBadge>? = null,
+)
+
+@Serializable
+class KickChannelBadge(
+    val type: String? = null,
+    @SerialName("badge_type")
+    val badgeType: String? = null,
+    val text: String? = null,
+    val name: String? = null,
+    val slug: String? = null,
+    val count: Int? = null,
+    val months: Int? = null,
+    val level: Int? = null,
+    val tier: Int? = null,
+    val version: Int? = null,
+    @SerialName("badge_image")
+    val badgeImage: JsonElement? = null,
+    @SerialName("badge_image_url")
+    val badgeImageUrl: String? = null,
+    val image: JsonElement? = null,
+    @SerialName("image_url")
+    val imageUrl: String? = null,
+    val icon: JsonElement? = null,
+    @SerialName("icon_url")
+    val iconUrl: String? = null,
+    val url: String? = null,
+    val src: String? = null,
 )
 
 @Serializable
@@ -155,6 +193,22 @@ class KickMessageSender(
     val id: Long? = null,
     val slug: String? = null,
     val username: String? = null,
+    val role: String? = null,
+    @SerialName("is_super_admin")
+    val isSuperAdmin: Boolean? = null,
+    @SerialName("is_verified")
+    val isVerified: Boolean? = null,
+    val verified: Boolean? = null,
+    @SerialName("follower_badges")
+    val followerBadges: List<String>? = null,
+    @SerialName("is_founder")
+    val isFounder: Boolean? = null,
+    @SerialName("months_subscribed")
+    val monthsSubscribed: Int? = null,
+    @SerialName("subscriptions_count")
+    val subscriptionsCount: Int? = null,
+    @SerialName("quantity_gifted")
+    val quantityGifted: Int? = null,
     val identity: KickMessageIdentity? = null,
 )
 
@@ -167,6 +221,29 @@ class KickMessageIdentity(
 @Serializable
 class KickMessageBadge(
     val type: String? = null,
+    @SerialName("badge_type")
+    val badgeType: String? = null,
     val text: String? = null,
+    val name: String? = null,
+    val slug: String? = null,
     val count: Int? = null,
+    val months: Int? = null,
+    val level: Int? = null,
+    val tier: Int? = null,
+    val version: Int? = null,
+    val active: Boolean? = null,
+    @SerialName("badge_image")
+    val badgeImage: JsonElement? = null,
+    @SerialName("badge_image_url")
+    val badgeImageUrl: String? = null,
+    @SerialName("badge_url")
+    val badgeUrl: String? = null,
+    @SerialName("image_url")
+    val imageUrl: String? = null,
+    @SerialName("icon_url")
+    val iconUrl: String? = null,
+    val url: String? = null,
+    val src: String? = null,
+    val image: JsonElement? = null,
+    val icon: JsonElement? = null,
 )
