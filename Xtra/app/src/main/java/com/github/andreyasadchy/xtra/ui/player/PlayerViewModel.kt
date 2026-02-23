@@ -419,10 +419,34 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun loadVideo(networkLibrary: String?, gqlHeaders: Map<String, String>, videoId: String?, playerType: String?, supportedCodecs: String?, enableIntegrity: Boolean) {
+    fun loadVideo(
+        networkLibrary: String?,
+        gqlHeaders: Map<String, String>,
+        videoId: String?,
+        videoSource: String?,
+        channelId: String?,
+        channelLogin: String?,
+        playerType: String?,
+        supportedCodecs: String?,
+        enableIntegrity: Boolean
+    ) {
         if (videoResult.value == null) {
             viewModelScope.launch {
                 try {
+                    if (videoSource.equals(C.KICK, true)) {
+                        val kickUrl = channelLogin?.let { login ->
+                            kickRepository.getChannelVideos(
+                                channelSlug = login,
+                                channelId = channelId,
+                                limit = 100
+                            ).firstOrNull { it.id == videoId }?.url
+                        }
+                        if (!kickUrl.isNullOrBlank()) {
+                            videoResult.value = kickUrl
+                            backupQualities = null
+                        }
+                        return@launch
+                    }
                     val result = playerRepository.loadVideoPlaylistUrl(networkLibrary, gqlHeaders, videoId, playerType, supportedCodecs, enableIntegrity)
                     videoResult.value = result.first
                     backupQualities = result.second

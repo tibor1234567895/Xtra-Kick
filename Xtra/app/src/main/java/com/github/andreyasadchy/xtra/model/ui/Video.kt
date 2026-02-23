@@ -7,6 +7,8 @@ import kotlinx.parcelize.Parcelize
 @Parcelize
 class Video(
     val id: String? = null,
+    val source: String? = null,
+    val url: String? = null,
     val channelId: String? = null,
     val channelLogin: String? = null,
     val channelName: String? = null,

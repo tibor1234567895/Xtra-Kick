@@ -8,6 +8,7 @@ import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.TwitchApiHelper
 import kotlin.math.max
 
 class ChannelClipsDataSource(
@@ -32,11 +33,27 @@ class ChannelClipsDataSource(
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Clip> {
         if (!channelLogin.isNullOrBlank()) {
             return try {
-                val list = kickRepository.getChannelClips(
+                val rawList = kickRepository.getChannelClips(
                     channelSlug = channelLogin,
                     channelId = channelId,
-                    limit = params.loadSize
+                    limit = maxOf(params.loadSize, 200),
                 )
+                val startMs = startedAt?.let { TwitchApiHelper.parseIso8601DateUTC(it) }
+                val endMs = endedAt?.let { TwitchApiHelper.parseIso8601DateUTC(it) }
+                val list = rawList
+                    .asSequence()
+                    .filter { clip ->
+                        val ts = clip.uploadDate?.let { TwitchApiHelper.parseIso8601DateUTC(it) } ?: return@filter false
+                        val afterStart = startMs?.let { ts >= it } ?: true
+                        val beforeEnd = endMs?.let { ts <= it } ?: true
+                        afterStart && beforeEnd
+                    }
+                    .sortedWith(
+                        compareByDescending<Clip> { it.viewCount ?: -1 }
+                            .thenByDescending { it.uploadDate?.let(TwitchApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
+                    )
+                    .take(params.loadSize)
+                    .toList()
                 LoadResult.Page(
                     data = list,
                     prevKey = null,

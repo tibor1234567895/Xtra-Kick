@@ -378,6 +378,8 @@ class KickRepository @Inject constructor(
                 }
                 Video(
                     id = id,
+                    source = C.KICK,
+                    url = extractKickVideoUrl(item),
                     channelId = channelId,
                     channelLogin = channelLogin,
                     channelName = channelName,
@@ -397,6 +399,35 @@ class KickRepository @Inject constructor(
             .sortedByDescending { it.uploadDate }
             .take(limit)
             .toList()
+    }
+
+    private fun extractKickVideoUrl(item: JsonObject): String? {
+        val directUrl = item.primitiveOrNull("playback_url")
+            ?: item.primitiveOrNull("playlist_url")
+            ?: item.primitiveOrNull("hls_url")
+            ?: item.primitiveOrNull("video_url")
+            ?: item.primitiveOrNull("source")
+            ?: item.objOrNull("source")?.primitiveOrNull("url")
+            ?: item.objOrNull("video")?.primitiveOrNull("url")
+            ?: item.objOrNull("livestream")?.primitiveOrNull("playback_url")
+        return normalizeKickVideoUrl(directUrl)
+    }
+
+    private fun normalizeKickVideoUrl(url: String?): String? {
+        val normalizedUrl = url?.trim().takeUnless { it.isNullOrBlank() } ?: return null
+        return when {
+            normalizedUrl.endsWith(".m3u8", ignoreCase = true) -> normalizedUrl
+            normalizedUrl.contains("kick.com", ignoreCase = true) &&
+                    (normalizedUrl.contains("/hls/", ignoreCase = true) ||
+                            normalizedUrl.contains("/stream/", ignoreCase = true)) -> {
+                if (normalizedUrl.endsWith("/")) {
+                    "${normalizedUrl}playlist.m3u8"
+                } else {
+                    "$normalizedUrl/playlist.m3u8"
+                }
+            }
+            else -> normalizedUrl
+        }
     }
 
     suspend fun getRecentMessages(channelOrChatroomId: String): KickMessagesData {

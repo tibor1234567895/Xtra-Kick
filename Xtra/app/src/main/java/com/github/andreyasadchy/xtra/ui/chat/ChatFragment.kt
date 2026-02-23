@@ -131,8 +131,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 val isLoggedIn = com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(requireContext())
                 val chatUrl = args.getString(KEY_CHAT_URL)
                 val suppressReplayUnavailable = args.getBoolean(KEY_SUPPRESS_REPLAY_UNAVAILABLE)
-                val kickClipReplayFallback = args.getBoolean(KEY_KICK_CLIP_REPLAY_FALLBACK)
-                if (isLive || (args.getString(KEY_VIDEO_ID) != null && args.getInt(KEY_START_TIME) != -1) || chatUrl != null || kickClipReplayFallback) {
+                val kickReplayFallback = args.getBoolean(KEY_KICK_REPLAY_FALLBACK)
+                if (isLive || (args.getString(KEY_VIDEO_ID) != null && args.getInt(KEY_START_TIME) != -1) || chatUrl != null || kickReplayFallback) {
                     val enableMessaging = isLive && isLoggedIn
                     val sizeModifier = (requireContext().prefs().getInt(C.CHAT_SIZE_MODIFIER, 100).toFloat() / 100f)
                     adapter = ChatAdapter(
@@ -803,9 +803,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             chatUrl = chatUrl,
                             getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
                             getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
-                            kickClipReplayFallback = kickClipReplayFallback,
-                            kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME),
-                            kickClipUrl = args.getString(KEY_KICK_CLIP_URL)
+                            kickReplayFallback = kickReplayFallback,
+                            kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
+                            kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL)
                         )
                     }
                 } else {
@@ -838,7 +838,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             } else {
                 val videoId = args.getString(KEY_VIDEO_ID)
                 val startTime = args.getInt(KEY_START_TIME)
-                if ((videoId != null && startTime != -1) || args.getBoolean(KEY_KICK_CLIP_REPLAY_FALLBACK)) {
+                if ((videoId != null && startTime != -1) || args.getBoolean(KEY_KICK_REPLAY_FALLBACK)) {
                     viewModel.startReplay(
                         channelId = channelId,
                         channelLogin = channelLogin,
@@ -846,9 +846,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         startTime = startTime,
                         getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
                         getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
-                        kickClipReplayFallback = args.getBoolean(KEY_KICK_CLIP_REPLAY_FALLBACK),
-                        kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME),
-                        kickClipUrl = args.getString(KEY_KICK_CLIP_URL)
+                        kickReplayFallback = args.getBoolean(KEY_KICK_REPLAY_FALLBACK),
+                        kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
+                        kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL)
                     )
                 }
             }
@@ -871,9 +871,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 startTime = args.getInt(KEY_START_TIME),
                 getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
                 getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
-                kickClipReplayFallback = args.getBoolean(KEY_KICK_CLIP_REPLAY_FALLBACK),
-                kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME),
-                kickClipUrl = args.getString(KEY_KICK_CLIP_URL)
+                kickReplayFallback = args.getBoolean(KEY_KICK_REPLAY_FALLBACK),
+                kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
+                kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL)
             )
         }
     }
@@ -1239,9 +1239,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     startTime = args.getInt(KEY_START_TIME),
                     getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
                     getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
-                    kickClipReplayFallback = args.getBoolean(KEY_KICK_CLIP_REPLAY_FALLBACK),
-                    kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME),
-                    kickClipUrl = args.getString(KEY_KICK_CLIP_URL)
+                    kickReplayFallback = args.getBoolean(KEY_KICK_REPLAY_FALLBACK),
+                    kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
+                    kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL)
                 )
             }
         }
@@ -1313,9 +1313,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         private const val KEY_CHAT_URL = "chatUrl"
         private const val KEY_START_TIME = "startTime"
         private const val KEY_SUPPRESS_REPLAY_UNAVAILABLE = "suppressReplayUnavailable"
-        private const val KEY_KICK_CLIP_REPLAY_FALLBACK = "kickClipReplayFallback"
-        private const val KEY_KICK_CLIP_REPLAY_START_TIME = "kickClipReplayStartTime"
-        private const val KEY_KICK_CLIP_URL = "kickClipUrl"
+        private const val KEY_KICK_REPLAY_FALLBACK = "kickReplayFallback"
+        private const val KEY_KICK_REPLAY_START_TIME = "kickReplayStartTime"
+        private const val KEY_KICK_REPLAY_URL = "kickReplayUrl"
 
         fun newInstance(channelId: String?, channelLogin: String?, channelName: String?, streamId: String?): ChatFragment {
             return ChatFragment().apply {
@@ -1335,9 +1335,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             videoId: String?,
             startTime: Int?,
             suppressReplayUnavailable: Boolean = false,
-            kickClipReplayFallback: Boolean = false,
-            kickClipReplayStartTime: String? = null,
-            kickClipUrl: String? = null
+            kickReplayFallback: Boolean = false,
+            kickReplayStartTime: String? = null,
+            kickReplayUrl: String? = null
         ): ChatFragment {
             return ChatFragment().apply {
                 arguments = Bundle().apply {
@@ -1347,9 +1347,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     putString(KEY_VIDEO_ID, videoId)
                     putInt(KEY_START_TIME, (startTime ?: -1))
                     putBoolean(KEY_SUPPRESS_REPLAY_UNAVAILABLE, suppressReplayUnavailable)
-                    putBoolean(KEY_KICK_CLIP_REPLAY_FALLBACK, kickClipReplayFallback)
-                    putString(KEY_KICK_CLIP_REPLAY_START_TIME, kickClipReplayStartTime)
-                    putString(KEY_KICK_CLIP_URL, kickClipUrl)
+                    putBoolean(KEY_KICK_REPLAY_FALLBACK, kickReplayFallback)
+                    putString(KEY_KICK_REPLAY_START_TIME, kickReplayStartTime)
+                    putString(KEY_KICK_REPLAY_URL, kickReplayUrl)
                 }
             }
         }

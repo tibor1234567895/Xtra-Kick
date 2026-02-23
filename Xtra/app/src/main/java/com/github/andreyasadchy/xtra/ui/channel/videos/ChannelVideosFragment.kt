@@ -96,6 +96,7 @@ class ChannelVideosFragment : PagedListFragment(), Scrollable, Sortable, VideosS
                 val sortValues = args.channelId?.let { viewModel.getSortChannel(it) } ?: viewModel.getSortChannel("default")
                 viewModel.setFilter(
                     sort = sortValues?.videoSort,
+                    period = VideosSortDialog.PERIOD_ALL,
                     type = sortValues?.videoType,
                 )
                 viewModel.sortText.value = getString(
@@ -169,7 +170,7 @@ class ChannelVideosFragment : PagedListFragment(), Scrollable, Sortable, VideosS
                 if (changed) {
                     binding.scrollTop.visibility = View.GONE
                     pagingAdapter.submitData(PagingData.empty())
-                    viewModel.setFilter(sort, type)
+                    viewModel.setFilter(sort, period, type)
                     viewModel.sortText.value = getString(R.string.sort_and_type, sortText, typeText)
                 }
                 if (saveSort) {

@@ -119,18 +119,18 @@ class ChatViewModel @Inject constructor(
     private var kickReplayFallbackChannelId: String? = null
     private var kickReplayFallbackChannelLogin: String? = null
     private var kickReplayFallbackStartTimeMs: Long? = null
-    private var kickReplayFallbackClipUrl: String? = null
+    private var kickReplayFallbackUrl: String? = null
     private var kickReplayFallbackGetCurrentPosition: (() -> Long?)? = null
     private var kickReplaySessionKey: String? = null
-    private val kickClipReplayPreloadWindowMs = 60_000L
-    private val kickClipReplayPreloadMaxMessages = 120
-    private val kickClipReplayPollIntervalMs = 2_000L
-    private val kickClipReplayEmitIntervalMs = 250L
-    private val kickClipReplayEmitLeadMs = 350L
+    private val kickReplayPreloadWindowMs = 60_000L
+    private val kickReplayPreloadMaxMessages = 120
+    private val kickReplayPollIntervalMs = 2_000L
+    private val kickReplayEmitIntervalMs = 250L
+    private val kickReplayEmitLeadMs = 350L
     private val kickReplayPendingMessages = mutableListOf<ChatMessage>()
     private val kickReplayPendingKeys = LinkedHashSet<String>()
-    private val kickClipChatDebugTag = "KickClipChatDebug"
-    private val kickClipChatRequestSeq = AtomicLong(0L)
+    private val kickReplayChatDebugTag = "KickReplayChatDebug"
+    private val kickReplayChatRequestSeq = AtomicLong(0L)
     var autoReconnect = true
 
     private var chatReplayManager: ChatReplayManager? = null
@@ -222,14 +222,14 @@ class ChatViewModel @Inject constructor(
         startTime: Int = 0,
         getCurrentPosition: () -> Long?,
         getCurrentSpeed: () -> Float?,
-        kickClipReplayFallback: Boolean = false,
-        kickClipReplayStartTime: String? = null,
-        kickClipUrl: String? = null
+        kickReplayFallback: Boolean = false,
+        kickReplayStartTime: String? = null,
+        kickReplayUrl: String? = null
     ) {
         if (chatReplayManager == null && chatReplayManagerLocal == null) {
             messageLimit = applicationContext.prefs().getInt(C.CHAT_LIMIT, 600)
-            startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, kickClipReplayFallback, kickClipReplayStartTime, kickClipUrl)
-            if (videoId != null || kickClipReplayFallback) {
+            startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, kickReplayFallback, kickReplayStartTime, kickReplayUrl)
+            if (videoId != null || kickReplayFallback) {
                 loadEmotes(channelId, channelLogin)
             }
         }
@@ -257,18 +257,18 @@ class ChatViewModel @Inject constructor(
         startTime: Int,
         getCurrentPosition: () -> Long?,
         getCurrentSpeed: () -> Float?,
-        kickClipReplayFallback: Boolean = false,
-        kickClipReplayStartTime: String? = null,
-        kickClipUrl: String? = null
+        kickReplayFallback: Boolean = false,
+        kickReplayStartTime: String? = null,
+        kickReplayUrl: String? = null
     ) {
-        if (kickClipReplayFallback) {
+        if (kickReplayFallback) {
             if (kickChatJob?.isActive != true) {
-                startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, true, kickClipReplayStartTime, kickClipUrl)
+                startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, true, kickReplayStartTime, kickReplayUrl)
             }
             return
         }
         if (chatReplayManager?.isActive == false || chatReplayManagerLocal?.isActive == false) {
-            startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, kickClipReplayFallback, kickClipReplayStartTime, kickClipUrl)
+            startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, kickReplayFallback, kickReplayStartTime, kickReplayUrl)
         }
     }
 
@@ -951,13 +951,13 @@ class ChatViewModel @Inject constructor(
         val alreadyQueued: Int,
     )
 
-    private fun isKickClipChatDebugEnabled(): Boolean {
+    private fun isKickReplayChatDebugEnabled(): Boolean {
         return BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_CLIP_CHAT, true)
     }
 
-    private inline fun logKickClipChat(stage: String, sessionKey: String?, message: () -> String) {
-        if (!isKickClipChatDebugEnabled()) return
-        Log.i(kickClipChatDebugTag, "stage=$stage session=${sessionKey ?: "-"} ${message()}")
+    private inline fun logKickReplayChat(stage: String, sessionKey: String?, message: () -> String) {
+        if (!isKickReplayChatDebugEnabled()) return
+        Log.i(kickReplayChatDebugTag, "stage=$stage session=${sessionKey ?: "-"} ${message()}")
     }
 
     private fun messageRangeSummary(messages: List<ChatMessage>): String {
@@ -1032,7 +1032,7 @@ class ChatViewModel @Inject constructor(
                     .map { kickRepository.toChatMessage(it) }
                     .filter { !it.message.isNullOrBlank() || !it.systemMsg.isNullOrBlank() }
                     .sortedBy { it.timestamp }
-                if (rawCount > 0 && messages.isEmpty() && isKickClipChatDebugEnabled()) {
+                if (rawCount > 0 && messages.isEmpty() && isKickReplayChatDebugEnabled()) {
                     Log.d("KickChatDebug", "source=$source rawCount=$rawCount mappedCount=0")
                 }
                 var newKickEmotesAdded = false
@@ -1070,8 +1070,8 @@ class ChatViewModel @Inject constructor(
         var lastError: Exception? = null
         var hadSuccessfulResponse = false
         for (source in messageSources) {
-            val requestId = kickClipChatRequestSeq.incrementAndGet()
-            logKickClipChat(
+            val requestId = kickReplayChatRequestSeq.incrementAndGet()
+            logKickReplayChat(
                 stage = "request",
                 sessionKey = debugSessionKey
             ) {
@@ -1085,7 +1085,7 @@ class ChatViewModel @Inject constructor(
                     .map { kickRepository.toChatMessage(it) }
                     .filter { !it.message.isNullOrBlank() || !it.systemMsg.isNullOrBlank() }
                     .sortedBy { it.timestamp }
-                logKickClipChat(
+                logKickReplayChat(
                     stage = "response",
                     sessionKey = debugSessionKey
                 ) {
@@ -1110,7 +1110,7 @@ class ChatViewModel @Inject constructor(
                     return messages
                 }
             } catch (e: Exception) {
-                logKickClipChat(
+                logKickReplayChat(
                     stage = "request_error",
                     sessionKey = debugSessionKey
                 ) {
@@ -1240,17 +1240,18 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun startKickClipReplayChat(
+    private fun startKickReplayChat(
         channelId: String,
         channelLogin: String,
         channelName: String?,
         replayStartTimeMs: Long,
-        kickClipUrl: String?,
-        getCurrentPosition: () -> Long?
+        kickReplayUrl: String?,
+        getCurrentPosition: () -> Long?,
+        showClipStartMarker: Boolean = true
     ) {
         val sessionKey = "$channelId|$replayStartTimeMs"
         val isNewSession = kickReplaySessionKey != sessionKey
-        logKickClipChat(stage = "session_start", sessionKey = sessionKey) {
+        logKickReplayChat(stage = "session_start", sessionKey = sessionKey) {
             "channelId=$channelId channelLogin=$channelLogin replayStartMs=$replayStartTimeMs isNewSession=$isNewSession"
         }
         kickReplaySessionKey = sessionKey
@@ -1266,12 +1267,12 @@ class ChatViewModel @Inject constructor(
         addChatter(channelName)
         kickChatJob = viewModelScope.launch {
             val resolvedReplayStartTimeMs = runCatching {
-                kickClipUrl?.let { clipUrl -> kickRepository.getClipPlaylistStartTimeMs(clipUrl) }
+                kickReplayUrl?.let { clipUrl -> kickRepository.getClipPlaylistStartTimeMs(clipUrl) }
             }.getOrNull()
             val effectiveReplayStartTimeMs = resolvedReplayStartTimeMs ?: replayStartTimeMs
             if (resolvedReplayStartTimeMs != null && resolvedReplayStartTimeMs != replayStartTimeMs) {
-                logKickClipChat(stage = "replay_start_override", sessionKey = sessionKey) {
-                    "from=$replayStartTimeMs to=$resolvedReplayStartTimeMs clipUrl=$kickClipUrl"
+                logKickReplayChat(stage = "replay_start_override", sessionKey = sessionKey) {
+                    "from=$replayStartTimeMs to=$resolvedReplayStartTimeMs clipUrl=$kickReplayUrl"
                 }
             }
             runCatching {
@@ -1283,15 +1284,15 @@ class ChatViewModel @Inject constructor(
                 .map { it.trim() }
                 .filter { source -> source.isNotBlank() && source.all(Char::isDigit) }
                 .ifEmpty { listOf(channelId.trim()) }
-            logKickClipChat(stage = "sources", sessionKey = sessionKey) {
+            logKickReplayChat(stage = "sources", sessionKey = sessionKey) {
                 "values=${kickMessageSources.joinToString(",")}"
             }
             if (isNewSession) {
                 val removedMessages = clearChatMessages()
-                logKickClipChat(stage = "clear_messages", sessionKey = sessionKey) {
+                logKickReplayChat(stage = "clear_messages", sessionKey = sessionKey) {
                     "removed=$removedMessages"
                 }
-                val preloadStartTime = formatIso8601Utc((effectiveReplayStartTimeMs - kickClipReplayPreloadWindowMs).coerceAtLeast(0L))
+                val preloadStartTime = formatIso8601Utc((effectiveReplayStartTimeMs - kickReplayPreloadWindowMs).coerceAtLeast(0L))
                 try {
                     val preloadMessages = fetchKickHistoryMessages(
                         messageSources = kickMessageSources,
@@ -1300,24 +1301,26 @@ class ChatViewModel @Inject constructor(
                         debugPhase = "preload"
                     )
                         .filter { it.timestamp == null || it.timestamp < effectiveReplayStartTimeMs }
-                        .takeLast(kickClipReplayPreloadMaxMessages)
+                        .takeLast(kickReplayPreloadMaxMessages)
                     val stats = emitKickMessages(preloadMessages)
-                    logKickClipChat(stage = "emit", sessionKey = sessionKey) {
+                    logKickReplayChat(stage = "emit", sessionKey = sessionKey) {
                         "phase=preload ${messageRangeSummary(preloadMessages)} total=${stats.total} emitted=${stats.emitted} deduped=${stats.deduped}"
                     }
                 } catch (e: CancellationException) {
-                    logKickClipChat(stage = "cancelled", sessionKey = sessionKey) {
+                    logKickReplayChat(stage = "cancelled", sessionKey = sessionKey) {
                         "phase=preload"
                     }
                     throw e
                 } catch (e: Exception) {
-                    logKickClipChat(stage = "error", sessionKey = sessionKey) {
+                    logKickReplayChat(stage = "error", sessionKey = sessionKey) {
                         "phase=preload error=${e::class.java.simpleName}:${e.message}"
                     }
                 }
-                onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_clip_replay_starts)))
-                logKickClipChat(stage = "marker", sessionKey = sessionKey) {
-                    "type=clip_chat_start"
+                if (showClipStartMarker) {
+                    onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_clip_replay_starts)))
+                    logKickReplayChat(stage = "marker", sessionKey = sessionKey) {
+                        "type=clip_chat_start"
+                    }
                 }
             }
             var nextPollAtMs = 0L
@@ -1327,22 +1330,22 @@ class ChatViewModel @Inject constructor(
                     val rawPosition = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
                     val baseline = initialRawPositionMs ?: rawPosition.also {
                         initialRawPositionMs = it
-                        logKickClipChat(stage = "position_baseline", sessionKey = sessionKey) {
+                        logKickReplayChat(stage = "position_baseline", sessionKey = sessionKey) {
                             "rawStartMs=$it"
                         }
                     }
                     val position = (rawPosition - baseline).coerceAtLeast(0L)
                     val playbackTimestampMs = effectiveReplayStartTimeMs + position
-                    val dueStats = emitDueKickReplayMessages(playbackTimestampMs + kickClipReplayEmitLeadMs)
+                    val dueStats = emitDueKickReplayMessages(playbackTimestampMs + kickReplayEmitLeadMs)
                     if (dueStats.total > 0) {
-                        logKickClipChat(stage = "emit_due", sessionKey = sessionKey) {
+                        logKickReplayChat(stage = "emit_due", sessionKey = sessionKey) {
                             "rawPositionMs=$rawPosition positionMs=$position playbackTs=$playbackTimestampMs total=${dueStats.total} emitted=${dueStats.emitted} deduped=${dueStats.deduped} pending=${kickReplayPendingMessages.size}"
                         }
                     }
                     val nowMs = SystemClock.elapsedRealtime()
                     if (nowMs >= nextPollAtMs) {
                         val startTime = formatIso8601Utc(playbackTimestampMs)
-                        logKickClipChat(stage = "timeline_tick", sessionKey = sessionKey) {
+                        logKickReplayChat(stage = "timeline_tick", sessionKey = sessionKey) {
                             "rawPositionMs=$rawPosition positionMs=$position startTime=$startTime pending=${kickReplayPendingMessages.size}"
                         }
                         val timelineMessages = fetchKickHistoryMessages(
@@ -1353,31 +1356,31 @@ class ChatViewModel @Inject constructor(
                         )
                         val queueStats = queueKickReplayMessages(timelineMessages)
                         if (queueStats.queued > 0 || queueStats.alreadyQueued > 0) {
-                            logKickClipChat(stage = "queue", sessionKey = sessionKey) {
+                            logKickReplayChat(stage = "queue", sessionKey = sessionKey) {
                                 "phase=timeline ${messageRangeSummary(timelineMessages)} total=${queueStats.total} queued=${queueStats.queued} alreadyEmitted=${queueStats.alreadyEmitted} alreadyQueued=${queueStats.alreadyQueued} pending=${kickReplayPendingMessages.size}"
                             }
                         }
-                        val immediateDueStats = emitDueKickReplayMessages(playbackTimestampMs + kickClipReplayEmitLeadMs)
+                        val immediateDueStats = emitDueKickReplayMessages(playbackTimestampMs + kickReplayEmitLeadMs)
                         if (immediateDueStats.total > 0) {
-                            logKickClipChat(stage = "emit_due", sessionKey = sessionKey) {
+                            logKickReplayChat(stage = "emit_due", sessionKey = sessionKey) {
                                 "phase=post_poll positionMs=$position playbackTs=$playbackTimestampMs total=${immediateDueStats.total} emitted=${immediateDueStats.emitted} deduped=${immediateDueStats.deduped} pending=${kickReplayPendingMessages.size}"
                             }
                         }
-                        nextPollAtMs = nowMs + kickClipReplayPollIntervalMs
+                        nextPollAtMs = nowMs + kickReplayPollIntervalMs
                     }
                 } catch (e: CancellationException) {
-                    logKickClipChat(stage = "cancelled", sessionKey = sessionKey) {
+                    logKickReplayChat(stage = "cancelled", sessionKey = sessionKey) {
                         "phase=timeline"
                     }
                     throw e
                 } catch (e: Exception) {
-                    logKickClipChat(stage = "error", sessionKey = sessionKey) {
+                    logKickReplayChat(stage = "error", sessionKey = sessionKey) {
                         "phase=timeline error=${e::class.java.simpleName}:${e.message}"
                     }
                 }
-                delay(kickClipReplayEmitIntervalMs)
+                delay(kickReplayEmitIntervalMs)
             }
-            logKickClipChat(stage = "session_end", sessionKey = sessionKey) {
+            logKickReplayChat(stage = "session_end", sessionKey = sessionKey) {
                 "reason=job_inactive"
             }
         }
@@ -3092,13 +3095,13 @@ class ChatViewModel @Inject constructor(
         getCurrentSpeed: () -> Float?,
         channelId: String?,
         channelLogin: String?,
-        kickClipReplayFallback: Boolean = false,
-        kickClipReplayStartTime: String? = null,
-        kickClipUrl: String? = null
+        kickReplayFallback: Boolean = false,
+        kickReplayStartTime: String? = null,
+        kickReplayUrl: String? = null
     ) {
         stopReplayChat()
         if (!chatUrl.isNullOrBlank()) {
-            logKickClipChat(stage = "fallback_disabled", sessionKey = kickReplaySessionKey) {
+            logKickReplayChat(stage = "fallback_disabled", sessionKey = kickReplaySessionKey) {
                 "reason=chat_url_present"
             }
             kickReplayFallbackEnabled = false
@@ -3115,30 +3118,32 @@ class ChatViewModel @Inject constructor(
             )
             readChatFile(chatUrl, channelId, channelLogin)
         } else {
-            if (kickClipReplayFallback && !channelId.isNullOrBlank() && !channelLogin.isNullOrBlank()) {
-                logKickClipChat(stage = "fallback_enabled", sessionKey = null) {
-                    "channelId=$channelId channelLogin=$channelLogin replayStart=$kickClipReplayStartTime"
+            if (kickReplayFallback && !channelId.isNullOrBlank() && !channelLogin.isNullOrBlank()) {
+                logKickReplayChat(stage = "fallback_enabled", sessionKey = null) {
+                    "channelId=$channelId channelLogin=$channelLogin replayStart=$kickReplayStartTime"
                 }
                 kickReplayFallbackEnabled = true
                 kickReplayFallbackChannelId = channelId
                 kickReplayFallbackChannelLogin = channelLogin
-                kickReplayFallbackStartTimeMs = kickClipReplayStartTime
+                kickReplayFallbackStartTimeMs = kickReplayStartTime
                     ?.let { TwitchApiHelper.parseIso8601DateUTC(it) }
-                kickReplayFallbackClipUrl = kickClipUrl
+                kickReplayFallbackUrl = kickReplayUrl
                 kickReplayFallbackGetCurrentPosition = getCurrentPosition
                 kickReplayFallbackStartTimeMs?.let { replayStartTimeMs ->
-                    startKickClipReplayChat(channelId, channelLogin, channelLogin, replayStartTimeMs, kickClipUrl, getCurrentPosition)
+                    val isClipReplay = kickReplayUrl?.contains("/clips/", ignoreCase = true) == true ||
+                            kickReplayUrl?.contains("clips.kick.com", ignoreCase = true) == true
+                    startKickReplayChat(channelId, channelLogin, channelLogin, replayStartTimeMs, kickReplayUrl, getCurrentPosition, isClipReplay)
                 }
                 return
             }
-            logKickClipChat(stage = "fallback_disabled", sessionKey = kickReplaySessionKey) {
-                "reason=kick_clip_replay_not_applicable"
+            logKickReplayChat(stage = "fallback_disabled", sessionKey = kickReplaySessionKey) {
+                "reason=kick_replay_not_applicable"
             }
             kickReplayFallbackEnabled = false
             kickReplayFallbackChannelId = null
             kickReplayFallbackChannelLogin = null
             kickReplayFallbackStartTimeMs = null
-            kickReplayFallbackClipUrl = null
+            kickReplayFallbackUrl = null
             kickReplayFallbackGetCurrentPosition = null
             kickReplaySessionKey = null
             if (!videoId.isNullOrBlank()) {
@@ -3164,7 +3169,7 @@ class ChatViewModel @Inject constructor(
             val channelId = kickReplayFallbackChannelId
             val channelLogin = kickReplayFallbackChannelLogin
             val replayStartTimeMs = kickReplayFallbackStartTimeMs
-            val kickClipUrl = kickReplayFallbackClipUrl
+            val kickReplayUrl = kickReplayFallbackUrl
             val getCurrentPosition = kickReplayFallbackGetCurrentPosition
             if (
                 !channelId.isNullOrBlank() &&
@@ -3173,10 +3178,12 @@ class ChatViewModel @Inject constructor(
                 getCurrentPosition != null &&
                 kickChatJob?.isActive != true
             ) {
-                logKickClipChat(stage = "startReplayChatLoad", sessionKey = kickReplaySessionKey) {
+                logKickReplayChat(stage = "startReplayChatLoad", sessionKey = kickReplaySessionKey) {
                     "restarting_fallback channelId=$channelId"
                 }
-                startKickClipReplayChat(channelId, channelLogin, channelLogin, replayStartTimeMs, kickClipUrl, getCurrentPosition)
+                val isClipReplay = kickReplayUrl?.contains("/clips/", ignoreCase = true) == true ||
+                        kickReplayUrl?.contains("clips.kick.com", ignoreCase = true) == true
+                startKickReplayChat(channelId, channelLogin, channelLogin, replayStartTimeMs, kickReplayUrl, getCurrentPosition, isClipReplay)
             }
         } else {
             chatReplayManager?.start() ?: chatReplayManagerLocal?.startLoad()
@@ -3187,7 +3194,7 @@ class ChatViewModel @Inject constructor(
         if (kickReplayFallbackEnabled) {
             val hadKickChatJob = kickChatJob != null
             if (hadKickChatJob) {
-                logKickClipChat(stage = "stopReplayChat", sessionKey = kickReplaySessionKey) {
+                logKickReplayChat(stage = "stopReplayChat", sessionKey = kickReplaySessionKey) {
                     "cancelKickChatJob=true"
                 }
             }

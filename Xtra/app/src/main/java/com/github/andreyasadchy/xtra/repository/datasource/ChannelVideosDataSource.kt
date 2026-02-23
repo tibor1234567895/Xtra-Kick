@@ -9,6 +9,7 @@ import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.TwitchApiHelper
 
 class ChannelVideosDataSource(
     private val channelId: String?,
@@ -77,21 +78,47 @@ class ChannelVideosDataSource(
 
     private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
         val login = channelLogin?.takeIf { it.isNotBlank() } ?: throw Exception()
-        val typeAllowed = gqlType == null || gqlType == "ARCHIVE"
-        if (!typeAllowed) {
-            return LoadResult.Page(
-                data = emptyList(),
-                prevKey = null,
-                nextKey = null
-            )
-        }
-        val list = kickRepository.getChannelVideos(
+        val rawList = kickRepository.getChannelVideos(
             channelSlug = login,
             channelId = channelId,
-            limit = params.loadSize
+            limit = maxOf(params.loadSize, 200),
         )
+        val now = System.currentTimeMillis()
+        val periodStart = when (helixPeriod) {
+            "day" -> now - 24L * 60L * 60L * 1000L
+            "week" -> now - 7L * 24L * 60L * 60L * 1000L
+            "month" -> now - 30L * 24L * 60L * 60L * 1000L
+            else -> null
+        }
+        val filtered = rawList
+            .asSequence()
+            .filter { video ->
+                when (helixBroadcastTypes) {
+                    "all" -> true
+                    "archive" -> video.type.equals("ARCHIVE", true) || video.type.isNullOrBlank()
+                    "highlight" -> video.type.equals("HIGHLIGHT", true)
+                    "upload" -> video.type.equals("UPLOAD", true)
+                    else -> true
+                }
+            }
+            .filter { video ->
+                val start = periodStart ?: return@filter true
+                val ts = video.uploadDate?.let { TwitchApiHelper.parseIso8601DateUTC(it) } ?: return@filter false
+                ts >= start
+            }
+            .let { sequence ->
+                when (helixSort) {
+                    "views" -> sequence.sortedWith(
+                        compareByDescending<Video> { it.viewCount ?: -1 }
+                            .thenByDescending { it.uploadDate?.let(TwitchApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
+                    )
+                    else -> sequence.sortedByDescending { it.uploadDate?.let(TwitchApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
+                }
+            }
+            .take(params.loadSize)
+            .toList()
         return LoadResult.Page(
-            data = list,
+            data = filtered,
             prevKey = null,
             nextKey = null
         )

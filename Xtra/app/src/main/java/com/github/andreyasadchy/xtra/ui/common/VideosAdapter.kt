@@ -40,7 +40,7 @@ class VideosAdapter(
 ) : PagingDataAdapter<Video, VideosAdapter.PagingViewHolder>(
     object : DiffUtil.ItemCallback<Video>() {
         override fun areItemsTheSame(oldItem: Video, newItem: Video): Boolean =
-            oldItem.id == newItem.id
+            oldItem.id == newItem.id && oldItem.source == newItem.source
 
         override fun areContentsTheSame(oldItem: Video, newItem: Video): Boolean =
             oldItem.viewCount == newItem.viewCount &&
@@ -234,9 +234,16 @@ class VideosAdapter(
                                     R.id.download -> showDownloadDialog(item)
                                     R.id.bookmark -> saveBookmark(item)
                                     R.id.share -> {
+                                        val shareUrl = if (item.source.equals(C.KICK, true)) {
+                                            item.url
+                                                ?: item.channelLogin?.let { login -> item.id?.let { id -> "https://kick.com/$login/videos/$id" } }
+                                                ?: "https://kick.com/${item.channelLogin ?: ""}"
+                                        } else {
+                                            "https://twitch.tv/videos/${item.id}"
+                                        }
                                         context.startActivity(Intent.createChooser(Intent().apply {
                                             action = Intent.ACTION_SEND
-                                            putExtra(Intent.EXTRA_TEXT, "https://twitch.tv/videos/${item.id}")
+                                            putExtra(Intent.EXTRA_TEXT, shareUrl)
                                             item.title?.let {
                                                 putExtra(Intent.EXTRA_TITLE, it)
                                             }

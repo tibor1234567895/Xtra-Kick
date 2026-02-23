@@ -12,6 +12,7 @@ Artifacts at repo root (`Xtra-Kick(alpha).apk`, `Xtra-Kick(Alpha).apk_Decompiler
 
 ## Build, Test, and Development Commands
 Run commands from `Xtra/`:
+- Preferred local deploy flow from repo root: `./scripts/wsl_build_install.sh` (builds debug APK in WSL workspace and installs to connected phone via ADB).
 - `./gradlew assembleDebug`: build a local debug APK.
 - `./gradlew assembleRelease`: build release APK (matches CI task).
 - `./gradlew lint`: run Android Lint checks.

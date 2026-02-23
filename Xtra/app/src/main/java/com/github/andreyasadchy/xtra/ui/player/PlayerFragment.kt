@@ -1113,10 +1113,14 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         requireArguments().getString(KEY_STREAM_ID)
                     )
                     VIDEO -> ChatFragment.newInstance(
-                        requireArguments().getString(KEY_CHANNEL_ID),
-                        requireArguments().getString(KEY_CHANNEL_LOGIN),
-                        requireArguments().getString(KEY_VIDEO_ID),
-                        0
+                        channelId = requireArguments().getString(KEY_CHANNEL_ID),
+                        channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
+                        videoId = requireArguments().getString(KEY_VIDEO_ID),
+                        startTime = 0,
+                        suppressReplayUnavailable = requireArguments().getString(KEY_VIDEO_SOURCE).equals(C.KICK, true),
+                        kickReplayFallback = requireArguments().getString(KEY_VIDEO_SOURCE).equals(C.KICK, true),
+                        kickReplayStartTime = requireArguments().getString(KEY_UPLOAD_DATE),
+                        kickReplayUrl = requireArguments().getString(KEY_URL)
                     )
                     CLIP -> run {
                         val clipUrl = requireArguments().getString(KEY_URL)
@@ -1910,7 +1914,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             )
             if (videoType == VIDEO) {
                 val videoId = requireArguments().getString(KEY_VIDEO_ID)
-                if (!videoId.isNullOrBlank() && (prefs.getBoolean(C.PLAYER_GAMESBUTTON, true) || prefs.getBoolean(C.PLAYER_MENU_GAMES, false))) {
+                if (!videoId.isNullOrBlank() &&
+                    !requireArguments().getString(KEY_VIDEO_SOURCE).equals(C.KICK, true) &&
+                    (prefs.getBoolean(C.PLAYER_GAMESBUTTON, true) || prefs.getBoolean(C.PLAYER_MENU_GAMES, false))
+                ) {
                     viewModel.loadGamesList(
                         videoId,
                         prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
@@ -2021,6 +2028,16 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     protected fun playVideo(skipAccessToken: Boolean, playbackPosition: Long?) {
+        requireArguments().getString(KEY_URL)?.takeIf { it.isNotBlank() }?.let { directUrl ->
+            viewModel.qualities = mapOf(
+                "source" to Pair(getString(R.string.source), directUrl),
+                AUDIO_ONLY_QUALITY to Pair(getString(R.string.audio_only), null)
+            )
+            setDefaultQuality()
+            changePlayerMode()
+            startVideo(directUrl, playbackPosition, false)
+            return
+        }
         if (skipAccessToken && !requireArguments().getString(KEY_VIDEO_ANIMATED_PREVIEW).isNullOrBlank()) {
             requireArguments().getString(KEY_VIDEO_ANIMATED_PREVIEW)?.let { preview ->
                 val qualityMap = TwitchApiHelper.getVideoUrlMapFromPreview(preview, requireArguments().getString(KEY_VIDEO_TYPE), viewModel.backupQualities)
@@ -2057,6 +2074,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
                 gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
                 videoId = requireArguments().getString(KEY_VIDEO_ID),
+                videoSource = requireArguments().getString(KEY_VIDEO_SOURCE),
+                channelId = requireArguments().getString(KEY_CHANNEL_ID),
+                channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
                 playerType = prefs.getString(C.TOKEN_PLAYERTYPE_VIDEO, "channel_home_live"),
                 supportedCodecs = prefs.getString(C.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
                 enableIntegrity = prefs.getBoolean(C.ENABLE_INTEGRITY, false),
@@ -2403,6 +2423,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
                                 gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
                                 videoId = videoId,
+                                videoSource = requireArguments().getString(KEY_VIDEO_SOURCE),
+                                channelId = requireArguments().getString(KEY_CHANNEL_ID),
+                                channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
                                 playerType = prefs.getString(C.TOKEN_PLAYERTYPE_VIDEO, "channel_home_live"),
                                 supportedCodecs = prefs.getString(C.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
                                 enableIntegrity = prefs.getBoolean(C.ENABLE_INTEGRITY, false),
@@ -2416,7 +2439,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 TwitchApiHelper.getGQLHeaders(requireContext(), true),
                                 TwitchApiHelper.getHelixHeaders(requireContext()),
                             )
-                            if (!videoId.isNullOrBlank() && (prefs.getBoolean(C.PLAYER_GAMESBUTTON, true) || prefs.getBoolean(C.PLAYER_MENU_GAMES, false))) {
+                            if (!videoId.isNullOrBlank() &&
+                                !requireArguments().getString(KEY_VIDEO_SOURCE).equals(C.KICK, true) &&
+                                (prefs.getBoolean(C.PLAYER_GAMESBUTTON, true) || prefs.getBoolean(C.PLAYER_MENU_GAMES, false))
+                            ) {
                                 viewModel.loadGamesList(
                                     videoId,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
@@ -2502,6 +2528,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         return bundleOf(
             KEY_TYPE to VIDEO,
             KEY_VIDEO_ID to item.id,
+            KEY_VIDEO_SOURCE to item.source,
             KEY_TITLE to item.title,
             KEY_UPLOAD_DATE to item.uploadDate,
             KEY_DURATION to item.duration,
@@ -2509,6 +2536,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             KEY_IGNORE_SAVED_POSITION to ignoreSavedPosition,
             KEY_VIDEO_TYPE to item.type,
             KEY_VIDEO_ANIMATED_PREVIEW to item.animatedPreviewURL,
+            KEY_URL to item.url,
             KEY_CHANNEL_ID to item.channelId,
             KEY_CHANNEL_LOGIN to item.channelLogin,
             KEY_CHANNEL_NAME to item.channelName,
@@ -2584,6 +2612,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         protected const val KEY_TYPE = "type"
         protected const val KEY_STREAM_ID = "streamId"
         protected const val KEY_VIDEO_ID = "videoId"
+        protected const val KEY_VIDEO_SOURCE = "videoSource"
         protected const val KEY_CLIP_REPLAY_START_TIME = "clipReplayStartTime"
         protected const val KEY_CLIP_ID = "clipId"
         protected const val KEY_OFFLINE_VIDEO_ID = "offlineVideoId"

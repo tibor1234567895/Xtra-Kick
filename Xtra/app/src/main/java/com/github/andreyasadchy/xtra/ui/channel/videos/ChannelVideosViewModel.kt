@@ -158,8 +158,8 @@ class ChannelVideosViewModel @Inject constructor(
         sortChannelRepository.delete(item)
     }
 
-    fun setFilter(sort: String?, type: String?) {
-        filter.value = Filter(sort, null, type)
+    fun setFilter(sort: String?, period: String?, type: String?) {
+        filter.value = Filter(sort, period, type)
     }
 
     class Filter(
