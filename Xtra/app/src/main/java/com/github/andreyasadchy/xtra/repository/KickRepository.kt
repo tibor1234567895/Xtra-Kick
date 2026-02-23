@@ -22,6 +22,7 @@ import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.model.ui.User
 import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
+import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.TwitchApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -74,6 +75,10 @@ class KickRepository @Inject constructor(
     private val badgeCacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile
     private var badgePersistScheduled = false
+
+    private fun isKickBadgeDebugEnabled(): Boolean {
+        return BuildConfig.DEBUG && context.prefs().getBoolean(C.DEBUG_KICK_BADGE_LOGS, false)
+    }
 
     init {
         badgeCacheScope.launch {
@@ -242,11 +247,29 @@ class KickRepository @Inject constructor(
                         categoryObject.primitiveOrNull("name"),
                     )
                 }
+                val itemChannel = item.objOrNull("channel")
+                val itemChannelUser = itemChannel?.objOrNull("user")
+                val clipChannelId = item.primitiveOrNull("channel_id")
+                    ?: itemChannel?.primitiveOrNull("id")
+                    ?: resolvedChannelId
+                    ?: channelId
+                val clipChannelLogin = item.primitiveOrNull("channel_slug")
+                    ?: itemChannel?.primitiveOrNull("slug")
+                    ?: itemChannelUser?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
+                    ?: login
+                val clipChannelName = item.primitiveOrNull("channel_name")
+                    ?: itemChannelUser?.primitiveOrNull("username")
+                    ?: itemChannel?.primitiveOrNull("name")
+                    ?: channelName
+                val clipProfileImage = itemChannelUser?.primitiveOrNull("profile_image")
+                    ?: itemChannelUser?.primitiveOrNull("profile_pic")
+                    ?: itemChannelUser?.primitiveOrNull("profile_picture")
+                    ?: channelLogo
                 Clip(
                     id = id,
-                    channelId = channelId,
-                    channelLogin = login,
-                    channelName = channelName,
+                    channelId = clipChannelId,
+                    channelLogin = clipChannelLogin,
+                    channelName = clipChannelName,
                     clipUrl = clipUrl,
                     replayStartTime = normalizeDate(replayStartTime),
                     videoId = videoId,
@@ -259,7 +282,7 @@ class KickRepository @Inject constructor(
                     uploadDate = normalizeDate(createdAt),
                     thumbnailUrl = thumbnail,
                     duration = duration,
-                    profileImageUrl = channelLogo
+                    profileImageUrl = clipProfileImage
                 )
             }
             .distinctBy { it.id }
@@ -602,7 +625,7 @@ class KickRepository @Inject constructor(
             val resolvedImageUrl = directImageUrl
                 ?: resolveKickBadgeUrl(type, version)
                 ?: fallbackKickBadgeUrl(normalizedType, version)
-            if (resolvedImageUrl.isNullOrBlank() && BuildConfig.DEBUG) {
+            if (resolvedImageUrl.isNullOrBlank() && isKickBadgeDebugEnabled()) {
                 Log.w(
                     tag,
                     "Missing kick badge URL. type=$type normalized=$normalizedType version=$version text=${badge.text} rawUrlCandidates=${listOf(badge.badgeImageUrl, badge.badgeImage, badge.imageUrl, badge.image, badge.iconUrl, badge.icon, badge.badgeUrl, badge.src, badge.url)}"
@@ -611,7 +634,7 @@ class KickRepository @Inject constructor(
             if (resolvedImageUrl.isNullOrBlank()) {
                 return@mapNotNull null
             }
-            if (BuildConfig.DEBUG && normalizedType in setOf("moderator", "vip", "verified", "og", "founder", "sub_gifter", "broadcaster", "staff")) {
+            if (isKickBadgeDebugEnabled() && normalizedType in setOf("moderator", "vip", "verified", "og", "founder", "sub_gifter", "broadcaster", "staff")) {
                 Log.d(
                     badgeDebugTag,
                     "messageBadge type=$type normalized=$normalizedType version=$version direct=${!directImageUrl.isNullOrBlank()} resolved=true"
@@ -739,7 +762,7 @@ class KickRepository @Inject constructor(
                 if (kickBadgeUrls.putIfAbsent("kick:$candidate:default", imageUrl) == null) {
                     changed = true
                 }
-                if (BuildConfig.DEBUG && candidate in setOf("moderator", "vip", "verified", "og", "founder", "sub_gifter", "broadcaster", "staff")) {
+                if (isKickBadgeDebugEnabled() && candidate in setOf("moderator", "vip", "verified", "og", "founder", "sub_gifter", "broadcaster", "staff")) {
                     Log.d(badgeDebugTag, "cacheBadge key=$key hasUrl=${imageUrl.isNotBlank()}")
                 }
             }
@@ -901,13 +924,13 @@ class KickRepository @Inject constructor(
                     runCatching { json.parseToJsonElement(body) }
                         .onSuccess { element ->
                             val added = cacheKickBadgeUrlsFromJson(element)
-                            if (BuildConfig.DEBUG && added > 0) {
+                            if (isKickBadgeDebugEnabled() && added > 0) {
                                 Log.d(badgeDebugTag, "prefetch catalog matched $added entries from $url")
                             }
                         }
                 }
                 .onFailure {
-                    if (BuildConfig.DEBUG) {
+                    if (isKickBadgeDebugEnabled()) {
                         Log.d(badgeDebugTag, "prefetch catalog skip $url: ${it.message}")
                     }
                 }
@@ -1014,7 +1037,7 @@ class KickRepository @Inject constructor(
                 kickBadgeCatalogRefreshAt[channelCacheKey] = System.currentTimeMillis()
                 schedulePersistBadgeCache()
             } catch (e: Exception) {
-                if (BuildConfig.DEBUG) {
+                if (isKickBadgeDebugEnabled()) {
                     Log.w(badgeDebugTag, "prefetch catalog failed for channel=$channelCacheKey: ${e.message}")
                 }
             } finally {
@@ -1072,7 +1095,7 @@ class KickRepository @Inject constructor(
                 }
             }
         }.onFailure {
-            if (BuildConfig.DEBUG) {
+            if (isKickBadgeDebugEnabled()) {
                 Log.w(badgeDebugTag, "restore badge cache failed: ${it.message}")
             }
         }

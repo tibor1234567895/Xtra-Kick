@@ -2,6 +2,7 @@ package com.github.andreyasadchy.xtra.ui.chat
 
 import android.content.ContentResolver
 import android.content.Context
+import android.os.SystemClock
 import android.util.Base64
 import android.util.JsonReader
 import android.util.JsonToken
@@ -10,6 +11,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.chat.Badge
 import com.github.andreyasadchy.xtra.model.chat.ChannelPointReward
@@ -53,10 +55,13 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import org.json.JSONObject
@@ -68,6 +73,7 @@ import java.util.Locale
 import java.util.Timer
 import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.scheduleAtFixedRate
@@ -114,6 +120,16 @@ class ChatViewModel @Inject constructor(
     private var kickReplayFallbackChannelLogin: String? = null
     private var kickReplayFallbackStartTimeMs: Long? = null
     private var kickReplayFallbackGetCurrentPosition: (() -> Long?)? = null
+    private var kickReplaySessionKey: String? = null
+    private val kickClipReplayPreloadWindowMs = 60_000L
+    private val kickClipReplayPreloadMaxMessages = 120
+    private val kickClipReplayPollIntervalMs = 2_000L
+    private val kickClipReplayEmitIntervalMs = 250L
+    private val kickClipReplayEmitLeadMs = 350L
+    private val kickReplayPendingMessages = mutableListOf<ChatMessage>()
+    private val kickReplayPendingKeys = LinkedHashSet<String>()
+    private val kickClipChatDebugTag = "KickClipChatDebug"
+    private val kickClipChatRequestSeq = AtomicLong(0L)
     var autoReconnect = true
 
     private var chatReplayManager: ChatReplayManager? = null
@@ -264,6 +280,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun loadEmotes(channelId: String?, channelLogin: String?) {
+        val kickMode = isKickPreferred()
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
         val helixHeaders = TwitchApiHelper.getHelixHeaders(applicationContext)
         val gqlHeaders = TwitchApiHelper.getGQLHeaders(applicationContext, true)
@@ -274,51 +291,71 @@ class ChatViewModel @Inject constructor(
         synchronized(thirdPartyEmotes) {
             thirdPartyEmotes.clear()
         }
-        if (isKickPreferred() && !channelLogin.isNullOrBlank()) {
+        if (kickMode && !channelLogin.isNullOrBlank()) {
             viewModelScope.launch {
                 try {
                     // Populate Kick badge URL cache regardless of third-party emote settings.
                     kickRepository.getChannel(channelLogin)
-                    Log.d("KickBadgeDebug", "prefetchByLogin success login=$channelLogin")
+                    if (BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_BADGE_LOGS, false)) {
+                        Log.d("KickBadgeDebug", "prefetchByLogin success login=$channelLogin")
+                    }
                 } catch (_: Exception) {
-                    Log.w("KickBadgeDebug", "prefetchByLogin failed login=$channelLogin")
+                    if (BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_BADGE_LOGS, false)) {
+                        Log.w("KickBadgeDebug", "prefetchByLogin failed login=$channelLogin")
+                    }
                     channelId?.takeIf { it.isNotBlank() }?.let { idCandidate ->
                         runCatching {
                             kickRepository.getChannel(idCandidate)
-                            Log.d("KickBadgeDebug", "prefetchById success id=$idCandidate")
+                            if (BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_BADGE_LOGS, false)) {
+                                Log.d("KickBadgeDebug", "prefetchById success id=$idCandidate")
+                            }
                         }.onFailure {
-                            Log.w("KickBadgeDebug", "prefetchById failed id=$idCandidate")
+                            if (BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_BADGE_LOGS, false)) {
+                                Log.w("KickBadgeDebug", "prefetchById failed id=$idCandidate")
+                            }
                         }
                     }
                 }
             }
         }
-        val saved = savedGlobalBadges
-        if (!saved.isNullOrEmpty()) {
+        if (kickMode) {
             synchronized(globalBadges) {
                 globalBadges.clear()
-                globalBadges.addAll(saved)
             }
-            if (!reloadMessages.value) {
-                reloadMessages.value = true
+            synchronized(channelBadges) {
+                channelBadges.clear()
+            }
+            synchronized(cheerEmotes) {
+                cheerEmotes.clear()
             }
         } else {
-            viewModelScope.launch {
-                try {
-                    val badges = playerRepository.loadGlobalBadges(networkLibrary, helixHeaders, gqlHeaders, emoteQuality, enableIntegrity)
-                    if (badges.isNotEmpty()) {
-                        savedGlobalBadges = badges
-                        synchronized(globalBadges) {
-                            globalBadges.clear()
-                            globalBadges.addAll(badges)
+            val saved = savedGlobalBadges
+            if (!saved.isNullOrEmpty()) {
+                synchronized(globalBadges) {
+                    globalBadges.clear()
+                    globalBadges.addAll(saved)
+                }
+                if (!reloadMessages.value) {
+                    reloadMessages.value = true
+                }
+            } else {
+                viewModelScope.launch {
+                    try {
+                        val badges = playerRepository.loadGlobalBadges(networkLibrary, helixHeaders, gqlHeaders, emoteQuality, enableIntegrity)
+                        if (badges.isNotEmpty()) {
+                            savedGlobalBadges = badges
+                            synchronized(globalBadges) {
+                                globalBadges.clear()
+                                globalBadges.addAll(badges)
+                            }
+                            if (!reloadMessages.value) {
+                                reloadMessages.value = true
+                            }
                         }
-                        if (!reloadMessages.value) {
-                            reloadMessages.value = true
+                    } catch (e: Exception) {
+                        if (e.message == "failed integrity check" && integrity.value == null) {
+                            integrity.value = "refresh"
                         }
-                    }
-                } catch (e: Exception) {
-                    if (e.message == "failed integrity check" && integrity.value == null) {
-                        integrity.value = "refresh"
                     }
                 }
             }
@@ -442,7 +479,7 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             }
-            if (!channelId.isNullOrBlank() || (isKickPreferred() && !channelLogin.isNullOrBlank())) {
+            if (!channelId.isNullOrBlank() || (kickMode && !channelLogin.isNullOrBlank())) {
                 viewModelScope.launch {
                     try {
                         val emotes = loadBttvChannelEmotes(networkLibrary, channelId, channelLogin, useWebp)
@@ -513,7 +550,7 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             }
-            if (!channelId.isNullOrBlank() || (isKickPreferred() && !channelLogin.isNullOrBlank())) {
+            if (!channelId.isNullOrBlank() || (kickMode && !channelLogin.isNullOrBlank())) {
                 viewModelScope.launch {
                     try {
                         val emotes = loadFfzChannelEmotes(networkLibrary, channelId, channelLogin, useWebp)
@@ -539,7 +576,7 @@ class ChatViewModel @Inject constructor(
                 }
             }
         }
-        if (!channelId.isNullOrBlank() || !channelLogin.isNullOrBlank()) {
+        if (!kickMode && (!channelId.isNullOrBlank() || !channelLogin.isNullOrBlank())) {
             viewModelScope.launch {
                 try {
                     val badges = playerRepository.loadChannelBadges(networkLibrary, helixHeaders, gqlHeaders, channelId, channelLogin, emoteQuality, enableIntegrity)
@@ -580,6 +617,13 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun loadUserEmotes(channelId: String?) {
+        if (isKickPreferred()) {
+            synchronized(userEmotes) {
+                userEmotes.clear()
+            }
+            loadedUserEmotes = false
+            return
+        }
         val saved = savedUserEmotes
         if (!saved.isNullOrEmpty()) {
             synchronized(userEmotes) {
@@ -891,6 +935,90 @@ class ChatViewModel @Inject constructor(
         return true
     }
 
+    private data class KickClipEmitStats(
+        val total: Int,
+        val emitted: Int,
+        val deduped: Int,
+    )
+
+    private data class KickClipQueueStats(
+        val total: Int,
+        val queued: Int,
+        val alreadyEmitted: Int,
+        val alreadyQueued: Int,
+    )
+
+    private fun isKickClipChatDebugEnabled(): Boolean {
+        return BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_CLIP_CHAT, false)
+    }
+
+    private inline fun logKickClipChat(stage: String, sessionKey: String?, message: () -> String) {
+        if (!isKickClipChatDebugEnabled()) return
+        Log.i(kickClipChatDebugTag, "stage=$stage session=${sessionKey ?: "-"} ${message()}")
+    }
+
+    private fun messageRangeSummary(messages: List<ChatMessage>): String {
+        if (messages.isEmpty()) return "range=empty"
+        return "range=${messages.firstOrNull()?.timestamp ?: "null"}..${messages.lastOrNull()?.timestamp ?: "null"}"
+    }
+
+    private fun kickMessageKey(message: ChatMessage): String {
+        return message.id ?: "${message.timestamp}:${message.userName}:${message.message}"
+    }
+
+    private fun resetKickReplayPendingQueue() {
+        kickReplayPendingMessages.clear()
+        kickReplayPendingKeys.clear()
+    }
+
+    private fun queueKickReplayMessages(messages: List<ChatMessage>): KickClipQueueStats {
+        var queued = 0
+        var alreadyEmitted = 0
+        var alreadyQueued = 0
+        messages.forEach { message ->
+            val key = kickMessageKey(message)
+            val seen = synchronized(kickMessageIds) { kickMessageIds.contains(key) }
+            if (seen) {
+                alreadyEmitted += 1
+                return@forEach
+            }
+            if (!kickReplayPendingKeys.add(key)) {
+                alreadyQueued += 1
+                return@forEach
+            }
+            kickReplayPendingMessages.add(message)
+            queued += 1
+        }
+        kickReplayPendingMessages.sortBy { it.timestamp ?: Long.MIN_VALUE }
+        return KickClipQueueStats(
+            total = messages.size,
+            queued = queued,
+            alreadyEmitted = alreadyEmitted,
+            alreadyQueued = alreadyQueued
+        )
+    }
+
+    private suspend fun emitDueKickReplayMessages(cutoffTimestampMs: Long): KickClipEmitStats {
+        if (kickReplayPendingMessages.isEmpty()) {
+            return KickClipEmitStats(total = 0, emitted = 0, deduped = 0)
+        }
+        val due = mutableListOf<ChatMessage>()
+        while (kickReplayPendingMessages.isNotEmpty()) {
+            val next = kickReplayPendingMessages.first()
+            val nextTimestamp = next.timestamp
+            if (nextTimestamp != null && nextTimestamp > cutoffTimestampMs) {
+                break
+            }
+            kickReplayPendingMessages.removeAt(0)
+            kickReplayPendingKeys.remove(kickMessageKey(next))
+            due += next
+        }
+        if (due.isEmpty()) {
+            return KickClipEmitStats(total = 0, emitted = 0, deduped = 0)
+        }
+        return emitKickMessages(due)
+    }
+
     private suspend fun fetchKickMessages(messageSources: List<String>): List<ChatMessage> {
         var lastError: Exception? = null
         for (source in messageSources) {
@@ -901,7 +1029,7 @@ class ChatViewModel @Inject constructor(
                     .map { kickRepository.toChatMessage(it) }
                     .filter { !it.message.isNullOrBlank() || !it.systemMsg.isNullOrBlank() }
                     .sortedBy { it.timestamp }
-                if (rawCount > 0 && messages.isEmpty()) {
+                if (rawCount > 0 && messages.isEmpty() && isKickClipChatDebugEnabled()) {
                     Log.d("KickChatDebug", "source=$source rawCount=$rawCount mappedCount=0")
                 }
                 var newKickEmotesAdded = false
@@ -930,9 +1058,21 @@ class ChatViewModel @Inject constructor(
         return emptyList()
     }
 
-    private suspend fun fetchKickHistoryMessages(messageSources: List<String>, startTime: String): List<ChatMessage> {
+    private suspend fun fetchKickHistoryMessages(
+        messageSources: List<String>,
+        startTime: String,
+        debugSessionKey: String? = null,
+        debugPhase: String = "timeline"
+    ): List<ChatMessage> {
         var lastError: Exception? = null
         for (source in messageSources) {
+            val requestId = kickClipChatRequestSeq.incrementAndGet()
+            logKickClipChat(
+                stage = "request",
+                sessionKey = debugSessionKey
+            ) {
+                "id=$requestId phase=$debugPhase source=$source startTime=$startTime"
+            }
             try {
                 val response = kickRepository.getChatHistory(source, startTime)
                 val rawCount = response.messages.size
@@ -940,6 +1080,12 @@ class ChatViewModel @Inject constructor(
                     .map { kickRepository.toChatMessage(it) }
                     .filter { !it.message.isNullOrBlank() || !it.systemMsg.isNullOrBlank() }
                     .sortedBy { it.timestamp }
+                logKickClipChat(
+                    stage = "response",
+                    sessionKey = debugSessionKey
+                ) {
+                    "id=$requestId phase=$debugPhase source=$source raw=$rawCount mapped=${messages.size} cursor=${response.cursor ?: "-"} ${messageRangeSummary(messages)}"
+                }
                 var newKickEmotesAdded = false
                 messages.forEach { message ->
                     if (addKickInlineEmotes(message.fullMsg)) {
@@ -959,6 +1105,12 @@ class ChatViewModel @Inject constructor(
                     return messages
                 }
             } catch (e: Exception) {
+                logKickClipChat(
+                    stage = "request_error",
+                    sessionKey = debugSessionKey
+                ) {
+                    "id=$requestId phase=$debugPhase source=$source error=${e::class.java.simpleName}:${e.message}"
+                }
                 lastError = e
             }
         }
@@ -966,6 +1118,70 @@ class ChatViewModel @Inject constructor(
             throw lastError
         }
         return emptyList()
+    }
+
+    private suspend fun emitKickMessages(messages: List<ChatMessage>): KickClipEmitStats {
+        var emitted = 0
+        var deduped = 0
+        messages.forEach { message ->
+            val key = message.id ?: "${message.timestamp}:${message.userName}:${message.message}"
+            val shouldEmit = synchronized(kickMessageIds) {
+                val isNew = kickMessageIds.add(key)
+                if (kickMessageIds.size > 5000) {
+                    kickMessageIds.iterator().apply {
+                        if (hasNext()) {
+                            next()
+                            remove()
+                        }
+                    }
+                }
+                isNew
+            }
+            if (shouldEmit) {
+                onMessage(message)
+                addChatter(message.userName)
+                emitted += 1
+            } else {
+                deduped += 1
+            }
+        }
+        return KickClipEmitStats(
+            total = messages.size,
+            emitted = emitted,
+            deduped = deduped
+        )
+    }
+
+    private suspend fun clearChatMessages(): Int {
+        val size = synchronized(chatMessages) {
+            val size = chatMessages.size
+            chatMessages.clear()
+            size
+        }
+        if (size > 0) {
+            removeMessages.emit(size)
+        }
+        return size
+    }
+
+    private fun seedKickMessageIdsFromCurrentMessages() {
+        synchronized(kickMessageIds) {
+            kickMessageIds.clear()
+            synchronized(chatMessages) {
+                chatMessages.forEach { message ->
+                    val key = message.id ?: "${message.timestamp}:${message.userName}:${message.message}"
+                    kickMessageIds.add(key)
+                }
+            }
+            while (kickMessageIds.size > 5000) {
+                kickMessageIds.iterator().apply {
+                    if (hasNext()) {
+                        next()
+                        remove()
+                    }
+                }
+            }
+        }
     }
 
     private fun startKickChat(channelId: String, channelLogin: String, channelName: String?) {
@@ -984,7 +1200,7 @@ class ChatViewModel @Inject constructor(
             val kickMessageSources = resolveKickMessageSources(channelId, channelLogin)
             onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_join).format(channelLogin)))
             delay(1500)
-            while (kickChatJob?.isActive == true) {
+            while (currentCoroutineContext().isActive) {
                 try {
                     fetchKickMessages(kickMessageSources)
                         .forEach { message ->
@@ -1006,6 +1222,8 @@ class ChatViewModel @Inject constructor(
                                 addChatter(message.userName)
                             }
                         }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (_: Exception) {
 
                 }
@@ -1021,9 +1239,20 @@ class ChatViewModel @Inject constructor(
         replayStartTimeMs: Long,
         getCurrentPosition: () -> Long?
     ) {
+        val sessionKey = "$channelId|$replayStartTimeMs"
+        val isNewSession = kickReplaySessionKey != sessionKey
+        logKickClipChat(stage = "session_start", sessionKey = sessionKey) {
+            "channelId=$channelId channelLogin=$channelLogin replayStartMs=$replayStartTimeMs isNewSession=$isNewSession"
+        }
+        kickReplaySessionKey = sessionKey
         stopLiveChat()
-        synchronized(kickMessageIds) {
-            kickMessageIds.clear()
+        resetKickReplayPendingQueue()
+        if (isNewSession) {
+            synchronized(kickMessageIds) {
+                kickMessageIds.clear()
+            }
+        } else {
+            seedKickMessageIdsFromCurrentMessages()
         }
         addChatter(channelName)
         kickChatJob = viewModelScope.launch {
@@ -1032,38 +1261,88 @@ class ChatViewModel @Inject constructor(
             }.onFailure {
             runCatching { kickRepository.getChannel(channelId) }
             }
-            val kickMessageSources = LinkedHashSet<String>().apply {
-                add(channelId)
-                add(resolveKickChatId(channelId, channelLogin))
-            }.filter { it.isNotBlank() }
-            while (kickChatJob?.isActive == true) {
+            val kickMessageSources = listOf(channelId.trim()).filter { it.isNotBlank() }
+            if (isNewSession) {
+                val removedMessages = clearChatMessages()
+                logKickClipChat(stage = "clear_messages", sessionKey = sessionKey) {
+                    "removed=$removedMessages"
+                }
+                val preloadStartTime = formatIso8601Utc((replayStartTimeMs - kickClipReplayPreloadWindowMs).coerceAtLeast(0L))
+                try {
+                    val preloadMessages = fetchKickHistoryMessages(
+                        messageSources = kickMessageSources,
+                        startTime = preloadStartTime,
+                        debugSessionKey = sessionKey,
+                        debugPhase = "preload"
+                    )
+                        .filter { it.timestamp == null || it.timestamp < replayStartTimeMs }
+                        .takeLast(kickClipReplayPreloadMaxMessages)
+                    val stats = emitKickMessages(preloadMessages)
+                    logKickClipChat(stage = "emit", sessionKey = sessionKey) {
+                        "phase=preload ${messageRangeSummary(preloadMessages)} total=${stats.total} emitted=${stats.emitted} deduped=${stats.deduped}"
+                    }
+                } catch (e: CancellationException) {
+                    logKickClipChat(stage = "cancelled", sessionKey = sessionKey) {
+                        "phase=preload"
+                    }
+                    throw e
+                } catch (e: Exception) {
+                    logKickClipChat(stage = "error", sessionKey = sessionKey) {
+                        "phase=preload error=${e::class.java.simpleName}:${e.message}"
+                    }
+                }
+            }
+            var nextPollAtMs = 0L
+            while (currentCoroutineContext().isActive) {
                 try {
                     val position = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
-                    val startTime = formatIso8601Utc(replayStartTimeMs + position)
-                    fetchKickHistoryMessages(kickMessageSources, startTime)
-                        .forEach { message ->
-                            val key = message.id ?: "${message.timestamp}:${message.userName}:${message.message}"
-                            val shouldEmit = synchronized(kickMessageIds) {
-                                val isNew = kickMessageIds.add(key)
-                                if (kickMessageIds.size > 5000) {
-                                    kickMessageIds.iterator().apply {
-                                        if (hasNext()) {
-                                            next()
-                                            remove()
-                                        }
-                                    }
-                                }
-                                isNew
-                            }
-                            if (shouldEmit) {
-                                onMessage(message)
-                                addChatter(message.userName)
+                    val playbackTimestampMs = replayStartTimeMs + position
+                    val dueStats = emitDueKickReplayMessages(playbackTimestampMs + kickClipReplayEmitLeadMs)
+                    if (dueStats.total > 0) {
+                        logKickClipChat(stage = "emit_due", sessionKey = sessionKey) {
+                            "positionMs=$position playbackTs=$playbackTimestampMs total=${dueStats.total} emitted=${dueStats.emitted} deduped=${dueStats.deduped} pending=${kickReplayPendingMessages.size}"
+                        }
+                    }
+                    val nowMs = SystemClock.elapsedRealtime()
+                    if (nowMs >= nextPollAtMs) {
+                        val startTime = formatIso8601Utc(playbackTimestampMs)
+                        logKickClipChat(stage = "timeline_tick", sessionKey = sessionKey) {
+                            "positionMs=$position startTime=$startTime pending=${kickReplayPendingMessages.size}"
+                        }
+                        val timelineMessages = fetchKickHistoryMessages(
+                            messageSources = kickMessageSources,
+                            startTime = startTime,
+                            debugSessionKey = sessionKey,
+                            debugPhase = "timeline"
+                        )
+                        val queueStats = queueKickReplayMessages(timelineMessages)
+                        if (queueStats.queued > 0 || queueStats.alreadyQueued > 0) {
+                            logKickClipChat(stage = "queue", sessionKey = sessionKey) {
+                                "phase=timeline ${messageRangeSummary(timelineMessages)} total=${queueStats.total} queued=${queueStats.queued} alreadyEmitted=${queueStats.alreadyEmitted} alreadyQueued=${queueStats.alreadyQueued} pending=${kickReplayPendingMessages.size}"
                             }
                         }
-                } catch (_: Exception) {
-
+                        val immediateDueStats = emitDueKickReplayMessages(playbackTimestampMs + kickClipReplayEmitLeadMs)
+                        if (immediateDueStats.total > 0) {
+                            logKickClipChat(stage = "emit_due", sessionKey = sessionKey) {
+                                "phase=post_poll positionMs=$position playbackTs=$playbackTimestampMs total=${immediateDueStats.total} emitted=${immediateDueStats.emitted} deduped=${immediateDueStats.deduped} pending=${kickReplayPendingMessages.size}"
+                            }
+                        }
+                        nextPollAtMs = nowMs + kickClipReplayPollIntervalMs
+                    }
+                } catch (e: CancellationException) {
+                    logKickClipChat(stage = "cancelled", sessionKey = sessionKey) {
+                        "phase=timeline"
+                    }
+                    throw e
+                } catch (e: Exception) {
+                    logKickClipChat(stage = "error", sessionKey = sessionKey) {
+                        "phase=timeline error=${e::class.java.simpleName}:${e.message}"
+                    }
                 }
-                delay(2000)
+                delay(kickClipReplayEmitIntervalMs)
+            }
+            logKickClipChat(stage = "session_end", sessionKey = sessionKey) {
+                "reason=job_inactive"
             }
         }
     }
@@ -1287,6 +1566,7 @@ class ChatViewModel @Inject constructor(
 
     fun disconnect() {
         stopLiveChat()
+        kickReplaySessionKey = null
         usedRaidId = null
         raidClosed = true
         usedPollId = null
@@ -2781,11 +3061,15 @@ class ChatViewModel @Inject constructor(
     ) {
         stopReplayChat()
         if (!chatUrl.isNullOrBlank()) {
+            logKickClipChat(stage = "fallback_disabled", sessionKey = kickReplaySessionKey) {
+                "reason=chat_url_present"
+            }
             kickReplayFallbackEnabled = false
             kickReplayFallbackChannelId = null
             kickReplayFallbackChannelLogin = null
             kickReplayFallbackStartTimeMs = null
             kickReplayFallbackGetCurrentPosition = null
+            kickReplaySessionKey = null
             chatReplayManagerLocal = ChatReplayManagerLocal(
                 getCurrentPosition = getCurrentPosition,
                 getCurrentSpeed = getCurrentSpeed,
@@ -2795,6 +3079,9 @@ class ChatViewModel @Inject constructor(
             readChatFile(chatUrl, channelId, channelLogin)
         } else {
             if (kickClipReplayFallback && !channelId.isNullOrBlank() && !channelLogin.isNullOrBlank()) {
+                logKickClipChat(stage = "fallback_enabled", sessionKey = null) {
+                    "channelId=$channelId channelLogin=$channelLogin replayStart=$kickClipReplayStartTime"
+                }
                 kickReplayFallbackEnabled = true
                 kickReplayFallbackChannelId = channelId
                 kickReplayFallbackChannelLogin = channelLogin
@@ -2806,11 +3093,15 @@ class ChatViewModel @Inject constructor(
                 }
                 return
             }
+            logKickClipChat(stage = "fallback_disabled", sessionKey = kickReplaySessionKey) {
+                "reason=kick_clip_replay_not_applicable"
+            }
             kickReplayFallbackEnabled = false
             kickReplayFallbackChannelId = null
             kickReplayFallbackChannelLogin = null
             kickReplayFallbackStartTimeMs = null
             kickReplayFallbackGetCurrentPosition = null
+            kickReplaySessionKey = null
             if (!videoId.isNullOrBlank()) {
                 chatReplayManager = ChatReplayManager(
                     networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
@@ -2842,6 +3133,9 @@ class ChatViewModel @Inject constructor(
                 getCurrentPosition != null &&
                 kickChatJob?.isActive != true
             ) {
+                logKickClipChat(stage = "startReplayChatLoad", sessionKey = kickReplaySessionKey) {
+                    "restarting_fallback channelId=$channelId"
+                }
                 startKickClipReplayChat(channelId, channelLogin, channelLogin, replayStartTimeMs, getCurrentPosition)
             }
         } else {
@@ -2851,8 +3145,15 @@ class ChatViewModel @Inject constructor(
 
     fun stopReplayChat() {
         if (kickReplayFallbackEnabled) {
+            val hadKickChatJob = kickChatJob != null
+            if (hadKickChatJob) {
+                logKickClipChat(stage = "stopReplayChat", sessionKey = kickReplaySessionKey) {
+                    "cancelKickChatJob=true"
+                }
+            }
             kickChatJob?.cancel()
             kickChatJob = null
+            resetKickReplayPendingQueue()
         } else {
             chatReplayManager?.stop() ?: chatReplayManagerLocal?.stop()
         }

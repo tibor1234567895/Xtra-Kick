@@ -311,6 +311,8 @@ object C {
     const val DEBUG_USE_CUSTOM_PLAYBACK_SERVICE = "debug_use_custom_playback_service"
     const val DEBUG_EVENTSUB_CHAT = "debug_eventsub_chat"
     const val DEBUG_PLAYER_MENU_PLAYLIST_TAGS = "debug_player_menu_playlist_tags"
+    const val DEBUG_KICK_CLIP_CHAT = "debug_kick_clip_chat"
+    const val DEBUG_KICK_BADGE_LOGS = "debug_kick_badge_logs"
     const val ENABLE_INTEGRITY = "enable_integrity"
     const val USE_WEBVIEW_INTEGRITY = "use_webview_integrity"
     const val GET_ALL_GQL_HEADERS = "get_all_gql_headers"
