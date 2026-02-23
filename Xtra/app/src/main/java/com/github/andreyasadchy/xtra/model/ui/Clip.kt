@@ -9,6 +9,8 @@ class Clip(
     val id: String? = null,
     val channelId: String? = null,
     val channelName: String? = null,
+    val clipUrl: String? = null,
+    val replayStartTime: String? = null,
     val videoId: String? = null,
     var gameId: String? = null,
     val title: String? = null,

@@ -1118,12 +1118,20 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         requireArguments().getString(KEY_VIDEO_ID),
                         0
                     )
-                    CLIP -> ChatFragment.newInstance(
-                        requireArguments().getString(KEY_CHANNEL_ID),
-                        requireArguments().getString(KEY_CHANNEL_LOGIN),
-                        requireArguments().getString(KEY_VIDEO_ID),
-                        requireArguments().getInt(KEY_VOD_OFFSET).takeIf { it != -1 }
-                    )
+                    CLIP -> run {
+                        val clipUrl = requireArguments().getString(KEY_URL)
+                        val isKickClip = clipUrl?.contains("clips.kick.com", ignoreCase = true) == true ||
+                                clipUrl?.contains("kick.com", ignoreCase = true) == true
+                        ChatFragment.newInstance(
+                            requireArguments().getString(KEY_CHANNEL_ID),
+                            requireArguments().getString(KEY_CHANNEL_LOGIN),
+                            requireArguments().getString(KEY_VIDEO_ID),
+                            requireArguments().getInt(KEY_VOD_OFFSET).takeIf { it != -1 },
+                            isKickClip,
+                            isKickClip,
+                            requireArguments().getString(KEY_CLIP_REPLAY_START_TIME) ?: requireArguments().getString(KEY_UPLOAD_DATE)
+                        )
+                    }
                     OFFLINE_VIDEO -> ChatFragment.newLocalInstance(
                         requireArguments().getString(KEY_CHANNEL_ID),
                         requireArguments().getString(KEY_CHANNEL_LOGIN),
@@ -1616,13 +1624,16 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         val targetQuality = targetQualityString?.split("p")
         return targetQuality?.getOrNull(0)?.takeWhile { it.isDigit() }?.toIntOrNull()?.let { targetResolution ->
             val targetFps = targetQuality.getOrNull(1)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 30
-            val last = viewModel.qualities.keys.last { it != AUDIO_ONLY_QUALITY && it != CHAT_ONLY_QUALITY }
-            viewModel.qualities.keys.find { qualityString ->
+            val selectableQualities = viewModel.qualities.keys.filter {
+                it != AUDIO_ONLY_QUALITY && it != CHAT_ONLY_QUALITY
+            }
+            val fallbackQuality = selectableQualities.lastOrNull()
+            selectableQualities.find { qualityString ->
                 val quality = qualityString.split("p")
                 val resolution = quality.getOrNull(0)?.takeWhile { it.isDigit() }?.toIntOrNull()
                 val fps = quality.getOrNull(1)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 30
-                resolution != null && ((targetResolution == resolution && targetFps >= fps) || targetResolution > resolution || qualityString == last)
-            }
+                resolution != null && ((targetResolution == resolution && targetFps >= fps) || targetResolution > resolution || qualityString == fallbackQuality)
+            } ?: fallbackQuality
         }
     }
 
@@ -1950,12 +1961,23 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
             }
             CLIP -> {
-                viewModel.loadClip(
-                    networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext()),
-                    id = requireArguments().getString(KEY_CLIP_ID),
-                    enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                )
+                val clipUrl = requireArguments().getString(KEY_URL)
+                if (!clipUrl.isNullOrBlank()) {
+                    viewModel.qualities = mapOf(
+                        "source" to Pair(getString(R.string.source), clipUrl),
+                        AUDIO_ONLY_QUALITY to Pair(getString(R.string.audio_only), null)
+                    )
+                    setDefaultQuality()
+                    changePlayerMode()
+                    startClip(clipUrl)
+                } else {
+                    viewModel.loadClip(
+                        networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
+                        gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext()),
+                        id = requireArguments().getString(KEY_CLIP_ID),
+                        enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
+                    )
+                }
             }
             OFFLINE_VIDEO -> {
                 if (prefs.getBoolean(C.PLAYER_USE_VIDEOPOSITIONS, true)) {
@@ -2403,12 +2425,23 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             }
                         }
                         "refreshClip" -> {
-                            viewModel.loadClip(
-                                networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext()),
-                                id = requireArguments().getString(KEY_CLIP_ID),
-                                enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                            )
+                            val clipUrl = requireArguments().getString(KEY_URL)
+                            if (!clipUrl.isNullOrBlank()) {
+                                viewModel.qualities = mapOf(
+                                    "source" to Pair(getString(R.string.source), clipUrl),
+                                    AUDIO_ONLY_QUALITY to Pair(getString(R.string.audio_only), null)
+                                )
+                                setDefaultQuality()
+                                changePlayerMode()
+                                startClip(clipUrl)
+                            } else {
+                                viewModel.loadClip(
+                                    networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
+                                    gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext()),
+                                    id = requireArguments().getString(KEY_CLIP_ID),
+                                    enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
+                                )
+                            }
                             viewModel.isFollowingChannel(
                                 requireContext().tokenPrefs().getString(C.USER_ID, null),
                                 requireArguments().getString(KEY_CHANNEL_ID),
@@ -2496,12 +2529,14 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             KEY_VIDEO_ID to item.videoId,
             KEY_VIDEO_ANIMATED_PREVIEW to item.videoAnimatedPreviewURL,
             KEY_VOD_OFFSET to (item.vodOffset ?: -1),
+            KEY_CLIP_REPLAY_START_TIME to item.replayStartTime,
             KEY_CHANNEL_ID to item.channelId,
             KEY_CHANNEL_LOGIN to item.channelLogin,
             KEY_CHANNEL_NAME to item.channelName,
             KEY_PROFILE_IMAGE_URL to item.profileImageUrl,
             KEY_CHANNEL_LOGO to item.channelLogo,
             KEY_THUMBNAIL to item.thumbnail,
+            KEY_URL to item.clipUrl,
             KEY_GAME_ID to item.gameId,
             KEY_GAME_SLUG to item.gameSlug,
             KEY_GAME_NAME to item.gameName,
@@ -2548,6 +2583,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         protected const val KEY_TYPE = "type"
         protected const val KEY_STREAM_ID = "streamId"
         protected const val KEY_VIDEO_ID = "videoId"
+        protected const val KEY_CLIP_REPLAY_START_TIME = "clipReplayStartTime"
         protected const val KEY_CLIP_ID = "clipId"
         protected const val KEY_OFFLINE_VIDEO_ID = "offlineVideoId"
         protected const val KEY_TITLE = "title"

@@ -5,6 +5,7 @@ import android.content.Context
 import android.util.Base64
 import android.util.JsonReader
 import android.util.JsonToken
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
@@ -61,7 +62,11 @@ import kotlinx.serialization.json.Json
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.Timer
+import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.net.ssl.X509TrustManager
@@ -103,6 +108,12 @@ class ChatViewModel @Inject constructor(
     private var predictionTimeoutJob: Job? = null
     private var kickChatJob: Job? = null
     private val kickMessageIds = LinkedHashSet<String>()
+    private val kickBroadcasterUserIds = ConcurrentHashMap<String, Long>()
+    private var kickReplayFallbackEnabled = false
+    private var kickReplayFallbackChannelId: String? = null
+    private var kickReplayFallbackChannelLogin: String? = null
+    private var kickReplayFallbackStartTimeMs: Long? = null
+    private var kickReplayFallbackGetCurrentPosition: (() -> Long?)? = null
     var autoReconnect = true
 
     private var chatReplayManager: ChatReplayManager? = null
@@ -166,6 +177,7 @@ class ChatViewModel @Inject constructor(
             messageLimit = applicationContext.prefs().getInt(C.CHAT_LIMIT, 600)
             this.streamId = streamId
             if (isKickPreferred() && !channelId.isNullOrBlank()) {
+                loadEmotes(channelId, channelLogin)
                 startKickChat(channelId, channelLogin, channelName)
                 if (applicationContext.prefs().getBoolean(C.CHAT_RECENT, true)) {
                     loadRecentMessages(networkLibrary, channelLogin, channelId)
@@ -185,11 +197,21 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun startReplay(channelId: String?, channelLogin: String?, chatUrl: String? = null, videoId: String? = null, startTime: Int = 0, getCurrentPosition: () -> Long?, getCurrentSpeed: () -> Float?) {
+    fun startReplay(
+        channelId: String?,
+        channelLogin: String?,
+        chatUrl: String? = null,
+        videoId: String? = null,
+        startTime: Int = 0,
+        getCurrentPosition: () -> Long?,
+        getCurrentSpeed: () -> Float?,
+        kickClipReplayFallback: Boolean = false,
+        kickClipReplayStartTime: String? = null
+    ) {
         if (chatReplayManager == null && chatReplayManagerLocal == null) {
             messageLimit = applicationContext.prefs().getInt(C.CHAT_LIMIT, 600)
-            startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin)
-            if (videoId != null) {
+            startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, kickClipReplayFallback, kickClipReplayStartTime)
+            if (videoId != null || kickClipReplayFallback) {
                 loadEmotes(channelId, channelLogin)
             }
         }
@@ -209,9 +231,25 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun resumeReplay(channelId: String?, channelLogin: String?, chatUrl: String?, videoId: String?, startTime: Int, getCurrentPosition: () -> Long?, getCurrentSpeed: () -> Float?) {
+    fun resumeReplay(
+        channelId: String?,
+        channelLogin: String?,
+        chatUrl: String?,
+        videoId: String?,
+        startTime: Int,
+        getCurrentPosition: () -> Long?,
+        getCurrentSpeed: () -> Float?,
+        kickClipReplayFallback: Boolean = false,
+        kickClipReplayStartTime: String? = null
+    ) {
+        if (kickClipReplayFallback) {
+            if (kickChatJob?.isActive != true) {
+                startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, true, kickClipReplayStartTime)
+            }
+            return
+        }
         if (chatReplayManager?.isActive == false || chatReplayManagerLocal?.isActive == false) {
-            startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin)
+            startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, kickClipReplayFallback, kickClipReplayStartTime)
         }
     }
 
@@ -235,6 +273,25 @@ class ChatViewModel @Inject constructor(
         val enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false)
         synchronized(thirdPartyEmotes) {
             thirdPartyEmotes.clear()
+        }
+        if (isKickPreferred() && !channelLogin.isNullOrBlank()) {
+            viewModelScope.launch {
+                try {
+                    // Populate Kick badge URL cache regardless of third-party emote settings.
+                    kickRepository.getChannel(channelLogin)
+                    Log.d("KickBadgeDebug", "prefetchByLogin success login=$channelLogin")
+                } catch (_: Exception) {
+                    Log.w("KickBadgeDebug", "prefetchByLogin failed login=$channelLogin")
+                    channelId?.takeIf { it.isNotBlank() }?.let { idCandidate ->
+                        runCatching {
+                            kickRepository.getChannel(idCandidate)
+                            Log.d("KickBadgeDebug", "prefetchById success id=$idCandidate")
+                        }.onFailure {
+                            Log.w("KickBadgeDebug", "prefetchById failed id=$idCandidate")
+                        }
+                    }
+                }
+            }
         }
         val saved = savedGlobalBadges
         if (!saved.isNullOrEmpty()) {
@@ -385,10 +442,10 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             }
-            if (!channelId.isNullOrBlank()) {
+            if (!channelId.isNullOrBlank() || (isKickPreferred() && !channelLogin.isNullOrBlank())) {
                 viewModelScope.launch {
                     try {
-                        val emotes = playerRepository.loadBttvEmotes(networkLibrary, channelId, useWebp)
+                        val emotes = loadBttvChannelEmotes(networkLibrary, channelId, channelLogin, useWebp)
                         if (emotes.isNotEmpty()) {
                             synchronized(thirdPartyEmotes) {
                                 thirdPartyEmotes.addAll(emotes)
@@ -456,10 +513,10 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             }
-            if (!channelId.isNullOrBlank()) {
+            if (!channelId.isNullOrBlank() || (isKickPreferred() && !channelLogin.isNullOrBlank())) {
                 viewModelScope.launch {
                     try {
-                        val emotes = playerRepository.loadFfzEmotes(networkLibrary, channelId, useWebp)
+                        val emotes = loadFfzChannelEmotes(networkLibrary, channelId, channelLogin, useWebp)
                         if (emotes.isNotEmpty()) {
                             synchronized(thirdPartyEmotes) {
                                 thirdPartyEmotes.addAll(emotes)
@@ -714,19 +771,87 @@ class ChatViewModel @Inject constructor(
         }.filter { it.isNotBlank() }
     }
 
-    private suspend fun loadStvChannelEmotes(networkLibrary: String?, channelId: String, channelLogin: String?, useWebp: Boolean): Pair<String?, List<Emote>> {
-        return if (isKickPreferred()) {
-            val kickUserId = try {
-                channelLogin?.let { login ->
-                    kickRepository.getChannel(login).userId?.toString()
-                }
+    private suspend fun resolveKickBroadcasterUserId(channelId: String?, channelLogin: String?): Long? {
+        val channelIdValue = channelId?.trim().takeUnless { it.isNullOrBlank() }
+        val channelLoginValue = channelLogin?.trim().takeUnless { it.isNullOrBlank() }
+        val candidates = linkedSetOf<String>().apply {
+            channelLoginValue?.let(::add)
+            channelIdValue?.let(::add)
+        }
+        candidates.forEach { candidate ->
+            kickBroadcasterUserIds[candidate]?.let { return it }
+            val resolved = try {
+                kickRepository.getChannel(candidate).userId
             } catch (_: Exception) {
                 null
             }
-            playerRepository.loadStvKickEmotes(networkLibrary, kickUserId ?: channelId, useWebp)
-        } else {
-            playerRepository.loadStvEmotes(networkLibrary, channelId, useWebp)
+            if (resolved != null) {
+                kickBroadcasterUserIds[candidate] = resolved
+                channelIdValue?.let { kickBroadcasterUserIds[it] = resolved }
+                channelLoginValue?.let { kickBroadcasterUserIds[it] = resolved }
+                return resolved
+            }
         }
+        return null
+    }
+
+    private suspend fun loadStvChannelEmotes(networkLibrary: String?, channelId: String, channelLogin: String?, useWebp: Boolean): Pair<String?, List<Emote>> {
+        if (!isKickPreferred()) {
+            return playerRepository.loadStvEmotes(networkLibrary, channelId, useWebp)
+        }
+        var lastError: Exception? = null
+        val candidates = LinkedHashSet<String>().apply {
+            resolveKickBroadcasterUserId(channelId, channelLogin)?.toString()?.let(::add)
+            channelId.trim().takeIf { it.isNotBlank() }?.let(::add)
+            channelLogin?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
+        }
+        candidates.forEach { candidate ->
+            try {
+                return playerRepository.loadStvKickEmotes(networkLibrary, candidate, useWebp)
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        try {
+            return playerRepository.loadStvEmotes(networkLibrary, channelId, useWebp)
+        } catch (e: Exception) {
+            lastError = e
+        }
+        throw lastError
+    }
+
+    private suspend fun loadBttvChannelEmotes(networkLibrary: String?, channelId: String?, channelLogin: String?, useWebp: Boolean): List<Emote> {
+        if (isKickPreferred()) {
+            val login = channelLogin?.trim().takeUnless { it.isNullOrBlank() }
+            if (login != null) {
+                runCatching {
+                    playerRepository.loadBttvEmotesByLogin(networkLibrary, login, useWebp)
+                }.getOrNull()?.let { emotes ->
+                    if (emotes.isNotEmpty()) {
+                        return emotes
+                    }
+                }
+            }
+        }
+        val id = channelId?.trim().takeUnless { it.isNullOrBlank() } ?: return emptyList()
+        return playerRepository.loadBttvEmotes(networkLibrary, id, useWebp)
+    }
+
+    private suspend fun loadFfzChannelEmotes(networkLibrary: String?, channelId: String?, channelLogin: String?, useWebp: Boolean): List<Emote> {
+        if (isKickPreferred()) {
+            val login = channelLogin?.trim().takeUnless { it.isNullOrBlank() }
+            if (login != null) {
+                runCatching {
+                    playerRepository.loadFfzEmotesByLogin(networkLibrary, login, useWebp)
+                }.getOrNull()?.let { emotes ->
+                    if (emotes.isNotEmpty()) {
+                        return emotes
+                    }
+                }
+            }
+        }
+        val id = channelId?.trim().takeUnless { it.isNullOrBlank() } ?: return emptyList()
+        return playerRepository.loadFfzEmotes(networkLibrary, id, useWebp)
     }
 
     private fun addKickInlineEmotes(rawMessage: String?): Boolean {
@@ -770,10 +895,15 @@ class ChatViewModel @Inject constructor(
         var lastError: Exception? = null
         for (source in messageSources) {
             try {
-                val messages = kickRepository.getRecentMessages(source).messages
+                val response = kickRepository.getRecentMessages(source)
+                val rawCount = response.messages.size
+                val messages = response.messages
                     .map { kickRepository.toChatMessage(it) }
                     .filter { !it.message.isNullOrBlank() || !it.systemMsg.isNullOrBlank() }
                     .sortedBy { it.timestamp }
+                if (rawCount > 0 && messages.isEmpty()) {
+                    Log.d("KickChatDebug", "source=$source rawCount=$rawCount mappedCount=0")
+                }
                 var newKickEmotesAdded = false
                 messages.forEach { message ->
                     if (addKickInlineEmotes(message.fullMsg)) {
@@ -800,6 +930,44 @@ class ChatViewModel @Inject constructor(
         return emptyList()
     }
 
+    private suspend fun fetchKickHistoryMessages(messageSources: List<String>, startTime: String): List<ChatMessage> {
+        var lastError: Exception? = null
+        for (source in messageSources) {
+            try {
+                val response = kickRepository.getChatHistory(source, startTime)
+                val rawCount = response.messages.size
+                val messages = response.messages
+                    .map { kickRepository.toChatMessage(it) }
+                    .filter { !it.message.isNullOrBlank() || !it.systemMsg.isNullOrBlank() }
+                    .sortedBy { it.timestamp }
+                var newKickEmotesAdded = false
+                messages.forEach { message ->
+                    if (addKickInlineEmotes(message.fullMsg)) {
+                        newKickEmotesAdded = true
+                    }
+                }
+                if (newKickEmotesAdded) {
+                    synchronized(thirdPartyEmotes) {
+                        thirdPartyEmotes.sortBy { it.source }
+                    }
+                    if (!reloadMessages.value) {
+                        reloadMessages.value = true
+                    }
+                    thirdPartyEmotesUpdated.emit(Unit)
+                }
+                if (messages.isNotEmpty()) {
+                    return messages
+                }
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        if (lastError != null) {
+            throw lastError
+        }
+        return emptyList()
+    }
+
     private fun startKickChat(channelId: String, channelLogin: String, channelName: String?) {
         stopLiveChat()
         synchronized(kickMessageIds) {
@@ -807,12 +975,72 @@ class ChatViewModel @Inject constructor(
         }
         addChatter(channelName)
         kickChatJob = viewModelScope.launch {
+            runCatching {
+                // Warm badge URL cache before first message fetch so Kick badges can resolve immediately.
+                kickRepository.getChannel(channelLogin)
+            }.onFailure {
+                runCatching { kickRepository.getChannel(channelId) }
+            }
             val kickMessageSources = resolveKickMessageSources(channelId, channelLogin)
             onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_join).format(channelLogin)))
             delay(1500)
             while (kickChatJob?.isActive == true) {
                 try {
                     fetchKickMessages(kickMessageSources)
+                        .forEach { message ->
+                            val key = message.id ?: "${message.timestamp}:${message.userName}:${message.message}"
+                            val shouldEmit = synchronized(kickMessageIds) {
+                                val isNew = kickMessageIds.add(key)
+                                if (kickMessageIds.size > 5000) {
+                                    kickMessageIds.iterator().apply {
+                                        if (hasNext()) {
+                                            next()
+                                            remove()
+                                        }
+                                    }
+                                }
+                                isNew
+                            }
+                            if (shouldEmit) {
+                                onMessage(message)
+                                addChatter(message.userName)
+                            }
+                        }
+                } catch (_: Exception) {
+
+                }
+                delay(2000)
+            }
+        }
+    }
+
+    private fun startKickClipReplayChat(
+        channelId: String,
+        channelLogin: String,
+        channelName: String?,
+        replayStartTimeMs: Long,
+        getCurrentPosition: () -> Long?
+    ) {
+        stopLiveChat()
+        synchronized(kickMessageIds) {
+            kickMessageIds.clear()
+        }
+        addChatter(channelName)
+        kickChatJob = viewModelScope.launch {
+            runCatching {
+                kickRepository.getChannel(channelLogin)
+            }.onFailure {
+            runCatching { kickRepository.getChannel(channelId) }
+            }
+            val kickMessageSources = LinkedHashSet<String>().apply {
+                add(channelId)
+                add(resolveKickChatId(channelId, channelLogin))
+            }.filter { it.isNotBlank() }
+            while (kickChatJob?.isActive == true) {
+                try {
+                    val position = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
+                    val startTime = formatIso8601Utc(replayStartTimeMs + position)
+                    fetchKickHistoryMessages(kickMessageSources, startTime)
                         .forEach { message ->
                             val key = message.id ?: "${message.timestamp}:${message.userName}:${message.message}"
                             val shouldEmit = synchronized(kickMessageIds) {
@@ -1809,7 +2037,7 @@ class ChatViewModel @Inject constructor(
 
     fun send(message: CharSequence, replyId: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiCommands: Boolean, useApiChatMessages: Boolean, enableIntegrity: Boolean) {
         if (replyId != null) {
-            sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, useApiChatMessages, enableIntegrity, replyId)
+            sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity, replyId)
         } else {
             if (useApiCommands) {
                 if (message.toString().startsWith("/")) {
@@ -1819,32 +2047,37 @@ class ChatViewModel @Inject constructor(
 
                     }
                 } else {
-                    sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, useApiChatMessages, enableIntegrity)
+                    sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                 }
             } else {
                 if (message.toString() == "/dc" || message.toString() == "/disconnect") {
                     disconnect()
                 } else {
-                    sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, useApiChatMessages, enableIntegrity)
+                    sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                 }
             }
         }
     }
 
-    private fun sendMessage(message: CharSequence, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, accountId: String?, channelId: String?, useApiChatMessages: Boolean, enableIntegrity: Boolean, replyId: String? = null) {
+    private fun sendMessage(message: CharSequence, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiChatMessages: Boolean, enableIntegrity: Boolean, replyId: String? = null) {
         try {
             viewModelScope.launch {
                 if (isKickPreferred()) {
                     val accessToken = applicationContext.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)
-                    val broadcasterId = channelId?.toIntOrNull()
+                    val broadcasterId = resolveKickBroadcasterUserId(channelId, channelLogin)
                     if (!accessToken.isNullOrBlank() && broadcasterId != null) {
                         runCatching {
-                            kickRepository.sendChatMessage(accessToken, broadcasterId, message.toString())
+                            kickRepository.sendChatMessage(accessToken, broadcasterId, message.toString(), replyId)
                         }.onFailure {
                             onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, it.message)))
                         }
                     } else {
-                        onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, "missing kick auth scope")))
+                        val reason = if (accessToken.isNullOrBlank()) {
+                            "missing kick auth scope"
+                        } else {
+                            "missing kick broadcaster user id"
+                        }
+                        onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, reason)))
                     }
                     return@launch
                 }
@@ -1981,7 +2214,7 @@ class ChatViewModel @Inject constructor(
                     }
                 } else {
                     if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, useApiChatMessages, enableIntegrity)
+                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
@@ -2024,7 +2257,7 @@ class ChatViewModel @Inject constructor(
                     }
                 } else {
                     if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, useApiChatMessages, enableIntegrity)
+                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
@@ -2040,7 +2273,7 @@ class ChatViewModel @Inject constructor(
                     }
                 } else {
                     if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, useApiChatMessages, enableIntegrity)
+                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
@@ -2339,7 +2572,7 @@ class ChatViewModel @Inject constructor(
                     }
                 } else {
                     if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, useApiChatMessages, enableIntegrity)
+                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
@@ -2352,7 +2585,7 @@ class ChatViewModel @Inject constructor(
                     }
                 } else {
                     if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, useApiChatMessages, enableIntegrity)
+                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
@@ -2427,7 +2660,7 @@ class ChatViewModel @Inject constructor(
                     }
                 } else {
                     if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, useApiChatMessages, enableIntegrity)
+                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
@@ -2440,7 +2673,7 @@ class ChatViewModel @Inject constructor(
                     }
                 } else {
                     if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, useApiChatMessages, enableIntegrity)
+                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
@@ -2531,13 +2764,28 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             }
-            else -> sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, useApiChatMessages, enableIntegrity)
+            else -> sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
         }
     }
 
-    fun startReplayChat(videoId: String?, startTime: Int, chatUrl: String?, getCurrentPosition: () -> Long?, getCurrentSpeed: () -> Float?, channelId: String?, channelLogin: String?) {
+    fun startReplayChat(
+        videoId: String?,
+        startTime: Int,
+        chatUrl: String?,
+        getCurrentPosition: () -> Long?,
+        getCurrentSpeed: () -> Float?,
+        channelId: String?,
+        channelLogin: String?,
+        kickClipReplayFallback: Boolean = false,
+        kickClipReplayStartTime: String? = null
+    ) {
         stopReplayChat()
         if (!chatUrl.isNullOrBlank()) {
+            kickReplayFallbackEnabled = false
+            kickReplayFallbackChannelId = null
+            kickReplayFallbackChannelLogin = null
+            kickReplayFallbackStartTimeMs = null
+            kickReplayFallbackGetCurrentPosition = null
             chatReplayManagerLocal = ChatReplayManagerLocal(
                 getCurrentPosition = getCurrentPosition,
                 getCurrentSpeed = getCurrentSpeed,
@@ -2546,6 +2794,23 @@ class ChatViewModel @Inject constructor(
             )
             readChatFile(chatUrl, channelId, channelLogin)
         } else {
+            if (kickClipReplayFallback && !channelId.isNullOrBlank() && !channelLogin.isNullOrBlank()) {
+                kickReplayFallbackEnabled = true
+                kickReplayFallbackChannelId = channelId
+                kickReplayFallbackChannelLogin = channelLogin
+                kickReplayFallbackStartTimeMs = kickClipReplayStartTime
+                    ?.let { TwitchApiHelper.parseIso8601DateUTC(it) }
+                kickReplayFallbackGetCurrentPosition = getCurrentPosition
+                kickReplayFallbackStartTimeMs?.let { replayStartTimeMs ->
+                    startKickClipReplayChat(channelId, channelLogin, channelLogin, replayStartTimeMs, getCurrentPosition)
+                }
+                return
+            }
+            kickReplayFallbackEnabled = false
+            kickReplayFallbackChannelId = null
+            kickReplayFallbackChannelLogin = null
+            kickReplayFallbackStartTimeMs = null
+            kickReplayFallbackGetCurrentPosition = null
             if (!videoId.isNullOrBlank()) {
                 chatReplayManager = ChatReplayManager(
                     networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
@@ -2565,11 +2830,32 @@ class ChatViewModel @Inject constructor(
     }
 
     fun startReplayChatLoad() {
-        chatReplayManager?.start() ?: chatReplayManagerLocal?.startLoad()
+        if (kickReplayFallbackEnabled) {
+            val channelId = kickReplayFallbackChannelId
+            val channelLogin = kickReplayFallbackChannelLogin
+            val replayStartTimeMs = kickReplayFallbackStartTimeMs
+            val getCurrentPosition = kickReplayFallbackGetCurrentPosition
+            if (
+                !channelId.isNullOrBlank() &&
+                !channelLogin.isNullOrBlank() &&
+                replayStartTimeMs != null &&
+                getCurrentPosition != null &&
+                kickChatJob?.isActive != true
+            ) {
+                startKickClipReplayChat(channelId, channelLogin, channelLogin, replayStartTimeMs, getCurrentPosition)
+            }
+        } else {
+            chatReplayManager?.start() ?: chatReplayManagerLocal?.startLoad()
+        }
     }
 
     fun stopReplayChat() {
-        chatReplayManager?.stop() ?: chatReplayManagerLocal?.stop()
+        if (kickReplayFallbackEnabled) {
+            kickChatJob?.cancel()
+            kickChatJob = null
+        } else {
+            chatReplayManager?.stop() ?: chatReplayManagerLocal?.stop()
+        }
     }
 
     fun updatePosition(position: Long) {
@@ -2578,6 +2864,16 @@ class ChatViewModel @Inject constructor(
 
     fun updateSpeed(speed: Float) {
         chatReplayManager?.updateSpeed(speed) ?: chatReplayManagerLocal?.updateSpeed(speed)
+    }
+
+    private fun formatIso8601Utc(timestampMs: Long): String {
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            java.time.Instant.ofEpochMilli(timestampMs).toString()
+        } else {
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }.format(Date(timestampMs))
+        }
     }
 
     private inner class ChatReplayListener : ChatReplayManager.Listener {
