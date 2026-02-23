@@ -8,6 +8,7 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.datasource.ChannelSuggestedDataSource
 import com.github.andreyasadchy.xtra.ui.channel.ChannelPagerFragmentArgs
 import com.github.andreyasadchy.xtra.util.C
@@ -21,6 +22,7 @@ import javax.inject.Inject
 class ChannelSuggestedViewModel @Inject constructor(
     @ApplicationContext applicationContext: Context,
     private val graphQLRepository: GraphQLRepository,
+    private val kickRepository: KickRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -33,6 +35,7 @@ class ChannelSuggestedViewModel @Inject constructor(
             channelLogin = args.channelLogin,
             gqlHeaders = TwitchApiHelper.getGQLHeaders(applicationContext, true),
             graphQLRepository = graphQLRepository,
+            kickRepository = kickRepository,
             enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
         )

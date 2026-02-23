@@ -632,6 +632,7 @@
     <string name="kick_oauth_not_configured">Kick login is not configured. Set Kick client ID in API token settings.</string>
     <string name="integrity_token_twitch_only">Integrity token debug flow is Twitch-only and disabled for Kick login.</string>
     <string name="show_stv_badges">Show 7TV badges</string>
+    <string name="show_kick_badges">Show Kick badges</string>
     <string name="show_stv_personal_emotes">Show 7TV personal emotes</string>
     <string name="stv_live_updates">7TV live emote updates</string>
     <string name="personal_stv_emote">Personal 7TV emote</string>

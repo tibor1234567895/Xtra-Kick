@@ -185,6 +185,13 @@ class MediaPlayerFragment : PlayerFragment() {
             if (!prefs.getBoolean(C.PLAYER_KEEP_SCREEN_ON_WHEN_PAUSED, false) && canEnterPictureInPicture()) {
                 requireView().keepScreenOn = isPlaying
             }
+            if (videoType != STREAM) {
+                if (isPlaying) {
+                    chatFragment?.startReplayChatLoad()
+                } else {
+                    chatFragment?.stopReplayChat()
+                }
+            }
         }
     }
 

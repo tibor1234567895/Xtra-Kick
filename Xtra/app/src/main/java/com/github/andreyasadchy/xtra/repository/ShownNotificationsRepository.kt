@@ -5,7 +5,12 @@ import com.github.andreyasadchy.xtra.model.ShownNotification
 import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -14,6 +19,45 @@ import javax.inject.Singleton
 class ShownNotificationsRepository @Inject constructor(
     private val shownNotificationsDao: ShownNotificationsDao,
 ) {
+
+    suspend fun getNewKickStreams(
+        notificationUsersRepository: NotificationUsersRepository,
+        kickRepository: KickRepository,
+    ): List<Stream> = withContext(Dispatchers.IO) {
+        val channelIds = notificationUsersRepository.loadUsers().mapNotNull { it.channelId?.takeIf { id -> id.isNotBlank() } }
+        if (channelIds.isEmpty()) {
+            return@withContext emptyList()
+        }
+        val semaphore = Semaphore(8)
+        val list = coroutineScope {
+            channelIds.map { channelId ->
+                async {
+                    semaphore.withPermit {
+                        val channel = runCatching { kickRepository.getChannel(channelId) }.getOrNull() ?: return@withPermit null
+                        channel.livestream?.let { kickRepository.toStream(channel) }
+                    }
+                }
+            }.awaitAll()
+        }.filterNotNull()
+            .distinctBy { it.channelId ?: it.channelLogin ?: it.id }
+
+        val liveList = list.mapNotNull { stream ->
+            stream.channelId.takeUnless { it.isNullOrBlank() }?.let { channelId ->
+                stream.startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { startedAt ->
+                    ShownNotification(channelId, startedAt)
+                }
+            }
+        }
+        val oldList = shownNotificationsDao.getAll()
+        oldList.filter { item -> liveList.find { it.channelId == item.channelId } == null }.let {
+            shownNotificationsDao.deleteList(it)
+        }
+        shownNotificationsDao.insertList(liveList)
+        val newStreams = liveList.mapNotNull { item ->
+            item.takeIf { oldList.find { it.channelId == item.channelId }.let { it == null || it.startedAt < item.startedAt } }?.channelId
+        }
+        list.filter { it.channelId in newStreams }
+    }
 
     suspend fun getNewStreams(notificationUsersRepository: NotificationUsersRepository, networkLibrary: String?, gqlHeaders: Map<String, String>, graphQLRepository: GraphQLRepository, helixHeaders: Map<String, String>, helixRepository: HelixRepository): List<Stream> = withContext(Dispatchers.IO) {
         val list = mutableListOf<Stream>()

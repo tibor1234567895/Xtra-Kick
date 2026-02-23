@@ -7,6 +7,7 @@ import com.github.andreyasadchy.xtra.graphql.type.VideoSort
 import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.util.C
 
 class ChannelVideosDataSource(
@@ -23,6 +24,7 @@ class ChannelVideosDataSource(
     private val graphQLRepository: GraphQLRepository,
     private val helixHeaders: Map<String, String>,
     private val helixRepository: HelixRepository,
+    private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
     private val networkLibrary: String?,
@@ -31,6 +33,17 @@ class ChannelVideosDataSource(
     private var offset: String? = null
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Video> {
+        if (!channelLogin.isNullOrBlank()) {
+            return try {
+                kickLoad(params)
+            } catch (_: Exception) {
+                LoadResult.Page(
+                    data = emptyList(),
+                    prevKey = null,
+                    nextKey = null
+                )
+            }
+        }
         return if (!offset.isNullOrBlank()) {
             try {
                 loadFromApi(api, params)
@@ -38,19 +51,16 @@ class ChannelVideosDataSource(
                 LoadResult.Error(e)
             }
         } else {
-            try {
-                loadFromApi(apiPref.getOrNull(0), params)
-            } catch (e: Exception) {
+            val apisToTry = (apiPref + C.KICK).distinct()
+            var lastError: Exception? = null
+            apisToTry.forEach { pref ->
                 try {
-                    loadFromApi(apiPref.getOrNull(1), params)
+                    return loadFromApi(pref, params)
                 } catch (e: Exception) {
-                    try {
-                        loadFromApi(apiPref.getOrNull(2), params)
-                    } catch (e: Exception) {
-                        LoadResult.Error(e)
-                    }
+                    lastError = e
                 }
             }
+            LoadResult.Error(lastError ?: Exception("No enabled APIs"))
         }
     }
 
@@ -60,8 +70,31 @@ class ChannelVideosDataSource(
             C.GQL -> if (helixPeriod == "all") gqlQueryLoad(params) else throw Exception()
             C.GQL_PERSISTED_QUERY -> if (helixPeriod == "all") gqlLoad(params) else throw Exception()
             C.HELIX -> if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) helixLoad(params) else throw Exception()
+            C.KICK -> if (helixPeriod == "all") kickLoad(params) else throw Exception()
             else -> throw Exception()
         }
+    }
+
+    private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
+        val login = channelLogin?.takeIf { it.isNotBlank() } ?: throw Exception()
+        val typeAllowed = gqlType == null || gqlType == "ARCHIVE"
+        if (!typeAllowed) {
+            return LoadResult.Page(
+                data = emptyList(),
+                prevKey = null,
+                nextKey = null
+            )
+        }
+        val list = kickRepository.getChannelVideos(
+            channelSlug = login,
+            channelId = channelId,
+            limit = params.loadSize
+        )
+        return LoadResult.Page(
+            data = list,
+            prevKey = null,
+            nextKey = null
+        )
     }
 
     private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Video> {

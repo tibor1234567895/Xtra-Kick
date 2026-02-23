@@ -8,6 +8,11 @@ import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.util.C
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 class FollowedStreamsDataSource(
     private val userId: String?,
@@ -25,6 +30,14 @@ class FollowedStreamsDataSource(
     private var offset: String? = null
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Stream> {
+        // Kick-only mode: avoid legacy Twitch pre-check paths entirely.
+        if (apiPref.size == 1 && apiPref.firstOrNull() == C.KICK) {
+            return try {
+                kickLoad()
+            } catch (e: Exception) {
+                LoadResult.Error(e)
+            }
+        }
         return if (!offset.isNullOrBlank()) {
             try {
                 loadFromApi(api, params)
@@ -289,27 +302,32 @@ class FollowedStreamsDataSource(
     }
 
     private suspend fun kickLoad(): LoadResult<Int, Stream> {
-        val list = mutableListOf<Stream>()
-        localFollowsChannel.loadFollows().forEach { follow ->
-            val login = follow.userLogin?.takeIf { it.isNotBlank() }
-            val id = follow.userId?.takeIf { it.isNotBlank() }
-            val channel = try {
-                when {
-                    !login.isNullOrBlank() -> kickRepository.getChannel(login)
-                    !id.isNullOrBlank() -> kickRepository.getChannel(id)
-                    else -> null
+        val follows = localFollowsChannel.loadFollows()
+        val semaphore = Semaphore(8)
+        val streams = coroutineScope {
+            follows.map { follow ->
+                async {
+                    semaphore.withPermit {
+                        val login = follow.userLogin?.takeIf { it.isNotBlank() }
+                        val id = follow.userId?.takeIf { it.isNotBlank() }
+                        val channel = try {
+                            when {
+                                !login.isNullOrBlank() -> kickRepository.getChannel(login)
+                                !id.isNullOrBlank() -> kickRepository.getChannel(id)
+                                else -> null
+                            }
+                        } catch (_: Exception) {
+                            null
+                        }
+                        channel?.livestream?.let { kickRepository.toStream(channel) }
+                    }
                 }
-            } catch (_: Exception) {
-                null
-            }
-            channel?.livestream?.let {
-                val stream = kickRepository.toStream(channel)
-                if (list.none { item -> item.channelId == stream.channelId }) {
-                    list.add(stream)
-                }
-            }
+            }.awaitAll()
         }
-        list.sortByDescending { it.viewerCount ?: 0 }
+        val list = streams
+            .filterNotNull()
+            .distinctBy { it.channelId ?: it.channelLogin ?: it.id }
+            .sortedByDescending { it.viewerCount ?: 0 }
         return LoadResult.Page(
             data = list,
             prevKey = null,

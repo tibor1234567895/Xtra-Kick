@@ -1,0 +1,563 @@
+---------------------------- PROCESS STARTED (13639) for package com.github.andreyasadchy.xtra.debug ----------------------------
+18:35:55.507  D  Load libframework-connectivity-tiramisu-jni.so using APEX ns com_android_tethering for caller /apex/com.android.tethering/javalib/framework-connectivity-t.jar: ok
+18:35:55.534  D  Returning zygote-cached class loader: /system_ext/framework/androidx.window.extensions.jar
+18:35:55.534  D  Returning zygote-cached class loader: /system_ext/framework/androidx.window.sidecar.jar
+18:35:55.861  D  Configuring clns-9 for other apk /data/app/~~gljK1aN_Yjx2lNM291Nhvw==/com.github.andreyasadchy.xtra.debug-MftV5hYeysex_whCaT-tSQ==/base.apk. target_sdk_version=36, uses_libraries=, library_path=/data/app/~~gljK1aN_Yjx2lNM291Nhvw==/com.github.andreyasadchy.xtra.debug-MftV5hYeysex_whCaT-tSQ==/lib/arm64:/data/app/~~gljK1aN_Yjx2lNM291Nhvw==/com.github.andreyasadchy.xtra.debug-MftV5hYeysex_whCaT-tSQ==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/com.github.andreyasadchy.xtra.debug
+18:35:55.872  V  Currently set values for:
+18:35:55.872  V    angle_gl_driver_selection_pkgs=[com.android.angle, com.google.android.apps.tachyon]
+18:35:55.873  V    angle_gl_driver_selection_values=[angle, native]
+18:35:55.873  V  com.github.andreyasadchy.xtra.debug is not listed in per-application setting
+18:35:55.873  V  ANGLE allowlist from config: 
+18:35:55.873  V  No special selections for ANGLE, returning default driver choice
+18:35:55.874  V  Neither updatable production driver nor prerelease driver is supported.
+18:35:56.036  D  Load /data/app/~~gljK1aN_Yjx2lNM291Nhvw==/com.github.andreyasadchy.xtra.debug-MftV5hYeysex_whCaT-tSQ==/base.apk!/lib/arm64-v8a/libconscrypt_jni.so using class loader ns clns-9 (caller=/data/app/~~gljK1aN_Yjx2lNM291Nhvw==/com.github.andreyasadchy.xtra.debug-MftV5hYeysex_whCaT-tSQ==/base.apk!classes20.dex): ok
+18:35:56.037  V  Registering org/conscrypt/NativeCrypto's 288 native methods...
+18:35:56.081  I  Choreographer implicitly registered for the refresh rate.
+18:35:56.083  I  QUALCOMM build                   : 445fc2bdf5, I545b8eff08
+                 Build Date                       : 08/01/24
+                 OpenGL ES Shader Compiler Version: E031.47.01.00
+                 Local Branch                     : 
+                 Remote Branch                    : refs/tags/AU_LINUX_ANDROID_LA.VENDOR.12.3.11.00.00.934.442
+                 Remote Branch                    : NONE
+                 Reconstruct Branch               : NOTHING
+18:35:56.083  I  Build Config                     : S P 12.1.6 AArch64
+18:35:56.083  I  Driver Path                      : /vendor/lib64/egl/libGLESv2_adreno.so
+18:35:56.084  I  Driver Version                   : 0786.0
+18:35:56.084  I  Process Name                     : com.github.andreyasadchy.xtra.debug
+18:35:56.087  I  Using : Non-legacy ION heaps
+18:35:56.087  E  No ion heap of name ion_system_heap exists
+18:35:56.088  E  No ion heap of name ion_system_heap exists
+18:35:56.089  I  PFP: 0x016ee190, ME: 0x00000000
+18:35:56.102  D  Toggle override initialized to: false
+18:35:56.113  E  Pinning is deprecated since Android Q. Please use trim or other methods.
+18:35:56.165  D  Compat change id reported: 377864165; UID 10408; state: ENABLED
+18:35:56.165  D  Toggle override initialized to: OVERRIDE_UNSET
+18:35:56.222  I  hiddenapi: Accessing hidden method Landroid/view/ViewGroup;->makeOptionalFitsSystemWindows()V (runtime_flags=0, domain=platform, api=unsupported) from Landroidx/appcompat/widget/ViewUtils; (domain=app, TargetSdkVersion=36) using reflection: allowed
+18:35:56.253  I  Using FreeType backend (prop=Auto)
+18:35:56.398  D  Skipping component enablement for androidx.work.impl.background.systemjob.SystemJobService
+18:35:56.398  D  Created SystemJobScheduler and enabled SystemJobService
+18:35:56.404  D  The default process name was not specified.
+18:35:56.404  D  Performing cleanup operations.
+18:35:56.444  D  Skipping component enablement for androidx.work.impl.background.systemalarm.RescheduleReceiver
+18:35:56.519  E  createSessionUsingConfig: PerformanceHint cannot create session. PowerHintSessions are not supported!
+18:35:56.530  D  setTopOnBackInvokedCallback (unwrapped): android.app.Activity$$ExternalSyntheticLambda0@ae554ba
+18:35:56.536  D  WindowInsets changed: 1440x3120 statusBars:[0,128,0,0] navigationBars:[0,0,0,84] mandatorySystemGestures:[0,128,0,112] 
+18:35:56.544  I  --> POST https://api.kick.com/public/v1/token/introspect (170-byte body)
+18:35:56.563  I  Adding additional valid usage bits: 0x8202000
+18:35:56.702  I  --> GET https://kick.com/api/v2/channels/uhsnow
+18:35:56.702  I  --> GET https://kick.com/api/v2/channels/pettybomber
+18:35:56.718  D  hide(ime())
+18:35:56.719  I  com.github.andreyasadchy.xtra.debug:1e702149: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+18:35:56.759  I  <-- 404 https://kick.com/api/v2/channels/pettybomber (56ms, unknown-length body)
+18:35:57.598  I  <-- 401 https://api.kick.com/public/v1/token/introspect (1053ms, 37-byte body)
+18:35:57.907  I  <-- 200 https://kick.com/api/v2/channels/uhsnow (1204ms, unknown-length body)
+18:36:00.709  D  setTopOnBackInvokedCallback (unwrapped): androidx.navigationevent.OnBackInvokedInput$createOnBackAnimationCallback$1@a0e94ad
+18:36:01.082  W  requestLayout() improperly called by androidx.constraintlayout.widget.ConstraintLayout{e93f459 VFE...C.. ......I. 0,0-0,0 #7f0a02ee app:id/sortBar} during layout: running second layout pass
+18:36:01.109  W  requestLayout() improperly called by com.google.android.material.appbar.CollapsingToolbarLayout{f4e0f00 V.ED..... ........ 0,128-1440,1333 #7f0a00c0 app:id/collapsingToolbar} during second layout pass: posting in next frame
+18:36:01.110  W  requestLayout() improperly called by android.widget.LinearLayout{6ce9339 V.E...... ........ 0,224-1440,914 #7f0a0365 app:id/toolbarContainer} during second layout pass: posting in next frame
+18:36:01.110  W  requestLayout() improperly called by com.google.android.material.appbar.MaterialToolbar{de63d7e V.E...... ......I. 0,0-1440,515 #7f0a0364 app:id/toolbar} during second layout pass: posting in next frame
+18:36:01.130  I  --> GET https://kick.com/api/v2/channels/uhsnow/videos
+18:36:01.303  I  --> GET https://files.kick.com/images/channel/7740660/banner_image/a34786fb-24d9-47e9-8ddd-b81e51f1f9df
+18:36:01.371  I  <-- 304 https://files.kick.com/images/channel/7740660/banner_image/a34786fb-24d9-47e9-8ddd-b81e51f1f9df (66ms, 0-byte body)
+18:36:01.424  I  ☁️ Successful (NETWORK) - https://files.kick.com/images/channel/7740660/banner_image/a34786fb-24d9-47e9-8ddd-b81e51f1f9df
+18:36:01.530  I  <-- 200 https://kick.com/api/v2/channels/uhsnow/videos (399ms, unknown-length body)
+18:36:01.728  I  --> GET https://images.kick.com/video_thumbnails/n9o5ywe9csWT/XpJbM5KFFqws/720.webp?versionId=XF126IKzRGDAcZZXNdaxIujD4IscyD4K
+18:36:01.731  I  --> GET https://images.kick.com/video_thumbnails/n9o5ywe9csWT/pln9xCwswVII/720.webp
+18:36:01.734  I  --> GET https://images.kick.com/video_thumbnails/n9o5ywe9csWT/mtZRLvzQhMU1/720.webp
+18:36:01.944  D  Installing profile for com.github.andreyasadchy.xtra.debug
+18:36:02.111  I  <-- 200 https://images.kick.com/video_thumbnails/n9o5ywe9csWT/XpJbM5KFFqws/720.webp?versionId=XF126IKzRGDAcZZXNdaxIujD4IscyD4K (382ms, 83210-byte body)
+18:36:02.269  I  ☁️ Successful (NETWORK) - https://images.kick.com/video_thumbnails/n9o5ywe9csWT/XpJbM5KFFqws/720.webp?versionId=XF126IKzRGDAcZZXNdaxIujD4IscyD4K
+18:36:02.326  I  <-- 200 https://images.kick.com/video_thumbnails/n9o5ywe9csWT/mtZRLvzQhMU1/720.webp (591ms, 36058-byte body)
+18:36:02.339  I  <-- 200 https://images.kick.com/video_thumbnails/n9o5ywe9csWT/pln9xCwswVII/720.webp (607ms, 39114-byte body)
+18:36:02.352  I  ☁️ Successful (NETWORK) - https://images.kick.com/video_thumbnails/n9o5ywe9csWT/mtZRLvzQhMU1/720.webp
+18:36:02.376  I  ☁️ Successful (NETWORK) - https://images.kick.com/video_thumbnails/n9o5ywe9csWT/pln9xCwswVII/720.webp
+18:36:04.880  I  --> GET https://kick.com/api/v2/channels/uhsnow/clips
+18:36:05.380  I  <-- 200 https://kick.com/api/v2/channels/uhsnow/clips (499ms, unknown-length body)
+18:36:05.491  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/thumbnail.webp
+18:36:05.492  I  --> GET https://clips.kick.com/clips/f3/clip_01KJ3AJDCHQ6KF25P0VM7S072B/thumbnail.webp
+18:36:05.494  I  --> GET https://clips.kick.com/clips/7f/clip_01KJ3AJTJY066V8PZW2M9A453H/thumbnail.webp
+18:36:05.584  I  <-- 200 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/thumbnail.webp (92ms, 3000-byte body)
+18:36:05.589  I  <-- 200 https://clips.kick.com/clips/f3/clip_01KJ3AJDCHQ6KF25P0VM7S072B/thumbnail.webp (96ms, 6482-byte body)
+18:36:05.590  I  ☁️ Successful (NETWORK) - https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/thumbnail.webp
+18:36:05.592  I  <-- 200 https://clips.kick.com/clips/7f/clip_01KJ3AJTJY066V8PZW2M9A453H/thumbnail.webp (97ms, 6482-byte body)
+18:36:05.604  I  ☁️ Successful (NETWORK) - https://clips.kick.com/clips/f3/clip_01KJ3AJDCHQ6KF25P0VM7S072B/thumbnail.webp
+18:36:05.605  I  ☁️ Successful (NETWORK) - https://clips.kick.com/clips/7f/clip_01KJ3AJTJY066V8PZW2M9A453H/thumbnail.webp
+18:36:09.396  I  --> GET https://clips.kick.com/clips/80/clip_01KJ0JK1ZJDWDZV0YXF5B787PX/thumbnail.webp
+18:36:09.446  I  <-- 200 https://clips.kick.com/clips/80/clip_01KJ0JK1ZJDWDZV0YXF5B787PX/thumbnail.webp (49ms, 12768-byte body)
+18:36:09.453  I  ☁️ Successful (NETWORK) - https://clips.kick.com/clips/80/clip_01KJ0JK1ZJDWDZV0YXF5B787PX/thumbnail.webp
+18:36:12.892  I  Init 5fae3b2 [AndroidXMedia3/1.9.2] [OnePlus7Pro, GM1911, OnePlus, 36]
+18:36:12.927  D  prefetchByLogin success login=uhsnow
+18:36:12.930  I  --> GET https://7tv.io/v3/emote-sets/global
+18:36:12.930  I  --> GET https://7tv.io/v3/users/kick/8492176
+18:36:12.932  I  --> GET https://api.betterttv.net/3/cached/emotes/global
+18:36:12.934  I  --> GET https://api.frankerfacez.com/v1/set/global
+18:36:12.936  I  --> GET https://api.frankerfacez.com/v1/room/uhsnow
+18:36:12.937  I  --> GET https://api.frankerfacez.com/v1/room/uhsnow
+18:36:12.948  I  --> GET https://kick.com/api/v2/channels/uhsnow
+18:36:12.950  I  --> POST https://gql.twitch.tv/gql/ (144-byte body)
+18:36:12.951  I  --> POST https://gql.twitch.tv/gql/ (360-byte body)
+18:36:12.953  I  --> POST https://gql.twitch.tv/gql/ (243-byte body)
+18:36:12.974  I  Init bdfa37 [AndroidXMedia3/1.9.2] [OnePlus7Pro, GM1911, OnePlus, 36]
+18:36:13.014  D  onNewServiceWithAdapter: media.audio_flinger service obtained 0xb400006ff2ef1350
+18:36:13.015  D  getService: IAudioFlingerService retrieved: 0xb400007012f366f0  IAudioFlinger cached: 0xb400006ff2ef1350
+18:36:13.022  I  Init 3000a85 [AndroidXMedia3/1.9.2] [OnePlus7Pro, GM1911, OnePlus, 36]
+18:36:13.032  I  Couldn't find a unique registered media button receiver in the given context.
+18:36:13.034  I  <-- 200 https://api.betterttv.net/3/cached/emotes/global (101ms, unknown-length body)
+18:36:13.080  I  Init 2f21ae2 [AndroidXMedia3/1.9.2] [OnePlus7Pro, GM1911, OnePlus, 36]
+18:36:13.125  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/playlist.m3u8
+18:36:13.131  I  <-- 200 https://api.frankerfacez.com/v1/set/global (196ms, unknown-length body)
+18:36:13.140  I  <-- 200 https://api.frankerfacez.com/v1/room/uhsnow (203ms, unknown-length body)
+18:36:13.142  I  <-- 200 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/playlist.m3u8 (16ms, 1130-byte body)
+18:36:13.156  I  <-- 200 https://api.frankerfacez.com/v1/room/uhsnow (219ms, unknown-length body)
+18:36:13.159  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1400.ts
+18:36:13.172  I  --> GET https://api.betterttv.net/3/cached/users/twitch/122887284
+18:36:13.182  I  <-- 206 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1400.ts (21ms, 4598104-byte body)
+18:36:13.192  I  <-- 200 https://api.betterttv.net/3/cached/users/twitch/122887284 (20ms, unknown-length body)
+18:36:13.208  I  <-- 200 https://gql.twitch.tv/gql/ (257ms, unknown-length body)
+18:36:13.214  I  <-- 200 https://gql.twitch.tv/gql/ (261ms, 104-byte body)
+18:36:13.224  I  <-- 200 https://gql.twitch.tv/gql/ (272ms, unknown-length body)
+18:36:13.290  D  onNewService: media.audio_policy service obtained 0xb400007012efa600
+18:36:13.290  D  getService: IAudioPolicyService retrieved: 0xb400007012efa600  cached: 0xb400007012efa600
+18:36:13.308  W  Unsupported mime image/vnd.android.heic
+18:36:13.317  W  Unsupported mime image/vnd.android.heic
+18:36:13.332  W  Unsupported mime image/vnd.android.heic
+18:36:13.372  I  Creating an asynchronous MediaCodec adapter for track type video
+18:36:13.376  D  allocate(c2.qti.avc.decoder)
+18:36:13.380  I  ApexCodecs loaded
+18:36:13.380  I  Available Codec2 services: "default" "software" "__ApexCodecs__"
+18:36:13.382  I  setting up 'default' as default (vendor) store
+18:36:13.386  I  Created component [c2.qti.avc.decoder] for [c2.qti.avc.decoder]
+18:36:13.386  D  read media type: video/avc
+18:36:13.388  D  extent() != 1 for single value type: output.buffers.pool-ids.values
+18:36:13.389  D  ignoring local param raw.size (0xd2001800) as it is already supported
+18:36:13.389  D  ignoring local param default.color (0x5200180b) as it is already supported
+18:36:13.389  D  ignoring local param raw.hdr-static-info (0xd200180a) as it is already supported
+18:36:13.390  I  query failed after returning 18 values (BAD_INDEX)
+18:36:13.390  D  c2 config diff is Dict {
+                   c2::u32 algo.low-latency.value = 4294967295
+                   c2::i32 algo.priority.value = -1
+                   c2::float algo.rate.value = 30
+                   c2::u32 algo.secure-mode.value = 0
+                   c2::float coded.frame-rate.value = 30
+                   c2::u32 coded.pl.level = 20480
+                   c2::u32 coded.pl.profile = 20480
+                   c2::u32 coded.vui.color.matrix = 0
+                   c2::u32 coded.vui.color.primaries = 0
+                   c2::u32 coded.vui.color.range = 0
+                   c2::u32 coded.vui.color.transfer = 0
+                   c2::u32 default.color.matrix = 0
+                   c2::u32 default.color.primaries = 0
+                   c2::u32 default.color.range = 0
+                   c2::u32 default.color.transfer = 0
+                   c2::u32 input.buffers.max-size.value = 7077888
+                   c2::u32 input.delay.value = 0
+                   string input.media-type.value = "video/avc"
+                   c2::u32 output.delay.value = 18
+                   string output.media-type.value = "video/raw"
+                   c2::u32 raw.color.matrix = 0
+                   c2::u32 raw.color.primaries = 0
+                   c2::u32 raw.color.range = 0
+                   c2::u32 raw.color.transfer = 0
+                   c2::float raw.hdr-static-info.mastering.blue.x = 1
+                   c2::float raw.hdr-static-info.mastering.blue.y = 1
+                  
+18:36:13.391  W  expected specified color aspects (0:0:0:0)
+18:36:13.393  I  MediaCodec will operate in async mode
+18:36:13.394  I  media_quality service unavailable, skipping updatePictureProfile
+18:36:13.394  D  connecting to surface 0xb400006f62fac9a0, reason connectToSurface
+18:36:13.395  I  [c2.qti.avc.decoder] setting surface generation to 13966337
+18:36:13.395  D  disconnecting from surface 0xb400006f62fac9a0, reason connectToSurface(reconnect)
+18:36:13.395  D  connecting to surface 0xb400006f62fac990, reason connectToSurface(reconnect-with-listener)
+18:36:13.397  D  [c2.qti.avc.decoder] buffers are bound to CCodec for this session
+18:36:13.397  D  no c2 equivalents for log-session-id
+18:36:13.397  D  no c2 equivalents for importance
+18:36:13.397  D  no c2 equivalents for color-standard
+18:36:13.398  D  no c2 equivalents for csd-1
+18:36:13.398  D  no c2 equivalents for native-window
+18:36:13.398  D  no c2 equivalents for native-window-generation
+18:36:13.398  D  no c2 equivalents for flags
+18:36:13.399  D  c2 config diff is   c2::i32 algo.priority.value = 0
+                   c2::u32 default.color.matrix = 1
+                   c2::u32 default.color.primaries = 1
+                   c2::u32 default.color.range = 2
+                   c2::u32 default.color.transfer = 3
+                   c2::u32 raw.max-size.height = 1080
+                   c2::u32 raw.max-size.width = 1920
+18:36:13.399  W  query -- param skipped: index = 1107298332.
+18:36:13.400  D  client requested max input size 1566720, which is smaller than what component recommended (7077888); overriding with component recommendation.
+18:36:13.400  W  This behavior is subject to change. It is recommended that app developers double check whether the requested max input size is in reasonable range.
+18:36:13.400  D  encoding statistics level = 0
+18:36:13.400  D  setup formats input: AMessage(what = 0x00000000) = {
+                   int32_t feature-secure-playback = 0
+                   int32_t frame-rate = 30
+                   int32_t height = 1080
+                   int32_t level = 1
+                   int32_t max-input-size = 7077888
+                   string mime = "video/avc"
+                   int32_t priority = 0
+                   int32_t profile = 1
+                   int32_t width = 1920
+                   Rect crop(0, 0, 1919, 1079)
+                 }
+18:36:13.401  D  setup formats output: AMessage(what = 0x00000000) = {
+                   int32_t android._color-format = 2141391878
+                   int32_t android._video-scaling = 1
+                   int32_t android._dataspace = 260
+                   int32_t color-standard = 1
+                   int32_t color-range = 2
+                   int32_t color-transfer = 3
+                   int32_t sar-height = 1
+                   int32_t rotation-degrees = 0
+                   Buffer hdr-static-info = {
+                     00000000:  00 50 c3 50 c3 50 c3 50  c3 50 c3 50 c3 50 c3 50  .P.P.P.P.P.P.P.P
+                     00000010:  c3 01 00 10 27 01 00 01  00                       ....'....
+                   }
+                   int32_t sar-width = 1
+                   Rect crop(0, 0, 1919, 1079)
+                   int32_t width = 1920
+                   int32_t feature-secure-playback = 0
+                   int32_t frame-rate = 30
+                   int32_t height = 1080
+                   int32_t max-height = 1080
+                   int32_t max-width = 1920
+                   string mime = "video/raw"
+                   int32_t priority = 0
+                   int32_t color-format = 2130708361
+                 }
+18:36:13.401  I  query failed after returning 18 values (BAD_INDEX)
+18:36:13.401  E  Failed to query component interface for required system resources: 6
+18:36:13.402  D  keep callback message for reclaim
+18:36:13.412  W  query -- param skipped: index = 1342179345.
+18:36:13.412  W  query -- param skipped: index = 2415921170.
+18:36:13.413  W  query -- param skipped: index = 1610614798.
+18:36:13.413  D  [c2.qti.avc.decoder#839] Query input allocators returned 0 params => BAD_INDEX (6)
+18:36:13.413  D  Using ION
+18:36:13.414  D  [c2.qti.avc.decoder#839] Created input block pool with allocatorID 16 => poolID 17 - OK (0)
+18:36:13.414  D  [c2.qti.avc.decoder#839] Query output allocators returned 0 params => BAD_INDEX (6)
+18:36:13.415  D  [c2.qti.avc.decoder#839] Query output surface allocator returned 0 params => BAD_INDEX (6)
+18:36:13.415  I  [c2.qti.avc.decoder#839] Created output block pool with allocatorID 18 => poolID 45 - OK
+18:36:13.415  D  [c2.qti.avc.decoder#839] Configured output block pool ids 45 => OK
+18:36:13.416  D  remote graphic buffer migration 0/0
+18:36:13.416  D  setOutputSurface -- failed to set consumer usage (6/BAD_INDEX)
+18:36:13.416  D  setOutputSurface -- generation=13966337 consumer usage=0x900
+18:36:13.418  D  Surface configure completed
+18:36:13.424  I  Creating an asynchronous MediaCodec adapter for track type audio
+18:36:13.425  D  allocate(c2.android.aac.decoder)
+18:36:13.428  D  [c2.qti.avc.decoder#839] Ignoring stale input buffer done callback: last flush index = 0, frameIndex = 0
+18:36:13.428  I  setting up 'default' as default (vendor) store
+18:36:13.432  I  <-- 200 https://7tv.io/v3/users/kick/8492176 (501ms, unknown-length body)
+18:36:13.433  I  Created component [c2.android.aac.decoder] for [c2.android.aac.decoder]
+18:36:13.434  D  read media type: audio/mp4a-latm
+18:36:13.435  D  extent() != 1 for single value type: algo.buffers.max-count.values
+18:36:13.435  D  extent() != 1 for single value type: output.subscribed-indices.values
+18:36:13.435  D  extent() != 1 for single value type: input.buffers.allocator-ids.values
+18:36:13.436  D  extent() != 1 for single value type: output.buffers.allocator-ids.values
+18:36:13.436  D  extent() != 1 for single value type: algo.buffers.allocator-ids.values
+18:36:13.436  D  extent() != 1 for single value type: output.buffers.pool-ids.values
+18:36:13.436  D  extent() != 1 for single value type: algo.buffers.pool-ids.values
+18:36:13.438  I  query failed after returning 21 values (BAD_INDEX)
+18:36:13.438  D  c2 config diff is Dict {
+                   c2::u32 coded.aac-packaging.value = 0
+                   c2::u32 coded.bitrate.value = 64000
+                   c2::u32 coded.pl.level = 0
+                   c2::u32 coded.pl.profile = 8192
+                   c2::i32 coding.drc.album-mode.value = 0
+                   c2::float coding.drc.attenuation-factor.value = 1
+                   c2::float coding.drc.boost-factor.value = 1
+                   c2::i32 coding.drc.compression-mode.value = 3
+                   c2::i32 coding.drc.effect-type.value = 3
+                   c2::float coding.drc.encoded-level.value = 0.25
+                   c2::float coding.drc.reference-level.value = -16
+                   c2::u32 input.buffers.max-size.value = 8192
+                   c2::u32 input.delay.value = 0
+                   string input.media-type.value = "audio/mp4a-latm"
+                   c2::u32 output.delay.value = 2
+                   c2::float output.drc.output-loudness.value = 0.25
+                   c2::u32 output.large-frame.max-size = 0
+                   c2::u32 output.large-frame.threshold-size = 0
+                   string output.media-type.value = "audio/raw"
+                   c2::u32 raw.channel-count.value = 1
+                   c2::u32 raw.channel-mask.value = 0
+                   c2::u32 raw.max-channel-count.value = 8
+                   c2::u32 raw.sample-rate.value = 44100
+                 }
+18:36:13.440  I  MediaCodec will operate in async mode
+18:36:13.441  I  media_quality service unavailable, skipping updatePictureProfile
+18:36:13.441  D  [c2.android.aac.decoder] buffers are bound to CCodec for this session
+18:36:13.441  D  no c2 equivalents for log-session-id
+18:36:13.441  D  no c2 equivalents for importance
+18:36:13.441  D  no c2 equivalents for flags
+18:36:13.442  D  c2 config diff is   c2::u32 raw.channel-count.value = 2
+                   c2::u32 raw.sample-rate.value = 48000
+18:36:13.443  W  query -- param skipped: index = 1107298332.
+18:36:13.443  D  encoding statistics level = 0
+18:36:13.443  D  setup formats input: AMessage(what = 0x00000000) = {
+                   int32_t aac-drc-album-mode = 0
+                   int32_t aac-drc-boost-level = 127
+                   int32_t aac-drc-cut-level = 127
+                   int32_t aac-drc-effect-type = 3
+                   int32_t aac-encoded-target-level = -1
+                   int32_t aac-max-output-channel_count = 8
+                   int32_t aac-target-ref-level = 64
+                   int32_t bitrate = 64000
+                   int32_t channel-count = 2
+                   int32_t channel-mask = 0
+                   int32_t level = 0
+                   int32_t max-input-size = 8192
+                   int32_t max-output-channel-count = 8
+                   string mime = "audio/mp4a-latm"
+                   int32_t profile = 2
+                   int32_t sample-rate = 48000
+                 }
+18:36:13.444  D  setup formats output: AMessage(what = 0x00000000) = {
+                   int32_t aac-drc-album-mode = 0
+                   int32_t aac-drc-boost-level = 127
+                   int32_t aac-drc-cut-level = 127
+                   int32_t aac-drc-effect-type = 3
+                   int32_t aac-drc-output-loudness = -1
+                   int32_t aac-encoded-target-level = -1
+                   int32_t aac-max-output-channel_count = 8
+                   int32_t aac-target-ref-level = 64
+                   int32_t buffer-batch-max-output-size = 0
+                   int32_t buffer-batch-threshold-output-size = 0
+                   int32_t channel-count = 2
+                   int32_t channel-mask = 0
+                   int32_t max-output-channel-count = 8
+                   string mime = "audio/raw"
+                   int32_t sample-rate = 48000
+                   int32_t android._config-pcm-encoding = 2
+                 }
+18:36:13.444  I  query failed after returning 21 values (BAD_INDEX)
+18:36:13.444  E  Failed to query component interface for required system resources: 6
+18:36:13.445  D  keep callback message for reclaim
+18:36:13.445  W  query -- param skipped: index = 1342179345.
+18:36:13.446  W  query -- param skipped: index = 2415921170.
+18:36:13.446  W  query -- param skipped: index = 1610614798.
+18:36:13.446  D  [c2.android.aac.decoder#372] Created input block pool with allocatorID 16 => poolID 18 - OK (0)
+18:36:13.447  I  [c2.android.aac.decoder#372] Created output block pool with allocatorID 16 => poolID 122 - OK
+18:36:13.447  D  [c2.android.aac.decoder#372] Configured output block pool ids 122 => OK
+18:36:13.459  D  c2 config diff is   c2::u32 raw.channel-mask.value = 12
+18:36:13.459  D  [c2.android.aac.decoder#372:Output[N]] popFromStashAndRegister: at 1000000011666us, output format changed to AMessage(what = 0x00000000) = {
+                   int32_t aac-drc-album-mode = 0
+                   int32_t aac-drc-boost-level = 127
+                   int32_t aac-drc-cut-level = 127
+                   int32_t aac-drc-effect-type = 3
+                   int32_t aac-drc-output-loudness = -1
+                   int32_t aac-encoded-target-level = -1
+                   int32_t aac-max-output-channel_count = 8
+                   int32_t aac-target-ref-level = 64
+                   int32_t buffer-batch-max-output-size = 0
+                   int32_t buffer-batch-threshold-output-size = 0
+                   int32_t channel-count = 2
+                   int32_t channel-mask = 12
+                   int32_t max-output-channel-count = 8
+                   string mime = "audio/raw"
+                   int32_t sample-rate = 48000
+                   int32_t android._config-pcm-encoding = 2
+                 }
+18:36:13.479  I  hiddenapi: Accessing hidden method Landroid/media/AudioTrack;->getLatency()I (runtime_flags=0, domain=platform, api=unsupported) from Landroidx/media3/exoplayer/audio/AudioTrackPositionTracker; (domain=app, TargetSdkVersion=36) using reflection: allowed
+18:36:13.494  D  c2 config diff is   c2::u32 output.delay.value = 14
+                   c2::u32 raw.color.matrix = 1
+                   c2::u32 raw.color.primaries = 1
+                   c2::u32 raw.color.range = 2
+                   c2::u32 raw.color.transfer = 3
+                   c2::u32 raw.crop.height = 1080
+                   c2::u32 raw.crop.left = 0
+                   c2::u32 raw.crop.top = 0
+                   c2::u32 raw.crop.width = 1920
+18:36:13.494  D  set max dequeue count 25 from update
+18:36:13.520  E  attributionTag  not declared in manifest of com.github.andreyasadchy.xtra.debug
+18:36:13.522  E  attributionTag  not declared in manifest of com.github.andreyasadchy.xtra.debug
+18:36:13.571  I  <-- 200 https://7tv.io/v3/emote-sets/global (640ms, unknown-length body)
+18:36:13.612  D  getTimestamp_l(57): device stall time corrected using current time 27076779474160
+18:36:13.634  W  getTimestamp_l(57): retrograde timestamp time corrected, 27076789606036 < 27076789991504
+18:36:13.645  W  Unexpected start code prefix: 2324261
+18:36:13.646  W  Unexpected start code prefix: 3372837
+18:36:13.646  W  Unexpected start code prefix: 2324239
+18:36:13.650  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1401.ts
+18:36:13.668  I  <-- 206 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1401.ts (17ms, 4314788-byte body)
+18:36:13.953  W  Unexpected start code prefix: 2324283
+18:36:13.953  W  Unexpected start code prefix: 3372859
+18:36:13.953  W  Unexpected start code prefix: 2324261
+18:36:13.956  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1401.ts
+18:36:14.015  I  <-- 206 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1401.ts (58ms, 3947060-byte body)
+18:36:14.016  I  <-- 200 https://kick.com/api/v2/channels/uhsnow (1067ms, unknown-length body)
+18:36:14.029  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A08.048Z
+18:36:14.213  E  Cannot resume with ComponentInfo{com.github.andreyasadchy.xtra.debug/com.github.andreyasadchy.xtra.ui.player.PlaybackService}
+18:36:14.252  W  Unexpected start code prefix: 2324307
+18:36:14.253  W  Unexpected start code prefix: 3372883
+18:36:14.253  W  Unexpected start code prefix: 2324283
+18:36:14.258  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1401.ts
+18:36:14.277  I  <-- 206 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1401.ts (19ms, 4519708-byte body)
+18:36:14.418  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A08.048Z (389ms, unknown-length body)
+18:36:14.430  D  kickHistory source=7740660 start_time=2026-02-22T18:17:08.048Z messages=1 cursor=1771784336120795 sample=[emote:37226:KEKW]
+18:36:14.476  I  💾 Successful (DISK) - https://cdn.7tv.app/emote/01F61B1440000991F7SWQNMVX7/4x.webp
+18:36:14.607  W  Unexpected start code prefix: 2324329
+18:36:14.608  W  Unexpected start code prefix: 3372905
+18:36:14.608  W  Unexpected start code prefix: 2324307
+18:36:14.613  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1402.ts
+18:36:14.631  I  <-- 206 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1402.ts (18ms, 4225676-byte body)
+18:36:14.866  W  Unexpected start code prefix: 2324353
+18:36:14.866  W  Unexpected start code prefix: 3372929
+18:36:14.867  W  Unexpected start code prefix: 2324329
+18:36:14.871  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1402.ts
+18:36:14.890  I  <-- 206 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1402.ts (18ms, 4513128-byte body)
+18:36:15.125  W  Unexpected start code prefix: 2324375
+18:36:15.125  W  Unexpected start code prefix: 3372951
+18:36:15.125  W  Unexpected start code prefix: 2324353
+18:36:15.128  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1402.ts
+18:36:15.146  I  <-- 206 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1402.ts (17ms, 4702820-byte body)
+18:36:15.393  W  Unexpected start code prefix: 2324399
+18:36:15.393  W  Unexpected start code prefix: 3372975
+18:36:15.394  W  Unexpected start code prefix: 2324375
+18:36:15.398  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1403.ts
+18:36:15.419  I  <-- 206 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1403.ts (20ms, 4291288-byte body)
+18:36:15.896  W  Unexpected start code prefix: 2324421
+18:36:15.897  W  Unexpected start code prefix: 3372997
+18:36:15.897  W  Unexpected start code prefix: 2324399
+18:36:15.901  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1403.ts
+18:36:15.921  I  <-- 206 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1403.ts (19ms, 4506360-byte body)
+18:36:16.230  W  Unexpected start code prefix: 2324443
+18:36:16.230  W  Unexpected start code prefix: 3373019
+18:36:16.230  W  Unexpected start code prefix: 2324421
+18:36:16.234  I  --> GET https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1403.ts
+18:36:16.252  I  <-- 206 https://clips.kick.com/clips/1f/clip_01KJ391ABKWG0V3AKYZ8F9RN1C/1403.ts (17ms, 4119456-byte body)
+18:36:16.436  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A10.456Z
+18:36:16.503  W  Unexpected start code prefix: 2324467
+18:36:16.503  W  Unexpected start code prefix: 3373043
+18:36:16.504  W  Unexpected start code prefix: 2324443
+18:36:16.747  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A10.456Z (310ms, unknown-length body)
+18:36:16.755  D  kickHistory source=7740660 start_time=2026-02-22T18:17:10.456Z messages=1 cursor=1771784340746692 sample=[emote:3368352:lysiumSure][emote:3368352:lysiumSure][emote:3
+18:36:16.787  I  🧠 Successful (MEMORY_CACHE) - https://cdn.7tv.app/emote/01F61B1440000991F7SWQNMVX7/4x.webp
+18:36:16.789  I  --> GET https://files.kick.com/channel_subscriber_badges/658612/original
+18:36:16.864  I  <-- 304 https://files.kick.com/channel_subscriber_badges/658612/original (74ms, 0-byte body)
+18:36:16.877  I  ☁️ Successful (NETWORK) - https://files.kick.com/channel_subscriber_badges/658612/original
+18:36:18.499  D  bufferpool2 0xb400006f02f10e18 : 5(35389440 size) total buffers - 4(28311552 size) used buffers - 315/320 (recycle/alloc) - 5/320 (fetch/transfer)
+18:36:18.770  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A12.663Z
+18:36:18.907  D  bufferpool2 0xb400006f02f0e6c8 : 5(40960 size) total buffers - 1(8192 size) used buffers - 273/278 (recycle/alloc) - 5/277 (fetch/transfer)
+18:36:19.101  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A12.663Z (329ms, unknown-length body)
+18:36:19.107  D  kickHistory source=7740660 start_time=2026-02-22T18:17:12.663Z messages=1 cursor=1771784340746692 sample=[emote:3368352:lysiumSure][emote:3368352:lysiumSure][emote:3
+18:36:21.115  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A15.014Z
+18:36:21.456  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A15.014Z (339ms, unknown-length body)
+18:36:21.464  D  kickHistory source=7740660 start_time=2026-02-22T18:17:15.014Z messages=4 cursor=1771784341356082 sample=doomer? More like, boomer [emote:305040:Kappa]
+18:36:21.465  D  messageBadge type=founder normalized=founder version=1 direct=false resolved=true
+18:36:21.467  D  messageBadge type=sub_gifter normalized=sub_gifter version=42 direct=false resolved=true
+18:36:21.506  I  --> GET https://files.kick.com/channel_subscriber_badges/658614/original
+18:36:21.509  I  --> GET https://www.kickdatabase.com/kickBadges/subGifter25.svg
+18:36:21.511  I  🧠 Successful (MEMORY_CACHE) - https://files.kick.com/channel_subscriber_badges/658612/original
+18:36:21.514  I  🧠 Successful (MEMORY_CACHE) - https://cdn.7tv.app/emote/01F61B1440000991F7SWQNMVX7/4x.webp
+18:36:21.519  I  💾 Successful (DISK) - https://files.kick.com/emotes/305040/fullsize
+18:36:21.521  I  💾 Successful (DISK) - https://www.kickdatabase.com/kickBadges/founder.svg
+18:36:21.538  I  <-- 304 https://files.kick.com/channel_subscriber_badges/658614/original (31ms, 0-byte body)
+18:36:21.545  I  ☁️ Successful (NETWORK) - https://files.kick.com/channel_subscriber_badges/658614/original
+18:36:21.702  I  <-- 200 https://www.kickdatabase.com/kickBadges/subGifter25.svg (192ms, unknown-length body)
+18:36:21.715  I  ☁️ Successful (NETWORK) - https://www.kickdatabase.com/kickBadges/subGifter25.svg
+18:36:23.477  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A17.374Z
+18:36:23.537  D  bufferpool2 0xb400006f02f10e18 : 5(35389440 size) total buffers - 4(28311552 size) used buffers - 618/623 (recycle/alloc) - 5/623 (fetch/transfer)
+18:36:23.813  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A17.374Z (334ms, unknown-length body)
+18:36:23.827  D  kickHistory source=7740660 start_time=2026-02-22T18:17:17.374Z messages=4 cursor=1771784341356082 sample=doomer? More like, boomer [emote:305040:Kappa]
+18:36:23.829  D  messageBadge type=founder normalized=founder version=1 direct=false resolved=true
+18:36:23.832  D  messageBadge type=sub_gifter normalized=sub_gifter version=42 direct=false resolved=true
+18:36:23.948  D  bufferpool2 0xb400006f02f0e6c8 : 5(40960 size) total buffers - 1(8192 size) used buffers - 509/514 (recycle/alloc) - 5/513 (fetch/transfer)
+18:36:24.904  D  onInputBufferReleased: frameIndex not found (700); ignored
+18:36:25.838  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A19.735Z
+18:36:26.167  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A19.735Z (328ms, unknown-length body)
+18:36:26.178  D  kickHistory source=7740660 start_time=2026-02-22T18:17:19.735Z messages=4 cursor=1771784341356082 sample=doomer? More like, boomer [emote:305040:Kappa]
+18:36:26.181  D  messageBadge type=founder normalized=founder version=1 direct=false resolved=true
+18:36:26.182  D  messageBadge type=sub_gifter normalized=sub_gifter version=42 direct=false resolved=true
+18:36:28.191  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A22.083Z
+18:36:28.523  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A22.083Z (331ms, unknown-length body)
+18:36:28.527  D  kickHistory source=7740660 start_time=2026-02-22T18:17:22.083Z messages=1 cursor=1771784352062483 sample=its all over anyway, no reason to doom
+18:36:28.598  D  bufferpool2 0xb400006f02f10e18 : 5(35389440 size) total buffers - 5(35389440 size) used buffers - 922/927 (recycle/alloc) - 5/926 (fetch/transfer)
+18:36:29.428  D  bufferpool2 0xb400006f02f0e6c8 : 5(40960 size) total buffers - 1(8192 size) used buffers - 766/771 (recycle/alloc) - 5/770 (fetch/transfer)
+18:36:30.535  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A24.427Z
+18:36:30.877  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A24.427Z (341ms, unknown-length body)
+18:36:30.881  D  kickHistory source=7740660 start_time=2026-02-22T18:17:24.427Z messages=1 cursor=1771784352062483 sample=its all over anyway, no reason to doom
+18:36:32.888  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A26.784Z
+18:36:33.230  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A26.784Z (341ms, unknown-length body)
+18:36:33.232  D  kickHistory source=7740660 start_time=2026-02-22T18:17:26.784Z messages=0 cursor=1771784352075167 sample=null
+18:36:33.233  D  kickHistory emptyBody source=7740660 start_time=2026-02-22T18:17:26.784Z body={"data":{"messages":[],"cursor":"1771784352075167","pinned_message":null},"message":"OK"} 
+18:36:33.237  I  --> GET https://web.kick.com/api/v1/chat/7645377/history?start_time=2026-02-22T18%3A17%3A26.784Z
+18:36:33.540  I  <-- 200 https://web.kick.com/api/v1/chat/7645377/history?start_time=2026-02-22T18%3A17%3A26.784Z (302ms, unknown-length body)
+18:36:33.543  D  kickHistory source=7645377 start_time=2026-02-22T18:17:26.784Z messages=0 cursor= sample=null
+18:36:33.543  D  kickHistory emptyBody source=7645377 start_time=2026-02-22T18:17:26.784Z body={"data":{"messages":[],"cursor":"","pinned_message":null},"message":"OK"} 
+18:36:33.547  I  --> GET https://web.kick.com/api/v1/chat/uhsnow/history?start_time=2026-02-22T18%3A17%3A26.784Z
+18:36:33.641  D  bufferpool2 0xb400006f02f10e18 : 5(35389440 size) total buffers - 4(28311552 size) used buffers - 1224/1229 (recycle/alloc) - 5/1229 (fetch/transfer)
+18:36:33.793  I  <-- 400 https://web.kick.com/api/v1/chat/uhsnow/history?start_time=2026-02-22T18%3A17%3A26.784Z (245ms, 40-byte body)
+18:36:35.029  D  bufferpool2 0xb400006f02f0e6c8 : 5(40960 size) total buffers - 1(8192 size) used buffers - 1027/1032 (recycle/alloc) - 5/1031 (fetch/transfer)
+18:36:35.800  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A29.695Z
+18:36:36.100  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A29.695Z (299ms, unknown-length body)
+18:36:36.103  D  kickHistory source=7740660 start_time=2026-02-22T18:17:29.695Z messages=0 cursor=1771784352075167 sample=null
+18:36:36.103  D  kickHistory emptyBody source=7740660 start_time=2026-02-22T18:17:29.695Z body={"data":{"messages":[],"cursor":"1771784352075167","pinned_message":null},"message":"OK"} 
+18:36:36.108  I  --> GET https://web.kick.com/api/v1/chat/7645377/history?start_time=2026-02-22T18%3A17%3A29.695Z
+18:36:36.409  I  <-- 200 https://web.kick.com/api/v1/chat/7645377/history?start_time=2026-02-22T18%3A17%3A29.695Z (300ms, unknown-length body)
+18:36:36.411  D  kickHistory source=7645377 start_time=2026-02-22T18:17:29.695Z messages=0 cursor= sample=null
+18:36:36.412  D  kickHistory emptyBody source=7645377 start_time=2026-02-22T18:17:29.695Z body={"data":{"messages":[],"cursor":"","pinned_message":null},"message":"OK"} 
+18:36:36.416  I  --> GET https://web.kick.com/api/v1/chat/uhsnow/history?start_time=2026-02-22T18%3A17%3A29.695Z
+18:36:36.714  I  <-- 400 https://web.kick.com/api/v1/chat/uhsnow/history?start_time=2026-02-22T18%3A17%3A29.695Z (297ms, 40-byte body)
+18:36:38.672  D  bufferpool2 0xb400006f02f10e18 : 5(35389440 size) total buffers - 4(28311552 size) used buffers - 1526/1531 (recycle/alloc) - 5/1531 (fetch/transfer)
+18:36:38.720  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A32.613Z
+18:36:39.070  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A32.613Z (348ms, unknown-length body)
+18:36:39.075  D  kickHistory source=7740660 start_time=2026-02-22T18:17:32.613Z messages=1 cursor=1771784352075167 sample=Doomer? more like [emote:4147910:BBoomer]
+18:36:39.110  I  --> GET https://files.kick.com/emotes/4147910/fullsize
+18:36:39.120  D  https://www.kickdatabase.com/kickBadges/founder.svg: Memory cached image's size (16, 16) is smaller than the target size (4096, 4096).
+18:36:39.122  I  🧠 Successful (MEMORY_CACHE) - https://files.kick.com/channel_subscriber_badges/658614/original
+18:36:39.125  D  https://www.kickdatabase.com/kickBadges/subGifter25.svg: Memory cached image's size (16, 16) is smaller than the target size (4096, 4096).
+18:36:39.130  I  🧠 Successful (MEMORY_CACHE) - https://files.kick.com/emotes/305040/fullsize
+18:36:39.132  I  --> GET https://www.kickdatabase.com/kickBadges/subGifter25.svg
+18:36:39.135  I  🧠 Successful (MEMORY_CACHE) - https://files.kick.com/channel_subscriber_badges/658612/original
+18:36:39.136  I  <-- 200 https://files.kick.com/emotes/4147910/fullsize (25ms, 54894-byte body)
+18:36:39.138  I  🧠 Successful (MEMORY_CACHE) - https://cdn.7tv.app/emote/01F61B1440000991F7SWQNMVX7/4x.webp
+18:36:39.145  I  💾 Successful (DISK) - https://www.kickdatabase.com/kickBadges/founder.svg
+18:36:39.147  I  ☁️ Successful (NETWORK) - https://files.kick.com/emotes/4147910/fullsize
+18:36:39.174  I  <-- 304 https://www.kickdatabase.com/kickBadges/subGifter25.svg (41ms, 0-byte body)
+18:36:39.182  I  ☁️ Successful (NETWORK) - https://www.kickdatabase.com/kickBadges/subGifter25.svg
+18:36:40.510  D  bufferpool2 0xb400006f02f0e6c8 : 5(40960 size) total buffers - 1(8192 size) used buffers - 1284/1289 (recycle/alloc) - 5/1288 (fetch/transfer)
+18:36:41.085  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A34.981Z
+18:36:41.425  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A34.981Z (339ms, unknown-length body)
+18:36:41.430  D  kickHistory source=7740660 start_time=2026-02-22T18:17:34.981Z messages=1 cursor=1771784352075167 sample=Doomer? more like [emote:4147910:BBoomer]
+18:36:43.437  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A37.328Z
+18:36:43.704  D  bufferpool2 0xb400006f02f10e18 : 5(35389440 size) total buffers - 5(35389440 size) used buffers - 1828/1833 (recycle/alloc) - 5/1832 (fetch/transfer)
+18:36:43.781  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A37.328Z (342ms, unknown-length body)
+18:36:43.785  D  kickHistory source=7740660 start_time=2026-02-22T18:17:37.328Z messages=1 cursor=1771784358136666 sample=doom for that attention [emote:37226:KEKW]
+18:36:43.816  I  🧠 Successful (MEMORY_CACHE) - https://cdn.7tv.app/emote/01F61B1440000991F7SWQNMVX7/4x.webp
+18:36:45.707  D  bufferpool2 0xb400006f02f0e6c8 : 5(40960 size) total buffers - 1(8192 size) used buffers - 1529/1534 (recycle/alloc) - 5/1533 (fetch/transfer)
+18:36:45.794  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A39.687Z
+18:36:46.135  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A39.687Z (340ms, unknown-length body)
+18:36:46.140  D  kickHistory source=7740660 start_time=2026-02-22T18:17:39.687Z messages=1 cursor=1771784358136666 sample=doom for that attention [emote:37226:KEKW]
+18:36:48.148  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A42.041Z
+18:36:48.490  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A42.041Z (340ms, unknown-length body)
+18:36:48.492  D  kickHistory source=7740660 start_time=2026-02-22T18:17:42.041Z messages=0 cursor=1771784360283461 sample=null
+18:36:48.493  D  kickHistory emptyBody source=7740660 start_time=2026-02-22T18:17:42.041Z body={"data":{"messages":[],"cursor":"1771784360283461","pinned_message":null},"message":"OK"} 
+18:36:48.497  I  --> GET https://web.kick.com/api/v1/chat/7645377/history?start_time=2026-02-22T18%3A17%3A42.041Z
+18:36:48.743  D  bufferpool2 0xb400006f02f10e18 : 5(35389440 size) total buffers - 4(28311552 size) used buffers - 2130/2135 (recycle/alloc) - 5/2135 (fetch/transfer)
+18:36:48.797  I  <-- 200 https://web.kick.com/api/v1/chat/7645377/history?start_time=2026-02-22T18%3A17%3A42.041Z (300ms, unknown-length body)
+18:36:48.799  D  kickHistory source=7645377 start_time=2026-02-22T18:17:42.041Z messages=0 cursor= sample=null
+18:36:48.800  D  kickHistory emptyBody source=7645377 start_time=2026-02-22T18:17:42.041Z body={"data":{"messages":[],"cursor":"","pinned_message":null},"message":"OK"} 
+18:36:48.803  I  --> GET https://web.kick.com/api/v1/chat/uhsnow/history?start_time=2026-02-22T18%3A17%3A42.041Z
+18:36:49.104  I  <-- 400 https://web.kick.com/api/v1/chat/uhsnow/history?start_time=2026-02-22T18%3A17%3A42.041Z (300ms, 40-byte body)
+18:36:50.744  D  bufferpool2 0xb400006f02f0e6c8 : 5(40960 size) total buffers - 1(8192 size) used buffers - 1764/1769 (recycle/alloc) - 5/1768 (fetch/transfer)
+18:36:51.112  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A45.006Z
+18:36:51.460  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A45.006Z (346ms, unknown-length body)
+18:36:51.462  D  kickHistory source=7740660 start_time=2026-02-22T18:17:45.006Z messages=0 cursor=1771784360283461 sample=null
+18:36:51.462  D  kickHistory emptyBody source=7740660 start_time=2026-02-22T18:17:45.006Z body={"data":{"messages":[],"cursor":"1771784360283461","pinned_message":null},"message":"OK"} 
+18:36:51.466  I  --> GET https://web.kick.com/api/v1/chat/7645377/history?start_time=2026-02-22T18%3A17%3A45.006Z
+18:36:51.768  I  <-- 200 https://web.kick.com/api/v1/chat/7645377/history?start_time=2026-02-22T18%3A17%3A45.006Z (300ms, unknown-length body)
+18:36:51.770  D  kickHistory source=7645377 start_time=2026-02-22T18:17:45.006Z messages=0 cursor= sample=null
+18:36:51.771  D  kickHistory emptyBody source=7645377 start_time=2026-02-22T18:17:45.006Z body={"data":{"messages":[],"cursor":"","pinned_message":null},"message":"OK"} 
+18:36:51.775  I  --> GET https://web.kick.com/api/v1/chat/uhsnow/history?start_time=2026-02-22T18%3A17%3A45.006Z
+18:36:52.074  I  <-- 400 https://web.kick.com/api/v1/chat/uhsnow/history?start_time=2026-02-22T18%3A17%3A45.006Z (298ms, 40-byte body)
+18:36:53.791  D  bufferpool2 0xb400006f02f10e18 : 5(35389440 size) total buffers - 5(35389440 size) used buffers - 2434/2439 (recycle/alloc) - 5/2437 (fetch/transfer)
+18:36:54.081  I  --> GET https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A47.970Z
+18:36:54.430  I  <-- 200 https://web.kick.com/api/v1/chat/7740660/history?start_time=2026-02-22T18%3A17%3A47.970Z (348ms, unknown-length body)
+18:36:54.433  D  kickHistory source=7740660 start_time=2026-02-22T18:17:47.970Z messages=0 cursor=1771784360283461 sample=null
+18:36:54.433  D  kickHistory emptyBody source=7740660 start_time=2026-02-22T18:17:47.970Z body={"data":{"messages":[],"cursor":"1771784360283461","pinned_message":null},"message":"OK"} 
+18:36:54.437  I  --> GET https://web.kick.com/api/v1/chat/7645377/history?start_time=2026-02-22T18%3A17%3A47.970Z
+18:36:54.737  I  <-- 200 https://web.kick.com/api/v1/chat/7645377/history?start_time=2026-02-22T18%3A17%3A47.970Z (299ms, unknown-length body)
+18:36:54.740  D  kickHistory source=7645377 start_time=2026-02-22T18:17:47.970Z messages=0 cursor= sample=null
+18:36:54.741  D  kickHistory emptyBody source=7645377 start_time=2026-02-22T18:17:47.970Z body={"data":{"messages":[],"cursor":"","pinned_message":null},"message":"OK"} 
+18:36:54.745  I  --> GET https://web.kick.com/api/v1/chat/uhsnow/history?start_time=2026-02-22T18%3A17%3A47.970Z
+18:36:54.870  D  stop(57): called with 1999872 frames delivered
+18:36:54.871  E  attributionTag  not declared in manifest of com.github.andreyasadchy.xtra.debug
+18:36:54.872  E  attributionTag  not declared in manifest of com.github.andreyasadchy.xtra.debug
+18:36:55.043  I  <-- 400 https://web.kick.com/api/v1/chat/uhsnow/history?start_time=2026-02-22T18%3A17%3A47.970Z (298ms, 40-byte body)

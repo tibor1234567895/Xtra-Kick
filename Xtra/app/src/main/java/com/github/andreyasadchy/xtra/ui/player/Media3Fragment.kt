@@ -31,6 +31,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
+import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
@@ -153,6 +154,13 @@ class Media3Fragment : PlayerFragment() {
                     updateProgress()
                     if (!prefs.getBoolean(C.PLAYER_KEEP_SCREEN_ON_WHEN_PAUSED, false) && canEnterPictureInPicture()) {
                         requireView().keepScreenOn = isPlaying
+                    }
+                    if (videoType != STREAM) {
+                        if (isPlaying) {
+                            chatFragment?.startReplayChatLoad()
+                        } else {
+                            chatFragment?.stopReplayChat()
+                        }
                     }
                 }
 
@@ -349,6 +357,19 @@ class Media3Fragment : PlayerFragment() {
                     Log.e(tag, "Player error", error)
                     when (videoType) {
                         STREAM -> {
+                            if (isBehindLiveWindowError(error)) {
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    runCatching {
+                                        val wasPlaying = player?.playWhenReady == true
+                                        seekToLivePosition()
+                                        player?.prepare()
+                                        player?.playWhenReady = wasPlaying
+                                    }.onFailure {
+                                        restartPlayer()
+                                    }
+                                }
+                                return
+                            }
                             player?.sendCustomCommand(
                                 SessionCommand(PlaybackService.GET_ERROR_CODE, Bundle.EMPTY),
                                 Bundle.EMPTY
@@ -1069,6 +1090,17 @@ class Media3Fragment : PlayerFragment() {
         if (videoType != STREAM && isResumed) {
             player?.stop()
         }
+    }
+
+    private fun isBehindLiveWindowError(error: PlaybackException): Boolean {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is BehindLiveWindowException) {
+                return true
+            }
+            cause = cause.cause
+        }
+        return false
     }
 
     companion object {

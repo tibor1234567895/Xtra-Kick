@@ -11,6 +11,7 @@ import com.github.andreyasadchy.xtra.graphql.type.ClipsPeriod
 import com.github.andreyasadchy.xtra.model.ui.SortChannel
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.SortChannelRepository
 import com.github.andreyasadchy.xtra.repository.datasource.ChannelClipsDataSource
 import com.github.andreyasadchy.xtra.ui.channel.ChannelPagerFragmentArgs
@@ -31,6 +32,7 @@ class ChannelClipsViewModel @Inject constructor(
     private val sortChannelRepository: SortChannelRepository,
     private val graphQLRepository: GraphQLRepository,
     private val helixRepository: HelixRepository,
+    private val kickRepository: KickRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -86,6 +88,7 @@ class ChannelClipsViewModel @Inject constructor(
                 graphQLRepository = graphQLRepository,
                 helixHeaders = TwitchApiHelper.getHelixHeaders(applicationContext),
                 helixRepository = helixRepository,
+                kickRepository = kickRepository,
                 enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                 apiPref = (applicationContext.prefs().getString(C.API_PREFS_CHANNEL_CLIPS, null) ?: C.DEFAULT_API_PREFS_CHANNEL_CLIPS).split(',').mapNotNull {
                     val split = it.split(':')

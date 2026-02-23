@@ -41,7 +41,10 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.Credentials
@@ -877,6 +880,13 @@ class PlayerRepository @Inject constructor(
         )
     }
 
+    suspend fun loadBttvEmotesByLogin(networkLibrary: String?, channelLogin: String, useWebp: Boolean): List<Emote> = withContext(Dispatchers.IO) {
+        val twitchUserId = runCatching {
+            resolveTwitchUserIdFromFfzRoom(networkLibrary, channelLogin)
+        }.getOrNull() ?: return@withContext emptyList()
+        loadBttvEmotes(networkLibrary, twitchUserId, useWebp)
+    }
+
     private fun parseBttvEmotes(response: List<BttvResponse>, useWebp: Boolean, source: Int): List<Emote> {
         val list = listOf("IceCold", "SoSnowy", "SantaHat", "TopHat", "CandyCane", "ReinDeer", "cvHazmat", "cvMask")
         return response.mapNotNull { emote ->
@@ -940,43 +950,67 @@ class PlayerRepository @Inject constructor(
     }
 
     suspend fun loadFfzEmotes(networkLibrary: String?, channelId: String, useWebp: Boolean): List<Emote> = withContext(Dispatchers.IO) {
-        val response = when {
+        val response = loadFfzChannelResponse(networkLibrary, "https://api.frankerfacez.com/v1/room/id/${channelId}")
+        response.sets.entries.flatMap {
+            it.value.emoticons?.let { emotes -> parseFfzEmotes(emotes, useWebp, Emote.CHANNEL_FFZ) } ?: emptyList()
+        }
+    }
+
+    suspend fun loadFfzEmotesByLogin(networkLibrary: String?, channelLogin: String, useWebp: Boolean): List<Emote> = withContext(Dispatchers.IO) {
+        val response = loadFfzChannelResponse(networkLibrary, "https://api.frankerfacez.com/v1/room/${channelLogin}")
+        response.sets.entries.flatMap {
+            it.value.emoticons?.let { emotes -> parseFfzEmotes(emotes, useWebp, Emote.CHANNEL_FFZ) } ?: emptyList()
+        }
+    }
+
+    private suspend fun loadFfzChannelResponse(networkLibrary: String?, url: String): FfzChannelResponse {
+        return json.decodeFromString(loadUrlAsString(networkLibrary, url))
+    }
+
+    private suspend fun resolveTwitchUserIdFromFfzRoom(networkLibrary: String?, channelLogin: String): String? {
+        val response = loadUrlAsString(networkLibrary, "https://api.frankerfacez.com/v1/room/${channelLogin}")
+        return json.parseToJsonElement(response)
+            .jsonObject["room"]
+            ?.jsonObject
+            ?.get("twitch_id")
+            ?.jsonPrimitive
+            ?.contentOrNull
+    }
+
+    private suspend fun loadUrlAsString(networkLibrary: String?, url: String): String {
+        return when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                 val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.frankerfacez.com/v1/room/id/${channelId}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                    httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
                         addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                     }.build().start()
                 }
-                json.decodeFromString<FfzChannelResponse>(String(response.second))
+                String(response.second)
             }
             networkLibrary == "Cronet" && cronetEngine != null -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.frankerfacez.com/v1/room/id/${channelId}", request.callback, cronetExecutor).apply {
+                    cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).apply {
                         addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                     }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<FfzChannelResponse>(response)
+                    request.future.get().responseBody as String
                 } else {
                     val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.frankerfacez.com/v1/room/id/${channelId}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
+                        cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
                             addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                         }.build().start()
                     }
-                    json.decodeFromString<FfzChannelResponse>(String(response.second))
+                    String(response.second)
                 }
             }
             else -> {
                 okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.frankerfacez.com/v1/room/id/${channelId}")
+                    url(url)
                     header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                 }.build()).execute().use { response ->
-                    json.decodeFromString<FfzChannelResponse>(response.body.string())
+                    response.body.string()
                 }
             }
-        }
-        response.sets.entries.flatMap {
-            it.value.emoticons?.let { emotes -> parseFfzEmotes(emotes, useWebp, Emote.CHANNEL_FFZ) } ?: emptyList()
         }
     }
 

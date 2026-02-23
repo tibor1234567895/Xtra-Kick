@@ -41,6 +41,7 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsManifest
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import com.github.andreyasadchy.xtra.R
@@ -158,6 +159,13 @@ class ExoPlayerFragment : PlayerFragment() {
                             updateProgress()
                             if (!prefs.getBoolean(C.PLAYER_KEEP_SCREEN_ON_WHEN_PAUSED, false) && canEnterPictureInPicture()) {
                                 requireView().keepScreenOn = isPlaying
+                            }
+                            if (videoType != STREAM) {
+                                if (isPlaying) {
+                                    chatFragment?.startReplayChatLoad()
+                                } else {
+                                    chatFragment?.stopReplayChat()
+                                }
                             }
                         }
 
@@ -347,6 +355,19 @@ class ExoPlayerFragment : PlayerFragment() {
                             Log.e(tag, "Player error", error)
                             when (videoType) {
                                 STREAM -> {
+                                    if (isBehindLiveWindowError(error)) {
+                                        viewLifecycleOwner.lifecycleScope.launch {
+                                            runCatching {
+                                                val wasPlaying = player?.playWhenReady == true
+                                                seekToLivePosition()
+                                                player?.prepare()
+                                                player?.playWhenReady = wasPlaying
+                                            }.onFailure {
+                                                restartPlayer()
+                                            }
+                                        }
+                                        return
+                                    }
                                     val responseCode = (player?.playerError?.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode ?: 0
                                     val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                                     val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
@@ -611,25 +632,31 @@ class ExoPlayerFragment : PlayerFragment() {
             }
             playbackService?.videoId = null
             playbackService?.offlineVideoId = null
-            player.setMediaSource(
-                ProgressiveMediaSource.Factory(
-                    DefaultDataSource.Factory(
-                        requireContext(),
-                        viewModel.getDataSourceFactory(prefs.getString(C.NETWORK_LIBRARY, "OkHttp"))
-                    )
-                ).createMediaSource(
-                    MediaItem.Builder().apply {
-                        setUri(url?.toUri())
-                        setMediaMetadata(
-                            MediaMetadata.Builder().apply {
-                                setTitle(requireArguments().getString(KEY_TITLE))
-                                setArtist(requireArguments().getString(KEY_CHANNEL_NAME))
-                                setArtworkUri(requireArguments().getString(KEY_CHANNEL_LOGO)?.toUri())
-                            }.build()
-                        )
+            val mediaItem = MediaItem.Builder().apply {
+                setUri(url?.toUri())
+                if (url?.contains(".m3u8", ignoreCase = true) == true) {
+                    setMimeType(MimeTypes.APPLICATION_M3U8)
+                }
+                setMediaMetadata(
+                    MediaMetadata.Builder().apply {
+                        setTitle(requireArguments().getString(KEY_TITLE))
+                        setArtist(requireArguments().getString(KEY_CHANNEL_NAME))
+                        setArtworkUri(requireArguments().getString(KEY_CHANNEL_LOGO)?.toUri())
                     }.build()
                 )
+            }.build()
+            val dataSourceFactory = DefaultDataSource.Factory(
+                requireContext(),
+                viewModel.getDataSourceFactory(prefs.getString(C.NETWORK_LIBRARY, "OkHttp"))
             )
+            val mediaSource = if (url?.contains(".m3u8", ignoreCase = true) == true) {
+                HlsMediaSource.Factory(dataSourceFactory).apply {
+                    setPlaylistParserFactory(CustomHlsPlaylistParserFactory())
+                }.createMediaSource(mediaItem)
+            } else {
+                ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+            }
+            player.setMediaSource(mediaSource)
             player.volume = prefs.getInt(C.PLAYER_VOLUME, 100) / 100f
             player.setPlaybackSpeed(prefs.getFloat(C.PLAYER_SPEED, 1f))
             player.prepare()
@@ -1087,6 +1114,17 @@ class ExoPlayerFragment : PlayerFragment() {
         if (videoType != STREAM && isResumed) {
             player?.stop()
         }
+    }
+
+    private fun isBehindLiveWindowError(error: PlaybackException): Boolean {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is BehindLiveWindowException) {
+                return true
+            }
+            cause = cause.cause
+        }
+        return false
     }
 
     companion object {

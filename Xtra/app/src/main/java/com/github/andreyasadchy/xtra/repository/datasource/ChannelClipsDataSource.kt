@@ -6,6 +6,7 @@ import com.github.andreyasadchy.xtra.graphql.type.ClipsPeriod
 import com.github.andreyasadchy.xtra.model.ui.Clip
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.util.C
 import kotlin.math.max
 
@@ -20,6 +21,7 @@ class ChannelClipsDataSource(
     private val graphQLRepository: GraphQLRepository,
     private val helixHeaders: Map<String, String>,
     private val helixRepository: HelixRepository,
+    private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
     private val networkLibrary: String?,
@@ -28,6 +30,26 @@ class ChannelClipsDataSource(
     private var offset: String? = null
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Clip> {
+        if (!channelLogin.isNullOrBlank()) {
+            return try {
+                val list = kickRepository.getChannelClips(
+                    channelSlug = channelLogin,
+                    channelId = channelId,
+                    limit = params.loadSize
+                )
+                LoadResult.Page(
+                    data = list,
+                    prevKey = null,
+                    nextKey = null
+                )
+            } catch (_: Exception) {
+                LoadResult.Page(
+                    data = emptyList(),
+                    prevKey = null,
+                    nextKey = null
+                )
+            }
+        }
         return if (!offset.isNullOrBlank()) {
             try {
                 loadFromApi(api, params)

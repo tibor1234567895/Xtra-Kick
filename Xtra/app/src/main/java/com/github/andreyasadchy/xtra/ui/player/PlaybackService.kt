@@ -31,6 +31,7 @@ import androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist
 import androidx.media3.exoplayer.hls.playlist.HlsMultivariantPlaylist
 import androidx.media3.exoplayer.hls.playlist.HlsPlaylist
 import androidx.media3.exoplayer.hls.playlist.HlsPlaylistParserFactory
+import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.ParsingLoadable
@@ -145,6 +146,9 @@ class PlaybackService : MediaSessionService() {
 
                 override fun onPlayerError(error: PlaybackException) {
                     if (background) {
+                        if (isBehindLiveWindowError(error)) {
+                            player.seekToDefaultPosition()
+                        }
                         player.prepare()
                     }
                 }
@@ -406,35 +410,41 @@ class PlaybackService : MediaSessionService() {
                                 videoId = null
                                 offlineVideoId = null
                                 val networkLibrary = prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-                                player.setMediaSource(
-                                    ProgressiveMediaSource.Factory(
-                                        DefaultDataSource.Factory(
-                                            this@PlaybackService,
-                                            when {
-                                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                                    HttpEngineDataSource.Factory(httpEngine!!.get(), cronetExecutor, null, null) { false }
-                                                }
-                                                networkLibrary == "Cronet" && cronetEngine != null -> {
-                                                    CronetDataSource.Factory(cronetEngine!!.get(), cronetExecutor, null, null) { false }
-                                                }
-                                                else -> {
-                                                    OkHttpDataSource.Factory(okHttpClient, null) { false }
-                                                }
-                                            }
-                                        )
-                                    ).createMediaSource(
-                                        MediaItem.Builder().apply {
-                                            setUri(uri?.toUri())
-                                            setMediaMetadata(
-                                                MediaMetadata.Builder().apply {
-                                                    setTitle(title)
-                                                    setArtist(channelName)
-                                                    setArtworkUri(channelLogo?.toUri())
-                                                }.build()
-                                            )
+                                val dataSourceFactory = DefaultDataSource.Factory(
+                                    this@PlaybackService,
+                                    when {
+                                        networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                                            HttpEngineDataSource.Factory(httpEngine!!.get(), cronetExecutor, null, null) { false }
+                                        }
+                                        networkLibrary == "Cronet" && cronetEngine != null -> {
+                                            CronetDataSource.Factory(cronetEngine!!.get(), cronetExecutor, null, null) { false }
+                                        }
+                                        else -> {
+                                            OkHttpDataSource.Factory(okHttpClient, null) { false }
+                                        }
+                                    }
+                                )
+                                val mediaItem = MediaItem.Builder().apply {
+                                    setUri(uri?.toUri())
+                                    if (uri?.contains(".m3u8", ignoreCase = true) == true) {
+                                        setMimeType(MimeTypes.APPLICATION_M3U8)
+                                    }
+                                    setMediaMetadata(
+                                        MediaMetadata.Builder().apply {
+                                            setTitle(title)
+                                            setArtist(channelName)
+                                            setArtworkUri(channelLogo?.toUri())
                                         }.build()
                                     )
-                                )
+                                }.build()
+                                val mediaSource = if (uri?.contains(".m3u8", ignoreCase = true) == true) {
+                                    HlsMediaSource.Factory(dataSourceFactory).apply {
+                                        setPlaylistParserFactory(CustomHlsPlaylistParserFactory())
+                                    }.createMediaSource(mediaItem)
+                                } else {
+                                    ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+                                }
+                                player.setMediaSource(mediaSource)
                                 session.player.volume = prefs().getInt(C.PLAYER_VOLUME, 100) / 100f
                                 session.player.setPlaybackSpeed(prefs().getFloat(C.PLAYER_SPEED, 1f))
                                 session.player.prepare()
@@ -662,6 +672,17 @@ class PlaybackService : MediaSessionService() {
             mediaSession = null
         }
         super.onDestroy()
+    }
+
+    private fun isBehindLiveWindowError(error: PlaybackException): Boolean {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is BehindLiveWindowException) {
+                return true
+            }
+            cause = cause.cause
+        }
+        return false
     }
 
     class CustomHlsPlaylistParserFactory(): HlsPlaylistParserFactory {

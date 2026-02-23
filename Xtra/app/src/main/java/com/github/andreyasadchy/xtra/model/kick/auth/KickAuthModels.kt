@@ -53,13 +53,24 @@ data class KickTokenIntrospectResponse(
 @Serializable
 data class KickChatSendRequest(
     @SerialName("broadcaster_user_id")
-    val broadcasterUserId: Int,
+    val broadcasterUserId: Long,
     val content: String,
     val type: String = "user",
+    @SerialName("reply_to_message_id")
+    val replyToMessageId: String? = null,
 )
 
 @Serializable
 data class KickChatSendResponse(
+    val data: KickChatSendData? = null,
     val status: String? = null,
     val message: String? = null,
+)
+
+@Serializable
+data class KickChatSendData(
+    @SerialName("is_sent")
+    val isSent: Boolean? = null,
+    @SerialName("message_id")
+    val messageId: String? = null,
 )

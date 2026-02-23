@@ -12,12 +12,10 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.github.andreyasadchy.xtra.R
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.NotificationUsersRepository
 import com.github.andreyasadchy.xtra.repository.ShownNotificationsRepository
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -36,21 +34,14 @@ class LiveNotificationWorker @AssistedInject constructor(
     lateinit var notificationUsersRepository: NotificationUsersRepository
 
     @Inject
-    lateinit var graphQLRepository: GraphQLRepository
-
-    @Inject
-    lateinit var helixRepository: HelixRepository
+    lateinit var kickRepository: KickRepository
 
     private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     override suspend fun doWork(): Result {
-        val streams = shownNotifications.getNewStreams(
+        val streams = shownNotifications.getNewKickStreams(
             notificationUsersRepository = notificationUsersRepository,
-            networkLibrary = context.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            gqlHeaders = TwitchApiHelper.getGQLHeaders(context, true),
-            graphQLRepository = graphQLRepository,
-            helixHeaders = TwitchApiHelper.getHelixHeaders(context),
-            helixRepository = helixRepository
+            kickRepository = kickRepository,
         )
         if (streams.isNotEmpty()) {
             val channelId = context.getString(R.string.notification_live_channel_id)

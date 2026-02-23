@@ -76,8 +76,9 @@ class ChannelPagerViewModel @Inject constructor(
     fun loadStream(networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (_stream.value == null) {
             viewModelScope.launch {
-                _stream.value = try {
-                    args.channelLogin?.let { channelLogin ->
+                _stream.value = if (!args.channelLogin.isNullOrBlank()) {
+                    try {
+                        val channelLogin = args.channelLogin!!
                         val channel = kickRepository.getChannel(channelLogin)
                         val stream = kickRepository.toStream(channel)
                         Stream(
@@ -105,8 +106,10 @@ class ChannelPagerViewModel @Inject constructor(
                                 isLive = channel.livestream != null,
                             )
                         )
-                    } ?: throw Exception()
-                } catch (_: Exception) {
+                    } catch (_: Exception) {
+                        null
+                    }
+                } else {
                     try {
                         val response = graphQLRepository.loadQueryUserChannelPage(networkLibrary, gqlHeaders, args.channelId, if (args.channelId.isNullOrBlank()) args.channelLogin else null)
                         if (enableIntegrity && integrity.value == null) {
@@ -186,11 +189,13 @@ class ChannelPagerViewModel @Inject constructor(
     fun loadUser(networkLibrary: String?, helixHeaders: Map<String, String>) {
         if (_user.value == null) {
             viewModelScope.launch {
-                _user.value = try {
-                    args.channelLogin?.let { channelLogin ->
-                        kickRepository.getChannel(channelLogin).let { kickRepository.toUser(it) }
-                    } ?: throw Exception()
-                } catch (_: Exception) {
+                _user.value = if (!args.channelLogin.isNullOrBlank()) {
+                    try {
+                        kickRepository.getChannel(args.channelLogin!!).let { kickRepository.toUser(it) }
+                    } catch (_: Exception) {
+                        null
+                    }
+                } else {
                     if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                         try {
                             helixRepository.getUsers(

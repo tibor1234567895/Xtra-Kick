@@ -59,13 +59,16 @@ class GamePagerViewModel @Inject constructor(
     fun loadGame(networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (_game.value == null) {
             viewModelScope.launch {
+                val queryId = args.gameId.takeIf { args.gameSlug.isNullOrBlank() }
+                val querySlug = args.gameSlug
+                val queryName = args.gameName.takeIf { queryId.isNullOrBlank() && querySlug.isNullOrBlank() }
                 _game.value = try {
                     val response = graphQLRepository.loadQueryGame(
                         networkLibrary = networkLibrary,
                         headers = gqlHeaders,
-                        id = args.gameId,
-                        slug = args.gameSlug.takeIf { args.gameId.isNullOrBlank() },
-                        name = args.gameName.takeIf { args.gameId.isNullOrBlank() && args.gameSlug.isNullOrBlank() },
+                        id = queryId,
+                        slug = querySlug,
+                        name = queryName,
                     )
                     if (enableIntegrity && integrity.value == null) {
                         response.errors?.find { it.message == "failed integrity check" }?.let {
@@ -96,8 +99,8 @@ class GamePagerViewModel @Inject constructor(
                             helixRepository.getGames(
                                 networkLibrary = networkLibrary,
                                 headers = helixHeaders,
-                                ids = args.gameId?.let { listOf(it) },
-                                names = if (args.gameId.isNullOrBlank()) args.gameName?.let { listOf(it) } else null
+                                ids = queryId?.let { listOf(it) },
+                                names = if (queryId.isNullOrBlank()) args.gameName?.let { listOf(it) } else null
                             ).data.firstOrNull()?.let {
                                 Game(
                                     gameId = it.id,
@@ -118,13 +121,16 @@ class GamePagerViewModel @Inject constructor(
         if (_isFollowing.value == null) {
             viewModelScope.launch {
                 try {
+                    val queryId = gameId.takeIf { gameSlug.isNullOrBlank() }
+                    val querySlug = gameSlug
+                    val queryName = gameName.takeIf { queryId.isNullOrBlank() && querySlug.isNullOrBlank() }
                     val isFollowing = if (setting == 0 && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                         graphQLRepository.loadQueryFollowingGame(
                             networkLibrary = networkLibrary,
                             headers = gqlHeaders,
-                            id = gameId,
-                            slug = gameSlug.takeIf { gameId.isNullOrBlank() },
-                            name = gameName.takeIf { gameId.isNullOrBlank() && gameSlug.isNullOrBlank() },
+                            id = queryId,
+                            slug = querySlug,
+                            name = queryName,
                         ).data?.game?.self?.follow?.followedAt != null
                     } else {
                         gameId?.let {

@@ -62,6 +62,8 @@ class KickChannelResponse(
     val followersCount: Int? = null,
     @SerialName("banner_image")
     val bannerImage: KickBanner? = null,
+    @SerialName("recent_categories")
+    val recentCategories: List<KickSubcategory>? = null,
     @SerialName("subscriber_badges")
     val subscriberBadges: List<KickChannelBadge>? = null,
     @SerialName("founder_badges")
@@ -154,6 +156,13 @@ class KickChannelBadge(
 class KickUser(
     val id: Long? = null,
     val username: String? = null,
+    val bio: String? = null,
+    val instagram: String? = null,
+    val twitter: String? = null,
+    val youtube: String? = null,
+    val discord: String? = null,
+    val tiktok: String? = null,
+    val facebook: String? = null,
     @SerialName("profilepic")
     val profilePic: String? = null,
     @SerialName("profile_picture")
@@ -182,6 +191,9 @@ class KickMessage(
     @SerialName("user_id")
     val userId: Long? = null,
     val content: String? = null,
+    val message: String? = null,
+    val text: String? = null,
+    val body: String? = null,
     val type: String? = null,
     @SerialName("created_at")
     val createdAt: String? = null,

@@ -34,6 +34,7 @@ import androidx.media3.common.util.Util
 import androidx.media3.datasource.DataSourceBitmapLoader
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.session.CacheBitmapLoader
 import androidx.media3.session.DefaultMediaNotificationProvider
 import com.github.andreyasadchy.xtra.R
@@ -133,6 +134,9 @@ class ExoPlayerService : Service() {
                 override fun onPlayerError(error: PlaybackException) {
                     updatePlaybackState()
                     if (background) {
+                        if (isBehindLiveWindowError(error)) {
+                            player.seekToDefaultPosition()
+                        }
                         player.prepare()
                     }
                 }
@@ -623,6 +627,17 @@ class ExoPlayerService : Service() {
         notificationBitmapCallback = null
         applicationHandler?.removeCallbacksAndMessages(null)
         notificationManager?.cancel(NOTIFICATION_ID)
+    }
+
+    private fun isBehindLiveWindowError(error: PlaybackException): Boolean {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is BehindLiveWindowException) {
+                return true
+            }
+            cause = cause.cause
+        }
+        return false
     }
 
     companion object {
