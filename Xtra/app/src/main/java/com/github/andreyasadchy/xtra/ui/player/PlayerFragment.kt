@@ -1102,7 +1102,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
             }
             val currentChatFragment = (childFragmentManager.findFragmentById(R.id.chatFragmentContainer) as? ChatFragment)
-            if (currentChatFragment != null) {
+            if (currentChatFragment != null && videoType != CLIP) {
                 chatFragment = currentChatFragment
             } else {
                 val fragment = when (videoType) {
@@ -1129,7 +1129,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             requireArguments().getInt(KEY_VOD_OFFSET).takeIf { it != -1 },
                             isKickClip,
                             isKickClip,
-                            requireArguments().getString(KEY_CLIP_REPLAY_START_TIME) ?: requireArguments().getString(KEY_UPLOAD_DATE)
+                            requireArguments().getString(KEY_CLIP_REPLAY_START_TIME) ?: requireArguments().getString(KEY_UPLOAD_DATE),
+                            clipUrl
                         )
                     }
                     OFFLINE_VIDEO -> ChatFragment.newLocalInstance(

@@ -804,7 +804,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
                             getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                             kickClipReplayFallback = kickClipReplayFallback,
-                            kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME)
+                            kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME),
+                            kickClipUrl = args.getString(KEY_KICK_CLIP_URL)
                         )
                     }
                 } else {
@@ -846,7 +847,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
                         getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                         kickClipReplayFallback = args.getBoolean(KEY_KICK_CLIP_REPLAY_FALLBACK),
-                        kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME)
+                        kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME),
+                        kickClipUrl = args.getString(KEY_KICK_CLIP_URL)
                     )
                 }
             }
@@ -870,7 +872,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
                 getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                 kickClipReplayFallback = args.getBoolean(KEY_KICK_CLIP_REPLAY_FALLBACK),
-                kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME)
+                kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME),
+                kickClipUrl = args.getString(KEY_KICK_CLIP_URL)
             )
         }
     }
@@ -1237,7 +1240,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
                     getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                     kickClipReplayFallback = args.getBoolean(KEY_KICK_CLIP_REPLAY_FALLBACK),
-                    kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME)
+                    kickClipReplayStartTime = args.getString(KEY_KICK_CLIP_REPLAY_START_TIME),
+                    kickClipUrl = args.getString(KEY_KICK_CLIP_URL)
                 )
             }
         }
@@ -1311,6 +1315,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         private const val KEY_SUPPRESS_REPLAY_UNAVAILABLE = "suppressReplayUnavailable"
         private const val KEY_KICK_CLIP_REPLAY_FALLBACK = "kickClipReplayFallback"
         private const val KEY_KICK_CLIP_REPLAY_START_TIME = "kickClipReplayStartTime"
+        private const val KEY_KICK_CLIP_URL = "kickClipUrl"
 
         fun newInstance(channelId: String?, channelLogin: String?, channelName: String?, streamId: String?): ChatFragment {
             return ChatFragment().apply {
@@ -1331,7 +1336,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             startTime: Int?,
             suppressReplayUnavailable: Boolean = false,
             kickClipReplayFallback: Boolean = false,
-            kickClipReplayStartTime: String? = null
+            kickClipReplayStartTime: String? = null,
+            kickClipUrl: String? = null
         ): ChatFragment {
             return ChatFragment().apply {
                 arguments = Bundle().apply {
@@ -1343,6 +1349,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     putBoolean(KEY_SUPPRESS_REPLAY_UNAVAILABLE, suppressReplayUnavailable)
                     putBoolean(KEY_KICK_CLIP_REPLAY_FALLBACK, kickClipReplayFallback)
                     putString(KEY_KICK_CLIP_REPLAY_START_TIME, kickClipReplayStartTime)
+                    putString(KEY_KICK_CLIP_URL, kickClipUrl)
                 }
             }
         }

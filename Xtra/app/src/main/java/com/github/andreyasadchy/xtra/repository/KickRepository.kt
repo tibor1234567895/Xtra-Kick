@@ -420,6 +420,39 @@ class KickRepository @Inject constructor(
         return KickMessagesData(messages = messages, cursor = cursor)
     }
 
+    suspend fun getClipPlaylistStartTimeMs(clipUrl: String): Long? = withContext(Dispatchers.IO) {
+        val normalizedUrl = clipUrl.trim()
+        if (normalizedUrl.isBlank()) return@withContext null
+        val playlistUrl = when {
+            normalizedUrl.endsWith(".m3u8", ignoreCase = true) -> normalizedUrl
+            normalizedUrl.endsWith("/") -> "${normalizedUrl}playlist.m3u8"
+            else -> "$normalizedUrl/playlist.m3u8"
+        }
+        okHttpClient.newCall(
+            Request.Builder()
+                .url(playlistUrl)
+                .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36")
+                .header("Accept", "application/x-mpegURL,text/plain,*/*")
+                .build()
+        ).execute().use { response ->
+            if (!response.isSuccessful) {
+                return@withContext null
+            }
+            val firstProgramDateTime = response.body.string()
+                .lineSequence()
+                .firstOrNull { it.startsWith("#EXT-X-PROGRAM-DATE-TIME:", ignoreCase = true) }
+                ?.substringAfter(':')
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return@withContext null
+            return@withContext runCatching {
+                normalizeDate(firstProgramDateTime)?.let { normalized ->
+                    TwitchApiHelper.parseIso8601DateUTC(normalized)
+                }
+            }.getOrNull()
+        }
+    }
+
     suspend fun sendChatMessage(accessToken: String, broadcasterUserId: Long, content: String, replyToMessageId: String? = null): KickChatSendResponse = withContext(Dispatchers.IO) {
         data class ChatAttempt(
             val body: String,
