@@ -137,6 +137,9 @@
     <string name="ascending">Ascending</string>
     <string name="logout_title">Log out?</string>
     <string name="logout_msg">Logged in as %s</string>
+    <string name="login_success_toast">Logged in as %s</string>
+    <string name="logout_success_toast">Logged out</string>
+    <string name="not_logged_in">Not logged in</string>
     <string name="language">Language</string>
     <string name="never">Never</string>
     <string name="blue">Blue</string>
