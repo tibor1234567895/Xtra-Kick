@@ -13,17 +13,55 @@ kotlin {
 }
 
 android {
-    val kickClientId = ((project.findProperty("KICK_CLIENT_ID") as String?) ?: "").replace("\"", "\\\"")
-    val kickOAuthBackendBaseUrl = ((project.findProperty("KICK_OAUTH_BACKEND_BASE_URL") as String?) ?: "").replace("\"", "\\\"")
+    val dotEnv = rootProject.file(".env").takeIf { it.exists() }?.readLines()
+        ?.asSequence()
+        ?.mapNotNull { line ->
+            val trimmed = line.trim()
+            if (trimmed.isBlank() || trimmed.startsWith("#")) return@mapNotNull null
+            val delimiter = trimmed.indexOf('=')
+            if (delimiter <= 0) return@mapNotNull null
+            val key = trimmed.substring(0, delimiter).trim()
+            val rawValue = trimmed.substring(delimiter + 1).trim()
+            val value = rawValue.removeSurrounding("\"").removeSurrounding("'")
+            if (key.isBlank()) null else key to value
+        }
+        ?.toMap()
+        ?: emptyMap()
 
-    signingConfigs {
-        getByName("debug") {
-            keyAlias = "debug"
-            keyPassword = "123456"
-            storeFile = file("debug-keystore.jks")
-            storePassword = "123456"
+    fun projectPropertyOrDefault(name: String, default: String = ""): String {
+        val fromEnv = System.getenv(name)?.trim()
+        if (!fromEnv.isNullOrEmpty()) return fromEnv
+
+        val fromDotEnv = dotEnv[name]?.trim()
+        if (!fromDotEnv.isNullOrEmpty()) return fromDotEnv
+
+        val fromGradleProp = (project.findProperty(name) as String?)?.trim()
+        if (!fromGradleProp.isNullOrEmpty()) return fromGradleProp
+
+        return default
+    }
+
+    val kickClientId = projectPropertyOrDefault("KICK_CLIENT_ID").replace("\"", "\\\"")
+    val kickOAuthBackendBaseUrl = projectPropertyOrDefault("KICK_OAUTH_BACKEND_BASE_URL", "https://kickauth.example.invalid").replace("\"", "\\\"")
+    val localDebugKeystorePath = projectPropertyOrDefault("LOCAL_DEBUG_KEYSTORE_FILE", "${project.projectDir}/debug-keystore.jks")
+    val localDebugStorePassword = projectPropertyOrDefault("LOCAL_DEBUG_STORE_PASSWORD")
+    val localDebugKeyAlias = projectPropertyOrDefault("LOCAL_DEBUG_KEY_ALIAS")
+    val localDebugKeyPassword = projectPropertyOrDefault("LOCAL_DEBUG_KEY_PASSWORD")
+    val localDebugKeystoreFile = file(localDebugKeystorePath)
+
+    if (localDebugKeystoreFile.exists() &&
+        localDebugStorePassword.isNotEmpty() &&
+        localDebugKeyAlias.isNotEmpty() &&
+        localDebugKeyPassword.isNotEmpty()
+    ) {
+        signingConfigs.getByName("debug").apply {
+            storeFile = localDebugKeystoreFile
+            storePassword = localDebugStorePassword
+            keyAlias = localDebugKeyAlias
+            keyPassword = localDebugKeyPassword
         }
     }
+
     namespace = "com.github.andreyasadchy.xtra"
     compileSdk = 36
 
@@ -39,7 +77,6 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-DEBUG"
-            signingConfig = signingConfigs.getByName("debug")
             buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
         }
@@ -47,6 +84,8 @@ android {
             isShrinkResources = true
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Keep current behavior by using the default debug signing config unless a dedicated
+            // release signing setup is introduced via local/CI Gradle properties.
             signingConfig = signingConfigs.getByName("debug")
             buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
