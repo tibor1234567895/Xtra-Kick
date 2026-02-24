@@ -216,6 +216,13 @@
         app:singleLineTitle="false" />
 
     <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="player_show_latency"
+        android:title="@string/show_latency"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
         android:defaultValue="false"
         android:key="player_viewerlist"
         android:title="@string/player_viewerlist"

@@ -293,4 +293,33 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
+    <ListPreference
+        android:defaultValue="0"
+        android:entries="@array/chatDelayModeEntries"
+        android:entryValues="@array/miscValues"
+        android:key="chat_delay_mode"
+        android:summary="%s"
+        android:title="@string/chat_delay_mode"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SeekBarPreference
+        android:defaultValue="5"
+        android:key="chat_delay_custom_secs"
+        android:max="120"
+        android:title="@string/chat_delay_custom_secs"
+        app:dependency="chat_delay_mode"
+        app:iconSpaceReserved="false"
+        app:min="0"
+        app:showSeekBarValue="true"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="chat_show_delay_indicator"
+        android:title="@string/chat_show_delay_indicator"
+        app:dependency="chat_delay_mode"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
 </androidx.preference.PreferenceScreen>

@@ -187,6 +187,19 @@ class ChatViewModel @Inject constructor(
     val addMessages = MutableSharedFlow<Pair<List<ChatMessage>, Int>>()
     val removeMessages = MutableSharedFlow<Int>()
     val updateUserMessages = MutableSharedFlow<String>()
+    val liveLatencyMs = MutableStateFlow(0L)
+
+    fun setLiveLatency(ms: Long) {
+        liveLatencyMs.value = ms
+    }
+
+    private fun effectiveDelayMs(): Long {
+        return when (applicationContext.prefs().getString(C.CHAT_DELAY_MODE, "0")) {
+            "1" -> liveLatencyMs.value
+            "2" -> applicationContext.prefs().getInt(C.CHAT_DELAY_CUSTOM_SECS, 5) * 1000L
+            else -> 0L
+        }
+    }
     val userEmotesUpdated = MutableSharedFlow<Unit>()
     val thirdPartyEmotesUpdated = MutableSharedFlow<Unit>()
 
@@ -1411,6 +1424,15 @@ class ChatViewModel @Inject constructor(
     }
 
     suspend fun onMessage(message: ChatMessage) {
+        val delayMs = effectiveDelayMs()
+        if (delayMs > 0L) {
+            viewModelScope.launch { delay(delayMs); processMessage(message) }
+        } else {
+            processMessage(message)
+        }
+    }
+
+    private suspend fun processMessage(message: ChatMessage) {
         synchronized(chatMessages) {
             chatMessages.add(message)
             val removeCount = if (chatMessages.size > messageLimit) {

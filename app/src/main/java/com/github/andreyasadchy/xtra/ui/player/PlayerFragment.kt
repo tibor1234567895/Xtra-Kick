@@ -2,6 +2,9 @@ package com.github.andreyasadchy.xtra.ui.player
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
@@ -264,6 +267,25 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             val longPressTimeout = ViewConfiguration.getLongPressTimeout()
             val moveFreely = prefs.getBoolean(C.PLAYER_MOVE_FREELY, false)
             val doubleTap = prefs.getBoolean(C.PLAYER_DOUBLETAP, true) && !prefs.getBoolean(C.CHAT_DISABLE, false)
+            val swipeChatDetector = GestureDetector(
+                requireContext(),
+                object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                        if (!isPortrait && isMaximized && !prefs.getBoolean(C.CHAT_DISABLE, false) &&
+                            kotlin.math.abs(velocityX) > kotlin.math.abs(velocityY) * 1.5f) {
+                            if (velocityX < -600f && !chatLayout.isVisible) {
+                                showChat()
+                                return true
+                            } else if (velocityX > 600f && chatLayout.isVisible) {
+                                hideChat()
+                                return true
+                            }
+                        }
+                        return false
+                    }
+                }
+            )
+
             val controllerTapDetector = GestureDetector(
                 requireContext(),
                 object : GestureDetector.SimpleOnGestureListener() {
@@ -474,6 +496,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             lastY = y * slidingLayout.scaleY
                             statusBarSwipe = !isPortrait && y <= 100
                             downAction(event)
+                            if (isMaximized) swipeChatDetector.onTouchEvent(event)
                         }
                         MotionEvent.ACTION_POINTER_DOWN -> {
                             if (activePointerId == -1) {
@@ -492,6 +515,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         }
                         MotionEvent.ACTION_MOVE -> {
                             if (isMaximized) {
+                                swipeChatDetector.onTouchEvent(event)
                                 playerControls.root.dispatchTouchEvent(event)
                                 if (!playerControls.progressBar.isPressed && !statusBarSwipe && activePointerId != -1) {
                                     val pointerIndex = event.findPointerIndex(activePointerId)
@@ -571,7 +595,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 activePointerId = newId
                             }
                         }
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> upAction(event)
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            if (isMaximized) swipeChatDetector.onTouchEvent(event)
+                            upAction(event)
+                        }
                     }
                 }
                 true
@@ -819,6 +846,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 updateUptime(startedAtMs)
                             }
                         }
+                    }
+                    if (prefs.getBoolean(C.PLAYER_SHOW_LATENCY, true)) {
+                        latencyLayout.visibility = View.VISIBLE
                     }
                     rewind.visibility = View.GONE
                     fastForward.visibility = View.GONE
@@ -1409,7 +1439,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     fun hideChat() {
         isChatOpen = false
-        hideChatLayout()
+        hideChatLayout(animate = true)
         if (prefs.getBoolean(C.PLAYER_CHATTOGGLE, true)) {
             binding.playerControls.toggleChat.apply {
                 visibility = View.VISIBLE
@@ -1422,7 +1452,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     fun showChat() {
         isChatOpen = true
-        showChatLayout()
+        showChatLayout(animate = true)
         if (prefs.getBoolean(C.PLAYER_CHATTOGGLE, true)) {
             binding.playerControls.toggleChat.apply {
                 visibility = View.VISIBLE
@@ -1438,32 +1468,89 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
-    private fun hideChatLayout() {
+    private fun hideChatLayout(animate: Boolean = false) {
         with(binding) {
-            playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
-                width = ViewGroup.LayoutParams.MATCH_PARENT
-                height = ViewGroup.LayoutParams.MATCH_PARENT
-                marginEnd = 0
+            if (animate && chatWidthLandscape > 0 && chatLayout.isVisible) {
+                ValueAnimator.ofFloat(0f, chatWidthLandscape.toFloat()).apply {
+                    duration = 250L
+                    interpolator = AccelerateInterpolator()
+                    addUpdateListener { va ->
+                        val v = va.animatedValue as Float
+                        chatLayout.translationX = v
+                        playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
+                            marginEnd = (chatWidthLandscape - v).toInt()
+                        }
+                    }
+                    addListener(object : AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(animation: Animator) {
+                            (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                                .hideSoftInputFromWindow(chatLayout.windowToken, 0)
+                            chatLayout.clearFocus()
+                            chatLayout.translationX = 0f
+                            chatLayout.visibility = View.GONE
+                            playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
+                                width = ViewGroup.LayoutParams.MATCH_PARENT
+                                height = ViewGroup.LayoutParams.MATCH_PARENT
+                                marginEnd = 0
+                            }
+                        }
+                    })
+                    start()
+                }
+            } else {
+                playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
+                    width = ViewGroup.LayoutParams.MATCH_PARENT
+                    height = ViewGroup.LayoutParams.MATCH_PARENT
+                    marginEnd = 0
+                }
+                (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                    .hideSoftInputFromWindow(chatLayout.windowToken, 0)
+                chatLayout.clearFocus()
+                chatLayout.visibility = View.GONE
             }
-            (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(chatLayout.windowToken, 0)
-            chatLayout.clearFocus()
-            chatLayout.visibility = View.GONE
         }
     }
 
-    private fun showChatLayout() {
+    private fun showChatLayout(animate: Boolean = false) {
         with(binding) {
-            playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
-                width = ViewGroup.LayoutParams.MATCH_PARENT
-                height = ViewGroup.LayoutParams.MATCH_PARENT
-                marginEnd = chatWidthLandscape
-            }
             chatLayout.updateLayoutParams<FrameLayout.LayoutParams> {
                 width = chatWidthLandscape
                 height = ViewGroup.LayoutParams.MATCH_PARENT
                 gravity = Gravity.END
             }
-            chatLayout.visibility = View.VISIBLE
+            if (animate && chatWidthLandscape > 0) {
+                chatLayout.translationX = chatWidthLandscape.toFloat()
+                chatLayout.visibility = View.VISIBLE
+                ValueAnimator.ofFloat(chatWidthLandscape.toFloat(), 0f).apply {
+                    duration = 250L
+                    interpolator = DecelerateInterpolator()
+                    addUpdateListener { va ->
+                        val v = va.animatedValue as Float
+                        chatLayout.translationX = v
+                        playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
+                            marginEnd = (chatWidthLandscape - v).toInt()
+                        }
+                    }
+                    addListener(object : AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(animation: Animator) {
+                            chatLayout.translationX = 0f
+                            playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
+                                width = ViewGroup.LayoutParams.MATCH_PARENT
+                                height = ViewGroup.LayoutParams.MATCH_PARENT
+                                marginEnd = chatWidthLandscape
+                            }
+                        }
+                    })
+                    start()
+                }
+            } else {
+                playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
+                    width = ViewGroup.LayoutParams.MATCH_PARENT
+                    height = ViewGroup.LayoutParams.MATCH_PARENT
+                    marginEnd = chatWidthLandscape
+                }
+                chatLayout.visibility = View.VISIBLE
+            }
         }
     }
 
@@ -1512,6 +1599,19 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 uptimeLayout.visibility = View.GONE
             }
         }
+    }
+
+    fun updateLatency(liveOffsetMs: Long?) {
+        with(binding.playerControls) {
+            if (liveOffsetMs != null && prefs.getBoolean(C.PLAYER_SHOW_LATENCY, true)) {
+                latencyLayout.visibility = View.VISIBLE
+                val seconds = liveOffsetMs / 1000.0
+                latencyText.text = "~%.1fs".format(seconds)
+            } else {
+                latencyLayout.visibility = View.GONE
+            }
+        }
+        chatFragment?.updateLiveLatency(liveOffsetMs ?: 0L)
     }
 
     fun updateStreamInfo(title: String?, gameId: String?, gameSlug: String?, gameName: String?) {
@@ -1682,6 +1782,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 controllerIsAnimating = true
                                 if (view != null) {
                                     binding.playerControls.root.visibility = View.VISIBLE
+                                    updateProgress()
                                 }
                             }
 
