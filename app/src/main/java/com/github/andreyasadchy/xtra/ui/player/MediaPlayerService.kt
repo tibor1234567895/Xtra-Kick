@@ -339,7 +339,7 @@ class MediaPlayerService : Service() {
                     }
                 } else {
                     val callback = object : FutureCallback<Bitmap> {
-                        override fun onSuccess(result: Bitmap?) {
+                        override fun onSuccess(result: Bitmap) {
                             if (this == metadataBitmapCallback) {
                                 setMetadata(result)
                             }
@@ -385,7 +385,7 @@ class MediaPlayerService : Service() {
                     }
                 } else {
                     val callback = object : FutureCallback<Bitmap> {
-                        override fun onSuccess(result: Bitmap?) {
+                        override fun onSuccess(result: Bitmap) {
                             if (this == notificationBitmapCallback) {
                                 sendNotification(result)
                             }
