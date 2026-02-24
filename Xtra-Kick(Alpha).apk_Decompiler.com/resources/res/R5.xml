@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" xmlns:aapt="http://schemas.android.com/aapt" android:layout_width="match_parent" android:layout_height="match_parent">
-    <androidx.fragment.app.FragmentContainerView android:name="androidx.navigation.fragment.NavHostFragment" android:id="@+id/navHostFragment" android:layout_width="match_parent" android:layout_height="0dp" app:defaultNavHost="true" app:layout_constraintBottom_toTopOf="@+id/navBarContainer" app:layout_constraintLeft_toLeftOf="0" app:layout_constraintRight_toRightOf="0" app:layout_constraintTop_toTopOf="0"/>
-    <LinearLayout android:orientation="vertical" android:id="@+id/navBarContainer" android:layout_width="match_parent" android:layout_height="wrap_content" app:layout_constraintBottom_toBottomOf="0">
-        <View android:background="?attr/dividerColor" android:layout_width="match_parent" android:layout_height="1dp"/>
-        <com.google.android.material.bottomnavigation.BottomNavigationView android:id="@+id/navBar" android:layout_width="match_parent" android:layout_height="55dp" app:labelVisibilityMode="1" style="?attr/navBarStyle"/>
-    </LinearLayout>
-    <FrameLayout android:id="@+id/playerContainer" android:focusable="true" android:clipChildren="false" android:layout_width="match_parent" android:layout_height="match_parent"/>
-</androidx.constraintlayout.widget.ConstraintLayout>

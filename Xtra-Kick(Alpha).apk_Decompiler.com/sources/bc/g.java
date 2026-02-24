@@ -1,7 +1,0 @@
-package bc;
-
-import java.security.cert.X509Certificate;
-
-public interface g {
-    X509Certificate a(X509Certificate x509Certificate);
-}
