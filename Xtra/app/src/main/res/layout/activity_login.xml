@@ -52,15 +52,20 @@
         app:tint="?attr/colorControlNormal"
         tools:visibility="visible" />
 
-    <TextView
+    <Button
         android:id="@+id/havingTrouble"
-        android:layout_width="wrap_content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:background="?attr/selectableItemBackground"
-        android:padding="10dp"
-        android:text="@string/trouble_logging_in"
-        android:textAppearance="?attr/textAppearanceTitleMedium"
-        android:textSize="18sp"
+        style="?attr/elevatedButtonStyle"
+        android:layout_marginHorizontal="20dp"
+        android:layout_marginBottom="20dp"
+        android:backgroundTint="?attr/colorPrimary"
+        android:elevation="6dp"
+        android:minHeight="52dp"
+        android:text="@string/open_browser_login_recommended"
+        android:textAllCaps="false"
+        android:textColor="?attr/colorOnPrimary"
+        android:textStyle="bold"
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"

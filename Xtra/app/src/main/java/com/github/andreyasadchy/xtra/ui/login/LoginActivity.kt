@@ -1,6 +1,7 @@
 package com.github.andreyasadchy.xtra.ui.login
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -72,7 +73,7 @@ class LoginActivity : AppCompatActivity() {
         binding.openUrl.visibility = View.GONE
         binding.next.visibility = View.GONE
         binding.havingTrouble.visibility = View.VISIBLE
-        binding.havingTrouble.setOnClickListener { startKickLogin() }
+        binding.havingTrouble.setOnClickListener { startKickLoginExternal() }
 
         configureWebView()
 
@@ -222,7 +223,25 @@ class LoginActivity : AppCompatActivity() {
 
     private fun startKickLogin() {
         callbackHandled = false
+        val url = prepareKickLoginUrl() ?: return
+        showKickLoginInWebView(url)
+    }
 
+    private fun startKickLoginExternal() {
+        callbackHandled = false
+        val url = prepareKickLoginUrl() ?: return
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+        }
+        try {
+            startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, R.string.kick_browser_fallback_webview, Toast.LENGTH_SHORT).show()
+            showKickLoginInWebView(url)
+        }
+    }
+
+    private fun prepareKickLoginUrl(): String? {
         val clientId = KickOAuthConfig.getClientId(this)
         val backendBaseUrl = KickOAuthConfig.getBackendBaseUrl(this)
         val redirectUri = KickOAuthConfig.getRedirectUri(this)
@@ -233,13 +252,13 @@ class LoginActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.kick_oauth_not_configured, Toast.LENGTH_LONG).show()
             startActivity(Intent(this, SettingsActivity::class.java))
             finish()
-            return
+            return null
         }
 
         if (!KickOAuthConfig.hasRequiredScopes(scopes)) {
             Toast.makeText(this, R.string.kick_oauth_scope_missing, Toast.LENGTH_LONG).show()
             finish()
-            return
+            return null
         }
 
         val verifier = KickPkceHelper.generateCodeVerifier()
@@ -263,6 +282,10 @@ class LoginActivity : AppCompatActivity() {
             codeChallenge = challenge,
         )
 
+        return url
+    }
+
+    private fun showKickLoginInWebView(url: String) {
         binding.progressBar.visibility = View.GONE
         binding.webView.visibility = View.VISIBLE
         binding.webView.loadUrl(url)
