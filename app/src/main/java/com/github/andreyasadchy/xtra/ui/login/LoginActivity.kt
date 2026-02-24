@@ -46,6 +46,12 @@ class LoginActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         applyTheme()
+
+        if (intent.getBooleanExtra(C.LOGIN_LOGOUT_ONLY, false)) {
+            logoutAndFinish()
+            return
+        }
+
         binding = ActivityLoginBinding.inflate(layoutInflater)
         setContentView(binding.root)
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, windowInsets ->
@@ -70,11 +76,6 @@ class LoginActivity : AppCompatActivity() {
 
         configureWebView()
 
-        if (intent.getBooleanExtra(C.LOGIN_LOGOUT_ONLY, false)) {
-            logoutAndFinish()
-            return
-        }
-
         if (!tryHandleKickCallback(intent.data)) {
             startKickLogin()
         }
@@ -96,6 +97,11 @@ class LoginActivity : AppCompatActivity() {
             allowContentAccess = false
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
+            // Strip the "wv" (WebView) flag and "Version/4.0" from the user agent so
+            // Google's OAuth service does not reject the request with disallowed_useragent.
+            userAgentString = userAgentString
+                .replace("; wv", "")
+                .replace("Version/4.0 ", "")
         }
         binding.webView.isFocusable = true
         binding.webView.isFocusableInTouchMode = true
@@ -191,6 +197,7 @@ class LoginActivity : AppCompatActivity() {
                     putString(C.USER_ID, user?.id)
                     putString(C.USERNAME, loginName)
                 }
+                Toast.makeText(this@LoginActivity, getString(R.string.login_success_toast, loginName ?: ""), Toast.LENGTH_SHORT).show()
                 setResult(RESULT_OK)
             } catch (e: Exception) {
                 val messageId = if (e is IllegalStateException && e.message == "missing scopes") {
@@ -296,6 +303,7 @@ class LoginActivity : AppCompatActivity() {
             }
             AuthStateHelper.clearKickAuth(this@LoginActivity)
             AuthStateHelper.clearLegacyTwitchAuth(this@LoginActivity)
+            Toast.makeText(this@LoginActivity, R.string.logout_success_toast, Toast.LENGTH_SHORT).show()
             setResult(RESULT_OK)
             finish()
         }

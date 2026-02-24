@@ -394,10 +394,14 @@ class SettingsActivity : AppCompatActivity() {
                 findNavController().navigate(SettingsNavGraphDirections.actionGlobalPlaybackSettingsFragment())
                 true
             }
-            findPreference<Preference>("api_token_settings")?.setOnPreferenceClickListener {
-                requireActivity().findViewById<AppBarLayout>(R.id.appBar)?.setExpanded(true)
-                findNavController().navigate(SettingsNavGraphDirections.actionGlobalApiTokenSettingsFragment())
-                true
+            findPreference<Preference>("api_token_settings")?.apply {
+                val username = requireContext().tokenPrefs().getString(C.KICK_USER_LOGIN, null)?.takeIf { it.isNotBlank() }
+                summary = if (username != null) getString(R.string.logout_msg, username) else getString(R.string.not_logged_in)
+                setOnPreferenceClickListener {
+                    requireActivity().findViewById<AppBarLayout>(R.id.appBar)?.setExpanded(true)
+                    findNavController().navigate(SettingsNavGraphDirections.actionGlobalApiTokenSettingsFragment())
+                    true
+                }
             }
             findPreference<Preference>("download_settings")?.setOnPreferenceClickListener {
                 requireActivity().findViewById<AppBarLayout>(R.id.appBar)?.setExpanded(true)
