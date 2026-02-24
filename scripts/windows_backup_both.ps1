@@ -4,11 +4,12 @@ param(
     [string]$PublicRemote = "origin",
     [string]$PrivateBranch = "main",
     [string]$PublicBranch = "main",
-    [string]$SourceFolder = "Xtra"
+    [string]$SourceFolder = "Xtra",
+    [switch]$SuppressLfCrLfWarnings = $true
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 function Run-Git {
     param(
@@ -16,11 +17,23 @@ function Run-Git {
         [string]$Cwd
     )
     if ($Cwd) {
-        & git -C $Cwd @GitArgs
+        $lines = & git -c core.autocrlf=false -c core.safecrlf=false -C $Cwd @GitArgs 2>&1
     } else {
-        & git @GitArgs
+        $lines = & git -c core.autocrlf=false -c core.safecrlf=false @GitArgs 2>&1
     }
-    if ($LASTEXITCODE -ne 0) {
+    $exitCode = $LASTEXITCODE
+
+    if ($lines) {
+        foreach ($line in $lines) {
+            $text = [string]$line
+            if ($SuppressLfCrLfWarnings -and $text -match '^warning: in the working copy of .+ LF will be replaced by CRLF') {
+                continue
+            }
+            Write-Host $text
+        }
+    }
+
+    if ($exitCode -ne 0) {
         throw "git command failed: git $($GitArgs -join ' ')"
     }
 }
@@ -56,7 +69,7 @@ if (-not $publicUrl) {
 }
 
 $tempDir = Join-Path $env:TEMP ("xtra-public-sync-" + [Guid]::NewGuid().ToString("N"))
-Run-Git -GitArgs @("clone", "--depth", "1", "--branch", $PublicBranch, $publicUrl, $tempDir)
+Run-Git -GitArgs @("clone", "--quiet", "--depth", "1", "--branch", $PublicBranch, $publicUrl, $tempDir)
 
 try {
     Get-ChildItem -Path $tempDir -Force | Where-Object { $_.Name -ne ".git" } | Remove-Item -Recurse -Force
