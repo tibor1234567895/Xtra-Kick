@@ -113,7 +113,7 @@ android {
 
 dependencies {
     implementation("com.google.guava:guava:33.3.1-android") // exoplayer
-    implementation("com.google.android.gms:play-services-cronet:18.1.0")
+    implementation("com.google.android.gms:play-services-cronet:18.1.1")
     implementation("com.google.mlkit:language-id:17.0.6")
     implementation("com.google.mlkit:translate:17.0.3")
 
