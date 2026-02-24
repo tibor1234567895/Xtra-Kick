@@ -28,6 +28,7 @@ class FollowedStreamsDataSource(
     private suspend fun kickLoad(): LoadResult<Int, Stream> {
         val follows = localFollowsChannel.loadFollows()
         val followsByLogin = follows.mapNotNull { it.userLogin?.lowercase(Locale.ROOT) }.toSet()
+        val followsByName = follows.mapNotNull { it.userName?.lowercase(Locale.ROOT) }.toSet()
         val followsById = follows.mapNotNull { it.userId }.toSet()
 
         val indexedLive = mutableMapOf<String, Stream>()
@@ -44,10 +45,14 @@ class FollowedStreamsDataSource(
                     val stream = kickRepository.toStream(item)
                     val login = stream.channelLogin?.lowercase(Locale.ROOT)
                     val id = stream.channelId
-                    val matched = (login != null && followsByLogin.contains(login)) || (id != null && followsById.contains(id))
+                    val name = stream.channelName?.lowercase(Locale.ROOT)
+                    val matched = (login != null && followsByLogin.contains(login)) ||
+                        (id != null && followsById.contains(id)) ||
+                        (name != null && followsByName.contains(name))
                     if (matched) {
                         val key = login ?: id ?: stream.id ?: return@forEach
                         indexedLive[key] = stream
+                        name?.let { indexedLive.putIfAbsent(it, stream) }
                     }
                 }
             }
@@ -60,7 +65,8 @@ class FollowedStreamsDataSource(
                     semaphore.withPermit {
                         val login = follow.userLogin?.takeIf { it.isNotBlank() }
                         val id = follow.userId?.takeIf { it.isNotBlank() }
-                        val key = login?.lowercase(Locale.ROOT) ?: id
+                        val name = follow.userName?.takeIf { it.isNotBlank() }?.lowercase(Locale.ROOT)
+                        val key = login?.lowercase(Locale.ROOT) ?: id ?: name
                         key?.let { indexedLive[it] }?.let { return@withPermit it }
                         val channel = try {
                             when {
