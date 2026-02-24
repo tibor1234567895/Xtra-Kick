@@ -625,7 +625,7 @@ class KickRepository @Inject constructor(
         ).execute().use { response ->
             ChatResult(
                 code = response.code,
-                body = response.body?.string().orEmpty(),
+                body = response.body.string(),
             )
         }
     }
