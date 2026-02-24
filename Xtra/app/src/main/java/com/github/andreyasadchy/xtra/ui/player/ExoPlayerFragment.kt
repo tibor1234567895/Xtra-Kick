@@ -747,6 +747,10 @@ class ExoPlayerFragment : PlayerFragment() {
                 position.text = DateUtils.formatElapsedTime(currentPosition / 1000)
                 progressBar.setPosition(currentPosition)
                 progressBar.setBufferedPosition(player?.bufferedPosition ?: 0)
+                if (videoType == STREAM) {
+                    val offset = player?.currentLiveOffset?.takeIf { it != androidx.media3.common.C.TIME_UNSET }
+                    updateLatency(offset)
+                }
                 root.removeCallbacks(updateProgressAction)
                 player?.let { player ->
                     if (player.isPlaying) {

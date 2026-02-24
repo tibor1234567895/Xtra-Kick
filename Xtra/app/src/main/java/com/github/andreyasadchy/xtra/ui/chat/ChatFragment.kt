@@ -81,6 +81,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private var isChatTouched = false
     private var showChatStatus = false
     private var hasRecentEmotes = false
+    private var delayBadgeActive = false
+    private var delayBadgeFirstShown = false
+    private val hideDelayBadgeRunnable = Runnable { _binding?.chatDelayText?.visibility = View.GONE }
     private var messagingEnabled = false
 
     private var autoCompleteAdapter: AutoCompleteAdapter<Any>? = null
@@ -225,6 +228,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 if (showChatStatus && chatStatus.isGone) {
                                     chatStatus.visibility = View.VISIBLE
                                     chatStatus.postDelayed({ chatStatus.visibility = View.GONE }, 5000)
+                                }
+                                if (delayBadgeActive && chatDelayText.isGone) {
+                                    flashDelayBadge()
                                 }
                             }
                         })
@@ -926,6 +932,39 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     fun updateStreamId(id: String?) {
         viewModel.streamId = id
+    }
+
+    fun updateLiveLatency(ms: Long) {
+        viewModel.setLiveLatency(ms)
+        val ctx = context ?: return
+        val b = _binding ?: return
+        val delayMs = when (ctx.prefs().getString(C.CHAT_DELAY_MODE, "0")) {
+            "1" -> ms
+            "2" -> ctx.prefs().getInt(C.CHAT_DELAY_CUSTOM_SECS, 5) * 1000L
+            else -> 0L
+        }
+        if (delayMs > 0L) {
+            b.chatDelayText.text = ctx.getString(R.string.chat_delay_indicator, "%.0f".format(delayMs / 1000.0))
+            delayBadgeActive = true
+            if (!delayBadgeFirstShown) {
+                delayBadgeFirstShown = true
+                flashDelayBadge()
+            }
+        } else {
+            delayBadgeActive = false
+            delayBadgeFirstShown = false
+            b.chatDelayText.removeCallbacks(hideDelayBadgeRunnable)
+            b.chatDelayText.visibility = View.GONE
+        }
+    }
+
+    private fun flashDelayBadge() {
+        val ctx = context ?: return
+        val b = _binding ?: return
+        if (!ctx.prefs().getBoolean(C.CHAT_SHOW_DELAY_INDICATOR, true)) return
+        b.chatDelayText.removeCallbacks(hideDelayBadgeRunnable)
+        b.chatDelayText.visibility = View.VISIBLE
+        b.chatDelayText.postDelayed(hideDelayBadgeRunnable, 4000L)
     }
 
     fun getTranslateAllMessages(): Boolean {

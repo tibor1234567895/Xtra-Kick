@@ -185,6 +185,7 @@
     <string name="days">d</string>
     <string name="seconds">s</string>
     <string name="show_uptime">Show stream uptime</string>
+    <string name="show_latency">Show stream latency</string>
     <string name="chatFirstMsgEntries1">Show type and change background color</string>
     <string name="chatFirstMsgEntries2">Change background color</string>
     <string name="chatFirstMsgEntries3">Show as normal messages</string>
@@ -636,6 +637,13 @@
     <string name="show_stv_badges">Show 7TV badges</string>
     <string name="show_kick_badges" translatable="false">Show Kick badges</string>
     <string name="show_stv_personal_emotes">Show 7TV personal emotes</string>
+    <string name="chat_delay_mode">Live chat delay</string>
+    <string name="chat_delay_mode_off">Off</string>
+    <string name="chat_delay_mode_auto">Auto (match stream delay)</string>
+    <string name="chat_delay_mode_custom">Custom</string>
+    <string name="chat_delay_custom_secs">Custom delay (seconds)</string>
+    <string name="chat_show_delay_indicator">Show chat delay badge</string>
+    <string name="chat_delay_indicator">⏱ ~%ss</string>
     <string name="stv_live_updates">7TV live emote updates</string>
     <string name="personal_stv_emote">Personal 7TV emote</string>
     <string name="show_polls">Show polls</string>

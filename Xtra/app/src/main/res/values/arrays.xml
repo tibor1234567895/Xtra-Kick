@@ -248,6 +248,12 @@
         <item>@string/never</item>
     </string-array>
 
+    <string-array name="chatDelayModeEntries">
+        <item>@string/chat_delay_mode_off</item>
+        <item>@string/chat_delay_mode_auto</item>
+        <item>@string/chat_delay_mode_custom</item>
+    </string-array>
+
     <string-array name="chatFirstMsgEntries">
         <item>@string/chatFirstMsgEntries1</item>
         <item>@string/chatFirstMsgEntries2</item>
