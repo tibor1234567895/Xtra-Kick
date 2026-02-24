@@ -15,6 +15,12 @@ Run commands from `Xtra/`:
 - **MANDATORY DEFAULT FLOW (repo root):** `./scripts/wsl_build_install.sh`
   - This is the primary build/install path and should be used first for routine validation.
   - Use direct Gradle commands only when this script is not suitable for the specific task.
+- **MANDATORY BACKUP FLOW (repo root):** `./scripts/backup_both_windows.sh`
+  - This is the primary backup path and should be used to sync both repos in one run.
+  - It runs Windows PowerShell from WSL and performs:
+    - Full backup push to private repo (`private/main`).
+    - Public app-only sync push (contents of `Xtra/` to public `origin/main` root).
+  - Optional commit message: `./scripts/backup_both_windows.sh "backup before release"`.
 - Preferred local deploy flow from repo root: `./scripts/wsl_build_install.sh` (builds debug APK in WSL workspace and installs to connected phone via ADB).
 - `./gradlew assembleDebug`: build a local debug APK.
 - `./gradlew assembleRelease`: build release APK (matches CI task).

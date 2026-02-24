@@ -19,5 +19,10 @@ PS1_WIN="$(wslpath -w "$PS1_PATH")"
 if [[ $# -gt 0 ]]; then
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS1_WIN" -CommitMessage "$*"
 else
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS1_WIN"
+  read -r -p "Backup comment (Enter = auto timestamp): " USER_MSG
+  if [[ -n "${USER_MSG// }" ]]; then
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS1_WIN" -CommitMessage "$USER_MSG"
+  else
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS1_WIN"
+  fi
 fi
