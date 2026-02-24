@@ -11,6 +11,7 @@ Options:
   --source DIR          Source Android project dir (default: <repo>/Xtra)
   --workdir DIR         WSL build dir (default: $HOME/xtra-wsl-build)
   --sdk-dir DIR         Android SDK dir for WSL local.properties
+  --arm64-only          Build arm64-v8a-only APK (smaller size, physical devices)
   --skip-sync           Skip rsync from source to workdir
   -h, --help            Show this help
 EOF
@@ -24,6 +25,7 @@ WORKDIR="${HOME}/xtra-wsl-build"
 TASK=":app:assembleRelease"
 SKIP_SYNC=0
 SDK_DIR="${ANDROID_SDK_ROOT:-}"
+ARM64_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-sync)
       SKIP_SYNC=1
+      shift
+      ;;
+    --arm64-only)
+      ARM64_ONLY=1
       shift
       ;;
     -h|--help)
@@ -90,7 +96,11 @@ printf 'sdk.dir=%s\n' "${SDK_DIR}" > "${WORKDIR}/local.properties"
 
 echo "Building ${TASK} in ${WORKDIR}"
 SECONDS=0
-(cd "${WORKDIR}" && ./gradlew "${TASK}")
+GRADLE_ARGS=("${TASK}")
+if [[ "${ARM64_ONLY}" -eq 1 ]]; then
+  GRADLE_ARGS+=("-PTARGET_ABI=arm64-v8a")
+fi
+(cd "${WORKDIR}" && ./gradlew "${GRADLE_ARGS[@]}")
 echo "Build completed in ${SECONDS}s"
 
 APK="${WORKDIR}/app/build/outputs/apk/release/app-release.apk"

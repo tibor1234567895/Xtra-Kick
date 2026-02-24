@@ -43,6 +43,7 @@ android {
 
     val kickClientId = projectPropertyOrDefault("KICK_CLIENT_ID").replace("\"", "\\\"")
     val kickOAuthBackendBaseUrl = projectPropertyOrDefault("KICK_OAUTH_BACKEND_BASE_URL", "https://kickauth.example.invalid").replace("\"", "\\\"")
+    val targetAbi = (project.findProperty("TARGET_ABI") as String?)?.trim()?.takeIf { it.isNotBlank() }
     val localDebugKeystorePath = projectPropertyOrDefault("LOCAL_DEBUG_KEYSTORE_FILE", "${project.projectDir}/debug-keystore.jks")
     val localDebugStorePassword = projectPropertyOrDefault("LOCAL_DEBUG_STORE_PASSWORD")
     val localDebugKeyAlias = projectPropertyOrDefault("LOCAL_DEBUG_KEY_ALIAS")
@@ -66,11 +67,16 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.github.andreyasadchy.xtra"
+        applicationId = "com.github.andreyasadchy.xtrakick"
         minSdk = 23
         targetSdk = 36
         versionCode = 121
         versionName = "2.54.0"
+        if (targetAbi != null) {
+            ndk {
+                abiFilters += targetAbi
+            }
+        }
     }
 
     buildTypes {

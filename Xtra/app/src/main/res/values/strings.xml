@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">Xtra</string>
+    <string name="app_name" translatable="false">Xtra Kick</string>
     <string name="notification_downloads_channel_id" translatable="false">xtra_downloads_channel</string>
     <string name="notification_live_channel_id" translatable="false">xtra_live_channel</string>
     <string name="notification_playback_channel_id" translatable="false">xtra_playback_channel</string>
