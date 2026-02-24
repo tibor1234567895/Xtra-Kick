@@ -53,6 +53,7 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
         fun onCopyMessageClicked(message: String)
         fun onViewProfileClicked(id: String?, login: String?, name: String?, channelLogo: String?)
         fun onTranslateMessageClicked(chatMessage: ChatMessage, languageTag: String?)
+        fun onHideMessageClicked(chatMessage: ChatMessage)
     }
 
     companion object {
@@ -257,6 +258,15 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
                 } else {
                     copyMessage.visibility = View.GONE
                 }
+            }
+            if ((chatMessage.message != null || chatMessage.systemMsg != null)) {
+                hideMessage.visibility = View.VISIBLE
+                hideMessage.setOnClickListener {
+                    listener.onHideMessageClicked(chatMessage)
+                    dismiss()
+                }
+            } else {
+                hideMessage.visibility = View.GONE
             }
             val clipboard = getSystemService(requireContext(), ClipboardManager::class.java)
             copyClip.setOnClickListener {

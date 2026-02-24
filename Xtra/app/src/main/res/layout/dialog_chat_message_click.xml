@@ -191,6 +191,15 @@
                 tools:visibility="visible" />
 
             <Button
+                android:id="@+id/hideMessage"
+                style="?attr/bottomSheetButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/hide_message"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
+            <Button
                 android:id="@+id/viewProfile"
                 style="?attr/bottomSheetButtonStyle"
                 android:layout_width="match_parent"

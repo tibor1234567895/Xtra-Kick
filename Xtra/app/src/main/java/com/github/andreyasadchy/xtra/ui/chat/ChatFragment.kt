@@ -1056,6 +1056,17 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         binding.editText.setText(message)
     }
 
+    override fun onHideMessageClicked(chatMessage: ChatMessage) {
+        chatMessage.isHidden = true
+        adapter?.let { adapter ->
+            synchronized(viewModel.chatMessages) {
+                viewModel.chatMessages.indexOf(chatMessage).takeIf { it != -1 }
+            }?.let {
+                adapter.notifyItemChanged(it)
+            }
+        }
+    }
+
     override fun onViewProfileClicked(id: String?, login: String?, name: String?, channelLogo: String?) {
         findNavController().navigate(
             ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(

@@ -97,6 +97,11 @@ class ChatAdapter(
         val chatMessage = synchronized(messages) {
             messages.getOrNull(position)
         } ?: return
+        if (chatMessage.isHidden) {
+            holder.itemView.visibility = View.GONE
+            return
+        }
+        holder.itemView.visibility = View.VISIBLE
         val result = ChatAdapterUtils.prepareChatMessage(
             chatMessage, holder.textView, enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg,
             rewardChatMsg, replyMessage, null, useRandomColors, random, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints,

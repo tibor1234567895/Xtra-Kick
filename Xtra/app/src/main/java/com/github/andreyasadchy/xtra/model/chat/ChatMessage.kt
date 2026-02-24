@@ -23,4 +23,5 @@ class ChatMessage(
     var translatedMessage: String? = null,
     var translationFailed: Boolean = false,
     var messageLanguage: String? = null,
+    var isHidden: Boolean = false,
 )
