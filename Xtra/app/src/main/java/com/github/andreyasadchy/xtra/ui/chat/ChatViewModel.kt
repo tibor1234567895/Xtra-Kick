@@ -44,6 +44,7 @@ import com.github.andreyasadchy.xtra.util.chat.ChatWriteWebSocket
 import com.github.andreyasadchy.xtra.util.chat.EventSubUtils
 import com.github.andreyasadchy.xtra.util.chat.EventSubWebSocket
 import com.github.andreyasadchy.xtra.util.chat.HermesWebSocket
+import com.github.andreyasadchy.xtra.util.chat.KickChatWebSocket
 import com.github.andreyasadchy.xtra.util.chat.PubSubUtils
 import com.github.andreyasadchy.xtra.util.chat.RecentMessageUtils
 import com.github.andreyasadchy.xtra.util.chat.StvEventApiUtils
@@ -113,6 +114,7 @@ class ChatViewModel @Inject constructor(
     private var usedPredictionId: String? = null
     private var predictionTimeoutJob: Job? = null
     private var kickChatJob: Job? = null
+    private var kickChatWebSocket: KickChatWebSocket? = null
     private val kickMessageIds = LinkedHashSet<String>()
     private val kickBroadcasterUserIds = ConcurrentHashMap<String, Long>()
     private var kickReplayFallbackEnabled = false
@@ -1199,14 +1201,51 @@ class ChatViewModel @Inject constructor(
         }
         addChatter(channelName)
         kickChatJob = viewModelScope.launch {
-            runCatching {
-                // Warm badge URL cache before first message fetch so Kick badges can resolve immediately.
-                kickRepository.getChannel(channelLogin)
-            }.onFailure {
-                runCatching { kickRepository.getChannel(channelId) }
-            }
+            // Warm badge URL cache and obtain chatroom ID for WebSocket subscription.
+            val channel = runCatching { kickRepository.getChannel(channelLogin) }
+                .recoverCatching { kickRepository.getChannel(channelId) }
+                .getOrNull()
+            val chatroomId = channel?.let { kickRepository.getChatId(it) }
             val kickMessageSources = resolveKickMessageSources(channelId, channelLogin)
             onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_join).format(channelLogin)))
+            if (!chatroomId.isNullOrBlank()) {
+                // Prefer real-time WebSocket delivery when a chatroom ID is available.
+                val ws = KickChatWebSocket(
+                    chatroomId = chatroomId,
+                    trustManager = trustManager,
+                    listener = object : KickChatWebSocket.Listener {
+                        override suspend fun onChatMessage(messageData: String) {
+                            val kickMsg = kickRepository.parseKickWebSocketMessage(messageData) ?: return
+                            val message = kickRepository.toChatMessage(kickMsg)
+                            if (message.message.isNullOrBlank() && message.systemMsg.isNullOrBlank()) return
+                            if (addKickInlineEmotes(message.fullMsg)) {
+                                synchronized(thirdPartyEmotes) { thirdPartyEmotes.sortBy { it.source } }
+                                if (!reloadMessages.value) reloadMessages.value = true
+                                thirdPartyEmotesUpdated.emit(Unit)
+                            }
+                            val key = message.id ?: "${message.timestamp}:${message.userName}:${message.message}"
+                            val shouldEmit = synchronized(kickMessageIds) {
+                                val isNew = kickMessageIds.add(key)
+                                if (kickMessageIds.size > 5000) {
+                                    kickMessageIds.remove(kickMessageIds.first())
+                                }
+                                isNew
+                            }
+                            if (shouldEmit) {
+                                onMessage(message)
+                                addChatter(message.userName)
+                            }
+                        }
+                        override suspend fun onDisconnect(message: String, fullMsg: String?) {}
+                    },
+                )
+                kickChatWebSocket = ws
+                val wsJob = ws.connect(this)
+                wsJob.join()
+                // WebSocket exhausted all reconnect attempts – fall through to polling.
+                kickChatWebSocket = null
+            }
+            // Polling fallback: used when the chatroom ID is unavailable or after WebSocket failure.
             delay(1500)
             while (currentCoroutineContext().isActive) {
                 try {
@@ -1556,6 +1595,13 @@ class ChatViewModel @Inject constructor(
     fun stopLiveChat() {
         kickChatJob?.cancel()
         kickChatJob = null
+        val wsToDisconnect = kickChatWebSocket
+        kickChatWebSocket = null
+        if (wsToDisconnect != null) {
+            MainScope().launch(Dispatchers.IO) {
+                wsToDisconnect.disconnect(null)
+            }
+        }
         synchronized(kickMessageIds) {
             kickMessageIds.clear()
         }

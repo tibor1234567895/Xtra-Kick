@@ -655,6 +655,10 @@ class KickRepository @Inject constructor(
         )
     }
 
+    fun parseKickWebSocketMessage(data: String): KickMessage? {
+        return runCatching { json.decodeFromString(KickMessage.serializer(), data) }.getOrNull()
+    }
+
     fun toChatMessage(message: KickMessage): ChatMessage {
         val rawContent = message.content ?: message.message ?: message.text ?: message.body
         val content = rawContent?.replace(emoteRegex) { result -> result.groupValues.getOrElse(1) { "" } }
