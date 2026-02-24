@@ -723,8 +723,8 @@ class PlaybackService : MediaSessionService() {
         const val CODECS = "codecs"
         const val URLS = "urls"
 
-        const val MULTIVARIANT_PLAYLIST_REGEX = "^usher\\.ttvnw\\.net$"
-        const val MEDIA_PLAYLIST_REGEX = "^(?:[a-z0-9-]+\\.playlist\\.(?:live-video|ttvnw)\\.net|video-weaver\\.[a-z0-9-]+\\.hls\\.ttvnw\\.net)$"
+        const val MULTIVARIANT_PLAYLIST_REGEX = "^[a-z0-9.-]+$"
+        const val MEDIA_PLAYLIST_REGEX = "^[a-z0-9.-]+$"
 
         const val REQUEST_CODE_RESUME = 2
     }

@@ -3,125 +3,76 @@ package com.github.andreyasadchy.xtra.repository.datasource
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.github.andreyasadchy.xtra.model.ui.Game
-import com.github.andreyasadchy.xtra.model.ui.Tag
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowGameRepository
-import com.github.andreyasadchy.xtra.util.C
+import java.io.File
+import java.util.Locale
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 class FollowedGamesDataSource(
     private val localFollowsGame: LocalFollowGameRepository,
     private val gqlHeaders: Map<String, String>,
     private val graphQLRepository: GraphQLRepository,
+    private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
     private val networkLibrary: String?,
 ) : PagingSource<Int, Game>() {
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Game> {
-        val list = mutableListOf<Game>()
-        localFollowsGame.loadFollows().forEach {
-            list.add(Game(
-                gameId = it.gameId,
-                gameSlug = it.gameSlug,
-                gameName = it.gameName,
-                boxArtUrl = it.boxArt,
-                followLocal = true
-            ))
+        val follows = localFollowsGame.loadFollows()
+        val missingArt = follows.filter { follow ->
+            val value = follow.boxArt
+            value.isNullOrBlank() || (value.startsWith("/") && !File(value).exists())
         }
-        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-            try {
-                loadFromApi(apiPref.getOrNull(0))
-            } catch (e: Exception) {
-                try {
-                    loadFromApi(apiPref.getOrNull(1))
-                } catch (e: Exception) {
-                    null
+        if (missingArt.isNotEmpty()) {
+            val artById = mutableMapOf<String, String>()
+            val artBySlug = mutableMapOf<String, String>()
+            val artByName = mutableMapOf<String, String>()
+            runCatching {
+                val responses = coroutineScope {
+                    (1..6).map { page ->
+                        async { kickRepository.getSubcategories(page = page, limit = 100) }
+                    }.awaitAll()
                 }
-            }?.let {
-                if (it is LoadResult.Error && it.throwable.message == "failed integrity check") {
-                    return it
+                responses.forEach { response ->
+                    response.data.forEach { category ->
+                        val url = category.banner?.url?.takeIf { it.isNotBlank() } ?: return@forEach
+                        category.id?.toString()?.let { artById[it] = url }
+                        category.slug?.lowercase(Locale.ROOT)?.let { artBySlug[it] = url }
+                        category.name?.lowercase(Locale.ROOT)?.let { artByName[it] = url }
+                    }
                 }
-                it as? LoadResult.Page
-            }?.data?.forEach { game ->
-                val item = list.find { it.gameId == game.gameId }
-                if (item == null) {
-                    game.followAccount = true
-                    list.add(game)
-                } else {
-                    item.followAccount = true
-                    item.viewersCount = game.viewersCount
-                    item.broadcastersCount = game.broadcastersCount
-                    item.tags = game.tags
+            }
+            missingArt.forEach { follow ->
+                val resolved = follow.gameId?.let(artById::get)
+                    ?: follow.gameSlug?.lowercase(Locale.ROOT)?.let(artBySlug::get)
+                    ?: follow.gameName?.lowercase(Locale.ROOT)?.let(artByName::get)
+                val currentArt = follow.boxArt
+                if (!resolved.isNullOrBlank()) {
+                    follow.boxArt = resolved
+                    runCatching { localFollowsGame.updateFollow(follow) }
+                } else if (!currentArt.isNullOrBlank() && currentArt.startsWith("/") && !File(currentArt).exists()) {
+                    // Clear stale local-file paths so future loads keep trying to resolve remote art.
+                    follow.boxArt = null
+                    runCatching { localFollowsGame.updateFollow(follow) }
                 }
             }
         }
-        list.sortBy { it.gameName }
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = null
-        )
-    }
-
-    private suspend fun loadFromApi(apiPref: String?): LoadResult<Int, Game> {
-        return when (apiPref) {
-            C.GQL -> if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) gqlQueryLoad() else throw Exception()
-            C.GQL_PERSISTED_QUERY -> if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) gqlLoad() else throw Exception()
-            else -> throw Exception()
-        }
-    }
-
-    private suspend fun gqlQueryLoad(): LoadResult<Int, Game> {
-        val response = graphQLRepository.loadQueryUserFollowedGames(networkLibrary, gqlHeaders, 100)
-        if (enableIntegrity) {
-            response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-        }
-        val list = response.data!!.user!!.followedGames!!.nodes!!.mapNotNull { item ->
-            item?.let {
+        val list = follows
+            .map {
                 Game(
-                    gameId = it.id,
-                    gameSlug = it.slug,
-                    gameName = it.displayName,
-                    boxArtUrl = it.boxArtURL,
-                    viewersCount = it.viewersCount,
-                    broadcastersCount = it.broadcastersCount,
-                    tags = it.tags?.map { tag ->
-                        Tag(
-                            id = tag.id,
-                            name = tag.localizedName
-                        )
-                    }
+                    gameId = it.gameId,
+                    gameSlug = it.gameSlug,
+                    gameName = it.gameName,
+                    boxArtUrl = it.boxArt,
+                    followLocal = true
                 )
             }
-        }
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = null
-        )
-    }
-
-    private suspend fun gqlLoad(): LoadResult<Int, Game> {
-        val response = graphQLRepository.loadFollowedGames(networkLibrary, gqlHeaders, 100)
-        if (enableIntegrity) {
-            response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-        }
-        val list = response.data!!.currentUser.followedGames.nodes.map { item ->
-            item.let {
-                Game(
-                    gameId = it.id,
-                    gameName = it.displayName,
-                    boxArtUrl = it.boxArtURL,
-                    viewersCount = it.viewersCount ?: 0,
-                    tags = it.tags?.map { tag ->
-                        Tag(
-                            id = tag.id,
-                            name = tag.localizedName
-                        )
-                    }
-                )
-            }
-        }
+            .sortedBy { it.gameName }
         return LoadResult.Page(
             data = list,
             prevKey = null,

@@ -18,11 +18,11 @@ import javax.inject.Singleton
 @Singleton
 class ShownNotificationsRepository @Inject constructor(
     private val shownNotificationsDao: ShownNotificationsDao,
+    private val kickRepository: KickRepository,
 ) {
 
     suspend fun getNewKickStreams(
         notificationUsersRepository: NotificationUsersRepository,
-        kickRepository: KickRepository,
     ): List<Stream> = withContext(Dispatchers.IO) {
         val channelIds = notificationUsersRepository.loadUsers().mapNotNull { it.channelId?.takeIf { id -> id.isNotBlank() } }
         if (channelIds.isEmpty()) {
@@ -33,8 +33,8 @@ class ShownNotificationsRepository @Inject constructor(
             channelIds.map { channelId ->
                 async {
                     semaphore.withPermit {
-                        val channel = runCatching { kickRepository.getChannel(channelId) }.getOrNull() ?: return@withPermit null
-                        channel.livestream?.let { kickRepository.toStream(channel) }
+                        val channel = runCatching { this@ShownNotificationsRepository.kickRepository.getChannel(channelId) }.getOrNull() ?: return@withPermit null
+                        channel.livestream?.let { this@ShownNotificationsRepository.kickRepository.toStream(channel) }
                     }
                 }
             }.awaitAll()
@@ -60,47 +60,7 @@ class ShownNotificationsRepository @Inject constructor(
     }
 
     suspend fun getNewStreams(notificationUsersRepository: NotificationUsersRepository, networkLibrary: String?, gqlHeaders: Map<String, String>, graphQLRepository: GraphQLRepository, helixHeaders: Map<String, String>, helixRepository: HelixRepository): List<Stream> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<Stream>()
-        notificationUsersRepository.loadUsers().map { it.channelId }.takeIf { it.isNotEmpty() }?.let {
-            try {
-                gqlQueryLocal(networkLibrary, gqlHeaders, it, graphQLRepository)
-            } catch (e: Exception) {
-                if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                    try {
-                        helixLocal(networkLibrary, helixHeaders, it, helixRepository)
-                    } catch (e: Exception) {
-                        return@withContext emptyList()
-                    }
-                } else return@withContext emptyList()
-            }.let { list.addAll(it) }
-        }
-        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-            try {
-                gqlQueryLoad(networkLibrary, gqlHeaders, graphQLRepository)
-            } catch (e: Exception) {
-                return@withContext emptyList()
-            }.mapNotNull { item ->
-                item.takeIf { list.find { it.channelId == item.channelId } == null }
-            }.let {
-                list.addAll(it)
-            }
-        }
-        val liveList = list.mapNotNull { stream ->
-            stream.channelId.takeUnless { it.isNullOrBlank() }?.let { channelId ->
-                stream.startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { startedAt ->
-                    ShownNotification(channelId, startedAt)
-                }
-            }
-        }
-        val oldList = shownNotificationsDao.getAll()
-        oldList.filter { item -> liveList.find { it.channelId == item.channelId } == null }.let {
-            shownNotificationsDao.deleteList(it)
-        }
-        shownNotificationsDao.insertList(liveList)
-        val newStreams = liveList.mapNotNull { item ->
-            item.takeIf { oldList.find { it.channelId == item.channelId }.let { it == null || it.startedAt < item.startedAt } }?.channelId
-        }
-        list.filter { it.channelId in newStreams }
+        getNewKickStreams(notificationUsersRepository)
     }
 
     private suspend fun gqlQueryLoad(networkLibrary: String?, gqlHeaders: Map<String, String>, graphQLRepository: GraphQLRepository): List<Stream> {

@@ -313,31 +313,8 @@ class ChannelPagerViewModel @Inject constructor(
                 try {
                     val followId = channelId ?: channelLogin
                     if (!followId.isNullOrBlank()) {
-                        if (setting == 0 && !channelId.isNullOrBlank() && !userId.isNullOrBlank() && userId != channelId) {
-                            try {
-                                if (gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
-                                val follower = graphQLRepository.loadQueryFollowingUser(
-                                    networkLibrary = networkLibrary,
-                                    headers = gqlHeaders,
-                                    id = channelId,
-                                    login = channelLogin.takeIf { channelId.isBlank() },
-                                ).data?.user?.self?.follower
-                                _isFollowing.value = follower?.followedAt != null
-                                _notificationsEnabled.value = follower?.notificationSettings?.isEnabled == true
-                            } catch (e: Exception) {
-                                val following = helixRepository.getUserFollows(
-                                    networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
-                                    userId = userId,
-                                    targetId = channelId,
-                                ).data.firstOrNull()?.channelId == channelId
-                                _isFollowing.value = following
-                                _notificationsEnabled.value = notificationUsersRepository.getByUserId(channelId) != null
-                            }
-                        } else {
-                            _isFollowing.value = localFollowsChannel.getFollowByUserId(followId) != null
-                            _notificationsEnabled.value = notificationUsersRepository.getByUserId(followId) != null
-                        }
+                        _isFollowing.value = localFollowsChannel.getFollowByUserId(followId) != null
+                        _notificationsEnabled.value = notificationUsersRepository.getByUserId(followId) != null
                     }
                 } catch (e: Exception) {
 
@@ -351,37 +328,14 @@ class ChannelPagerViewModel @Inject constructor(
             try {
                 val followId = channelId ?: channelLogin
                 if (!followId.isNullOrBlank()) {
-                    if (setting == 0 && !channelId.isNullOrBlank() && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
-                        val errorMessage = graphQLRepository.loadFollowUser(networkLibrary, gqlHeaders, channelId).also { response ->
-                            if (enableIntegrity && integrity.value == null) {
-                                response.errors?.find { it.message == "failed integrity check" }?.let {
-                                    integrity.value = "follow"
-                                    return@launch
-                                }
-                            }
-                        }.errors?.firstOrNull()?.message
-                        if (!errorMessage.isNullOrBlank()) {
-                            follow.value = Pair(true, errorMessage)
-                        } else {
-                            _isFollowing.value = true
-                            follow.value = Pair(true, null)
-                            _notificationsEnabled.value = true
-                            if (notificationsEnabled) {
-                                _stream.value?.startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let {
-                                    shownNotificationsRepository.saveList(listOf(ShownNotification(channelId, it)))
-                                }
-                            }
-                        }
-                    } else {
-                        localFollowsChannel.saveFollow(LocalFollowChannel(followId, channelLogin, channelName))
-                        _isFollowing.value = true
-                        follow.value = Pair(true, null)
-                        notificationUsersRepository.saveUser(NotificationUser(followId))
-                        _notificationsEnabled.value = true
-                        if (notificationsEnabled) {
-                            _stream.value?.startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { startedAt ->
-                                shownNotificationsRepository.saveList(listOf(ShownNotification(followId, startedAt)))
-                            }
+                    localFollowsChannel.saveFollow(LocalFollowChannel(followId, channelLogin, channelName))
+                    _isFollowing.value = true
+                    follow.value = Pair(true, null)
+                    notificationUsersRepository.saveUser(NotificationUser(followId))
+                    _notificationsEnabled.value = true
+                    if (notificationsEnabled) {
+                        _stream.value?.startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { startedAt ->
+                            shownNotificationsRepository.saveList(listOf(ShownNotification(followId, startedAt)))
                         }
                     }
                 }
@@ -396,29 +350,11 @@ class ChannelPagerViewModel @Inject constructor(
             try {
                 val followId = channelId ?: channelLogin
                 if (!followId.isNullOrBlank()) {
-                    if (setting == 0 && !channelId.isNullOrBlank() && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
-                        val errorMessage = graphQLRepository.loadUnfollowUser(networkLibrary, gqlHeaders, channelId).also { response ->
-                            if (enableIntegrity && integrity.value == null) {
-                                response.errors?.find { it.message == "failed integrity check" }?.let {
-                                    integrity.value = "unfollow"
-                                    return@launch
-                                }
-                            }
-                        }.errors?.firstOrNull()?.message
-                        if (!errorMessage.isNullOrBlank()) {
-                            follow.value = Pair(false, errorMessage)
-                        } else {
-                            _isFollowing.value = false
-                            follow.value = Pair(false, null)
-                            _notificationsEnabled.value = false
-                        }
-                    } else {
-                        localFollowsChannel.getFollowByUserId(followId)?.let { localFollowsChannel.deleteFollow(it) }
-                        _isFollowing.value = false
-                        follow.value = Pair(false, null)
-                        notificationUsersRepository.deleteUser(NotificationUser(followId))
-                        _notificationsEnabled.value = false
-                    }
+                    localFollowsChannel.getFollowByUserId(followId)?.let { localFollowsChannel.deleteFollow(it) }
+                    _isFollowing.value = false
+                    follow.value = Pair(false, null)
+                    notificationUsersRepository.deleteUser(NotificationUser(followId))
+                    _notificationsEnabled.value = false
                 }
             } catch (e: Exception) {
 

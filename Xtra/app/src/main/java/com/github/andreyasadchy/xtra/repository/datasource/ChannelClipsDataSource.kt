@@ -31,71 +31,52 @@ class ChannelClipsDataSource(
     private var offset: String? = null
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Clip> {
-        if (!channelLogin.isNullOrBlank()) {
-            return try {
-                val rawList = kickRepository.getChannelClips(
-                    channelSlug = channelLogin,
-                    channelId = channelId,
-                    limit = maxOf(params.loadSize, 200),
-                )
-                val startMs = startedAt?.let { TwitchApiHelper.parseIso8601DateUTC(it) }
-                val endMs = endedAt?.let { TwitchApiHelper.parseIso8601DateUTC(it) }
-                val list = rawList
-                    .asSequence()
-                    .filter { clip ->
-                        val ts = clip.uploadDate?.let { TwitchApiHelper.parseIso8601DateUTC(it) } ?: return@filter false
-                        val afterStart = startMs?.let { ts >= it } ?: true
-                        val beforeEnd = endMs?.let { ts <= it } ?: true
-                        afterStart && beforeEnd
-                    }
-                    .sortedWith(
-                        compareByDescending<Clip> { it.viewCount ?: -1 }
-                            .thenByDescending { it.uploadDate?.let(TwitchApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
-                    )
-                    .take(params.loadSize)
-                    .toList()
-                LoadResult.Page(
-                    data = list,
-                    prevKey = null,
-                    nextKey = null
-                )
-            } catch (_: Exception) {
-                LoadResult.Page(
-                    data = emptyList(),
-                    prevKey = null,
-                    nextKey = null
-                )
-            }
+        if (channelLogin.isNullOrBlank()) {
+            return LoadResult.Page(
+                data = emptyList(),
+                prevKey = null,
+                nextKey = null
+            )
         }
-        return if (!offset.isNullOrBlank()) {
-            try {
-                loadFromApi(api, params)
-            } catch (e: Exception) {
-                LoadResult.Error(e)
-            }
-        } else {
-            try {
-                loadFromApi(apiPref.getOrNull(0), params)
-            } catch (e: Exception) {
-                try {
-                    loadFromApi(apiPref.getOrNull(1), params)
-                } catch (e: Exception) {
-                    try {
-                        loadFromApi(apiPref.getOrNull(2), params)
-                    } catch (e: Exception) {
-                        LoadResult.Error(e)
-                    }
+        return try {
+            val rawList = kickRepository.getChannelClips(
+                channelSlug = channelLogin,
+                channelId = channelId,
+                limit = maxOf(params.loadSize, 200),
+            )
+            val startMs = startedAt?.let { TwitchApiHelper.parseIso8601DateUTC(it) }
+            val endMs = endedAt?.let { TwitchApiHelper.parseIso8601DateUTC(it) }
+            val list = rawList
+                .asSequence()
+                .filter { clip ->
+                    val ts = clip.uploadDate?.let { TwitchApiHelper.parseIso8601DateUTC(it) } ?: return@filter false
+                    val afterStart = startMs?.let { ts >= it } ?: true
+                    val beforeEnd = endMs?.let { ts <= it } ?: true
+                    afterStart && beforeEnd
                 }
-            }
+                .sortedWith(
+                    compareByDescending<Clip> { it.viewCount ?: -1 }
+                        .thenByDescending { it.uploadDate?.let(TwitchApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
+                )
+                .take(params.loadSize)
+                .toList()
+            LoadResult.Page(
+                data = list,
+                prevKey = null,
+                nextKey = null
+            )
+        } catch (_: Exception) {
+            LoadResult.Page(
+                data = emptyList(),
+                prevKey = null,
+                nextKey = null
+            )
         }
     }
 
     private suspend fun loadFromApi(apiPref: String?, params: LoadParams<Int>): LoadResult<Int, Clip> {
         api = apiPref
         return when (apiPref) {
-            C.GQL -> gqlQueryLoad(params)
-            C.GQL_PERSISTED_QUERY -> gqlLoad(params)
-            C.HELIX -> if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) helixLoad(params) else throw Exception()
             else -> throw Exception()
         }
     }

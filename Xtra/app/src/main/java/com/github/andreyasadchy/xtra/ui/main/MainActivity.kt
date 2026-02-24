@@ -76,6 +76,7 @@ import com.github.andreyasadchy.xtra.ui.player.PlayerFragment
 import com.github.andreyasadchy.xtra.ui.team.TeamFragmentDirections
 import com.github.andreyasadchy.xtra.ui.top.TopStreamsFragmentDirections
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.TwitchApiHelper
 import com.github.andreyasadchy.xtra.util.applyTheme
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
@@ -519,8 +520,8 @@ class MainActivity : AppCompatActivity() {
                 val url = intent.data?.toString()
                 if (url != null) {
                     when {
-                        url.contains("twitch.tv/videos/") -> {
-                            val id = url.substringAfter("twitch.tv/videos/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
+                        url.contains("kick.com/videos/") -> {
+                            val id = url.substringAfter("kick.com/videos/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
                             val offset = url.substringAfter("?t=", "").takeIf { it.isNotBlank() }?.let { (TwitchApiHelper.getDuration(it) ?: 0) * 1000 }
                             if (!id.isNullOrBlank()) {
                                 viewModel.loadVideo(
@@ -545,8 +546,8 @@ class MainActivity : AppCompatActivity() {
                                 )
                             }
                         }
-                        url.contains("clips.twitch.tv/") -> {
-                            val id = url.substringAfter("clips.twitch.tv/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
+                        url.contains("clips.kick.com/") -> {
+                            val id = url.substringAfter("clips.kick.com/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
                             if (!id.isNullOrBlank()) {
                                 viewModel.loadClip(
                                     id,
@@ -557,8 +558,8 @@ class MainActivity : AppCompatActivity() {
                                 )
                             }
                         }
-                        url.contains("twitch.tv/directory/category/") -> {
-                            val slug = url.substringAfter("twitch.tv/directory/category/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
+                        url.contains("kick.com/categories/") -> {
+                            val slug = url.substringAfter("kick.com/categories/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
                             val tag = url.substringAfter("?tl=", "").takeIf { it.isNotBlank() }?.substringBefore("&")
                             if (!slug.isNullOrBlank()) {
                                 viewModel.loadGame(
@@ -571,8 +572,8 @@ class MainActivity : AppCompatActivity() {
                                 )
                             }
                         }
-                        url.contains("twitch.tv/directory/game/") -> {
-                            val name = url.substringAfter("twitch.tv/directory/game/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
+                        url.contains("kick.com/categories/") -> {
+                            val name = url.substringAfter("kick.com/categories/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
                             val tag = url.substringAfter("?tl=", "").takeIf { it.isNotBlank() }?.substringBefore("&")
                             if (!name.isNullOrBlank()) {
                                 viewModel.loadGame(
@@ -585,8 +586,8 @@ class MainActivity : AppCompatActivity() {
                                 )
                             }
                         }
-                        url.contains("twitch.tv/directory/all/tags/") -> {
-                            val tag = url.substringAfter("twitch.tv/directory/all/tags/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
+                        url.contains("kick.com/tags/") -> {
+                            val tag = url.substringAfter("kick.com/tags/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
                             if (!tag.isNullOrBlank()) {
                                 playerFragment?.minimize()
                                 navController.navigate(
@@ -596,14 +597,14 @@ class MainActivity : AppCompatActivity() {
                                 )
                             }
                         }
-                        url.contains("twitch.tv/directory/all") -> {
+                        url.contains("kick.com/directory/all") -> {
                             playerFragment?.minimize()
                             navController.navigate(
                                 TopStreamsFragmentDirections.actionGlobalTopFragment()
                             )
                         }
-                        url.contains("twitch.tv/directory/tags/") -> {
-                            val tagId = url.substringAfter("twitch.tv/directory/tags/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
+                        url.contains("kick.com/tags/") -> {
+                            val tagId = url.substringAfter("kick.com/tags/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
                             if (!tagId.isNullOrBlank()) {
                                 viewModel.loadTag(
                                     tagId,
@@ -613,14 +614,14 @@ class MainActivity : AppCompatActivity() {
                                 )
                             }
                         }
-                        url.contains("twitch.tv/directory") -> {
+                        url.contains("kick.com/directory") -> {
                             playerFragment?.minimize()
                             navController.navigate(
                                 GamesFragmentDirections.actionGlobalGamesFragment()
                             )
                         }
-                        url.contains("twitch.tv/team/") -> {
-                            val teamName = url.substringAfter("twitch.tv/team/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
+                        url.contains("kick.com/team/") -> {
+                            val teamName = url.substringAfter("kick.com/team/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
                             if (!teamName.isNullOrBlank()) {
                                 playerFragment?.minimize()
                                 navController.navigate(
@@ -631,7 +632,7 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
                         else -> {
-                            val login = url.substringAfter("twitch.tv/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
+                            val login = url.substringAfter("kick.com/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
                             if (!login.isNullOrBlank()) {
                                 viewModel.loadUser(
                                     login,
@@ -978,7 +979,7 @@ class MainActivity : AppCompatActivity() {
             prefs.edit {
                 if (prefs().getString(C.GQL_CLIENT_ID2, "kd1unb4b3q4t58fwlpcbzcbnm76a8fp") == "kd1unb4b3q4t58fwlpcbzcbnm76a8fp" && prefs().getString(C.GQL_TOKEN2, null).isNullOrBlank()) {
                     putString(C.GQL_CLIENT_ID2, "ue6666qo983tsx6so1t0vnawi233wa")
-                    putString(C.GQL_REDIRECT2, "https://www.twitch.tv/settings/connections")
+                    putString(C.GQL_REDIRECT2, "https://kick.com/settings/connections")
                 }
             }
         }
@@ -1093,8 +1094,8 @@ class MainActivity : AppCompatActivity() {
             val currentKickUserId = tokenPrefs().getString(C.KICK_USER_ID, null)
             val currentKickUserLogin = tokenPrefs().getString(C.KICK_USER_LOGIN, null)
             prefs.edit {
-                if (currentKickRedirect.isNullOrBlank() || currentKickRedirect == "xtra://kick-auth/callback") {
-                    putString(C.KICK_REDIRECT_URI, "https://localhost/callback")
+                if (currentKickRedirect.isNullOrBlank() || currentKickRedirect == "https://localhost/callback") {
+                    putString(C.KICK_REDIRECT_URI, KickOAuthConfig.DEFAULT_REDIRECT_URI)
                 }
                 if (currentKickScopes.isNullOrBlank()) {
                     putString(C.KICK_SCOPES, "user:read chat:write")
@@ -1115,6 +1116,16 @@ class MainActivity : AppCompatActivity() {
                 remove(C.GQL_TOKEN2)
                 remove(C.GQL_TOKEN_WEB)
                 remove(C.INTEGRITY_EXPIRATION)
+            }
+        }
+        if (version < 14) {
+            prefs.edit {
+                val currentKickRedirect = prefs.getString(C.KICK_REDIRECT_URI, null)
+                if (currentKickRedirect.isNullOrBlank() || currentKickRedirect == "https://localhost/callback") {
+                    putString(C.KICK_REDIRECT_URI, KickOAuthConfig.DEFAULT_REDIRECT_URI)
+                }
+                remove(C.KICK_CLIENT_SECRET)
+                putInt(C.SETTINGS_VERSION, 14)
             }
         }
     }

@@ -34,43 +34,26 @@ class ChannelVideosDataSource(
     private var offset: String? = null
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Video> {
-        if (!channelLogin.isNullOrBlank()) {
-            return try {
-                kickLoad(params)
-            } catch (_: Exception) {
-                LoadResult.Page(
-                    data = emptyList(),
-                    prevKey = null,
-                    nextKey = null
-                )
-            }
-        }
-        return if (!offset.isNullOrBlank()) {
-            try {
-                loadFromApi(api, params)
-            } catch (e: Exception) {
-                LoadResult.Error(e)
-            }
-        } else {
-            val apisToTry = (apiPref + C.KICK).distinct()
-            var lastError: Exception? = null
-            apisToTry.forEach { pref ->
-                try {
-                    return loadFromApi(pref, params)
-                } catch (e: Exception) {
-                    lastError = e
-                }
-            }
-            LoadResult.Error(lastError ?: Exception("No enabled APIs"))
+        return if (channelLogin.isNullOrBlank()) {
+            LoadResult.Page(
+                data = emptyList(),
+                prevKey = null,
+                nextKey = null
+            )
+        } else try {
+            kickLoad(params)
+        } catch (_: Exception) {
+            LoadResult.Page(
+                data = emptyList(),
+                prevKey = null,
+                nextKey = null
+            )
         }
     }
 
     private suspend fun loadFromApi(apiPref: String?, params: LoadParams<Int>): LoadResult<Int, Video> {
         api = apiPref
         return when (apiPref) {
-            C.GQL -> if (helixPeriod == "all") gqlQueryLoad(params) else throw Exception()
-            C.GQL_PERSISTED_QUERY -> if (helixPeriod == "all") gqlLoad(params) else throw Exception()
-            C.HELIX -> if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) helixLoad(params) else throw Exception()
             C.KICK -> if (helixPeriod == "all") kickLoad(params) else throw Exception()
             else -> throw Exception()
         }

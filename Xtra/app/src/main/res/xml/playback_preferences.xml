@@ -17,7 +17,7 @@
         app:useSimpleSummaryProvider="true" />
 
     <EditTextPreference
-        android:defaultValue="twitch-web-wall-mason"
+        android:defaultValue="kick-web-wall-mason"
         android:dependency="token_random_deviceid"
         android:key="token_xdeviceid"
         android:title="@string/stream_device_id"

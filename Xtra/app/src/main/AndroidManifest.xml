@@ -41,15 +41,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-                <data android:host="*.twitch.tv" />
-                <data android:host="twitch.tv" />
-            </intent-filter>
         </activity>
         <activity android:name=".ui.settings.SettingsActivity" />
         <activity
@@ -62,6 +53,10 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="xtra"
+                    android:host="kick-auth"
+                    android:pathPrefix="/callback" />
                 <data
                     android:scheme="https"
                     android:host="localhost"

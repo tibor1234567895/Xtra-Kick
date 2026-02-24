@@ -39,8 +39,6 @@ class XtraModule {
     fun providesHttpEngine(application: Application): HttpEngine? {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7) {
             HttpEngine.Builder(application).apply {
-                addQuicHint("gql.twitch.tv", 443, 443)
-                addQuicHint("www.twitch.tv", 443, 443)
                 addQuicHint("7tv.io", 443, 443)
                 addQuicHint("cdn.7tv.app", 443, 443)
                 addQuicHint("api.betterttv.net", 443, 443)
@@ -59,8 +57,6 @@ class XtraModule {
                 val userAgent = "Cronet/" + defaultUserAgent.substringAfter("Cronet/", "").substringBefore(')')
                 setUserAgent(userAgent)
                 setQuicOptions(QuicOptions.builder().setHandshakeUserAgent(userAgent).build())
-                addQuicHint("gql.twitch.tv", 443, 443)
-                addQuicHint("www.twitch.tv", 443, 443)
                 addQuicHint("7tv.io", 443, 443)
                 addQuicHint("cdn.7tv.app", 443, 443)
                 addQuicHint("api.betterttv.net", 443, 443)

@@ -12,7 +12,6 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.github.andreyasadchy.xtra.R
-import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.NotificationUsersRepository
 import com.github.andreyasadchy.xtra.repository.ShownNotificationsRepository
 import com.github.andreyasadchy.xtra.util.C
@@ -33,15 +32,11 @@ class LiveNotificationWorker @AssistedInject constructor(
     @Inject
     lateinit var notificationUsersRepository: NotificationUsersRepository
 
-    @Inject
-    lateinit var kickRepository: KickRepository
-
     private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     override suspend fun doWork(): Result {
         val streams = shownNotifications.getNewKickStreams(
             notificationUsersRepository = notificationUsersRepository,
-            kickRepository = kickRepository,
         )
         if (streams.isNotEmpty()) {
             val channelId = context.getString(R.string.notification_live_channel_id)

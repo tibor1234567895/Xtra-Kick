@@ -303,11 +303,11 @@ class PlayerViewModel @Inject constructor(
         if (streamResult.value == null) {
             viewModelScope.launch {
                 try {
-                    streamResult.value = try {
-                        kickRepository.getChannel(channelLogin).let { kickRepository.getPlayableUrl(it) }.takeIf { !it.isNullOrBlank() } ?: throw Exception()
-                    } catch (_: Exception) {
-                        playerRepository.loadStreamPlaylistUrl(networkLibrary, gqlHeaders, channelLogin, randomDeviceId, xDeviceId, playerType, supportedCodecs, proxyPlaybackAccessToken, proxyHost, proxyPort, proxyUser, proxyPassword, enableIntegrity)
-                    }
+                    streamResult.value = kickRepository
+                        .getChannel(channelLogin)
+                        .let { kickRepository.getPlayableUrl(it) }
+                        .takeIf { !it.isNullOrBlank() }
+                        ?: throw Exception("Kick playback URL unavailable")
                 } catch (e: Exception) {
                     if (e.message == "failed integrity check" && integrity.value == null) {
                         integrity.value = "refreshStream"
@@ -347,75 +347,8 @@ class PlayerViewModel @Inject constructor(
     }
 
     private suspend fun updateStream(channelId: String?, channelLogin: String?, networkLibrary: String?, helixHeaders: Map<String, String>, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
-        stream.value = try {
-            try {
-                channelLogin?.let { login ->
-                    kickRepository.getChannel(login).let { kickRepository.toStream(it) }
-                } ?: throw Exception()
-            } catch (_: Exception) {
-                val response = graphQLRepository.loadQueryUsersStream(
-                    networkLibrary = networkLibrary,
-                    headers = gqlHeaders,
-                    ids = channelId?.let { listOf(it) },
-                    logins = if (channelId.isNullOrBlank()) channelLogin?.let { listOf(it) } else null
-                )
-                if (enableIntegrity) {
-                    response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
-                }
-                response.data!!.users?.firstOrNull()?.let {
-                    Stream(
-                        id = it.stream?.id,
-                        channelId = channelId,
-                        channelLogin = it.login,
-                        channelName = it.displayName,
-                        gameId = it.stream?.game?.id,
-                        gameSlug = it.stream?.game?.slug,
-                        gameName = it.stream?.game?.displayName,
-                        title = it.stream?.broadcaster?.broadcastSettings?.title,
-                        viewerCount = it.stream?.viewersCount,
-                        startedAt = it.stream?.createdAt?.toString(),
-                        thumbnailUrl = it.stream?.previewImageURL,
-                        profileImageUrl = it.profileImageURL,
-                        tags = it.stream?.freeformTags?.mapNotNull { tag -> tag.name }
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            if (e.message == "failed integrity check") throw e
-            if (helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
-            try {
-                helixRepository.getStreams(
-                    networkLibrary = networkLibrary,
-                    headers = helixHeaders,
-                    ids = channelId?.let { listOf(it) },
-                    logins = if (channelId.isNullOrBlank()) channelLogin?.let { listOf(it) } else null
-                ).data.firstOrNull()?.let {
-                    Stream(
-                        id = it.id,
-                        channelId = it.channelId,
-                        channelLogin = it.channelLogin,
-                        channelName = it.channelName,
-                        gameId = it.gameId,
-                        gameName = it.gameName,
-                        title = it.title,
-                        viewerCount = it.viewerCount,
-                        startedAt = it.startedAt,
-                        thumbnailUrl = it.thumbnailUrl,
-                        tags = it.tags
-                    )
-                }
-            } catch (_: Exception) {
-                val response = graphQLRepository.loadViewerCount(networkLibrary, gqlHeaders, channelLogin)
-                if (enableIntegrity) {
-                    response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
-                }
-                response.data!!.user.stream?.let {
-                    Stream(
-                        id = it.id,
-                        viewerCount = it.viewersCount
-                    )
-                }
-            }
+        stream.value = channelLogin?.let { login ->
+            kickRepository.getChannel(login).let { kickRepository.toStream(it) }
         }
     }
 
@@ -445,11 +378,9 @@ class PlayerViewModel @Inject constructor(
                             videoResult.value = kickUrl
                             backupQualities = null
                         }
-                        return@launch
+                    } else {
+                        throw UnsupportedOperationException("Legacy Twitch VOD playback flow has been removed")
                     }
-                    val result = playerRepository.loadVideoPlaylistUrl(networkLibrary, gqlHeaders, videoId, playerType, supportedCodecs, enableIntegrity)
-                    videoResult.value = result.first
-                    backupQualities = result.second
                 } catch (e: Exception) {
                     if (e.message == "failed integrity check" && integrity.value == null) {
                         integrity.value = "refreshVideo"
@@ -733,28 +664,7 @@ class PlayerViewModel @Inject constructor(
                 try {
                     val followId = channelId ?: channelLogin
                     if (!followId.isNullOrBlank()) {
-                        if (setting == 0 && !channelId.isNullOrBlank() && !userId.isNullOrBlank() && userId != channelId) {
-                            try {
-                                if (gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
-                                val follower = graphQLRepository.loadQueryFollowingUser(
-                                    networkLibrary = networkLibrary,
-                                    headers = gqlHeaders,
-                                    id = channelId,
-                                    login = channelLogin.takeIf { channelId.isBlank() },
-                                ).data?.user?.self?.follower
-                                _isFollowing.value = follower?.followedAt != null
-                            } catch (e: Exception) {
-                                val following = helixRepository.getUserFollows(
-                                    networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
-                                    userId = userId,
-                                    targetId = channelId,
-                                ).data.firstOrNull()?.channelId == channelId
-                                _isFollowing.value = following
-                            }
-                        } else {
-                            _isFollowing.value = localFollowsChannel.getFollowByUserId(followId) != null
-                        }
+                        _isFollowing.value = localFollowsChannel.getFollowByUserId(followId) != null
                     }
                 } catch (e: Exception) {
 
@@ -768,35 +678,13 @@ class PlayerViewModel @Inject constructor(
             try {
                 val followId = channelId ?: channelLogin
                 if (!followId.isNullOrBlank()) {
-                    if (setting == 0 && !channelId.isNullOrBlank() && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
-                        val errorMessage = graphQLRepository.loadFollowUser(networkLibrary, gqlHeaders, channelId).also { response ->
-                            if (enableIntegrity && integrity.value == null) {
-                                response.errors?.find { it.message == "failed integrity check" }?.let {
-                                    integrity.value = "follow"
-                                    return@launch
-                                }
-                            }
-                        }.errors?.firstOrNull()?.message
-                        if (!errorMessage.isNullOrBlank()) {
-                            follow.value = Pair(true, errorMessage)
-                        } else {
-                            _isFollowing.value = true
-                            follow.value = Pair(true, null)
-                            if (notificationsEnabled) {
-                                startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { started ->
-                                    shownNotificationsRepository.saveList(listOf(ShownNotification(followId, started)))
-                                }
-                            }
-                        }
-                    } else {
-                        localFollowsChannel.saveFollow(LocalFollowChannel(followId, channelLogin, channelName))
-                        _isFollowing.value = true
-                        follow.value = Pair(true, null)
-                        notificationUsersRepository.saveUser(NotificationUser(followId))
-                        if (notificationsEnabled) {
-                            startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { started ->
-                                shownNotificationsRepository.saveList(listOf(ShownNotification(followId, started)))
-                            }
+                    localFollowsChannel.saveFollow(LocalFollowChannel(followId, channelLogin, channelName))
+                    _isFollowing.value = true
+                    follow.value = Pair(true, null)
+                    notificationUsersRepository.saveUser(NotificationUser(followId))
+                    if (notificationsEnabled) {
+                        startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { started ->
+                            shownNotificationsRepository.saveList(listOf(ShownNotification(followId, started)))
                         }
                     }
                 }
@@ -811,27 +699,10 @@ class PlayerViewModel @Inject constructor(
             try {
                 val followId = channelId ?: channelLogin
                 if (!followId.isNullOrBlank()) {
-                    if (setting == 0 && !channelId.isNullOrBlank() && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && userId != channelId) {
-                        val errorMessage = graphQLRepository.loadUnfollowUser(networkLibrary, gqlHeaders, channelId).also { response ->
-                            if (enableIntegrity && integrity.value == null) {
-                                response.errors?.find { it.message == "failed integrity check" }?.let {
-                                    integrity.value = "unfollow"
-                                    return@launch
-                                }
-                            }
-                        }.errors?.firstOrNull()?.message
-                        if (!errorMessage.isNullOrBlank()) {
-                            follow.value = Pair(false, errorMessage)
-                        } else {
-                            _isFollowing.value = false
-                            follow.value = Pair(false, null)
-                        }
-                    } else {
-                        localFollowsChannel.getFollowByUserId(followId)?.let { localFollowsChannel.deleteFollow(it) }
-                        _isFollowing.value = false
-                        follow.value = Pair(false, null)
-                        notificationUsersRepository.deleteUser(NotificationUser(followId))
-                    }
+                    localFollowsChannel.getFollowByUserId(followId)?.let { localFollowsChannel.deleteFollow(it) }
+                    _isFollowing.value = false
+                    follow.value = Pair(false, null)
+                    notificationUsersRepository.deleteUser(NotificationUser(followId))
                 }
             } catch (e: Exception) {
 

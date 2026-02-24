@@ -127,3 +127,39 @@ fi
 echo "Installing to ${SERIAL}"
 adb -s "${SERIAL}" install -r -t "${APK}"
 echo "Installed ${APK}"
+
+echo "Launching app on ${SERIAL}"
+AAPT=""
+if command -v aapt2 >/dev/null 2>&1; then
+  AAPT="aapt2"
+elif command -v aapt >/dev/null 2>&1; then
+  AAPT="aapt"
+else
+  AAPT="$(find "${SDK_DIR}/build-tools" -name "aapt2" -type f 2>/dev/null | sort -V | tail -1)"
+  if [[ -z "${AAPT}" ]]; then
+    AAPT="$(find "${SDK_DIR}/build-tools" -name "aapt" -type f 2>/dev/null | sort -V | tail -1)"
+  fi
+fi
+
+PACKAGE=""
+ACTIVITY=""
+if [[ -n "${AAPT}" ]]; then
+  BADGING="$("${AAPT}" dump badging "${APK}" 2>/dev/null)"
+  PACKAGE="$(echo "${BADGING}" | awk -F"'" '/^package:/{print $2; exit}')"
+  ACTIVITY="$(echo "${BADGING}" | awk -F"'" '/launchable-activity/{print $2; exit}')"
+fi
+
+if [[ -n "${PACKAGE}" && -n "${ACTIVITY}" ]]; then
+  adb -s "${SERIAL}" shell am start -n "${PACKAGE}/${ACTIVITY}"
+  echo "Launched ${PACKAGE}/${ACTIVITY}"
+elif [[ -n "${PACKAGE}" ]]; then
+  adb -s "${SERIAL}" shell monkey -p "${PACKAGE}" -c android.intent.category.LAUNCHER 1
+  echo "Launched ${PACKAGE} via monkey"
+else
+  # Fallback: derive package from apk filename convention (debug suffix)
+  FALLBACK_PKG="com.github.andreyasadchy.xtra.debug"
+  FALLBACK_ACT="com.github.andreyasadchy.xtra.ui.main.MainActivity"
+  echo "Could not determine package from APK; trying known debug package." >&2
+  adb -s "${SERIAL}" shell am start -n "${FALLBACK_PKG}/${FALLBACK_ACT}"
+  echo "Launched ${FALLBACK_PKG}/${FALLBACK_ACT}"
+fi

@@ -108,7 +108,12 @@ class KickCategory(
 @Serializable
 class KickThumbnail(
     val src: String? = null,
-)
+    @SerialName("url")
+    val url: String? = null,
+) {
+    val imageUrl: String?
+        get() = src ?: url
+}
 
 @Serializable
 class KickBanner(

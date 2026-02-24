@@ -9,6 +9,7 @@ class LocalFollowChannel(
     var userLogin: String? = null,
     var userName: String? = null,
     var channelLogo: String? = null,
+    var sourceMask: Int = 1,
 ) {
 
     @PrimaryKey(autoGenerate = true)

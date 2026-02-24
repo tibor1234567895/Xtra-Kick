@@ -110,7 +110,7 @@ class TeamFragment : PagedListFragment(), Scrollable, IntegrityDialog.CallbackLi
                     R.id.share -> {
                         startActivity(Intent.createChooser(Intent().apply {
                             action = Intent.ACTION_SEND
-                            putExtra(Intent.EXTRA_TEXT, "https://twitch.tv/team/${args.teamName}")
+                            putExtra(Intent.EXTRA_TEXT, "https://kick.com/team/${args.teamName}")
                             args.teamName?.let {
                                 putExtra(Intent.EXTRA_TITLE, it)
                             }

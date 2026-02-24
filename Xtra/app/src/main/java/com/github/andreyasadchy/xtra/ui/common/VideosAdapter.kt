@@ -239,7 +239,7 @@ class VideosAdapter(
                                                 ?: item.channelLogin?.let { login -> item.id?.let { id -> "https://kick.com/$login/videos/$id" } }
                                                 ?: "https://kick.com/${item.channelLogin ?: ""}"
                                         } else {
-                                            "https://twitch.tv/videos/${item.id}"
+                                            "https://kick.com/videos/${item.id}"
                                         }
                                         context.startActivity(Intent.createChooser(Intent().apply {
                                             action = Intent.ACTION_SEND

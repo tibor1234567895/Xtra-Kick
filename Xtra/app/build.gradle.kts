@@ -13,6 +13,9 @@ kotlin {
 }
 
 android {
+    val kickClientId = ((project.findProperty("KICK_CLIENT_ID") as String?) ?: "").replace("\"", "\\\"")
+    val kickOAuthBackendBaseUrl = ((project.findProperty("KICK_OAUTH_BACKEND_BASE_URL") as String?) ?: "").replace("\"", "\\\"")
+
     signingConfigs {
         getByName("debug") {
             keyAlias = "debug"
@@ -37,12 +40,16 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-DEBUG"
             signingConfig = signingConfigs.getByName("debug")
+            buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
+            buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
         }
         release {
             isShrinkResources = true
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
+            buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
+            buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
         }
     }
     buildFeatures {

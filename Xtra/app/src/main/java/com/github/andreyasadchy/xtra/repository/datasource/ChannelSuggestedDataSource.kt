@@ -19,66 +19,31 @@ class ChannelSuggestedDataSource(
         return try {
             channelLogin?.let { login ->
                 val channel = runCatching { kickRepository.getChannel(login) }.getOrNull()
-                if (channel == null) {
-                    return LoadResult.Page(
-                        data = emptyList(),
-                        prevKey = null,
-                        nextKey = null
-                    )
+                    ?: return LoadResult.Page(data = emptyList(), prevKey = null, nextKey = null)
+                val subcategory = channel.livestream?.category?.slug ?: channel.recentCategories?.firstOrNull()?.slug
+                if (subcategory.isNullOrBlank()) {
+                    return LoadResult.Page(data = emptyList(), prevKey = null, nextKey = null)
                 }
-                channel.let {
-                    val subcategory = channel.livestream?.category?.slug ?: channel.recentCategories?.firstOrNull()?.slug
-                    if (subcategory.isNullOrBlank()) {
-                        return LoadResult.Page(
-                            data = emptyList(),
-                            prevKey = null,
-                            nextKey = null
-                        )
-                    }
-                    val currentChannelId = channel.id?.toString()
-                    val list = kickRepository.getLivestreams(
-                        page = 1,
-                        limit = params.loadSize,
-                        subcategory = subcategory
-                    ).data.map {
-                        kickRepository.toStream(it)
-                    }.filter { stream ->
-                        !stream.channelLogin.equals(login, true) && (currentChannelId.isNullOrBlank() || stream.channelId != currentChannelId)
-                    }.distinctBy { stream ->
-                        stream.channelId ?: stream.channelLogin ?: stream.id
-                    }
-                    return LoadResult.Page(
-                        data = list,
-                        prevKey = null,
-                        nextKey = null
-                    )
+                val currentChannelId = channel.id?.toString()
+                val list = kickRepository.getLivestreams(
+                    page = 1,
+                    limit = params.loadSize,
+                    subcategory = subcategory
+                ).data.map {
+                    kickRepository.toStream(it)
+                }.filter { stream ->
+                    !stream.channelLogin.equals(login, true) && (currentChannelId.isNullOrBlank() || stream.channelId != currentChannelId)
+                }.distinctBy { stream ->
+                    stream.channelId ?: stream.channelLogin ?: stream.id
                 }
+                return LoadResult.Page(
+                    data = list,
+                    prevKey = null,
+                    nextKey = null
+                )
             }
-            val response = graphQLRepository.loadChannelSuggested(networkLibrary, gqlHeaders, channelLogin)
-            if (enableIntegrity) {
-                response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-            }
-            val list = response.data!!.sideNav.sections.edges.find {
-                it.node.id == "provider-side-nav-similar-streamer-currently-watching-1"
-            }?.node?.content?.edges?.map { item ->
-                item.node.let {
-                    Stream(
-                        id = it.id,
-                        channelId = it.broadcaster?.id,
-                        channelLogin = it.broadcaster?.login,
-                        channelName = it.broadcaster?.displayName,
-                        gameId = it.game?.id,
-                        gameSlug = it.game?.slug,
-                        gameName = it.game?.displayName,
-                        title = it.broadcaster?.broadcastSettings?.title,
-                        viewerCount = it.viewersCount,
-                        profileImageUrl = it.broadcaster?.profileImageURL,
-                        tags = it.freeformTags?.mapNotNull { tag -> tag.name }
-                    )
-                }
-            } ?: emptyList()
             LoadResult.Page(
-                data = list,
+                data = emptyList(),
                 prevKey = null,
                 nextKey = null
             )

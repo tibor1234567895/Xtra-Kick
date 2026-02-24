@@ -29,6 +29,7 @@ import com.github.andreyasadchy.xtra.model.chat.StvBadge
 import com.github.andreyasadchy.xtra.model.chat.StvUser
 import com.github.andreyasadchy.xtra.model.chat.TwitchBadge
 import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
+import com.github.andreyasadchy.xtra.model.kick.KickMessage
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
@@ -44,6 +45,7 @@ import com.github.andreyasadchy.xtra.util.chat.ChatWriteWebSocket
 import com.github.andreyasadchy.xtra.util.chat.EventSubUtils
 import com.github.andreyasadchy.xtra.util.chat.EventSubWebSocket
 import com.github.andreyasadchy.xtra.util.chat.HermesWebSocket
+import com.github.andreyasadchy.xtra.util.chat.KickPusherChatWebSocket
 import com.github.andreyasadchy.xtra.util.chat.PubSubUtils
 import com.github.andreyasadchy.xtra.util.chat.RecentMessageUtils
 import com.github.andreyasadchy.xtra.util.chat.StvEventApiUtils
@@ -64,6 +66,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
@@ -97,6 +100,7 @@ class ChatViewModel @Inject constructor(
     private var chatWriteIRC: ChatWriteIRC? = null
     private var chatReadWebSocket: ChatReadWebSocket? = null
     private var chatWriteWebSocket: ChatWriteWebSocket? = null
+    private var kickPusherChatWebSocket: KickPusherChatWebSocket? = null
     private var chatReadJob: Job? = null
     private var chatWriteJob: Job? = null
     private var eventSub: EventSubWebSocket? = null
@@ -122,6 +126,8 @@ class ChatViewModel @Inject constructor(
     private var kickReplayFallbackUrl: String? = null
     private var kickReplayFallbackGetCurrentPosition: (() -> Long?)? = null
     private var kickReplaySessionKey: String? = null
+    private var kickRealtimeLastDisconnectMessage: String? = null
+    private var kickRealtimeLastDisconnectAtMs: Long = 0L
     private val kickReplayPreloadWindowMs = 60_000L
     private val kickReplayPreloadMaxMessages = 120
     private val kickReplayPollIntervalMs = 2_000L
@@ -188,19 +194,14 @@ class ChatViewModel @Inject constructor(
     val chatMessages = mutableListOf<ChatMessage>()
     val autoCompleteList = mutableListOf<Any?>()
     private val chatters = ConcurrentHashMap<String, Chatter>()
+    @Volatile
+    private var kickLivePollingFallbackActive = false
 
     fun startLive(networkLibrary: String?, channelId: String?, channelLogin: String?, channelName: String?, streamId: String?) {
         if (chatReadIRC == null && chatReadWebSocket == null && eventSub == null && kickChatJob == null && channelLogin != null) {
             messageLimit = applicationContext.prefs().getInt(C.CHAT_LIMIT, 600)
             this.streamId = streamId
-            if (isKickPreferred() && !channelId.isNullOrBlank()) {
-                loadEmotes(channelId, channelLogin)
-                startKickChat(channelId, channelLogin, channelName)
-                if (applicationContext.prefs().getBoolean(C.CHAT_RECENT, true)) {
-                    loadRecentMessages(networkLibrary, channelLogin, channelId)
-                }
-                return
-            }
+            kickLivePollingFallbackActive = false
             startLiveChat(channelId, channelLogin)
             addChatter(channelName)
             loadEmotes(channelId, channelLogin)
@@ -237,14 +238,8 @@ class ChatViewModel @Inject constructor(
 
     fun resumeLive(channelId: String?, channelLogin: String?) {
         if (channelLogin != null && autoReconnect) {
-            if (isKickPreferred() && !channelId.isNullOrBlank()) {
-                if (kickChatJob?.isActive != true) {
-                    startKickChat(channelId, channelLogin, channelLogin)
-                }
-            } else {
-                if (chatReadJob?.isActive == false) {
-                    startLiveChat(channelId, channelLogin)
-                }
+            if (!kickLivePollingFallbackActive && chatReadJob?.isActive == false) {
+                startLiveChat(channelId, channelLogin)
             }
         }
     }
@@ -1324,17 +1319,10 @@ class ChatViewModel @Inject constructor(
                 }
             }
             var nextPollAtMs = 0L
-            var initialRawPositionMs: Long? = null
             while (currentCoroutineContext().isActive) {
                 try {
                     val rawPosition = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
-                    val baseline = initialRawPositionMs ?: rawPosition.also {
-                        initialRawPositionMs = it
-                        logKickReplayChat(stage = "position_baseline", sessionKey = sessionKey) {
-                            "rawStartMs=$it"
-                        }
-                    }
-                    val position = (rawPosition - baseline).coerceAtLeast(0L)
+                    val position = rawPosition
                     val playbackTimestampMs = effectiveReplayStartTimeMs + position
                     val dueStats = emitDueKickReplayMessages(playbackTimestampMs + kickReplayEmitLeadMs)
                     if (dueStats.total > 0) {
@@ -1445,6 +1433,7 @@ class ChatViewModel @Inject constructor(
 
     fun startLiveChat(channelId: String?, channelLogin: String) {
         stopLiveChat()
+        val kickMode = isKickPreferred()
         val gqlHeaders = TwitchApiHelper.getGQLHeaders(applicationContext, true)
         val helixHeaders = TwitchApiHelper.getHelixHeaders(applicationContext)
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
@@ -1459,7 +1448,34 @@ class ChatViewModel @Inject constructor(
         val nameDisplay = applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "0")
         val useApiChatMessages = applicationContext.prefs().getBoolean(C.DEBUG_API_CHAT_MESSAGES, true)
         val showWebSocketDebugInfo = applicationContext.prefs().getBoolean(C.DEBUG_WEBSOCKET_INFO, false)
-        if (applicationContext.prefs().getBoolean(C.DEBUG_EVENTSUB_CHAT, false) && !helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+        val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false)
+        val gqlWebClientId = applicationContext.prefs().getString(C.GQL_CLIENT_ID_WEB, "kimne78kx3ncx6brgo4mv6wki5h1ko")
+        if (kickMode) {
+            synchronized(kickMessageIds) {
+                kickMessageIds.clear()
+            }
+            chatReadJob = viewModelScope.launch {
+                val fallbackId = channelId?.takeIf { it.isNotBlank() } ?: channelLogin
+                val kickChatroomId = if (!channelId.isNullOrBlank()) {
+                    resolveKickChatId(channelId, channelLogin)
+                } else {
+                    fallbackId
+                }
+                if (debugKickRealtimeChat) {
+                    Log.d("KickRealtimeChat", "resolved chatroomId=$kickChatroomId channelId=$channelId channelLogin=$channelLogin")
+                }
+                if (!isActive) {
+                    return@launch
+                }
+                kickPusherChatWebSocket = KickPusherChatWebSocket(
+                    chatroomId = kickChatroomId,
+                    trustManager = trustManager,
+                    listener = KickPusherChatListener(channelLogin, channelId),
+                    debugLogging = debugKickRealtimeChat
+                )
+                kickPusherChatWebSocket?.connect(this)?.join()
+            }
+        } else if (applicationContext.prefs().getBoolean(C.DEBUG_EVENTSUB_CHAT, false) && !helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
             eventSub = EventSubWebSocket(trustManager, EventSubListener(helixHeaders, channelLogin, showUserNotice, showClearChat, usePubSub, networkLibrary, isLoggedIn, accountId, channelId))
             chatReadJob = eventSub?.connect(viewModelScope)
         } else {
@@ -1500,7 +1516,6 @@ class ChatViewModel @Inject constructor(
             }
         }
         val collectPoints = applicationContext.prefs().getBoolean(C.CHAT_POINTS_COLLECT, true)
-        val gqlWebClientId = applicationContext.prefs().getString(C.GQL_CLIENT_ID_WEB, "kimne78kx3ncx6brgo4mv6wki5h1ko")
         val gqlWebToken = applicationContext.tokenPrefs().getString(C.GQL_TOKEN_WEB, null)
         if (usePubSub && !channelId.isNullOrBlank() && (accountId.isNullOrBlank() || !collectPoints || !gqlWebToken.isNullOrBlank() || enableIntegrity)) {
             val notifyPoints = applicationContext.prefs().getBoolean(C.CHAT_POINTS_NOTIFY, false)
@@ -1564,7 +1579,11 @@ class ChatViewModel @Inject constructor(
                 chatReadIRC?.disconnect(chatReadJob)
             }
         } else {
-            if (chatReadWebSocket != null) {
+            if (kickPusherChatWebSocket != null) {
+                MainScope().launch(Dispatchers.IO) {
+                    kickPusherChatWebSocket?.disconnect(chatReadJob)
+                }
+            } else if (chatReadWebSocket != null) {
                 MainScope().launch(Dispatchers.IO) {
                     chatReadWebSocket?.disconnect(chatReadJob)
                 }
@@ -1576,6 +1595,7 @@ class ChatViewModel @Inject constructor(
                 }
             }
         }
+        kickPusherChatWebSocket = null
         if (chatWriteIRC != null) {
             MainScope().launch(Dispatchers.IO) {
                 chatWriteIRC?.disconnect(chatWriteJob)
@@ -1718,6 +1738,109 @@ class ChatViewModel @Inject constructor(
                 fullMsg = fullMsg
             ))
         }
+    }
+
+    private inner class KickPusherChatListener(
+        private val channelLogin: String,
+        private val channelId: String?,
+    ) : KickPusherChatWebSocket.Listener {
+        override suspend fun onConnect() {
+            onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_join).format(channelLogin)))
+        }
+
+        override suspend fun onChatMessage(messageJson: String) {
+            val kickMessage = parseKickRealtimeMessage(messageJson) ?: return
+            val chatMessage = kickRepository.toChatMessage(kickMessage)
+            if (chatMessage.message.isNullOrBlank() && chatMessage.systemMsg.isNullOrBlank()) {
+                return
+            }
+            var newKickEmotesAdded = false
+            if (addKickInlineEmotes(chatMessage.fullMsg)) {
+                newKickEmotesAdded = true
+            }
+            if (newKickEmotesAdded) {
+                userEmotesUpdated.emit(Unit)
+            }
+            emitKickMessages(listOf(chatMessage))
+        }
+
+        override suspend fun onDisconnect(message: String, fullMsg: String?) {
+            val isHostResolutionFailure = message.contains("UnknownHostException", ignoreCase = true) ||
+                message.contains("Unable to resolve host", ignoreCase = true) ||
+                message.contains("No address associated with hostname", ignoreCase = true)
+            val shouldEmitDisconnect = shouldEmitKickRealtimeDisconnect(message)
+            if (!isHostResolutionFailure && shouldEmitDisconnect) {
+                onMessage(
+                    ChatMessage(
+                        systemMsg = ContextCompat.getString(applicationContext, R.string.chat_disconnect).format(channelLogin, message),
+                        fullMsg = fullMsg
+                    )
+                )
+            }
+            if (isHostResolutionFailure) {
+                // Stop retry loop spam when DNS cannot resolve the realtime host.
+                kickPusherChatWebSocket?.disconnect(chatReadJob)
+                chatReadJob = null
+                return
+            }
+            if (
+                !channelLogin.isBlank() &&
+                autoReconnect &&
+                !message.contains("UnknownHostException", ignoreCase = true)
+            ) {
+                viewModelScope.launch {
+                    delay(3000)
+                    if (chatReadJob?.isActive != true) {
+                        startLiveChat(channelId, channelLogin)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun shouldEmitKickRealtimeDisconnect(message: String): Boolean {
+        val now = System.currentTimeMillis()
+        val sameAsLast = kickRealtimeLastDisconnectMessage == message
+        val recent = now - kickRealtimeLastDisconnectAtMs < 15_000L
+        if (sameAsLast && recent) {
+            return false
+        }
+        kickRealtimeLastDisconnectMessage = message
+        kickRealtimeLastDisconnectAtMs = now
+        return true
+    }
+
+    private fun parseKickRealtimeMessage(messageJson: String): KickMessage? {
+        fun decodeCandidate(raw: String?): KickMessage? {
+            if (raw.isNullOrBlank()) return null
+            return runCatching { json.decodeFromString<KickMessage>(raw) }.getOrNull()
+        }
+        decodeCandidate(messageJson)?.let { return it }
+        val root = runCatching { JSONObject(messageJson) }.getOrNull() ?: return null
+        val candidates = mutableListOf<String>()
+        fun addObj(obj: JSONObject?) {
+            if (obj != null) candidates.add(obj.toString())
+        }
+        addObj(root)
+        addObj(root.optJSONObject("data"))
+        addObj(root.optJSONObject("message"))
+        addObj(root.optJSONObject("payload"))
+        val dataRaw = root.opt("data")
+        if (dataRaw is String) {
+            addObj(runCatching { JSONObject(dataRaw) }.getOrNull())
+            val arr = runCatching { JSONArray(dataRaw) }.getOrNull()
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    addObj(arr.optJSONObject(i))
+                }
+            }
+        }
+        val payload = root.optJSONObject("payload")
+        addObj(payload?.optJSONObject("data"))
+        for (candidate in candidates) {
+            decodeCandidate(candidate)?.let { return it }
+        }
+        return null
     }
 
     private inner class ChatWriteListener(

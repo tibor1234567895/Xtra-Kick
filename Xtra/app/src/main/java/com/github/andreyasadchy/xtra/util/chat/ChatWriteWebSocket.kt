@@ -22,7 +22,7 @@ class ChatWriteWebSocket(
     private var pongTimer: Timer? = null
 
     fun connect(coroutineScope: CoroutineScope): Job {
-        webSocket = WebSocket("wss://irc-ws.chat.twitch.tv", trustManager, WebSocketListener())
+        webSocket = WebSocket("wss://chat.kick.com", trustManager, WebSocketListener())
         return coroutineScope.launch(Dispatchers.IO) {
             webSocket?.start()
         }
@@ -63,7 +63,7 @@ class ChatWriteWebSocket(
 
     private inner class WebSocketListener : WebSocket.Listener {
         override suspend fun onConnect(webSocket: WebSocket) {
-            webSocket.write("CAP REQ :twitch.tv/tags twitch.tv/commands")
+            webSocket.write("CAP REQ :kick.com/tags kick.com/commands")
             webSocket.write("PASS oauth:$userToken")
             webSocket.write("NICK $userLogin")
             webSocket.write("JOIN #$channelLogin")

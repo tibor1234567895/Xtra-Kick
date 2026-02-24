@@ -8,6 +8,7 @@ import android.content.pm.PackageInstaller
 import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
+import android.util.Log
 import android.widget.Toast
 import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
@@ -20,6 +21,8 @@ import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.VideoPosition
+import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendIntrospectRequest
+import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendRefreshRequest
 import com.github.andreyasadchy.xtra.model.ui.Clip
 import com.github.andreyasadchy.xtra.model.ui.Game
 import com.github.andreyasadchy.xtra.model.ui.OfflineVideo
@@ -37,6 +40,7 @@ import com.github.andreyasadchy.xtra.ui.login.LoginActivity
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
+import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.TwitchApiHelper
 import com.github.andreyasadchy.xtra.util.getByteArrayCronetCallback
 import com.github.andreyasadchy.xtra.util.prefs
@@ -61,7 +65,6 @@ import org.chromium.net.apihelpers.RedirectHandlers
 import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.io.File
 import java.io.FileOutputStream
-import java.net.URLEncoder
 import java.util.Timer
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
@@ -82,6 +85,7 @@ class MainViewModel @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val json: Json,
 ) : ViewModel() {
+    private val kickAuthValidateTag = "KickAuthValidate"
 
     val integrity = MutableStateFlow<String?>(null)
 
@@ -842,35 +846,37 @@ class MainViewModel @Inject constructor(
                 }
                 val now = System.currentTimeMillis() / 1000L
                 val expiresAt = activity.tokenPrefs().getLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L)
-                val clientId = activity.prefs().getString(C.KICK_CLIENT_ID, null)
-                val clientSecret = activity.prefs().getString(C.KICK_CLIENT_SECRET, null)
+                val backendBaseUrl = KickOAuthConfig.getBackendBaseUrl(activity)
+                    ?: throw IllegalStateException("401")
                 val refreshToken = activity.tokenPrefs().getString(C.KICK_REFRESH_TOKEN, null)
                 var activeToken = accessToken
                 val shouldRefresh = expiresAt > 0L && expiresAt <= now + 30L
-                if (!shouldRefresh && !clientId.isNullOrBlank() && !clientSecret.isNullOrBlank()) {
-                    val introspect = authRepository.introspectKickToken(
-                        networkLibrary,
-                        formBody(
-                            "client_id" to clientId,
-                            "client_secret" to clientSecret,
-                            "token" to accessToken,
-                        ),
-                    )
-                    if (!introspect.active) {
+                if (!shouldRefresh) {
+                    val introspect = runCatching {
+                        authRepository.introspectKickToken(
+                            networkLibrary = networkLibrary,
+                            backendBaseUrl = backendBaseUrl,
+                            request = KickBackendIntrospectRequest(
+                                token = accessToken,
+                            ),
+                        )
+                    }.getOrElse { error ->
+                        Log.w(kickAuthValidateTag, "Introspect failed, falling back to users endpoint: ${error.message}")
+                        null
+                    }
+                    if (introspect != null && !introspect.active) {
                         throw IllegalStateException("401")
                     }
                 }
                 if (shouldRefresh) {
-                    if (refreshToken.isNullOrBlank() || clientId.isNullOrBlank() || clientSecret.isNullOrBlank()) {
+                    if (refreshToken.isNullOrBlank()) {
                         throw IllegalStateException("401")
                     }
                     val refresh = authRepository.refreshKickToken(
-                        networkLibrary,
-                        formBody(
-                            "grant_type" to "refresh_token",
-                            "refresh_token" to refreshToken,
-                            "client_id" to clientId,
-                            "client_secret" to clientSecret,
+                        networkLibrary = networkLibrary,
+                        backendBaseUrl = backendBaseUrl,
+                        request = KickBackendRefreshRequest(
+                            refreshToken = refreshToken,
                         ),
                     )
                     val newAccess = refresh.accessToken?.takeIf { it.isNotBlank() } ?: throw IllegalStateException("401")
@@ -882,8 +888,19 @@ class MainViewModel @Inject constructor(
                         putString(C.KICK_TOKEN_TYPE, refresh.tokenType)
                     }
                 }
-                val user = authRepository.getKickCurrentUser(networkLibrary, activeToken).data.firstOrNull()
+                val user = try {
+                    authRepository.getKickCurrentUser(networkLibrary, activeToken).data.firstOrNull()
+                } catch (e: Exception) {
+                    if (e.message?.contains("(401)") == true) {
+                        throw IllegalStateException("401")
+                    }
+                    throw e
+                }
+                if (user == null) {
+                    throw IllegalStateException("401")
+                }
                 val loginName = user?.name ?: user?.channelSlug ?: user?.id
+                Log.i(kickAuthValidateTag, "Kick OAuth validated via /public/v1/users. userId=${user.id} login=${loginName ?: "unknown"}")
                 activity.tokenPrefs().edit {
                     putString(C.KICK_USER_ID, user?.id)
                     putString(C.KICK_USER_LOGIN, loginName)
@@ -900,12 +917,6 @@ class MainViewModel @Inject constructor(
             }
         }
         TwitchApiHelper.checkedValidation = true
-    }
-
-    private fun formBody(vararg pairs: Pair<String, String?>): String {
-        return pairs.filter { !it.second.isNullOrBlank() }.joinToString("&") {
-            "${URLEncoder.encode(it.first, Charsets.UTF_8.name())}=${URLEncoder.encode(it.second, Charsets.UTF_8.name())}"
-        }
     }
 
     fun checkUpdates(networkLibrary: String?, url: String, lastChecked: Long) {

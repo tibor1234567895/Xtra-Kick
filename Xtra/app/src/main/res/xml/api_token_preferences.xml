@@ -12,30 +12,6 @@
         app:singleLineTitle="false" />
 
     <EditTextPreference
-        android:defaultValue=""
-        android:key="kick_client_id"
-        android:title="@string/api_kick_client_id"
-        app:useSimpleSummaryProvider="true"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <EditTextPreference
-        android:defaultValue=""
-        android:key="kick_client_secret"
-        android:title="@string/api_kick_client_secret"
-        app:useSimpleSummaryProvider="true"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <EditTextPreference
-        android:defaultValue="https://localhost/callback"
-        android:key="kick_redirect_uri"
-        android:title="@string/api_kick_redirect"
-        app:useSimpleSummaryProvider="true"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <EditTextPreference
         android:defaultValue="user:read chat:write"
         android:key="kick_scopes"
         android:title="@string/api_kick_scopes"

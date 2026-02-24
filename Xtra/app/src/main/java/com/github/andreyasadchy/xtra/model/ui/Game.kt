@@ -3,6 +3,7 @@ package com.github.andreyasadchy.xtra.model.ui
 import android.os.Parcelable
 import com.github.andreyasadchy.xtra.util.TwitchApiHelper
 import kotlinx.parcelize.Parcelize
+import java.io.File
 
 @Parcelize
 class Game(
@@ -23,5 +24,7 @@ class Game(
 ) : Parcelable {
 
     val boxArt: String?
-        get() = TwitchApiHelper.getTemplateUrl(boxArtUrl, "game")
+        get() = boxArtUrl
+            ?.takeUnless { it.startsWith("/") && !File(it).exists() }
+            ?.let { TwitchApiHelper.getTemplateUrl(it, "game") }
 }

@@ -43,7 +43,7 @@ class ChatWriteIRC(
                             contains("ROOMSTATE") -> listener.onRoomState(this)
                             contains("USERSTATE") -> listener.onUserState(this)
                             startsWith("PING") -> {
-                                write("PONG :tmi.twitch.tv")
+                                write("PONG :kick.com")
                                 writer?.flush()
                             }
                         }
@@ -71,13 +71,13 @@ class ChatWriteIRC(
                     sslContext.socketFactory
                 }
             }
-            socketFactory.createSocket("irc.twitch.tv", 6697)
+            socketFactory.createSocket("chat.kick.com", 6697)
         } else {
-            Socket("irc.twitch.tv", 6667)
+            Socket("chat.kick.com", 6667)
         }
         reader = BufferedReader(InputStreamReader(socket?.inputStream))
         writer = BufferedWriter(OutputStreamWriter(socket?.outputStream))
-        write("CAP REQ :twitch.tv/tags twitch.tv/commands")
+        write("CAP REQ :kick.com/tags kick.com/commands")
         write("PASS oauth:$userToken")
         write("NICK $userLogin")
         write("JOIN #$channelLogin")

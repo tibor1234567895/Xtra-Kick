@@ -36,7 +36,7 @@ class StreamsDataSource(
                 LoadResult.Error(e)
             }
         } else {
-            val apisToTry = (apiPref + C.KICK).distinct()
+            val apisToTry = listOf(C.KICK)
             var lastError: Exception? = null
             apisToTry.forEach { pref ->
                 try {
@@ -52,9 +52,6 @@ class StreamsDataSource(
     private suspend fun loadFromApi(apiPref: String?, params: LoadParams<Int>): LoadResult<Int, Stream> {
         api = apiPref
         return when (apiPref) {
-            C.GQL -> gqlQueryLoad(params)
-            C.GQL_PERSISTED_QUERY -> gqlLoad(params)
-            C.HELIX -> if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank() && tags.isNullOrEmpty() && gqlQueryLanguages.isNullOrEmpty() && gqlLanguages.isNullOrEmpty()) helixLoad(params) else throw Exception()
             C.KICK -> kickLoad(params)
             else -> throw Exception()
         }

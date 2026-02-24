@@ -43,5 +43,24 @@ object AuthStateHelper {
             remove(C.USERNAME)
             remove(C.INTEGRITY_EXPIRATION)
         }
+        context.prefs().edit {
+            remove(C.API_LOGIN)
+            remove(C.HELIX_CLIENT_ID)
+            remove(C.HELIX_REDIRECT)
+            remove(C.GQL_CLIENT_ID)
+            remove(C.GQL_REDIRECT)
+            remove(C.GQL_CLIENT_ID2)
+            remove(C.GQL_REDIRECT2)
+            remove(C.GQL_CLIENT_ID_WEB)
+            remove(C.CHAT_PUBSUB_ENABLED)
+            remove(C.CHAT_POINTS_COLLECT)
+            remove(C.CHAT_POINTS_NOTIFY)
+            remove(C.CHAT_RAIDS_SHOW)
+            remove(C.CHAT_RAIDS_AUTO_SWITCH)
+            remove(C.CHAT_POLLS_SHOW)
+            remove(C.CHAT_PREDICTIONS_SHOW)
+            remove(C.DEBUG_EVENTSUB_CHAT)
+            remove(C.GET_ALL_GQL_HEADERS)
+        }
     }
 }

@@ -23,6 +23,7 @@ import com.github.andreyasadchy.xtra.model.ui.User
 import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.TwitchApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -46,6 +47,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Request
+import java.util.Collections
 import java.io.IOException
 import java.net.URLEncoder
 import java.util.Locale
@@ -71,7 +73,7 @@ class KickRepository @Inject constructor(
     private val kickBadgeUrls = ConcurrentHashMap<String, String>()
     private val channelCache = ConcurrentHashMap<String, Pair<Long, KickChannelResponse>>()
     private val kickBadgeCatalogRefreshAt = ConcurrentHashMap<String, Long>()
-    private val kickBadgeCatalogRefreshInProgress = ConcurrentHashMap.newKeySet<String>()
+    private val kickBadgeCatalogRefreshInProgress = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
     private val badgeCacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile
     private var badgePersistScheduled = false
@@ -84,6 +86,39 @@ class KickRepository @Inject constructor(
         badgeCacheScope.launch {
             restoreKickBadgeCacheFromDisk()
         }
+    }
+
+    private data class KickCurrentUser(
+        val id: String?,
+        val login: String?,
+    )
+
+    private suspend fun resolveKickCurrentUser(accessToken: String): KickCurrentUser? {
+        val raw = runCatching {
+            getRawAuthenticated(
+                url = "https://api.kick.com/public/v1/users",
+                accessToken = accessToken,
+                isKickWeb = false,
+            )
+        }.getOrNull() ?: return null
+        val root = runCatching { json.parseToJsonElement(raw) }.getOrNull() ?: return null
+        val users = when (root) {
+            is JsonArray -> root
+            is JsonObject -> root.arrayOrNull("data")
+                ?: root.arrayOrNull("users")
+                ?: root.objOrNull("data")?.arrayOrNull("users")
+                ?: root.objOrNull("data")?.arrayOrNull("items")
+            else -> null
+        } ?: return null
+        val user = users.firstOrNull() as? JsonObject ?: return null
+        val id = user.primitiveOrNull("id")
+            ?: user.primitiveOrNull("user_id")
+            ?: user.primitiveOrNull("channel_id")
+        val login = user.primitiveOrNull("name")
+            ?: user.primitiveOrNull("username")
+            ?: user.primitiveOrNull("channel_slug")
+            ?: user.objOrNull("channel")?.primitiveOrNull("slug")
+        return KickCurrentUser(id = id, login = login)
     }
 
     suspend fun getLivestreams(
@@ -113,7 +148,10 @@ class KickRepository @Inject constructor(
                 return cachedChannel
             }
         }
-        return get<KickChannelResponse>("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}").also { channel ->
+        val decoded = json.decodeFromString<KickChannelResponse>(
+            getRaw("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}")
+        )
+        return decoded.also { channel ->
             val cachedAt = System.currentTimeMillis()
             channelCache[normalizedKey] = cachedAt to channel
             channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
@@ -610,7 +648,7 @@ class KickRepository @Inject constructor(
             title = item.title,
             viewerCount = item.viewerCount,
             startedAt = normalizeDate(item.createdAt),
-            thumbnailUrl = item.thumbnail?.src,
+            thumbnailUrl = item.thumbnail?.imageUrl,
             profileImageUrl = item.channel?.user?.profileImage,
             tags = item.tags
         )
@@ -628,7 +666,7 @@ class KickRepository @Inject constructor(
             title = channel.livestream?.title,
             viewerCount = channel.livestream?.viewerCount,
             startedAt = normalizeDate(channel.livestream?.createdAt),
-            thumbnailUrl = channel.livestream?.thumbnail?.src,
+            thumbnailUrl = channel.livestream?.thumbnail?.imageUrl,
             profileImageUrl = channel.user?.profileImage,
         )
     }
@@ -1187,6 +1225,35 @@ class KickRepository @Inject constructor(
             response.body.string()
         }
     }
+
+    private suspend fun getRawAuthenticated(
+        url: String,
+        accessToken: String,
+        isKickWeb: Boolean = false,
+        kickPlatformWeb: Boolean = false,
+    ): String = withContext(Dispatchers.IO) {
+        val clientId = KickOAuthConfig.getClientId(context)
+        okHttpClient.newCall(
+            createRequestBuilder(url, isKickWeb)
+                .header("Authorization", "Bearer $accessToken")
+                .apply {
+                    if (url.contains("api.kick.com/") && !clientId.isNullOrBlank()) {
+                        header("Client-Id", clientId)
+                    }
+                    if (kickPlatformWeb) {
+                        header("x-kick-platform", "web")
+                        header("Accept", "application/json, text/plain, */*")
+                    }
+                }
+                .build()
+        ).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("Kick request failed (${response.code}) for $url")
+            }
+            response.body.string()
+        }
+    }
+
 
     private fun createRequestBuilder(url: String, isKickWeb: Boolean = false): Request.Builder {
         return Request.Builder()

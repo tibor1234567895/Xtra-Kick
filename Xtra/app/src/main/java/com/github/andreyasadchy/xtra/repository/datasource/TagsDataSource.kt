@@ -15,40 +15,11 @@ class TagsDataSource(
 ) : PagingSource<Int, Tag>() {
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Tag> {
-        return try {
-            val response = query.takeIf { it.isNotBlank() }?.let {
-                if (getGameTags) {
-                    val response = graphQLRepository.loadGameTags(networkLibrary, gqlHeaders, query, 100)
-                    if (enableIntegrity) {
-                        response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-                    }
-                    response.data?.searchCategoryTags?.map {
-                        Tag(
-                            id = it.id,
-                            name = it.localizedName,
-                            scope = it.scope
-                        )
-                    }
-                } else {
-                    val response = graphQLRepository.loadFreeformTags(networkLibrary, gqlHeaders, query, 100)
-                    if (enableIntegrity) {
-                        response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-                    }
-                    response.data?.searchFreeformTags?.edges?.map { edge ->
-                        Tag(
-                            name = edge.node.tagName
-                        )
-                    }
-                }
-            } ?: emptyList()
-            LoadResult.Page(
-                data = response,
-                prevKey = null,
-                nextKey = null
-            )
-        } catch (e: Exception) {
-            LoadResult.Error(e)
-        }
+        return LoadResult.Page(
+            data = emptyList(),
+            prevKey = null,
+            nextKey = null
+        )
     }
 
     override fun getRefreshKey(state: PagingState<Int, Tag>): Int? {

@@ -21,7 +21,7 @@ class ChatReadWebSocket(
     private var pongTimer: Timer? = null
 
     fun connect(coroutineScope: CoroutineScope): Job {
-        webSocket = WebSocket("wss://irc-ws.chat.twitch.tv", trustManager, WebSocketListener())
+        webSocket = WebSocket("wss://chat.kick.com", trustManager, WebSocketListener())
         return coroutineScope.launch(Dispatchers.IO) {
             webSocket?.start()
         }
@@ -68,7 +68,7 @@ class ChatReadWebSocket(
 
     private inner class WebSocketListener : WebSocket.Listener {
         override suspend fun onConnect(webSocket: WebSocket) {
-            webSocket.write("CAP REQ :twitch.tv/tags twitch.tv/commands")
+            webSocket.write("CAP REQ :kick.com/tags kick.com/commands")
             webSocket.write("NICK justinfan${Random.nextInt(1000, 10000)}")
             webSocket.write("JOIN #$channelLogin")
             listener.onConnect()

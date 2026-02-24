@@ -188,7 +188,7 @@ class ClipsAdapter(
                                     R.id.share -> {
                                         context.startActivity(Intent.createChooser(Intent().apply {
                                             action = Intent.ACTION_SEND
-                                            putExtra(Intent.EXTRA_TEXT, "https://twitch.tv/${item.channelLogin}/clip/${item.id}")
+                                            putExtra(Intent.EXTRA_TEXT, "https://kick.com/${item.channelLogin}/clip/${item.id}")
                                             item.title?.let {
                                                 putExtra(Intent.EXTRA_TITLE, it)
                                             }

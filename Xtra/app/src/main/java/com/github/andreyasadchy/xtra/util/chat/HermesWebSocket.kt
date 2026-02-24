@@ -42,7 +42,7 @@ class HermesWebSocket(
     private val handledMessageIds = mutableListOf<String>()
 
     fun connect(coroutineScope: CoroutineScope): Job {
-        webSocket = WebSocket("wss://hermes.twitch.tv/v1?clientId=${gqlClientId}", trustManager, WebSocketListener())
+        webSocket = WebSocket("wss://ws.kick.com/v1?clientId=${gqlClientId}", trustManager, WebSocketListener())
         return coroutineScope.launch(Dispatchers.IO) {
             webSocket?.start()
         }

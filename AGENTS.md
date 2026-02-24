@@ -12,6 +12,9 @@ Artifacts at repo root (`Xtra-Kick(alpha).apk`, `Xtra-Kick(Alpha).apk_Decompiler
 
 ## Build, Test, and Development Commands
 Run commands from `Xtra/`:
+- **MANDATORY DEFAULT FLOW (repo root):** `./scripts/wsl_build_install.sh`
+  - This is the primary build/install path and should be used first for routine validation.
+  - Use direct Gradle commands only when this script is not suitable for the specific task.
 - Preferred local deploy flow from repo root: `./scripts/wsl_build_install.sh` (builds debug APK in WSL workspace and installs to connected phone via ADB).
 - `./gradlew assembleDebug`: build a local debug APK.
 - `./gradlew assembleRelease`: build release APK (matches CI task).

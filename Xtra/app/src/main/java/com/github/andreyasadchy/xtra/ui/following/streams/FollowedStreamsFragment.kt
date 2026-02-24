@@ -18,9 +18,11 @@ import androidx.paging.PagingDataAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.CommonRecyclerViewLayoutBinding
+import com.github.andreyasadchy.xtra.databinding.SortBarBinding
 import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.ui.common.PagedListFragment
 import com.github.andreyasadchy.xtra.ui.common.Scrollable
+import com.github.andreyasadchy.xtra.ui.common.Sortable
 import com.github.andreyasadchy.xtra.ui.common.StreamsAdapter
 import com.github.andreyasadchy.xtra.ui.common.StreamsCompactAdapter
 import com.github.andreyasadchy.xtra.ui.top.TopStreamsFragmentDirections
@@ -31,7 +33,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
-class FollowedStreamsFragment : PagedListFragment(), Scrollable {
+class FollowedStreamsFragment : PagedListFragment(), Scrollable, Sortable {
 
     private var _binding: CommonRecyclerViewLayoutBinding? = null
     private val binding get() = _binding!!
@@ -74,6 +76,9 @@ class FollowedStreamsFragment : PagedListFragment(), Scrollable {
 
     override fun initialize() {
         viewLifecycleOwner.lifecycleScope.launch {
+            if (viewModel.sortText.value == null) {
+                viewModel.sortText.value = "${getString(R.string.source)}: ${getString(R.string.local)}"
+            }
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.flow.collectLatest { pagingData ->
                     pagingAdapter.submitData(pagingData)
@@ -81,6 +86,18 @@ class FollowedStreamsFragment : PagedListFragment(), Scrollable {
             }
         }
         initializeAdapter(binding, pagingAdapter, enableScrollTopButton = false)
+    }
+
+    override fun setupSortBar(sortBar: SortBarBinding) {
+        sortBar.root.visibility = View.VISIBLE
+        sortBar.root.setOnClickListener(null)
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.sortText.collectLatest {
+                    sortBar.sortText.text = it
+                }
+            }
+        }
     }
 
     override fun scrollToTop() {

@@ -31,7 +31,7 @@ class GamesDataSource(
                 LoadResult.Error(e)
             }
         } else {
-            val apisToTry = (apiPref + C.KICK).distinct()
+            val apisToTry = listOf(C.KICK)
             var lastError: Exception? = null
             apisToTry.forEach { pref ->
                 try {
@@ -47,9 +47,6 @@ class GamesDataSource(
     private suspend fun loadFromApi(apiPref: String?, params: LoadParams<Int>): LoadResult<Int, Game> {
         api = apiPref
         return when (apiPref) {
-            C.GQL -> gqlQueryLoad(params)
-            C.GQL_PERSISTED_QUERY -> gqlLoad(params)
-            C.HELIX -> if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank() && tags.isNullOrEmpty()) helixLoad(params) else throw Exception()
             C.KICK -> if (tags.isNullOrEmpty()) kickLoad(params) else throw Exception()
             else -> throw Exception()
         }

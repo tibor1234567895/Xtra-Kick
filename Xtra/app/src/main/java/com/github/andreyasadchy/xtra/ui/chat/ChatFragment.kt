@@ -949,7 +949,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     fun toggleBackPressedCallback(enable: Boolean) {
         if (enable) {
-            requireActivity().onBackPressedDispatcher.addCallback(this, backPressedCallback)
+            requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backPressedCallback)
         } else {
             backPressedCallback.remove()
         }

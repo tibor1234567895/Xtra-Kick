@@ -36,10 +36,10 @@ object TwitchApiHelper {
     var checkedUpdates = false
 
     fun getTemplateUrl(url: String?, type: String): String? {
-        if (url.isNullOrBlank() || url.startsWith("https://vod-secure.twitch.tv/_404/404_processing")) {
+        if (url.isNullOrBlank() || url.startsWith("https://files.kick.com/images/default-thumbnail")) {
             return when (type) {
-                "game" -> "https://static-cdn.jtvnw.net/ttv-static/404_boxart.jpg"
-                "video" -> "https://vod-secure.twitch.tv/_404/404_processing_320x180.png"
+                "game" -> "https://files.kick.com/images/default-thumbnail.png"
+                "video" -> "https://files.kick.com/images/default-thumbnail.png"
                 else -> null
             }
         }

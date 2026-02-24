@@ -21,7 +21,7 @@ class EventSubWebSocket(
     private val handledMessageIds = mutableListOf<String>()
 
     fun connect(coroutineScope: CoroutineScope): Job {
-        webSocket = WebSocket("wss://eventsub.wss.twitch.tv/ws", trustManager, WebSocketListener())
+        webSocket = WebSocket("wss://ws.kick.com", trustManager, WebSocketListener())
         return coroutineScope.launch(Dispatchers.IO) {
             webSocket?.start()
         }

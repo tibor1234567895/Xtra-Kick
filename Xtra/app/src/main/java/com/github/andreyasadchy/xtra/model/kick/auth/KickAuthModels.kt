@@ -61,6 +61,29 @@ data class KickChatSendRequest(
 )
 
 @Serializable
+data class KickBackendExchangeRequest(
+    val code: String,
+    val codeVerifier: String,
+    val redirectUri: String,
+)
+
+@Serializable
+data class KickBackendRefreshRequest(
+    val refreshToken: String,
+)
+
+@Serializable
+data class KickBackendRevokeRequest(
+    val token: String,
+    val tokenTypeHint: String? = null,
+)
+
+@Serializable
+data class KickBackendIntrospectRequest(
+    val token: String,
+)
+
+@Serializable
 data class KickChatSendResponse(
     val data: KickChatSendData? = null,
     val status: String? = null,

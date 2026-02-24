@@ -2240,7 +2240,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     fun maximize() {
         with(binding) {
             isMaximized = true
-            requireActivity().onBackPressedDispatcher.addCallback(this@PlayerFragment, backPressedCallback)
+            requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backPressedCallback)
             if (videoType == STREAM && chatFragment?.emoteMenuIsVisible() == true) {
                 chatFragment?.toggleBackPressedCallback(true)
             }

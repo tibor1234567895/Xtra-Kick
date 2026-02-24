@@ -277,7 +277,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     R.id.share -> {
                         startActivity(Intent.createChooser(Intent().apply {
                             action = Intent.ACTION_SEND
-                            putExtra(Intent.EXTRA_TEXT, "https://twitch.tv/${args.channelLogin}")
+                            putExtra(Intent.EXTRA_TEXT, "https://kick.com/${args.channelLogin}")
                             args.channelName?.let {
                                 putExtra(Intent.EXTRA_TITLE, it)
                             }

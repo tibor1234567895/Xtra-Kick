@@ -24,6 +24,7 @@ import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowGameRepository
 import com.github.andreyasadchy.xtra.repository.NotificationUsersRepository
 import com.github.andreyasadchy.xtra.repository.OfflineRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.RecentSearchRepository
 import com.github.andreyasadchy.xtra.repository.SavedFiltersRepository
 import com.github.andreyasadchy.xtra.repository.ShownNotificationsRepository
@@ -71,7 +72,10 @@ class DatabaseModule {
 
     @Singleton
     @Provides
-    fun providesShownNotificationsRepository(shownNotificationsDao: ShownNotificationsDao): ShownNotificationsRepository = ShownNotificationsRepository(shownNotificationsDao)
+    fun providesShownNotificationsRepository(
+        shownNotificationsDao: ShownNotificationsDao,
+        kickRepository: KickRepository,
+    ): ShownNotificationsRepository = ShownNotificationsRepository(shownNotificationsDao, kickRepository)
 
     @Singleton
     @Provides
@@ -339,6 +343,11 @@ class DatabaseModule {
                 object : Migration(32, 33) {
                     override fun migrate(db: SupportSQLiteDatabase) {
                         db.execSQL("CREATE TABLE IF NOT EXISTS recent_search (id INTEGER NOT NULL, query TEXT NOT NULL, type TEXT NOT NULL, lastSearched INTEGER NOT NULL, PRIMARY KEY (id))")
+                    }
+                },
+                object : Migration(33, 34) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL("ALTER TABLE local_follows ADD COLUMN sourceMask INTEGER NOT NULL DEFAULT 1")
                     }
                 },
             )

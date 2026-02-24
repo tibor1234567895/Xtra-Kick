@@ -77,7 +77,7 @@ class FollowedGamesAdapter(
                             }
                         )
                     }
-                    if (item.boxArt != null) {
+                    if (!item.boxArt.isNullOrBlank()) {
                         gameImage.visibility = View.VISIBLE
                         fragment.requireContext().imageLoader.enqueue(
                             ImageRequest.Builder(fragment.requireContext()).apply {

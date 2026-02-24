@@ -3,11 +3,9 @@ package com.github.andreyasadchy.xtra.repository.datasource
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.github.andreyasadchy.xtra.model.ui.Stream
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
-import com.github.andreyasadchy.xtra.util.C
+import java.util.Locale
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -15,294 +13,46 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
 class FollowedStreamsDataSource(
-    private val userId: String?,
     private val localFollowsChannel: LocalFollowChannelRepository,
-    private val gqlHeaders: Map<String, String>,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixHeaders: Map<String, String>,
-    private val helixRepository: HelixRepository,
     private val kickRepository: KickRepository,
-    private val enableIntegrity: Boolean,
-    private val apiPref: List<String>,
-    private val networkLibrary: String?,
 ) : PagingSource<Int, Stream>() {
-    private var api: String? = null
-    private var offset: String? = null
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        // Kick-only mode: avoid legacy Twitch pre-check paths entirely.
-        if (apiPref.size == 1 && apiPref.firstOrNull() == C.KICK) {
-            return try {
-                kickLoad()
-            } catch (e: Exception) {
-                LoadResult.Error(e)
-            }
+        return try {
+            kickLoad()
+        } catch (e: Exception) {
+            LoadResult.Error(e)
         }
-        return if (!offset.isNullOrBlank()) {
-            try {
-                loadFromApi(api, params)
-            } catch (e: Exception) {
-                LoadResult.Error(e)
-            }
-        } else {
-            val list = mutableListOf<Stream>()
-            localFollowsChannel.loadFollows().mapNotNull { it.userId }.takeIf { it.isNotEmpty() }?.let {
-                try {
-                    gqlQueryLocal(it)
-                } catch (e: Exception) {
-                    try {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) helixLocal(it) else throw Exception()
-                    } catch (e: Exception) {
-                        null
-                    }
-                }
-            }?.let {
-                if (it is LoadResult.Error && it.throwable.message == "failed integrity check") {
-                    return it
-                }
-                (it as? LoadResult.Page)?.data?.let { list.addAll(it) }
-            }
-            val result = run {
-                val apisToTry = (apiPref + C.KICK).distinct()
-                var loadedResult: LoadResult<Int, Stream>? = null
-                for (pref in apisToTry) {
-                    try {
-                        loadedResult = loadFromApi(pref, params)
-                        break
-                    } catch (_: Exception) {
-
-                    }
-                }
-                loadedResult
-            }?.let {
-                if (it is LoadResult.Error && it.throwable.message == "failed integrity check") {
-                    return it
-                }
-                it as? LoadResult.Page
-            }
-            result?.data?.forEach { stream ->
-                val item = list.find { it.channelId == stream.channelId }
-                if (item == null) {
-                    list.add(stream)
-                }
-            }
-            list.sortByDescending { it.viewerCount }
-            LoadResult.Page(
-                data = list,
-                prevKey = null,
-                nextKey = result?.nextKey
-            )
-        }
-    }
-
-    private suspend fun loadFromApi(apiPref: String?, params: LoadParams<Int>): LoadResult<Int, Stream> {
-        api = apiPref
-        return when (apiPref) {
-            C.GQL -> if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) gqlQueryLoad(params) else throw Exception()
-            C.GQL_PERSISTED_QUERY -> if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) gqlLoad(params) else throw Exception()
-            C.HELIX -> if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) helixLoad(params) else throw Exception()
-            C.KICK -> kickLoad()
-            else -> throw Exception()
-        }
-    }
-
-    private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val response = graphQLRepository.loadQueryUserFollowedStreams(networkLibrary, gqlHeaders, 100, offset)
-        if (enableIntegrity) {
-            response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-        }
-        val data = response.data!!.user!!.followedLiveUsers!!
-        val items = data.edges!!
-        val list = items.mapNotNull { item ->
-            item?.node?.let {
-                Stream(
-                    id = it.stream?.id,
-                    channelId = it.id,
-                    channelLogin = it.login,
-                    channelName = it.displayName,
-                    gameId = it.stream?.game?.id,
-                    gameSlug = it.stream?.game?.slug,
-                    gameName = it.stream?.game?.displayName,
-                    title = it.stream?.broadcaster?.broadcastSettings?.title,
-                    viewerCount = it.stream?.viewersCount,
-                    startedAt = it.stream?.createdAt?.toString(),
-                    thumbnailUrl = it.stream?.previewImageURL,
-                    profileImageUrl = it.profileImageURL,
-                    tags = it.stream?.freeformTags?.mapNotNull { tag -> tag.name }
-                )
-            }
-        }
-        offset = items.lastOrNull()?.cursor?.toString()
-        val nextPage = data.pageInfo?.hasNextPage != false
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank() && nextPage) {
-                (params.key ?: 1) + 1
-            } else null
-        )
-    }
-
-    private suspend fun gqlLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val response = graphQLRepository.loadFollowedStreams(networkLibrary, gqlHeaders, 100, offset)
-        if (enableIntegrity) {
-            response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-        }
-        val data = response.data!!.currentUser.followedLiveUsers
-        val items = data.edges
-        val list = items.map { item ->
-            item.node.let {
-                Stream(
-                    id = it.stream?.id,
-                    channelId = it.id,
-                    channelLogin = it.login,
-                    channelName = it.displayName,
-                    gameId = it.stream?.game?.id,
-                    gameSlug = it.stream?.game?.slug,
-                    gameName = it.stream?.game?.displayName,
-                    title = it.stream?.title,
-                    viewerCount = it.stream?.viewersCount,
-                    startedAt = it.stream?.createdAt,
-                    thumbnailUrl = it.stream?.previewImageURL,
-                    profileImageUrl = it.profileImageURL,
-                    tags = it.stream?.freeformTags?.mapNotNull { tag -> tag.name }
-                )
-            }
-        }
-        offset = items.lastOrNull()?.cursor
-        val nextPage = data.pageInfo?.hasNextPage != false
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank() && nextPage) {
-                (params.key ?: 1) + 1
-            } else null
-        )
-    }
-
-    private suspend fun helixLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val response = helixRepository.getFollowedStreams(
-            networkLibrary = networkLibrary,
-            headers = helixHeaders,
-            userId = userId,
-            limit = 100,
-            offset = offset,
-        )
-        val users = response.data.mapNotNull { it.channelId }.let {
-            helixRepository.getUsers(
-                networkLibrary = networkLibrary,
-                headers = helixHeaders,
-                ids = it,
-            ).data
-        }
-        val list = response.data.map {
-            Stream(
-                id = it.id,
-                channelId = it.channelId,
-                channelLogin = it.channelLogin,
-                channelName = it.channelName,
-                gameId = it.gameId,
-                gameName = it.gameName,
-                title = it.title,
-                viewerCount = it.viewerCount,
-                startedAt = it.startedAt,
-                thumbnailUrl = it.thumbnailUrl,
-                profileImageUrl = it.channelId?.let { id ->
-                    users.find { user -> user.channelId == id }?.profileImageUrl
-                },
-                tags = it.tags
-            )
-        }
-        offset = response.pagination?.cursor
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank()) {
-                (params.key ?: 1) + 1
-            } else null
-        )
-    }
-
-    private suspend fun gqlQueryLocal(ids: List<String>): LoadResult<Int, Stream> {
-        val items = ids.chunked(100).map { list ->
-            graphQLRepository.loadQueryUsersStream(networkLibrary, gqlHeaders, list).also { response ->
-                if (enableIntegrity) {
-                    response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-                }
-            }
-        }.flatMap { it.data!!.users!! }
-        val list = items.mapNotNull { item ->
-            item?.let {
-                if (it.stream?.viewersCount != null) {
-                    Stream(
-                        id = it.stream.id,
-                        channelId = it.id,
-                        channelLogin = it.login,
-                        channelName = it.displayName,
-                        gameId = it.stream.game?.id,
-                        gameSlug = it.stream.game?.slug,
-                        gameName = it.stream.game?.displayName,
-                        title = it.stream.broadcaster?.broadcastSettings?.title,
-                        viewerCount = it.stream.viewersCount,
-                        startedAt = it.stream.createdAt?.toString(),
-                        thumbnailUrl = it.stream.previewImageURL,
-                        profileImageUrl = it.profileImageURL,
-                        tags = it.stream.freeformTags?.mapNotNull { tag -> tag.name }
-                    )
-                } else null
-            }
-        }
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = null
-        )
-    }
-
-    private suspend fun helixLocal(ids: List<String>): LoadResult<Int, Stream> {
-        val items = ids.chunked(100).map {
-            helixRepository.getStreams(
-                networkLibrary = networkLibrary,
-                headers = helixHeaders,
-                ids = it,
-            )
-        }.flatMap { it.data }
-        val users = items.mapNotNull { it.channelId }.chunked(100).map {
-            helixRepository.getUsers(
-                networkLibrary = networkLibrary,
-                headers = helixHeaders,
-                ids = it,
-            )
-        }.flatMap { it.data }
-        val list = items.mapNotNull {
-            if (it.viewerCount != null) {
-                Stream(
-                    id = it.id,
-                    channelId = it.channelId,
-                    channelLogin = it.channelLogin,
-                    channelName = it.channelName,
-                    gameId = it.gameId,
-                    gameName = it.gameName,
-                    title = it.title,
-                    viewerCount = it.viewerCount,
-                    startedAt = it.startedAt,
-                    thumbnailUrl = it.thumbnailUrl,
-                    profileImageUrl = it.channelId?.let { id ->
-                        users.find { user -> user.channelId == id }?.profileImageUrl
-                    },
-                    tags = it.tags
-                )
-            } else null
-        }
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = null
-        )
     }
 
     private suspend fun kickLoad(): LoadResult<Int, Stream> {
         val follows = localFollowsChannel.loadFollows()
+        val followsByLogin = follows.mapNotNull { it.userLogin?.lowercase(Locale.ROOT) }.toSet()
+        val followsById = follows.mapNotNull { it.userId }.toSet()
+
+        val indexedLive = mutableMapOf<String, Stream>()
+        runCatching {
+            val pages = coroutineScope {
+                (1..8).map { page ->
+                    async {
+                        kickRepository.getLivestreams(page = page, limit = 100, sort = "desc")
+                    }
+                }.awaitAll()
+            }
+            pages.forEach { live ->
+                live.data.forEach { item ->
+                    val stream = kickRepository.toStream(item)
+                    val login = stream.channelLogin?.lowercase(Locale.ROOT)
+                    val id = stream.channelId
+                    val matched = (login != null && followsByLogin.contains(login)) || (id != null && followsById.contains(id))
+                    if (matched) {
+                        val key = login ?: id ?: stream.id ?: return@forEach
+                        indexedLive[key] = stream
+                    }
+                }
+            }
+        }
+
         val semaphore = Semaphore(8)
         val streams = coroutineScope {
             follows.map { follow ->
@@ -310,6 +60,8 @@ class FollowedStreamsDataSource(
                     semaphore.withPermit {
                         val login = follow.userLogin?.takeIf { it.isNotBlank() }
                         val id = follow.userId?.takeIf { it.isNotBlank() }
+                        val key = login?.lowercase(Locale.ROOT) ?: id
+                        key?.let { indexedLive[it] }?.let { return@withPermit it }
                         val channel = try {
                             when {
                                 !login.isNullOrBlank() -> kickRepository.getChannel(login)
@@ -324,12 +76,12 @@ class FollowedStreamsDataSource(
                 }
             }.awaitAll()
         }
-        val list = streams
-            .filterNotNull()
-            .distinctBy { it.channelId ?: it.channelLogin ?: it.id }
-            .sortedByDescending { it.viewerCount ?: 0 }
+
         return LoadResult.Page(
-            data = list,
+            data = streams
+                .filterNotNull()
+                .distinctBy { it.channelId ?: it.channelLogin ?: it.id }
+                .sortedByDescending { it.viewerCount ?: 0 },
             prevKey = null,
             nextKey = null
         )

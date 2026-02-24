@@ -93,6 +93,7 @@
     <string name="no">No</string>
     <string name="search">Search</string>
     <string name="chat_replay_unavailable">Chat replay is unavailable</string>
+    <string name="chat_clip_replay_starts" translatable="false">--- Clip chat starts here ---</string>
     <string name="video_subscribers_only">This video is only available to subscribers.</string>
     <string name="player_error">Player error, retrying...</string>
     <string name="picture_in_picture">Picture-in-Picture</string>
@@ -154,8 +155,8 @@
     <string name="token_random_deviceid">Random device ID</string>
     <string name="api_helix_client_id">Helix client ID</string>
     <string name="api_gql_client_id">GQL client ID</string>
-    <string name="api_kick_client_id">Kick client ID</string>
-    <string name="api_kick_client_secret">Kick client secret</string>
+    <string name="api_kick_client_id" translatable="false">Kick client ID</string>
+    <string name="api_kick_client_secret" translatable="false">Kick client secret</string>
     <string name="playback_speed">Playback speed</string>
     <string name="quality">Quality</string>
     <string name="saved_value">Saved value</string>
@@ -179,7 +180,7 @@
     <string name="chat_first">First time chat</string>
     <string name="chat_reward">Channel point redemption</string>
     <string name="always">Always</string>
-    <string name="twitch">Twitch</string>
+    <string name="twitch">Kick</string>
     <string name="local">Local</string>
     <string name="days">d</string>
     <string name="seconds">s</string>
@@ -391,8 +392,8 @@
     <string name="api_login">Get token for selected APIs</string>
     <string name="api_helix_redirect">Helix redirect URL</string>
     <string name="api_gql_redirect">GQL redirect URL</string>
-    <string name="api_kick_redirect">Kick redirect URL</string>
-    <string name="api_kick_scopes">Kick scopes</string>
+    <string name="api_kick_redirect" translatable="false">Kick redirect URL</string>
+    <string name="api_kick_scopes" translatable="false">Kick scopes</string>
     <string name="api_settings">API settings</string>
     <string name="streams">Streams</string>
     <string name="game_streams">Game streams</string>
@@ -445,7 +446,7 @@
     <string name="restart_player">Restart player</string>
     <string name="sub_only_summary">For sub-only content</string>
     <string name="follow_button">Follow button</string>
-    <string name="follow_account">Follow using Twitch account</string>
+    <string name="follow_account">Follow using Kick account</string>
     <string name="follow_local">Follow locally</string>
     <string name="hide">Hide</string>
     <string name="chat_ssl">Connect using SSL</string>
@@ -476,8 +477,8 @@
     <string name="api_user_login">Account login</string>
     <string name="api_helix_token">Helix token</string>
     <string name="api_gql_token">GQL token</string>
-    <string name="api_kick_access_token">Kick access token</string>
-    <string name="api_kick_refresh_token">Kick refresh token</string>
+    <string name="api_kick_access_token" translatable="false">Kick access token</string>
+    <string name="api_kick_refresh_token" translatable="false">Kick refresh token</string>
     <string name="api_validate_tokens">Validate tokens on startup</string>
     <string name="followed_only">Followed only</string>
     <string name="debug_api_commands">Use API chat commands</string>
@@ -627,12 +628,13 @@
     <string name="api_helix">Helix</string>
     <string name="api_gql">GQL</string>
     <string name="api_gql_persisted_query">GQL persisted query</string>
-    <string name="api_kick">Kick</string>
-    <string name="kick_not_implemented_action">This account action is not implemented for Kick yet.</string>
-    <string name="kick_oauth_not_configured">Kick login is not configured. Set Kick client ID in API token settings.</string>
-    <string name="integrity_token_twitch_only">Integrity token debug flow is Twitch-only and disabled for Kick login.</string>
+    <string name="api_kick" translatable="false">Kick</string>
+    <string name="kick_not_implemented_action" translatable="false">This account action is not implemented for Kick yet.</string>
+    <string name="kick_oauth_not_configured" translatable="false">Kick login is not configured. Set KICK_CLIENT_ID and KICK_OAUTH_BACKEND_BASE_URL in build config.</string>
+    <string name="kick_oauth_scope_missing" translatable="false">Kick login requires scopes: user:read and chat:write.</string>
+    <string name="integrity_token_twitch_only" translatable="false">Integrity token debug flow is disabled for Kick login.</string>
     <string name="show_stv_badges">Show 7TV badges</string>
-    <string name="show_kick_badges">Show Kick badges</string>
+    <string name="show_kick_badges" translatable="false">Show Kick badges</string>
     <string name="show_stv_personal_emotes">Show 7TV personal emotes</string>
     <string name="stv_live_updates">7TV live emote updates</string>
     <string name="personal_stv_emote">Personal 7TV emote</string>
@@ -711,6 +713,7 @@
     <string name="translate_from_selected">Translate from selected language</string>
     <string name="translate_all_messages">Translate all messages on this channel</string>
     <string name="show_more_websocket_info">Show more info about WebSockets</string>
+    <string name="debug_kick_realtime_chat" translatable="false">Kick realtime chat debug logs</string>
     <string name="websocket_connected">%s: Connected</string>
     <string name="websocket_disconnected">%1$s: Disconnected - %2$s</string>
     <string name="sort_and_type">Sort by: %1$s. Type: %2$s</string>

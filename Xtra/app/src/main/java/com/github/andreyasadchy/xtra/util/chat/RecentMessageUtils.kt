@@ -15,7 +15,7 @@ object RecentMessageUtils {
     fun parseChatMessage(message: String, userNotice: Boolean): ChatMessage {
         val parts = message.substring(1).split(" ".toRegex(), 2)
         val prefixes = splitAndMakeMap(parts[0], ";", "=")
-        val messageInfo = parts[1] //:<user>!<user>@<user>.tmi.twitch.tv PRIVMSG #<channelName> :<message>
+        val messageInfo = parts[1] //:<user>!<user>@<user>.kick.com PRIVMSG #<channelName> :<message>
         val userLogin = prefixes["login"] ?: try {
             messageInfo.substring(1, messageInfo.indexOf("!"))
         } catch (e: Exception) {

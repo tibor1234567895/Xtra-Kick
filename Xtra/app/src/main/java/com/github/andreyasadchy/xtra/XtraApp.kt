@@ -26,6 +26,7 @@ import com.github.andreyasadchy.xtra.util.prefs
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.OkHttpClient
+import okhttp3.Interceptor
 import okio.Buffer
 import okio.buffer
 import okio.source
@@ -91,6 +92,7 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                             it.writeTo(buffer)
                                             buffer.readByteArray()
                                         }
+                                        val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true)
                                         val requestMillis = System.currentTimeMillis()
                                         val response = suspendCoroutine { continuation ->
                                             httpEngine!!.get().newUrlRequestBuilder(request.url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
@@ -98,6 +100,11 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                                     entry.value.forEach {
                                                         addHeader(entry.key, it)
                                                     }
+                                                }
+                                                if (isKickStreamThumbnail) {
+                                                    addHeader("Referer", "https://kick.com/")
+                                                    addHeader("Origin", "https://kick.com")
+                                                    addHeader("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36")
                                                 }
                                                 requestBody?.let {
                                                     setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(requestBody), cronetExecutor)
@@ -132,11 +139,17 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                     object : NetworkClient {
                                         override suspend fun <T> executeRequest(request: NetworkRequest, block: suspend (NetworkResponse) -> T): T {
                                             val cronetRequest = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
+                                            val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true)
                                             cronetEngine!!.get().newUrlRequestBuilder(request.url, cronetRequest.callback, cronetExecutor).apply {
                                                 request.headers.asMap().forEach { entry ->
                                                     entry.value.forEach {
                                                         addHeader(entry.key, it)
                                                     }
+                                                }
+                                                if (isKickStreamThumbnail) {
+                                                    addHeader("Referer", "https://kick.com/")
+                                                    addHeader("Origin", "https://kick.com")
+                                                    addHeader("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36")
                                                 }
                                                 request.body?.let {
                                                     val buffer = Buffer()
@@ -176,6 +189,7 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                                 it.writeTo(buffer)
                                                 buffer.readByteArray()
                                             }
+                                            val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true)
                                             val requestMillis = System.currentTimeMillis()
                                             val response = suspendCoroutine { continuation ->
                                                 cronetEngine!!.get().newUrlRequestBuilder(request.url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
@@ -183,6 +197,11 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                                         entry.value.forEach {
                                                             addHeader(entry.key, it)
                                                         }
+                                                    }
+                                                    if (isKickStreamThumbnail) {
+                                                        addHeader("Referer", "https://kick.com/")
+                                                        addHeader("Origin", "https://kick.com")
+                                                        addHeader("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36")
                                                     }
                                                     requestBody?.let {
                                                         setUploadDataProvider(UploadDataProviders.create(requestBody), cronetExecutor)
@@ -212,8 +231,25 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                         }
                     }
                     else -> {
+                        val coilClient = okHttpClient.newBuilder()
+                            .addNetworkInterceptor(Interceptor { chain ->
+                                val request = chain.request()
+                                val url = request.url.toString()
+                                if (url.contains("://stream.kick.com/", ignoreCase = true)) {
+                                    chain.proceed(
+                                        request.newBuilder()
+                                            .header("Referer", "https://kick.com/")
+                                            .header("Origin", "https://kick.com")
+                                            .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36")
+                                            .build()
+                                    )
+                                } else {
+                                    chain.proceed(request)
+                                }
+                            })
+                            .build()
                         add(OkHttpNetworkFetcherFactory(
-                            callFactory = { okHttpClient },
+                            callFactory = { coilClient },
                             cacheStrategy = { CacheControlCacheStrategy() }
                         ))
                     }

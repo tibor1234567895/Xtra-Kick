@@ -63,24 +63,7 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
                     sort = sortValues?.videoSort,
                     order = sortValues?.videoType,
                 )
-                viewModel.sortText.value = getString(
-                    R.string.sort_and_order,
-                    getString(
-                        when (viewModel.sort) {
-                            FollowedChannelsSortDialog.SORT_FOLLOWED_AT -> R.string.time_followed
-                            FollowedChannelsSortDialog.SORT_ALPHABETICALLY -> R.string.alphabetically
-                            FollowedChannelsSortDialog.SORT_LAST_BROADCAST -> R.string.last_broadcast
-                            else -> R.string.last_broadcast
-                        }
-                    ),
-                    getString(
-                        when (viewModel.order) {
-                            FollowedChannelsSortDialog.ORDER_DESC -> R.string.descending
-                            FollowedChannelsSortDialog.ORDER_ASC -> R.string.ascending
-                            else -> R.string.descending
-                        }
-                    )
-                )
+                viewModel.sortText.value = buildSortText()
             }
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.flow.collectLatest { pagingData ->
@@ -114,7 +97,8 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
                 if (changed) {
                     pagingAdapter.submitData(PagingData.empty())
                     viewModel.setFilter(sort, order)
-                    viewModel.sortText.value = getString(R.string.sort_and_order, sortText, orderText)
+                    viewModel.sortText.value = buildSortText(sortText, orderText)
+                    viewModel.refreshAfterFilterChange()
                 }
                 if (saveDefault) {
                     val item = viewModel.getSortChannel("followed_channels")?.apply {
@@ -129,6 +113,24 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
                 }
             }
         }
+    }
+
+    private fun buildSortText(
+        sortText: CharSequence = getString(
+            when (viewModel.sort) {
+                FollowedChannelsSortDialog.SORT_FOLLOWED_AT -> R.string.time_followed
+                FollowedChannelsSortDialog.SORT_ALPHABETICALLY -> R.string.alphabetically
+                else -> R.string.last_broadcast
+            }
+        ),
+        orderText: CharSequence = getString(
+            when (viewModel.order) {
+                FollowedChannelsSortDialog.ORDER_ASC -> R.string.ascending
+                else -> R.string.descending
+            }
+        ),
+    ): CharSequence {
+        return getString(R.string.sort_and_order, sortText, orderText)
     }
 
     override fun scrollToTop() {

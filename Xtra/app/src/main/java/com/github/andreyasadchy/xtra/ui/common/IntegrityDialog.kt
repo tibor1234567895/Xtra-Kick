@@ -47,7 +47,7 @@ class IntegrityDialog : DialogFragment() {
         CookieManager.getInstance().removeAllCookies(null)
         val token = TwitchApiHelper.getGQLHeaders(context, true)[C.HEADER_TOKEN]?.removePrefix("OAuth ")
         if (!token.isNullOrBlank()) {
-            CookieManager.getInstance().setCookie("https://www.twitch.tv", "auth-token=$token")
+            CookieManager.getInstance().setCookie("https://kick.com", "auth-token=$token")
         }
         with(binding.webView) {
             settings.javaScriptEnabled = true
@@ -82,7 +82,7 @@ class IntegrityDialog : DialogFragment() {
                     return super.shouldInterceptRequest(view, webViewRequest)
                 }
             }
-            loadUrl("https://www.twitch.tv/login")
+            loadUrl("https://kick.com/login")
         }
         return builder.create()
     }

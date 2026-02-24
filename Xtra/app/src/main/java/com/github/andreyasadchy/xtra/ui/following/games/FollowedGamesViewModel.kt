@@ -7,6 +7,7 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowGameRepository
 import com.github.andreyasadchy.xtra.repository.datasource.FollowedGamesDataSource
 import com.github.andreyasadchy.xtra.util.C
@@ -21,6 +22,7 @@ class FollowedGamesViewModel @Inject constructor(
     @ApplicationContext applicationContext: Context,
     private val localFollowsGame: LocalFollowGameRepository,
     private val graphQLRepository: GraphQLRepository,
+    private val kickRepository: KickRepository,
 ) : ViewModel() {
 
     val flow = Pager(
@@ -30,6 +32,7 @@ class FollowedGamesViewModel @Inject constructor(
             localFollowsGame = localFollowsGame,
             gqlHeaders = TwitchApiHelper.getGQLHeaders(applicationContext, true),
             graphQLRepository = graphQLRepository,
+            kickRepository = kickRepository,
             enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             apiPref = (applicationContext.prefs().getString(C.API_PREFS_FOLLOWED_GAMES, null) ?: C.DEFAULT_API_PREFS_FOLLOWED_GAMES).split(',').mapNotNull {
                 val split = it.split(':')

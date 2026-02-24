@@ -48,7 +48,7 @@
     </string-array>
 
     <string-array name="followButtonEntries">
-        <item>@string/follow_account</item>
+        <item>@string/follow_local</item>
         <item>@string/follow_local</item>
         <item>@string/hide</item>
     </string-array>
