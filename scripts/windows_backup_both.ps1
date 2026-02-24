@@ -43,6 +43,12 @@ if (-not $repoRoot) {
     throw "Not inside a git repository."
 }
 
+$repoUserName = (& git -C $repoRoot config --get user.name).Trim()
+$repoUserEmail = (& git -C $repoRoot config --get user.email).Trim()
+if (-not $repoUserName -or -not $repoUserEmail) {
+    throw "Git user.name/user.email must be configured in the main repo for backup commits."
+}
+
 $currentBranch = (& git -C $repoRoot branch --show-current).Trim()
 if ($currentBranch -ne "main") {
     throw "Run this script from main. Current branch: '$currentBranch'."
@@ -72,6 +78,10 @@ $tempDir = Join-Path $env:TEMP ("xtra-public-sync-" + [Guid]::NewGuid().ToString
 Run-Git -GitArgs @("clone", "--quiet", "--depth", "1", "--branch", $PublicBranch, $publicUrl, $tempDir)
 
 try {
+    # Ensure temporary clone has commit identity, independent of global git config.
+    Run-Git -Cwd $tempDir -GitArgs @("config", "user.name", $repoUserName)
+    Run-Git -Cwd $tempDir -GitArgs @("config", "user.email", $repoUserEmail)
+
     Get-ChildItem -Path $tempDir -Force | Where-Object { $_.Name -ne ".git" } | Remove-Item -Recurse -Force
 
     $trackedInSource = (& git -C $repoRoot ls-files -- "$SourceFolder/*")
