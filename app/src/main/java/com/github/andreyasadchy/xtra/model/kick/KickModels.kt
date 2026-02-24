@@ -112,7 +112,12 @@ class KickThumbnail(
     val url: String? = null,
 ) {
     val imageUrl: String?
-        get() = src ?: url
+        get() {
+            val candidates = listOf(url, src)
+                .mapNotNull { it?.trim()?.takeIf { value -> value.isNotBlank() } }
+            return candidates.firstOrNull { !it.contains("://stream.kick.com/", ignoreCase = true) }
+                ?: candidates.firstOrNull()
+        }
 }
 
 @Serializable

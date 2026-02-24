@@ -637,10 +637,11 @@ class KickRepository @Inject constructor(
 
     fun toStream(item: KickLivestream, gameId: String? = null, gameSlug: String? = null, gameName: String? = null): Stream {
         val category = item.categories?.firstOrNull()
+        val channelLogin = item.channel?.slug ?: item.channel?.user?.username?.lowercase(Locale.ROOT)
         return Stream(
             id = item.id?.toString(),
             channelId = item.channel?.id?.toString() ?: item.channelId?.toString(),
-            channelLogin = item.channel?.slug,
+            channelLogin = channelLogin,
             channelName = item.channel?.user?.username,
             gameId = gameId ?: category?.id?.toString(),
             gameSlug = gameSlug ?: category?.slug,
