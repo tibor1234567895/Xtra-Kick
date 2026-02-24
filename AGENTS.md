@@ -20,7 +20,8 @@ Run commands from `Xtra/`:
   - It runs Windows PowerShell from WSL and performs:
     - Full backup push to private repo (`private/main`).
     - Public app-only sync push (contents of `Xtra/` to public `origin/main` root).
-  - Optional commit message: `./scripts/backup_both_windows.sh "backup before release"`.
+  - Running without args prompts for a custom backup comment (press Enter to use auto timestamp).
+  - Optional inline message: `./scripts/backup_both_windows.sh "backup before release"`.
 - Preferred local deploy flow from repo root: `./scripts/wsl_build_install.sh` (builds debug APK in WSL workspace and installs to connected phone via ADB).
 - `./gradlew assembleDebug`: build a local debug APK.
 - `./gradlew assembleRelease`: build release APK (matches CI task).
