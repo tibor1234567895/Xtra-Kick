@@ -4,7 +4,6 @@ import android.graphics.drawable.Animatable
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.LayerDrawable
 import android.text.Spannable
-import android.text.SpannableString
 import android.text.SpannableStringBuilder
 import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
 import android.text.method.LinkMovementMethod
@@ -72,8 +71,6 @@ class ReplyClickedChatAdapter(
     private val emoteQuality: String,
     private val animateGifs: Boolean,
     private val enableOverlayEmotes: Boolean,
-    private val translateAllMessages: Boolean,
-    private val translateMessage: (ChatMessage, String?) -> Unit,
     private val showLanguageDownloadDialog: (ChatMessage, String) -> Unit,
     private val random: Random,
     private val userColors: HashMap<String, Int>,
@@ -96,32 +93,86 @@ class ReplyClickedChatAdapter(
     }
 
     var messageClickListener: ((ChatMessage, ChatMessage?) -> Unit)? = null
+    private var renderGeneration = 0L
+    private val renderConfigSignature = listOf(
+        enableTimestamps,
+        timestampFormat,
+        firstMsgVisibility,
+        firstChatMsg,
+        redeemedChatMsg,
+        redeemedNoMsg,
+        rewardChatMsg,
+        replyMessage,
+        useRandomColors,
+        useReadableColors,
+        isLightTheme,
+        nameDisplay,
+        useBoldNames,
+        showNamePaints,
+        showStvBadges,
+        showKickBadges,
+        showPersonalEmotes,
+        showSystemMessageEmotes,
+        chatUrl,
+        loggedInUser,
+        false,
+        true
+    ).joinToString("|").hashCode().toLong()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         return ViewHolder(LayoutInflater.from(parent.context).inflate(R.layout.chat_list_item, parent, false))
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+        bindMessage(holder, position)
+    }
+
+    override fun onBindViewHolder(holder: ViewHolder, position: Int, payloads: MutableList<Any>) {
+        if (payloads.isNotEmpty()) {
+            bindMessage(holder, position)
+        } else {
+            super.onBindViewHolder(holder, position, payloads)
+        }
+    }
+
+    fun invalidateFormatting() {
+        renderGeneration += 1L
+        synchronized(messages) {
+            messages.forEach(ChatAdapterUtils::invalidatePreparedMessage)
+        }
+    }
+
+    private fun renderSignature(): Long = renderConfigSignature * 31L + renderGeneration
+
+    private fun bindMessage(holder: ViewHolder, position: Int) {
         val chatMessage = synchronized(messages) {
             messages.getOrNull(position)
         } ?: return
         val result = ChatAdapterUtils.prepareChatMessage(
-            chatMessage, holder.textView, enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg,
+            chatMessage, renderSignature(), enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg,
             rewardChatMsg, replyMessage, { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClick(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, random, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, namePaints, showStvBadges,
             showKickBadges, stvBadges, showPersonalEmotes, personalEmoteSets, stvUsers, enableOverlayEmotes, showSystemMessageEmotes, loggedInUser, chatUrl,
-            getEmoteBytes, userColors, savedColors, translateAllMessages, translateMessage, showLanguageDownloadDialog, false, localTwitchEmotes,
+            getEmoteBytes, userColors, savedColors, showLanguageDownloadDialog, false, localTwitchEmotes,
             thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalTwitchEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes
+        )
+        holder.bind(chatMessage, result.builder, result.backgroundRes)
+        if (chatMessage == selectedMessage) {
+            holder.textView.setBackgroundResource(R.color.chatMessageSelected)
+        }
+        ChatAdapterUtils.loadImages(
+            fragment, holder.textView, {
+                holder.bind(chatMessage, it, result.backgroundRes)
+                if (chatMessage == selectedMessage) {
+                    holder.textView.setBackgroundResource(R.color.chatMessageSelected)
+                }
+            }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
+            backgroundColor, imageLibrary, result.builder, result.translated, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes,
+            chatMessage, savedColors, useReadableColors, isLightTheme, showLanguageDownloadDialog, false
         )
         if (chatMessage == selectedMessage) {
             holder.textView.setBackgroundResource(R.color.chatMessageSelected)
         }
-        holder.bind(chatMessage, result.builder)
-        ChatAdapterUtils.loadImages(
-            fragment, holder.textView, { holder.bind(chatMessage, it) }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
-            backgroundColor, imageLibrary, result.builder, result.translated, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes,
-            chatMessage, savedColors, useReadableColors, isLightTheme, showLanguageDownloadDialog, false
-        )
     }
 
     fun updateBackground(chatMessage: ChatMessage, item: TextView) {
@@ -147,21 +198,6 @@ class ReplyClickedChatAdapter(
                 it.backgroundColor = (item.background as? ColorDrawable)?.color
                 view.setSpan(it, view.getSpanStart(it), view.getSpanEnd(it), SPAN_EXCLUSIVE_EXCLUSIVE)
             }
-        }
-    }
-
-    fun updateTranslation(chatMessage: ChatMessage, item: TextView, previousTranslation: String?) {
-        (item.text as? SpannableString)?.let { text ->
-            val builder = SpannableStringBuilder()
-            builder.append(
-                if (previousTranslation != null) {
-                    text.dropLast(previousTranslation.length + 1)
-                } else {
-                    text
-                }
-            )
-            ChatAdapterUtils.addTranslation(chatMessage, builder, builder.length, savedColors, useReadableColors, isLightTheme, showLanguageDownloadDialog, false)
-            item.text = builder
         }
     }
 
@@ -242,10 +278,11 @@ class ReplyClickedChatAdapter(
 
         val textView = itemView as TextView
 
-        fun bind(chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder) {
+        fun bind(chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder, backgroundRes: Int) {
             textView.apply {
                 text = formattedMessage
                 textSize = messageTextSize
+                setBackgroundResource(backgroundRes)
                 movementMethod = LinkMovementMethod.getInstance()
                 TooltipCompat.setTooltipText(this, chatMessage.message ?: chatMessage.systemMsg)
                 setOnClickListener {

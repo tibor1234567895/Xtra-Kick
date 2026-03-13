@@ -83,6 +83,7 @@ class ChannelPagerViewModel @Inject constructor(
                         val stream = kickRepository.toStream(channel)
                         Stream(
                             id = stream.id,
+                            source = stream.source,
                             channelId = stream.channelId,
                             channelLogin = stream.channelLogin,
                             channelName = stream.channelName,

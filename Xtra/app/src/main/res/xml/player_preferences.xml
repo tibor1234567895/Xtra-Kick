@@ -70,6 +70,16 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
+    <ListPreference
+        android:defaultValue="ivs_kick_live"
+        android:entries="@array/kickLivePlayerEngineEntries"
+        android:entryValues="@array/kickLivePlayerEngineValues"
+        android:key="player_kick_live_engine"
+        android:summary="%s"
+        android:title="@string/kick_live_player_engine"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
     <SwitchPreferenceCompat
         android:defaultValue="false"
         android:key="player_rounded_corner_padding"

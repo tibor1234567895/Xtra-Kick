@@ -30,6 +30,7 @@ import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.schedule
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
+import kotlin.math.min
 
 class WebSocket(
     private val url: String,
@@ -48,6 +49,7 @@ class WebSocket(
     private var nextFrameCompressed = false
     private var connectionAttempt = 0
     private var delayReconnect = false
+    private var isConnected = false
 
     suspend fun start() = withContext(Dispatchers.IO) {
         while (isActive) {
@@ -81,8 +83,11 @@ class WebSocket(
             if (delayReconnect) {
                 delayReconnect = false
                 delay(60000)
+                WebSocketRuntime.onReconnectScheduled(connectionAttempt, 60000, "rate_limited")
             } else {
-                delay(1000)
+                val delayMs = reconnectDelayMs(connectionAttempt)
+                WebSocketRuntime.onReconnectScheduled(connectionAttempt, delayMs, "retry")
+                delay(delayMs)
             }
         }
     }
@@ -157,11 +162,13 @@ class WebSocket(
         if (sendPings) {
             startPingTimer()
         }
+        setConnectedState(true)
         listener.onConnect(this@WebSocket)
         return@withContext false
     }
 
     private suspend fun startPingTimer() = withContext(Dispatchers.IO) {
+        pingTimer?.cancel()
         pingTimer = Timer().apply {
             schedule(270000) {
                 if (socket?.isClosed == false) {
@@ -175,6 +182,7 @@ class WebSocket(
     }
 
     private suspend fun startPongTimer() = withContext(Dispatchers.IO) {
+        pongTimer?.cancel()
         pongTimer = Timer().apply {
             schedule(10000) {
                 try {
@@ -386,6 +394,8 @@ class WebSocket(
     suspend fun disconnect() = withContext(Dispatchers.IO) {
         pingTimer?.cancel()
         pongTimer?.cancel()
+        pingTimer = null
+        pongTimer = null
         if (socket?.isClosed == false) {
             try {
                 val currentSocket = socket
@@ -396,16 +406,55 @@ class WebSocket(
 
             }
         }
+        setConnectedState(false)
+        socket = null
+        inputStream = null
+        outputStream = null
     }
 
     private suspend fun close() = withContext(Dispatchers.IO) {
         pingTimer?.cancel()
         pongTimer?.cancel()
+        pingTimer = null
+        pongTimer = null
         try {
             socket?.close()
         } catch (e: Exception) {
 
         }
+        setConnectedState(false)
+        socket = null
+        inputStream = null
+        outputStream = null
+    }
+
+    private fun setConnectedState(connected: Boolean) {
+        if (isConnected == connected) {
+            return
+        }
+        isConnected = connected
+        if (connected) {
+            WebSocketRuntime.onConnected()
+        } else {
+            WebSocketRuntime.onDisconnected()
+        }
+    }
+
+    private fun reconnectDelayMs(attempt: Int): Long {
+        val retryAttempt = attempt.coerceAtLeast(1)
+        val baseDelayMs = if (WebSocketRuntime.isAppInForeground) {
+            BASE_RECONNECT_DELAY_MS
+        } else {
+            BACKGROUND_BASE_RECONNECT_DELAY_MS
+        }
+        val maxDelayMs = if (WebSocketRuntime.isAppInForeground) {
+            MAX_RECONNECT_DELAY_MS
+        } else {
+            BACKGROUND_MAX_RECONNECT_DELAY_MS
+        }
+        val baseDelay = min(maxDelayMs, baseDelayMs shl (retryAttempt - 1))
+        val jitter = Random.nextLong(MAX_RECONNECT_JITTER_MS + 1)
+        return min(maxDelayMs, baseDelay + jitter)
     }
 
     interface Listener {
@@ -433,5 +482,10 @@ class WebSocket(
         private const val OPCODE_PONG = 0xa
         private val EMPTY_DEFLATE_BLOCK = listOf(0x00, 0x00, 0x00, 0xFF, 0xFF)
         private const val MINIMUM_DEFLATE_SIZE = 1024
+        private const val BASE_RECONNECT_DELAY_MS = 1000L
+        private const val MAX_RECONNECT_DELAY_MS = 30000L
+        private const val BACKGROUND_BASE_RECONNECT_DELAY_MS = 4000L
+        private const val BACKGROUND_MAX_RECONNECT_DELAY_MS = 60000L
+        private const val MAX_RECONNECT_JITTER_MS = 1000L
     }
 }

@@ -5,6 +5,16 @@
         <item>MediaPlayer</item>
     </string-array>
 
+    <string-array name="kickLivePlayerEngineEntries">
+        <item>@string/kick_live_player_engine_exo_only</item>
+        <item>@string/kick_live_player_engine_ivs</item>
+    </string-array>
+
+    <string-array name="kickLivePlayerEngineValues">
+        <item>exo_only</item>
+        <item>ivs_kick_live</item>
+    </string-array>
+
     <string-array name="networkLibraryEntries">
         <item>HttpEngine</item>
         <item>Cronet</item>
@@ -170,6 +180,18 @@
         <item>15000</item>
         <item>30000</item>
         <item>60000</item>
+    </string-array>
+
+    <string-array name="playerLatencyProfileEntries">
+        <item>@string/player_latency_profile_lowest</item>
+        <item>@string/player_latency_profile_balanced</item>
+        <item>@string/player_latency_profile_stable</item>
+    </string-array>
+
+    <string-array name="playerLatencyProfileValues">
+        <item>lowest</item>
+        <item>balanced</item>
+        <item>stable</item>
     </string-array>
 
     <string-array name="playerQualityEntries">

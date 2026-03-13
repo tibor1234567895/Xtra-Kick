@@ -2,6 +2,7 @@ package com.github.andreyasadchy.xtra.util.chat
 
 import android.os.Build
 import com.github.andreyasadchy.xtra.util.WebSocket
+import com.github.andreyasadchy.xtra.util.WebSocketRuntime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,6 +29,7 @@ class HermesWebSocket(
     private val gqlClientId: String?,
     private val gqlToken: String?,
     private val collectPoints: Boolean,
+    private val throttleBackgroundActivity: Boolean,
     private val showRaids: Boolean,
     private val showPolls: Boolean,
     private val showPredictions: Boolean,
@@ -130,7 +132,9 @@ class HermesWebSocket(
         minuteWatchedTimer = Timer().apply {
             scheduleAtFixedRate(60000, 60000) {
                 launch {
-                    listener.onMinuteWatched()
+                    if (!throttleBackgroundActivity || WebSocketRuntime.isAppInForeground) {
+                        listener.onMinuteWatched()
+                    }
                 }
             }
         }

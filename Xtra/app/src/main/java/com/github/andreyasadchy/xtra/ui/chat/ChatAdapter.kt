@@ -3,7 +3,6 @@ package com.github.andreyasadchy.xtra.ui.chat
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.LayerDrawable
 import android.text.Spannable
-import android.text.SpannableString
 import android.text.SpannableStringBuilder
 import android.text.TextUtils
 import android.text.method.LinkMovementMethod
@@ -70,7 +69,6 @@ class ChatAdapter(
     private val emoteQuality: String,
     private val animateGifs: Boolean,
     private val enableOverlayEmotes: Boolean,
-    private val translateMessage: (ChatMessage, String?) -> Unit,
     private val showLanguageDownloadDialog: (ChatMessage, String) -> Unit,
     private val channelId: String?,
     private val loggedInUser: String?,
@@ -78,6 +76,10 @@ class ChatAdapter(
     private val replyClickListener: (() -> Unit)?,
     private val imageClickListener: ((String?, String?, String?, Boolean?, Int?, Boolean?, String?) -> Unit)?,
 ) : RecyclerView.Adapter<ChatAdapter.ViewHolder>() {
+
+    companion object {
+        const val PAYLOAD_REFORMAT = "payload_reformat"
+    }
 
     var translateAllMessages = false
     private var selectedMessage: ChatMessage? = null
@@ -88,46 +90,75 @@ class ChatAdapter(
     private val savedLocalBadges = mutableMapOf<String, ByteArray>()
     private val savedLocalCheerEmotes = mutableMapOf<String, ByteArray>()
     private val savedLocalEmotes = mutableMapOf<String, ByteArray>()
+    private var renderGeneration = 0L
+    private val renderConfigSignature = listOf(
+        enableTimestamps,
+        timestampFormat,
+        firstMsgVisibility,
+        firstChatMsg,
+        redeemedChatMsg,
+        redeemedNoMsg,
+        rewardChatMsg,
+        replyMessage,
+        useRandomColors,
+        useReadableColors,
+        isLightTheme,
+        nameDisplay,
+        useBoldNames,
+        showNamePaints,
+        showStvBadges,
+        showKickBadges,
+        showPersonalEmotes,
+        showSystemMessageEmotes,
+        chatUrl,
+        loggedInUser,
+        true,
+        false
+    ).joinToString("|").hashCode().toLong()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         return ViewHolder(LayoutInflater.from(parent.context).inflate(R.layout.chat_list_item, parent, false))
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+        bindMessage(holder, position)
+    }
+
+    override fun onBindViewHolder(holder: ViewHolder, position: Int, payloads: MutableList<Any>) {
+        if (payloads.isNotEmpty()) {
+            bindMessage(holder, position)
+        } else {
+            super.onBindViewHolder(holder, position, payloads)
+        }
+    }
+
+    fun invalidateFormatting() {
+        renderGeneration += 1L
+        synchronized(messages) {
+            messages.forEach(ChatAdapterUtils::invalidatePreparedMessage)
+        }
+    }
+
+    private fun renderSignature(): Long = renderConfigSignature * 31L + renderGeneration
+
+    private fun bindMessage(holder: ViewHolder, position: Int) {
         val chatMessage = synchronized(messages) {
             messages.getOrNull(position)
         } ?: return
         val result = ChatAdapterUtils.prepareChatMessage(
-            chatMessage, holder.textView, enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg,
+            chatMessage, renderSignature(), enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg,
             rewardChatMsg, replyMessage, null, useRandomColors, random, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints,
             namePaints, showStvBadges, showKickBadges, stvBadges, showPersonalEmotes, personalEmoteSets, stvUsers, enableOverlayEmotes, showSystemMessageEmotes,
-            loggedInUser, chatUrl, getEmoteBytes, userColors, savedColors, translateAllMessages, translateMessage, showLanguageDownloadDialog,
+            loggedInUser, chatUrl, getEmoteBytes, userColors, savedColors, showLanguageDownloadDialog,
             true, localTwitchEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalTwitchEmotes, savedLocalBadges,
             savedLocalCheerEmotes, savedLocalEmotes
         )
-        holder.bind(chatMessage, result.builder)
+        holder.bind(chatMessage, result.builder, result.backgroundRes)
         ChatAdapterUtils.loadImages(
-            fragment, holder.textView, { holder.bind(chatMessage, it) }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
+            fragment, holder.textView, { holder.bind(chatMessage, it, result.backgroundRes) }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
             backgroundColor, imageLibrary, result.builder, result.translated, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes,
             chatMessage, savedColors, useReadableColors, isLightTheme, showLanguageDownloadDialog, true
         )
-    }
-
-    fun updateTranslation(chatMessage: ChatMessage, item: TextView, previousTranslation: String?) {
-        (item.text as? SpannableString)?.let { text ->
-            val builder = SpannableStringBuilder()
-            builder.append(
-                if (previousTranslation != null) {
-                    text.dropLast(previousTranslation.length + 1)
-                } else {
-                    text
-                }
-            )
-            if (!chatMessage.translationFailed) {
-                ChatAdapterUtils.addTranslation(chatMessage, builder, builder.length, savedColors, useReadableColors, isLightTheme, showLanguageDownloadDialog, true)
-            }
-            item.text = builder
-        }
     }
 
     fun createMessageClickedChatAdapter(): MessageClickedChatAdapter {
@@ -138,7 +169,7 @@ class ChatAdapter(
             { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClickListener?.invoke(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, showStvBadges, showKickBadges, showPersonalEmotes,
             showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize, badgeSize,
-            emoteQuality, animateGifs, enableOverlayEmotes, translateAllMessages, translateMessage, showLanguageDownloadDialog, random, userColors,
+            emoteQuality, animateGifs, enableOverlayEmotes, showLanguageDownloadDialog, random, userColors,
             savedColors, savedLocalTwitchEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessage
         )
     }
@@ -150,7 +181,7 @@ class ChatAdapter(
             { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClickListener?.invoke(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, showStvBadges, showKickBadges, showPersonalEmotes,
             showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize, badgeSize,
-            emoteQuality, animateGifs, enableOverlayEmotes, translateAllMessages, translateMessage, showLanguageDownloadDialog, random, userColors,
+            emoteQuality, animateGifs, enableOverlayEmotes, showLanguageDownloadDialog, random, userColors,
             savedColors, savedLocalTwitchEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessage
         )
     }
@@ -232,10 +263,11 @@ class ChatAdapter(
 
         val textView = itemView as TextView
 
-        fun bind(chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder) {
+        fun bind(chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder, backgroundRes: Int) {
             textView.apply {
                 text = formattedMessage
                 textSize = messageTextSize
+                setBackgroundResource(backgroundRes)
                 if (chatMessage.isReply) {
                     movementMethod = null
                     maxLines = 2

@@ -640,6 +640,7 @@ class KickRepository @Inject constructor(
         val channelLogin = item.channel?.slug ?: item.channel?.user?.username?.lowercase(Locale.ROOT)
         return Stream(
             id = item.id?.toString(),
+            source = C.KICK,
             channelId = item.channel?.id?.toString() ?: item.channelId?.toString(),
             channelLogin = channelLogin,
             channelName = item.channel?.user?.username,
@@ -658,6 +659,7 @@ class KickRepository @Inject constructor(
     fun toStream(channel: KickChannelResponse): Stream {
         return Stream(
             id = channel.livestream?.id?.toString(),
+            source = C.KICK,
             channelId = channel.id?.toString(),
             channelLogin = channel.slug,
             channelName = channel.user?.username,

@@ -764,6 +764,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.streamResult.collectLatest {
                                 if (it != null) {
+                                    requireArguments().putString(KEY_RESOLVED_STREAM_URL, it)
                                     startStream(it)
                                     viewModel.streamResult.value = null
                                 }
@@ -1601,12 +1602,16 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
-    fun updateLatency(liveOffsetMs: Long?) {
+    fun updateLatency(liveOffsetMs: Long?, targetOffsetMs: Long? = null) {
         with(binding.playerControls) {
             if (liveOffsetMs != null && prefs.getBoolean(C.PLAYER_SHOW_LATENCY, true)) {
                 latencyLayout.visibility = View.VISIBLE
                 val seconds = liveOffsetMs / 1000.0
-                latencyText.text = "~%.1fs".format(seconds)
+                latencyText.text = if (targetOffsetMs != null) {
+                    "~%.1fs / %.1fs".format(seconds, targetOffsetMs / 1000.0)
+                } else {
+                    "~%.1fs".format(seconds)
+                }
             } else {
                 latencyLayout.visibility = View.GONE
             }
@@ -2101,6 +2106,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     private fun loadStream() {
+        requireArguments().getString(KEY_RESOLVED_STREAM_URL)?.takeIf { it.isNotBlank() }?.let { resolvedUrl ->
+            startStream(resolvedUrl)
+            return
+        }
         requireArguments().getString(KEY_CHANNEL_LOGIN)?.let { channelLogin ->
             val proxyUrl = prefs.getString(C.PLAYER_PROXY_URL, "")
             if (viewModel.useCustomProxy && !proxyUrl.isNullOrBlank()) {
@@ -2611,6 +2620,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         return bundleOf(
             KEY_TYPE to STREAM,
             KEY_STREAM_ID to item.id,
+            KEY_STREAM_SOURCE to item.source,
             KEY_TITLE to item.title,
             KEY_VIEWER_COUNT to (item.viewerCount ?: -1),
             KEY_STARTED_AT to item.startedAt,
@@ -2624,6 +2634,29 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             KEY_GAME_NAME to item.gameName,
         )
     }
+
+    protected fun getStreamArguments(item: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean): Bundle {
+        return getStreamArguments(item).apply {
+            putString(KEY_RESOLVED_STREAM_URL, resolvedUrl)
+            putBoolean(KEY_FORCE_STANDARD_LIVE_ENGINE, forceStandardLiveEngine)
+        }
+    }
+
+    protected fun getCurrentStream() = Stream(
+        id = requireArguments().getString(KEY_STREAM_ID),
+        source = requireArguments().getString(KEY_STREAM_SOURCE),
+        channelId = requireArguments().getString(KEY_CHANNEL_ID),
+        channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
+        channelName = requireArguments().getString(KEY_CHANNEL_NAME),
+        gameId = requireArguments().getString(KEY_GAME_ID),
+        gameSlug = requireArguments().getString(KEY_GAME_SLUG),
+        gameName = requireArguments().getString(KEY_GAME_NAME),
+        title = requireArguments().getString(KEY_TITLE),
+        viewerCount = requireArguments().getInt(KEY_VIEWER_COUNT).takeIf { it != -1 },
+        startedAt = requireArguments().getString(KEY_STARTED_AT),
+        thumbnailUrl = requireArguments().getString(KEY_THUMBNAIL),
+        profileImageUrl = requireArguments().getString(KEY_CHANNEL_LOGO),
+    )
 
     protected fun getVideoArguments(item: Video, offset: Long?, ignoreSavedPosition: Boolean): Bundle {
         return bundleOf(
@@ -2712,6 +2745,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
         protected const val KEY_TYPE = "type"
         protected const val KEY_STREAM_ID = "streamId"
+        protected const val KEY_STREAM_SOURCE = "streamSource"
+        protected const val KEY_RESOLVED_STREAM_URL = "resolvedStreamUrl"
+        protected const val KEY_FORCE_STANDARD_LIVE_ENGINE = "forceStandardLiveEngine"
         protected const val KEY_VIDEO_ID = "videoId"
         protected const val KEY_VIDEO_SOURCE = "videoSource"
         protected const val KEY_CLIP_REPLAY_START_TIME = "clipReplayStartTime"

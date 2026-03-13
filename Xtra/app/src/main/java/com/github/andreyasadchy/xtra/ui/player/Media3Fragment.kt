@@ -60,6 +60,8 @@ class Media3Fragment : PlayerFragment() {
     private val player: MediaController?
         get() = controllerFuture?.let { if (it.isDone && !it.isCancelled) it.get() else null }
     private var playerListener: Player.Listener? = null
+    private var pendingInitialLiveSync = false
+    private var liveTargetOffsetMs: Long? = null
     private val updateProgressAction = Runnable { if (view != null) updateProgress() }
 
     override fun onStart() {
@@ -78,6 +80,9 @@ class Media3Fragment : PlayerFragment() {
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     binding.bufferingIndicator.isVisible = playbackState == Player.STATE_BUFFERING
+                    if (playbackState == Player.STATE_READY) {
+                        maybeSyncToLiveEdge(player, "onPlaybackStateChanged")
+                    }
                     val showPlayButton = Util.shouldShowPlayButton(player)
                     if (showPlayButton) {
                         binding.playerControls.playPause.setImageResource(R.drawable.baseline_play_arrow_black_48)
@@ -185,6 +190,7 @@ class Media3Fragment : PlayerFragment() {
                     binding.playerControls.progressBar.setDuration(duration)
                     binding.playerControls.duration.text = DateUtils.formatElapsedTime(duration / 1000)
                     updateProgress()
+                    maybeSyncToLiveEdge(player, "onTimelineChanged")
                     if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED && !timeline.isEmpty && viewModel.qualities.containsKey(AUTO_QUALITY)) {
                         viewModel.updateQualities = viewModel.quality != AUDIO_ONLY_QUALITY
                     }
@@ -532,6 +538,10 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun startStream(url: String?) {
+        val latencyConfig = LiveLatencySettings.resolve(prefs)
+        liveTargetOffsetMs = latencyConfig.targetOffsetMs
+        pendingInitialLiveSync = true
+        Log.d(TAG, "Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(latencyConfig)}")
         player?.sendCustomCommand(
             SessionCommand(
                 PlaybackService.START_STREAM, bundleOf(
@@ -546,6 +556,8 @@ class Media3Fragment : PlayerFragment() {
 
     override fun startVideo(url: String?, playbackPosition: Long?, multivariantPlaylist: Boolean) {
         player?.let { player ->
+            pendingInitialLiveSync = false
+            liveTargetOffsetMs = null
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                 setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
             }.build()
@@ -567,6 +579,8 @@ class Media3Fragment : PlayerFragment() {
 
     override fun startClip(url: String?) {
         player?.let { player ->
+            pendingInitialLiveSync = false
+            liveTargetOffsetMs = null
             val quality = viewModel.qualities.entries.find { it.key == viewModel.quality }
             if (quality?.key == AUDIO_ONLY_QUALITY) {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
@@ -594,6 +608,8 @@ class Media3Fragment : PlayerFragment() {
 
     override fun startOfflineVideo(url: String?, position: Long) {
         player?.let { player ->
+            pendingInitialLiveSync = false
+            liveTargetOffsetMs = null
             val quality = viewModel.qualities.entries.find { it.key == viewModel.quality }
             if (quality?.key == AUDIO_ONLY_QUALITY) {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
@@ -664,7 +680,7 @@ class Media3Fragment : PlayerFragment() {
                 progressBar.setBufferedPosition(player?.bufferedPosition ?: 0)
                 if (videoType == STREAM) {
                     val offset = player?.currentLiveOffset?.takeIf { it != androidx.media3.common.C.TIME_UNSET }
-                    updateLatency(offset)
+                    updateLatency(offset, liveTargetOffsetMs ?: LiveLatencySettings.resolve(prefs).targetOffsetMs)
                 }
                 root.removeCallbacks(updateProgressAction)
                 player?.let { player ->
@@ -679,6 +695,28 @@ class Media3Fragment : PlayerFragment() {
                     }
                 }
             }
+        }
+    }
+
+    private fun maybeSyncToLiveEdge(player: Player?, source: String) {
+        if (!pendingInitialLiveSync || videoType != STREAM || player == null) {
+            return
+        }
+        val resolvedConfig = LiveLatencySettings.resolve(prefs)
+        liveTargetOffsetMs = resolvedConfig.targetOffsetMs
+        if (!player.isCurrentMediaItemLive) {
+            return
+        }
+        val liveOffset = player.currentLiveOffset.takeIf { it != androidx.media3.common.C.TIME_UNSET }
+        if (LiveLatencySettings.shouldForceLiveEdgeSync(resolvedConfig, liveOffset)) {
+            Log.d(
+                TAG,
+                "Correcting initial live offset from ${liveOffset}ms to target ${resolvedConfig.targetOffsetMs}ms via seekToDefaultPosition ($source)"
+            )
+            player.seekToDefaultPosition()
+        }
+        if (liveOffset != null) {
+            pendingInitialLiveSync = false
         }
     }
 
@@ -1108,9 +1146,16 @@ class Media3Fragment : PlayerFragment() {
     }
 
     companion object {
+        private const val TAG = "Media3Fragment"
         fun newInstance(item: Stream): Media3Fragment {
             return Media3Fragment().apply {
                 arguments = getStreamArguments(item)
+            }
+        }
+
+        fun newInstance(item: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean): Media3Fragment {
+            return Media3Fragment().apply {
+                arguments = getStreamArguments(item, resolvedUrl, forceStandardLiveEngine)
             }
         }
 

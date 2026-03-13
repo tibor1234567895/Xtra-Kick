@@ -397,14 +397,12 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
         }
     }
 
-    fun updateTranslation(chatMessage: ChatMessage, previousTranslation: String?) {
+    fun updateTranslation(chatMessage: ChatMessage) {
         adapter?.let { adapter ->
             synchronized(adapter.messages) {
                 adapter.messages.indexOf(chatMessage).takeIf { it != -1 }
             }?.let {
-                (binding.recyclerView.layoutManager?.findViewByPosition(it) as? TextView)?.let {
-                    adapter.updateTranslation(chatMessage, it, previousTranslation)
-                } ?: adapter.notifyItemChanged(it)
+                adapter.notifyItemChanged(it, ChatAdapter.PAYLOAD_REFORMAT)
             }
         }
     }

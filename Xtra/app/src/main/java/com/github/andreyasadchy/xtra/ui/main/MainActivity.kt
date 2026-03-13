@@ -70,6 +70,8 @@ import com.github.andreyasadchy.xtra.ui.game.GameMediaFragmentDirections
 import com.github.andreyasadchy.xtra.ui.game.GamePagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.games.GamesFragmentDirections
 import com.github.andreyasadchy.xtra.ui.player.ExoPlayerFragment
+import com.github.andreyasadchy.xtra.ui.player.IvsPlayerFragment
+import com.github.andreyasadchy.xtra.ui.player.KickLivePlayback
 import com.github.andreyasadchy.xtra.ui.player.Media3Fragment
 import com.github.andreyasadchy.xtra.ui.player.MediaPlayerFragment
 import com.github.andreyasadchy.xtra.ui.player.PlayerFragment
@@ -695,15 +697,14 @@ class MainActivity : AppCompatActivity() {
 
 //Navigation listeners
 
-    fun startStream(stream: Stream) {
+    fun startStream(stream: Stream, resolvedUrl: String? = null, forceStandardLiveEngine: Boolean = false) {
         val fragment = when (prefs.getString(C.PLAYER, "ExoPlayer")) {
-            "MediaPlayer" -> MediaPlayerFragment.newInstance(stream)
+            "MediaPlayer" -> {
+                Toast.makeText(this, R.string.media_player_live_stream_fallback, Toast.LENGTH_LONG).show()
+                createStreamFragment(stream, resolvedUrl, forceStandardLiveEngine)
+            }
             else -> {
-                if (prefs.getBoolean(C.DEBUG_USE_CUSTOM_PLAYBACK_SERVICE, false)) {
-                    ExoPlayerFragment.newInstance(stream)
-                } else {
-                    Media3Fragment.newInstance(stream)
-                }
+                createStreamFragment(stream, resolvedUrl, forceStandardLiveEngine)
             }
         }
         startPlayer(fragment)
@@ -749,6 +750,27 @@ class MainActivity : AppCompatActivity() {
             }
         }
         startPlayer(fragment)
+    }
+
+    private fun createStreamFragment(stream: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean): PlayerFragment {
+        return if (KickLivePlayback.shouldUseIvs(
+                streamSource = stream.source,
+                enginePreference = prefs.getString(C.PLAYER_KICK_LIVE_ENGINE, KickLivePlayback.ENGINE_IVS),
+                forceStandardEngine = forceStandardLiveEngine
+            )
+        ) {
+            IvsPlayerFragment.newInstance(stream, resolvedUrl, forceStandardLiveEngine)
+        } else {
+            createModernPlayerFragment(stream, resolvedUrl, forceStandardLiveEngine)
+        }
+    }
+
+    private fun createModernPlayerFragment(stream: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean): PlayerFragment {
+        return if (prefs.getBoolean(C.DEBUG_USE_CUSTOM_PLAYBACK_SERVICE, false)) {
+            ExoPlayerFragment.newInstance(stream, resolvedUrl, forceStandardLiveEngine)
+        } else {
+            Media3Fragment.newInstance(stream, resolvedUrl, forceStandardLiveEngine)
+        }
     }
 
 //Player methods

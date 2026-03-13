@@ -65,6 +65,9 @@ import com.github.andreyasadchy.xtra.databinding.ActivitySettingsBinding
 import com.github.andreyasadchy.xtra.model.ui.SettingsDragListItem
 import com.github.andreyasadchy.xtra.model.ui.SettingsSearchItem
 import com.github.andreyasadchy.xtra.ui.common.IntegrityDialog
+import com.github.andreyasadchy.xtra.ui.player.ExoPlayerService
+import com.github.andreyasadchy.xtra.ui.player.LiveLatencySettings
+import com.github.andreyasadchy.xtra.ui.player.PlaybackService
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.TwitchApiHelper
 import com.github.andreyasadchy.xtra.util.applyTheme
@@ -1089,7 +1092,13 @@ class SettingsActivity : AppCompatActivity() {
 
     class BufferSettingsFragment : MaterialPreferenceFragment() {
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
+            val prefs = requireContext().prefs()
+            if (LiveLatencySettings.materializeProfileValues(prefs)) {
+                (requireActivity() as? SettingsActivity)?.setResult()
+                stopPlaybackServices()
+            }
             setPreferencesFromResource(R.xml.buffer_preferences, rootKey)
+            bindLatencyPreferences()
         }
 
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -1119,6 +1128,51 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
             (requireActivity() as? SettingsActivity)?.getSelectedSearchItem()?.let { scrollToPreference(it) }
+        }
+
+        private fun bindLatencyPreferences() {
+            val prefs = requireContext().prefs()
+            val settingsActivity = requireActivity() as? SettingsActivity
+            syncLatencyPreferenceValues()
+            findPreference<ListPreference>(C.PLAYER_LATENCY_PROFILE)?.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, newValue ->
+                val profile = newValue?.toString() ?: LiveLatencySettings.DEFAULT_PROFILE
+                LiveLatencySettings.applyPreset(prefs, profile)
+                settingsActivity?.setResult()
+                syncLatencyPreferenceValues()
+                stopPlaybackServices()
+                true
+            }
+            latencyEditKeys.forEach { key ->
+                findPreference<EditTextPreference>(key)?.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, _ ->
+                    settingsActivity?.setResult()
+                    stopPlaybackServices()
+                    true
+                }
+            }
+        }
+
+        private fun syncLatencyPreferenceValues() {
+            val prefs = requireContext().prefs()
+            latencyEditKeys.forEach { key ->
+                findPreference<EditTextPreference>(key)?.text = prefs.getString(key, "")
+            }
+        }
+
+        private fun stopPlaybackServices() {
+            requireContext().stopService(Intent(requireContext(), PlaybackService::class.java))
+            requireContext().stopService(Intent(requireContext(), ExoPlayerService::class.java))
+        }
+
+        companion object {
+            private val latencyEditKeys = arrayOf(
+                C.PLAYER_BUFFER_MIN,
+                C.PLAYER_BUFFER_MAX,
+                C.PLAYER_BUFFER_PLAYBACK,
+                C.PLAYER_BUFFER_REBUFFER,
+                C.PLAYER_LIVE_MIN_SPEED,
+                C.PLAYER_LIVE_MAX_SPEED,
+                C.PLAYER_LIVE_TARGET_OFFSET
+            )
         }
     }
 

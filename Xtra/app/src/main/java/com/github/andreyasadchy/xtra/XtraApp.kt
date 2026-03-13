@@ -1,6 +1,7 @@
 package com.github.andreyasadchy.xtra
 
 import android.app.Application
+import android.os.Bundle
 import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
@@ -20,6 +21,7 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.util.DebugLogger
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
+import com.github.andreyasadchy.xtra.util.WebSocketRuntime
 import com.github.andreyasadchy.xtra.util.coil.CacheControlCacheStrategy
 import com.github.andreyasadchy.xtra.util.getByteArrayCronetCallback
 import com.github.andreyasadchy.xtra.util.prefs
@@ -49,6 +51,26 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     override fun onCreate() {
         super.onCreate()
         INSTANCE = this
+        var startedActivities = 0
+        registerActivityLifecycleCallbacks(
+            object : ActivityLifecycleCallbacks {
+                override fun onActivityStarted(activity: android.app.Activity) {
+                    startedActivities += 1
+                    WebSocketRuntime.isAppInForeground = startedActivities > 0
+                }
+
+                override fun onActivityStopped(activity: android.app.Activity) {
+                    startedActivities = (startedActivities - 1).coerceAtLeast(0)
+                    WebSocketRuntime.isAppInForeground = startedActivities > 0
+                }
+
+                override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: Bundle?) {}
+                override fun onActivityResumed(activity: android.app.Activity) {}
+                override fun onActivityPaused(activity: android.app.Activity) {}
+                override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: Bundle) {}
+                override fun onActivityDestroyed(activity: android.app.Activity) {}
+            }
+        )
     }
 
     @Inject

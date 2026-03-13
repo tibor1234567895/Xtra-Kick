@@ -81,8 +81,8 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-DEBUG"
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-TEST"
             buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
         }
@@ -153,6 +153,7 @@ dependencies {
     implementation(libs.conscrypt)
     implementation(libs.serialization.json)
     implementation(libs.apollo.api)
+    implementation(libs.ivs.player)
 
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)

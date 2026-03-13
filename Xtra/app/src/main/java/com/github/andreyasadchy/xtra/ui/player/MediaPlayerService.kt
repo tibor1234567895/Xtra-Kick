@@ -688,6 +688,12 @@ class MediaPlayerService : Service() {
     }
 
     override fun onDestroy() {
+        sleepTimer?.cancel()
+        sleepTimer = null
+        savePositionTimer?.cancel()
+        savePositionTimer = null
+        dynamicsProcessing?.release()
+        dynamicsProcessing = null
         wifiLock?.release()
         player?.release()
         session?.release()
@@ -695,6 +701,7 @@ class MediaPlayerService : Service() {
         notificationBitmapCallback = null
         applicationHandler?.removeCallbacksAndMessages(null)
         notificationManager?.cancel(NOTIFICATION_ID)
+        super.onDestroy()
     }
 
     companion object {

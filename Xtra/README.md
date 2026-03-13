@@ -2,6 +2,8 @@
 
 Xtra Kick is an Android app for browsing and watching streams.
 
+Kick live streams now use Amazon IVS by default for lower-latency playback, with automatic fallback to the standard Media3/Exo playback path if IVS cannot start. You can change this in `Settings > Player > Kick live stream engine`.
+
 ## Status and disclaimer
 
 This project is in alpha/pre-alpha.
@@ -45,18 +47,20 @@ sdk.dir=/path/to/Android/Sdk
 
 ## Build
 
-Run from repository root:
+Run from repository root.
+
+If you are working on a Windows checkout, run builds from the Windows side. Do not use `./gradlew` from WSL against the `/mnt/c/...` copy of the repo.
 
 ```bash
-./gradlew assembleDebug
-./gradlew assembleRelease
+gradlew.bat assembleDebug
+gradlew.bat assembleRelease
 ```
 
 ## Test and checks
 
 ```bash
-./gradlew testDebugUnitTest
-./gradlew lint
+gradlew.bat testDebugUnitTest
+gradlew.bat lint
 ```
 
 ## Install debug APK (optional)

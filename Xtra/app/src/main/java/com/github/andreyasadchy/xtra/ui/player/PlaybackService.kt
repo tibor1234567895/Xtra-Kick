@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.ext.SdkExtensions
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.content.edit
 import androidx.core.net.toUri
@@ -23,7 +24,6 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.HttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsManifest
 import androidx.media3.exoplayer.hls.HlsMediaSource
@@ -101,6 +101,7 @@ class PlaybackService : MediaSessionService() {
     private var proxyMediaPlaylist = false
     private var videoId: Long? = null
     private var offlineVideoId: Int? = null
+    private lateinit var activeLatencyConfig: LiveLatencyConfig
     private var sleepTimer: Timer? = null
     private var sleepTimerEndTime = 0L
     private var lastSavedPosition: Long? = null
@@ -108,22 +109,15 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        activeLatencyConfig = LiveLatencySettings.resolve(prefs())
         val player = ExoPlayer.Builder(this).apply {
-            setLoadControl(
-                DefaultLoadControl.Builder().apply {
-                    setBufferDurationsMs(
-                        prefs().getString(C.PLAYER_BUFFER_MIN, "15000")?.toIntOrNull() ?: 15000,
-                        prefs().getString(C.PLAYER_BUFFER_MAX, "50000")?.toIntOrNull() ?: 50000,
-                        prefs().getString(C.PLAYER_BUFFER_PLAYBACK, "2000")?.toIntOrNull() ?: 2000,
-                        prefs().getString(C.PLAYER_BUFFER_REBUFFER, "2000")?.toIntOrNull() ?: 2000
-                    )
-                }.build()
-            )
+            setLoadControl(LiveLatencySettings.toLoadControl(activeLatencyConfig))
             setAudioAttributes(AudioAttributes.DEFAULT, prefs().getBoolean(C.PLAYER_AUDIO_FOCUS, false))
             setHandleAudioBecomingNoisy(prefs().getBoolean(C.PLAYER_HANDLE_AUDIO_BECOMING_NOISY, true))
             setSeekBackIncrementMs(prefs().getString(C.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000)
             setSeekForwardIncrementMs(prefs().getString(C.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000)
         }.build()
+        Log.d(TAG, "PlaybackService created with latency=${LiveLatencySettings.describe(activeLatencyConfig)}")
         player.addListener(
             object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -290,6 +284,14 @@ class PlaybackService : MediaSessionService() {
                                         }
                                     }.build()
                                 } else null
+                                val streamLatencyConfig = LiveLatencySettings.resolve(prefs())
+                                if (!LiveLatencySettings.sameLoadControlConfig(streamLatencyConfig, activeLatencyConfig)) {
+                                    Log.w(
+                                        TAG,
+                                        "Live latency buffers differ from active service buffers. current=${LiveLatencySettings.describe(activeLatencyConfig)} requested=${LiveLatencySettings.describe(streamLatencyConfig)}"
+                                    )
+                                }
+                                Log.d(TAG, "Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(streamLatencyConfig)}")
                                 val networkLibrary = prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
                                 player.setMediaSource(
                                     HlsMediaSource.Factory(
@@ -329,11 +331,7 @@ class PlaybackService : MediaSessionService() {
                                         MediaItem.Builder().apply {
                                             setUri(uri?.toUri())
                                             setMimeType(MimeTypes.APPLICATION_M3U8)
-                                            setLiveConfiguration(MediaItem.LiveConfiguration.Builder().apply {
-                                                prefs().getString(C.PLAYER_LIVE_MIN_SPEED, "")?.toFloatOrNull()?.let { setMinPlaybackSpeed(it) }
-                                                prefs().getString(C.PLAYER_LIVE_MAX_SPEED, "")?.toFloatOrNull()?.let { setMaxPlaybackSpeed(it) }
-                                                prefs().getString(C.PLAYER_LIVE_TARGET_OFFSET, "2000")?.toLongOrNull()?.let { setTargetOffsetMs(it) }
-                                            }.build())
+                                            setLiveConfiguration(LiveLatencySettings.toLiveConfiguration(streamLatencyConfig))
                                             setMediaMetadata(
                                                 MediaMetadata.Builder().apply {
                                                     setTitle(title)
@@ -666,6 +664,12 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        sleepTimer?.cancel()
+        sleepTimer = null
+        savePositionTimer?.cancel()
+        savePositionTimer = null
+        dynamicsProcessing?.release()
+        dynamicsProcessing = null
         mediaSession?.run {
             player.release()
             release()
@@ -696,6 +700,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
+        private const val TAG = "PlaybackService"
         const val START_STREAM = "startStream"
         const val START_VIDEO = "startVideo"
         const val START_CLIP = "startClip"

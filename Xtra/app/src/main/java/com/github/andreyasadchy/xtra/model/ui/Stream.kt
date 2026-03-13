@@ -7,6 +7,7 @@ import kotlinx.parcelize.Parcelize
 @Parcelize
 class Stream(
     var id: String? = null,
+    val source: String? = null,
     val channelId: String? = null,
     val channelLogin: String? = null,
     val channelName: String? = null,

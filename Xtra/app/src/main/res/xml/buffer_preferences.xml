@@ -1,8 +1,19 @@
 <androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <ListPreference
+        android:defaultValue="balanced"
+        android:entries="@array/playerLatencyProfileEntries"
+        android:entryValues="@array/playerLatencyProfileValues"
+        android:key="player_latency_profile"
+        android:title="@string/player_latency_profile"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false"
+        app:summary="@string/player_latency_profile_summary"
+        app:useSimpleSummaryProvider="true" />
+
     <EditTextPreference
-        android:defaultValue="15000"
+        android:defaultValue=""
         android:key="player_buffer_min"
         android:singleLine="true"
         android:title="@string/min_buffer"
@@ -12,7 +23,7 @@
         app:useSimpleSummaryProvider="true" />
 
     <EditTextPreference
-        android:defaultValue="50000"
+        android:defaultValue=""
         android:key="player_buffer_max"
         android:singleLine="true"
         android:title="@string/max_buffer"
@@ -22,7 +33,7 @@
         app:useSimpleSummaryProvider="true" />
 
     <EditTextPreference
-        android:defaultValue="2000"
+        android:defaultValue=""
         android:key="player_buffer_playback"
         android:singleLine="true"
         android:title="@string/buffer_for_playback"
@@ -32,7 +43,7 @@
         app:useSimpleSummaryProvider="true" />
 
     <EditTextPreference
-        android:defaultValue="2000"
+        android:defaultValue=""
         android:key="player_buffer_rebuffer"
         android:singleLine="true"
         android:title="@string/rebuffer"
@@ -62,7 +73,7 @@
         app:useSimpleSummaryProvider="true" />
 
     <EditTextPreference
-        android:defaultValue="2000"
+        android:defaultValue=""
         android:key="player_live_target_offset"
         android:singleLine="true"
         android:title="@string/live_target_offset"

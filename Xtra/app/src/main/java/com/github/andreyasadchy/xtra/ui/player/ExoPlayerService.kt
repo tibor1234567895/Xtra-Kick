@@ -19,6 +19,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -32,7 +33,6 @@ import androidx.media3.common.util.BitmapLoader
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
 import androidx.media3.datasource.DataSourceBitmapLoader
-import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.session.CacheBitmapLoader
@@ -76,6 +76,7 @@ class ExoPlayerService : Service() {
     var proxyMediaPlaylist = false
     var videoId: Long? = null
     var offlineVideoId: Int? = null
+    private lateinit var activeLatencyConfig: LiveLatencyConfig
     private var sleepTimer: Timer? = null
     private var sleepTimerEndTime = 0L
     private var lastSavedPosition: Long? = null
@@ -83,22 +84,15 @@ class ExoPlayerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        activeLatencyConfig = LiveLatencySettings.resolve(prefs())
         val player = ExoPlayer.Builder(this).apply {
-            setLoadControl(
-                DefaultLoadControl.Builder().apply {
-                    setBufferDurationsMs(
-                        prefs().getString(C.PLAYER_BUFFER_MIN, "15000")?.toIntOrNull() ?: 15000,
-                        prefs().getString(C.PLAYER_BUFFER_MAX, "50000")?.toIntOrNull() ?: 50000,
-                        prefs().getString(C.PLAYER_BUFFER_PLAYBACK, "2000")?.toIntOrNull() ?: 2000,
-                        prefs().getString(C.PLAYER_BUFFER_REBUFFER, "2000")?.toIntOrNull() ?: 2000
-                    )
-                }.build()
-            )
+            setLoadControl(LiveLatencySettings.toLoadControl(activeLatencyConfig))
             setAudioAttributes(AudioAttributes.DEFAULT, prefs().getBoolean(C.PLAYER_AUDIO_FOCUS, false))
             setHandleAudioBecomingNoisy(prefs().getBoolean(C.PLAYER_HANDLE_AUDIO_BECOMING_NOISY, true))
             setSeekBackIncrementMs(prefs().getString(C.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000)
             setSeekForwardIncrementMs(prefs().getString(C.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000)
         }.build()
+        Log.d(TAG, "ExoPlayerService created with latency=${LiveLatencySettings.describe(activeLatencyConfig)}")
         this.player = player
         player.addListener(
             object : Player.Listener {
@@ -532,6 +526,8 @@ class ExoPlayerService : Service() {
         return enabled
     }
 
+    fun getActiveLatencyConfig(): LiveLatencyConfig = activeLatencyConfig
+
     private fun reinitializeDynamicsProcessing(audioSessionId: Int) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             dynamicsProcessing = DynamicsProcessing(0, audioSessionId, null).apply {
@@ -621,12 +617,19 @@ class ExoPlayerService : Service() {
     }
 
     override fun onDestroy() {
+        sleepTimer?.cancel()
+        sleepTimer = null
+        savePositionTimer?.cancel()
+        savePositionTimer = null
+        dynamicsProcessing?.release()
+        dynamicsProcessing = null
         player?.release()
         session?.release()
         metadataBitmapCallback = null
         notificationBitmapCallback = null
         applicationHandler?.removeCallbacksAndMessages(null)
         notificationManager?.cancel(NOTIFICATION_ID)
+        super.onDestroy()
     }
 
     private fun isBehindLiveWindowError(error: PlaybackException): Boolean {
@@ -641,6 +644,7 @@ class ExoPlayerService : Service() {
     }
 
     companion object {
+        private const val TAG = "ExoPlayerService"
         private const val NOTIFICATION_ID = DefaultMediaNotificationProvider.DEFAULT_NOTIFICATION_ID
         private const val GROUP_KEY = "com.github.andreyasadchy.xtra.PLAYBACK_NOTIFICATIONS"
 

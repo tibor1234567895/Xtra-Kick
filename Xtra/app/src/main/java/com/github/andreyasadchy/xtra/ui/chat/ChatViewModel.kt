@@ -37,6 +37,7 @@ import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.repository.TranslateAllMessagesUsersRepository
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.WebSocketRuntime
 import com.github.andreyasadchy.xtra.util.chat.ChatReadIRC
 import com.github.andreyasadchy.xtra.util.chat.ChatReadWebSocket
 import com.github.andreyasadchy.xtra.util.chat.ChatUtils
@@ -73,6 +74,7 @@ import java.io.FileInputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.PriorityQueue
 import java.util.Timer
 import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
@@ -130,10 +132,13 @@ class ChatViewModel @Inject constructor(
     private var kickRealtimeLastDisconnectAtMs: Long = 0L
     private val kickReplayPreloadWindowMs = 60_000L
     private val kickReplayPreloadMaxMessages = 120
-    private val kickReplayPollIntervalMs = 2_000L
-    private val kickReplayEmitIntervalMs = 250L
-    private val kickReplayEmitLeadMs = 350L
-    private val kickReplayPendingMessages = mutableListOf<ChatMessage>()
+    private val kickReplayPollIntervalMs = 5_000L
+    private val kickReplayEmitIntervalMs = 750L
+    private val kickReplayEmitLeadMs = 500L
+    private val kickReplayPendingMessages = PriorityQueue<ChatMessage>(
+        compareBy<ChatMessage> { it.timestamp ?: Long.MIN_VALUE }
+            .thenBy { kickMessageKey(it) }
+    )
     private val kickReplayPendingKeys = LinkedHashSet<String>()
     private val kickReplayChatDebugTag = "KickReplayChatDebug"
     private val kickReplayChatRequestSeq = AtomicLong(0L)
@@ -997,10 +1002,9 @@ class ChatViewModel @Inject constructor(
                 alreadyQueued += 1
                 return@forEach
             }
-            kickReplayPendingMessages.add(message)
+            kickReplayPendingMessages.offer(message)
             queued += 1
         }
-        kickReplayPendingMessages.sortBy { it.timestamp ?: Long.MIN_VALUE }
         return KickClipQueueStats(
             total = messages.size,
             queued = queued,
@@ -1015,12 +1019,12 @@ class ChatViewModel @Inject constructor(
         }
         val due = mutableListOf<ChatMessage>()
         while (kickReplayPendingMessages.isNotEmpty()) {
-            val next = kickReplayPendingMessages.first()
+            val next = kickReplayPendingMessages.peek() ?: break
             val nextTimestamp = next.timestamp
             if (nextTimestamp != null && nextTimestamp > cutoffTimestampMs) {
                 break
             }
-            kickReplayPendingMessages.removeAt(0)
+            kickReplayPendingMessages.poll()
             kickReplayPendingKeys.remove(kickMessageKey(next))
             due += next
         }
@@ -1470,6 +1474,9 @@ class ChatViewModel @Inject constructor(
         val nameDisplay = applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "0")
         val useApiChatMessages = applicationContext.prefs().getBoolean(C.DEBUG_API_CHAT_MESSAGES, true)
         val showWebSocketDebugInfo = applicationContext.prefs().getBoolean(C.DEBUG_WEBSOCKET_INFO, false)
+        if (showWebSocketDebugInfo) {
+            Log.d("WebSocketRuntime", "connect chat snapshot=${WebSocketRuntime.snapshot()}")
+        }
         val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false)
         val gqlWebClientId = applicationContext.prefs().getString(C.GQL_CLIENT_ID_WEB, "kimne78kx3ncx6brgo4mv6wki5h1ko")
         if (kickMode) {
@@ -1538,6 +1545,7 @@ class ChatViewModel @Inject constructor(
             }
         }
         val collectPoints = applicationContext.prefs().getBoolean(C.CHAT_POINTS_COLLECT, true)
+        val throttleBackgroundActivity = applicationContext.prefs().getBoolean(C.CHAT_THROTTLE_BACKGROUND, true)
         val gqlWebToken = applicationContext.tokenPrefs().getString(C.GQL_TOKEN_WEB, null)
         if (usePubSub && !channelId.isNullOrBlank() && (accountId.isNullOrBlank() || !collectPoints || !gqlWebToken.isNullOrBlank() || enableIntegrity)) {
             val notifyPoints = applicationContext.prefs().getBoolean(C.CHAT_POINTS_NOTIFY, false)
@@ -1558,6 +1566,7 @@ class ChatViewModel @Inject constructor(
                     gqlWebToken
                 },
                 collectPoints = collectPoints,
+                throttleBackgroundActivity = throttleBackgroundActivity,
                 showRaids = applicationContext.prefs().getBoolean(C.CHAT_RAIDS_SHOW, true),
                 showPolls = applicationContext.prefs().getBoolean(C.CHAT_POLLS_SHOW, true),
                 showPredictions = applicationContext.prefs().getBoolean(C.CHAT_PREDICTIONS_SHOW, true),
@@ -1591,6 +1600,9 @@ class ChatViewModel @Inject constructor(
     }
 
     fun stopLiveChat() {
+        if (applicationContext.prefs().getBoolean(C.DEBUG_WEBSOCKET_INFO, false)) {
+            Log.d("WebSocketRuntime", "disconnect chat snapshot(before)=${WebSocketRuntime.snapshot()}")
+        }
         kickChatJob?.cancel()
         kickChatJob = null
         synchronized(kickMessageIds) {
@@ -1638,6 +1650,9 @@ class ChatViewModel @Inject constructor(
             MainScope().launch(Dispatchers.IO) {
                 stvEventApi?.disconnect(stvEventApiJob)
             }
+        }
+        if (applicationContext.prefs().getBoolean(C.DEBUG_WEBSOCKET_INFO, false)) {
+            Log.d("WebSocketRuntime", "disconnect chat snapshot(after)=${WebSocketRuntime.snapshot()}")
         }
     }
 

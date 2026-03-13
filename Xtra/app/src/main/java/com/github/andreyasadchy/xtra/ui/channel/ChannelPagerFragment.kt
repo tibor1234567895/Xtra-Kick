@@ -123,6 +123,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     activity.startStream(
                         Stream(
                             id = args.streamId,
+                            source = C.KICK,
                             channelId = args.channelId,
                             channelLogin = args.channelLogin,
                             channelName = args.channelName,
