@@ -1,0 +1,56 @@
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <SwitchPreferenceCompat
+        android:defaultValue="false"
+        android:key="player_stream_proxy"
+        android:summary="@string/use_custom_proxy_desc"
+        android:title="@string/use_custom_proxy"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <EditTextPreference
+        android:defaultValue="https://api.ttv.lol/playlist/$channel.m3u8?allow_source=true&amp;allow_audio_only=true&amp;fast_bread=true"
+        android:key="player_proxy_url"
+        android:summary="@string/stream_proxy_url_desc"
+        android:title="@string/stream_proxy_url"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <PreferenceCategory
+        android:title="@string/network"
+        app:iconSpaceReserved="false" />
+
+    <Preference
+        android:key="nav_proxy_settings"
+        android:title="@string/proxy_settings"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="nav_playback_settings"
+        android:title="@string/playback_settings"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <PreferenceCategory
+        android:title="@string/account"
+        app:iconSpaceReserved="false" />
+
+    <Preference
+        android:key="nav_api_token_settings"
+        android:title="@string/api_token_settings"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <PreferenceCategory
+        android:title="@string/advanced"
+        app:iconSpaceReserved="false" />
+
+    <Preference
+        android:key="nav_debug_settings"
+        android:title="@string/debug_settings"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+</androidx.preference.PreferenceScreen>

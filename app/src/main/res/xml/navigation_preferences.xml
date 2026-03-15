@@ -1,0 +1,99 @@
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <ListPreference
+        android:defaultValue="1"
+        android:entries="@array/followedEntries"
+        android:entryValues="@array/miscValues"
+        android:key="ui_startonfollowed"
+        android:summary="%s"
+        android:title="@string/startonfollowed"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_followpager"
+        android:title="@string/use_followpager"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_savedpager"
+        android:title="@string/use_savedpager"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_gamepager"
+        android:title="@string/use_gamepager"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_scrolltop"
+        android:title="@string/show_scrolltop"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <PreferenceCategory
+        android:title="@string/navigation_tabs"
+        app:iconSpaceReserved="false" />
+
+    <Preference
+        android:key="action_navigation_tab_list"
+        android:title="@string/navigation_tabs"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="action_following_tabs"
+        android:title="@string/following_tabs"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="action_saved_tabs"
+        android:title="@string/saved_tabs"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="action_channel_tabs"
+        android:title="@string/channel_tabs"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="action_game_tabs"
+        android:title="@string/game_tabs"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="action_search_tabs"
+        android:title="@string/search_tabs"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <PreferenceCategory
+        android:title="@string/search"
+        app:iconSpaceReserved="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_store_recent_searches"
+        android:title="@string/store_recent_searches"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="action_delete_recent_searches"
+        android:title="@string/delete_recent_searches"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+</androidx.preference.PreferenceScreen>

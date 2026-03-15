@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:id="@+id/coordinatorLayout" android:background="?android:attr/colorBackground" android:layout_width="match_parent" android:layout_height="match_parent">
-    <com.google.android.material.appbar.AppBarLayout android:id="@+id/appBar" android:background="?attr/primaryColor" android:layout_width="match_parent" android:layout_height="wrap_content">
-        <androidx.appcompat.widget.Toolbar android:id="@+id/toolbar" android:layout_width="match_parent" android:layout_height="wrap_content">
-            <androidx.appcompat.widget.SearchView android:id="@+id/search" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textAutoComplete" android:imeOptions="flagNoFullscreen" android:textDirection="locale" app:iconifiedByDefault="false" app:queryBackground="@android:color/transparent" app:queryHint="@string/search" app:searchIcon="@null"/>
-        </androidx.appcompat.widget.Toolbar>
-    </com.google.android.material.appbar.AppBarLayout>
-    <include android:id="@+id/recyclerViewLayout" android:layout_width="match_parent" android:layout_height="match_parent" app:layout_behavior="@string/appbar_scrolling_view_behavior" layout="@layout/common_recycler_view_layout"/>
-</androidx.coordinatorlayout.widget.CoordinatorLayout>

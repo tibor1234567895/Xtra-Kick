@@ -1,0 +1,193 @@
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory
+        android:title="@string/theme"
+        app:iconSpaceReserved="false" />
+
+    <ListPreference
+        android:defaultValue="0"
+        android:entries="@array/themeEntries"
+        android:entryValues="@array/themeValues"
+        android:key="theme"
+        android:summary="%s"
+        android:title="@string/theme"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="false"
+        android:key="ui_theme_follow_system"
+        android:title="@string/follow_system_theme"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <ListPreference
+        android:defaultValue="0"
+        android:entries="@array/themeEntries"
+        android:entryValues="@array/themeValues"
+        android:key="ui_theme_dark_on"
+        android:summary="%s"
+        android:title="@string/dark_theme_on"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <ListPreference
+        android:defaultValue="2"
+        android:entries="@array/themeEntries"
+        android:entryValues="@array/themeValues"
+        android:key="ui_theme_dark_off"
+        android:summary="%s"
+        android:title="@string/dark_theme_off"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <ListPreference
+        android:defaultValue="0"
+        android:entries="@array/roundedCornerEntries"
+        android:entryValues="@array/roundedCornerValues"
+        android:key="ui_theme_rounded_corners_v2"
+        android:summary="%s"
+        android:title="@string/rounded_corners"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="false"
+        android:key="ui_theme_reduced_padding"
+        android:title="@string/reduced_padding"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="false"
+        android:key="ui_theme_compact_text"
+        android:title="@string/compact_text"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_theme_appbar_lift"
+        android:title="@string/appbar_lift"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_theme_bottom_nav_color"
+        android:title="@string/bottom_nav_color"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_theme_material3"
+        android:title="@string/material_3"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <PreferenceCategory
+        android:title="@string/ui_settings"
+        app:iconSpaceReserved="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="false"
+        android:key="ui_draw_behind_cutouts"
+        android:title="@string/draw_behind_cutouts"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <ListPreference
+        android:defaultValue="@string/portraitColumns"
+        android:key="columnsPortrait"
+        android:entries="@array/portraitColumnCount"
+        android:entryValues="@array/portraitColumnCount"
+        android:summary="%s"
+        android:title="@string/portrait_column_count"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <ListPreference
+        android:defaultValue="@string/landscapeColumns"
+        android:key="columnsLandscape"
+        android:entries="@array/landscapeColumnCount"
+        android:entryValues="@array/landscapeColumnCount"
+        android:summary="%s"
+        android:title="@string/landscape_column_count"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <ListPreference
+        android:defaultValue="disabled"
+        android:entries="@array/compactStreamsEntries"
+        android:entryValues="@array/compactStreamsValues"
+        android:key="compactStreamsV2"
+        android:summary="%s"
+        android:title="@string/hide_stream_previews"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <ListPreference
+        android:defaultValue="0"
+        android:entries="@array/nameDisplayEntries"
+        android:entryValues="@array/nameDisplayValues"
+        android:key="ui_name_display"
+        android:summary="@string/name_display_summary"
+        android:title="@string/name_display"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <ListPreference
+        android:defaultValue="0"
+        android:entries="@array/followButtonEntries"
+        android:entryValues="@array/miscValues"
+        android:key="ui_follow_button"
+        android:summary="%s"
+        android:title="@string/follow_button"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_rounduserimage"
+        android:title="@string/rounduserimage"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_truncateviewcount"
+        android:title="@string/compact_number_formatting"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_uptime"
+        android:title="@string/show_uptime"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_tags"
+        android:title="@string/show_tags"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_broadcasterscount"
+        android:title="@string/broadcastersCount"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_bookmark_time_left"
+        android:title="@string/show_vod_time_left"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+</androidx.preference.PreferenceScreen>

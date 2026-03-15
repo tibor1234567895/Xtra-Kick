@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" xmlns:aapt="http://schemas.android.com/aapt">
-    <ListPreference android:entries="@array/themeEntries" android:title="@string/theme" android:key="theme" android:summary="%s" android:defaultValue="0" android:entryValues="@array/themeValues" app:iconSpaceReserved="false"/>
-    <SwitchPreferenceCompat android:title="@string/follow_system_theme" android:key="ui_theme_follow_system" android:defaultValue="false" app:iconSpaceReserved="false"/>
-    <ListPreference android:entries="@array/themeEntries" android:title="@string/dark_theme_on" android:key="ui_theme_dark_on" android:summary="%s" android:defaultValue="0" android:entryValues="@array/themeValues" app:iconSpaceReserved="false"/>
-    <ListPreference android:entries="@array/themeEntries" android:title="@string/dark_theme_off" android:key="ui_theme_dark_off" android:summary="%s" android:defaultValue="2" android:entryValues="@array/themeValues" app:iconSpaceReserved="false"/>
-    <SwitchPreferenceCompat android:title="@string/statusBarColor" android:key="ui_statusbar" android:defaultValue="true" app:iconSpaceReserved="false"/>
-    <SwitchPreferenceCompat android:title="@string/navigationBarColor" android:key="ui_navbar" android:defaultValue="true" app:iconSpaceReserved="false"/>
-</androidx.preference.PreferenceScreen>
