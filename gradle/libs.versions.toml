@@ -1,5 +1,5 @@
 [versions]
-activity = "1.12.4"
+activity = "1.13.0"
 android-gradle-plugin = "9.1.0"
 apollo = "4.4.1"
 appcompat = "1.7.1"
