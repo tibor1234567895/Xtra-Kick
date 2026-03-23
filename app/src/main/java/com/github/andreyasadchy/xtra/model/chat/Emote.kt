@@ -12,7 +12,7 @@ class Emote(
     val isOverlayEmote: Boolean = false,
     val source: Int? = null,
 ) {
-    val thirdParty = source == PERSONAL_STV || source == CHANNEL_STV || source == CHANNEL_BTTV || source == CHANNEL_FFZ || source == GLOBAL_STV || source == GLOBAL_BTTV || source == GLOBAL_FFZ
+    val thirdParty = source == PERSONAL_STV || source == CHANNEL_STV || source == GLOBAL_STV
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -31,10 +31,6 @@ class Emote(
     companion object {
         const val PERSONAL_STV = 0
         const val CHANNEL_STV = 1
-        const val CHANNEL_BTTV = 2
-        const val CHANNEL_FFZ = 3
-        const val GLOBAL_STV = 4
-        const val GLOBAL_BTTV = 5
-        const val GLOBAL_FFZ = 6
+        const val GLOBAL_STV = 2
     }
 }

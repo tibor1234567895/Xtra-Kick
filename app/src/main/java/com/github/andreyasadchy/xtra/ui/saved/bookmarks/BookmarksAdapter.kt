@@ -28,7 +28,7 @@ import com.github.andreyasadchy.xtra.ui.game.GameMediaFragmentDirections
 import com.github.andreyasadchy.xtra.ui.game.GamePagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 
 class BookmarksAdapter(
@@ -110,7 +110,7 @@ class BookmarksAdapter(
                             }
                         )
                     }
-                    val getDuration = item.duration?.let { TwitchApiHelper.getDuration(it) }
+                    val getDuration = item.duration?.let { KickApiHelper.getDuration(it) }
                     val position = item.videoId?.toLongOrNull()?.let { id -> positions?.find { it.id == id }?.position }
                     val ignore = ignored?.find { it.userId == item.userId } != null
                     val userType = item.userType ?: item.userBroadcasterType
@@ -144,7 +144,7 @@ class BookmarksAdapter(
                         }.build()
                     )
                     if (item.createdAt != null) {
-                        val text = TwitchApiHelper.formatTimeString(context, item.createdAt)
+                        val text = KickApiHelper.formatTimeString(context, item.createdAt)
                         if (text != null) {
                             date.visibility = View.VISIBLE
                             date.text = text
@@ -155,7 +155,7 @@ class BookmarksAdapter(
                         date.visibility = View.GONE
                     }
                     if (item.type?.lowercase() == "archive" && userType != null && item.createdAt != null && context.prefs().getBoolean(C.UI_BOOKMARK_TIME_LEFT, true) && !ignore) {
-                        val time = TwitchApiHelper.getVodTimeLeft(context, item.createdAt,
+                        val time = KickApiHelper.getVodTimeLeft(context, item.createdAt,
                             when (userType.lowercase()) {
                                 "" -> 14
                                 "affiliate" -> 14
@@ -178,7 +178,7 @@ class BookmarksAdapter(
                         duration.visibility = View.GONE
                     }
                     if (item.type != null) {
-                        val text = TwitchApiHelper.getType(context, item.type)
+                        val text = KickApiHelper.getType(context, item.type)
                         if (text != null) {
                             type.visibility = View.VISIBLE
                             type.text = text

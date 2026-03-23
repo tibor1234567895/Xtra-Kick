@@ -14,7 +14,7 @@ import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowGameRepository
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getByteArrayCronetCallback
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -120,7 +120,7 @@ class GamePagerViewModel @Inject constructor(
                         }
                     } catch (_: Exception) {
                         null
-                    }?.takeIf { !it.isNullOrBlank() }?.let { TwitchApiHelper.getTemplateUrl(it, "game") }
+                    }?.takeIf { !it.isNullOrBlank() }?.let { KickApiHelper.getTemplateUrl(it, "game") }
                     viewModelScope.launch(Dispatchers.IO) {
                         try {
                             remoteBoxArt?.let {
@@ -228,7 +228,7 @@ class GamePagerViewModel @Inject constructor(
                         }
                     } catch (_: Exception) {
                         null
-                    }?.takeIf { !it.isNullOrBlank() }?.let { TwitchApiHelper.getTemplateUrl(it, "game") }
+                    }?.takeIf { !it.isNullOrBlank() }?.let { KickApiHelper.getTemplateUrl(it, "game") }
                     viewModelScope.launch(Dispatchers.IO) {
                         try {
                             remoteBoxArt?.let {

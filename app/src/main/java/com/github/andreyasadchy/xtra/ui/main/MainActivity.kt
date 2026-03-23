@@ -86,7 +86,7 @@ import com.github.andreyasadchy.xtra.ui.team.TeamFragmentDirections
 import com.github.andreyasadchy.xtra.ui.top.TopStreamsFragmentDirections
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickOAuthConfig
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.applyTheme
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
@@ -248,19 +248,19 @@ class MainActivity : AppCompatActivity() {
                                 initialized = true
                             }
                             if (isNetworkAvailable) {
-                                if (!TwitchApiHelper.checkedValidation && prefs.getBoolean(C.VALIDATE_TOKENS, true)) {
+                                if (!KickApiHelper.checkedValidation && prefs.getBoolean(C.VALIDATE_TOKENS, true)) {
                                     viewModel.validate(
                                         prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                        TwitchApiHelper.getGQLHeaders(this@MainActivity, true),
+                                        KickApiHelper.getGQLHeaders(this@MainActivity, true),
                                         prefs.getString(C.GQL_CLIENT_ID_WEB, "kimne78kx3ncx6brgo4mv6wki5h1ko"),
-                                        tokenPrefs().getString(C.GQL_TOKEN_WEB, null)?.takeIf { it.isNotBlank() }?.let { TwitchApiHelper.addTokenPrefixGQL(it) },
-                                        TwitchApiHelper.getHelixHeaders(this@MainActivity),
+                                        tokenPrefs().getString(C.GQL_TOKEN_WEB, null)?.takeIf { it.isNotBlank() }?.let { KickApiHelper.addTokenPrefixGQL(it) },
+                                        KickApiHelper.getHelixHeaders(this@MainActivity),
                                         this@MainActivity.tokenPrefs().getString(C.KICK_USER_ID, null),
                                         this@MainActivity.tokenPrefs().getString(C.KICK_USER_LOGIN, null),
                                         this@MainActivity
                                     )
                                 }
-                                if (!TwitchApiHelper.checkedUpdates &&
+                                if (!KickApiHelper.checkedUpdates &&
                                     prefs.getBoolean(C.UPDATE_CHECK_ENABLED, false) &&
                                     (prefs.getString(C.UPDATE_CHECK_FREQUENCY, "7")?.toIntOrNull() ?: 7) * 86400000 + tokenPrefs().getLong(C.UPDATE_LAST_CHECKED, 0) < System.currentTimeMillis()
                                 ) {
@@ -550,14 +550,14 @@ class MainActivity : AppCompatActivity() {
                     when {
                         url.contains("kick.com/videos/") -> {
                             val id = url.substringAfter("kick.com/videos/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
-                            val offset = url.substringAfter("?t=", "").takeIf { it.isNotBlank() }?.let { (TwitchApiHelper.getDuration(it) ?: 0) * 1000 }
+                            val offset = url.substringAfter("?t=", "").takeIf { it.isNotBlank() }?.let { (KickApiHelper.getDuration(it) ?: 0) * 1000 }
                             if (!id.isNullOrBlank()) {
                                 viewModel.loadVideo(
                                     id,
                                     offset,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    TwitchApiHelper.getGQLHeaders(this),
-                                    TwitchApiHelper.getHelixHeaders(this),
+                                    KickApiHelper.getGQLHeaders(this),
+                                    KickApiHelper.getHelixHeaders(this),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -568,8 +568,8 @@ class MainActivity : AppCompatActivity() {
                                 viewModel.loadClip(
                                     id,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    TwitchApiHelper.getGQLHeaders(this),
-                                    TwitchApiHelper.getHelixHeaders(this),
+                                    KickApiHelper.getGQLHeaders(this),
+                                    KickApiHelper.getHelixHeaders(this),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -580,8 +580,8 @@ class MainActivity : AppCompatActivity() {
                                 viewModel.loadClip(
                                     id,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    TwitchApiHelper.getHelixHeaders(this),
-                                    TwitchApiHelper.getGQLHeaders(this),
+                                    KickApiHelper.getHelixHeaders(this),
+                                    KickApiHelper.getGQLHeaders(this),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -595,8 +595,8 @@ class MainActivity : AppCompatActivity() {
                                     gameSlug = slug,
                                     tag = tag?.let { Uri.decode(it) },
                                     networkLibrary = prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    gqlHeaders = TwitchApiHelper.getGQLHeaders(this),
-                                    helixHeaders = TwitchApiHelper.getHelixHeaders(this),
+                                    gqlHeaders = KickApiHelper.getGQLHeaders(this),
+                                    helixHeaders = KickApiHelper.getHelixHeaders(this),
                                     enableIntegrity = prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -624,7 +624,7 @@ class MainActivity : AppCompatActivity() {
                                 viewModel.loadTag(
                                     tagId,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    TwitchApiHelper.getGQLHeaders(this),
+                                    KickApiHelper.getGQLHeaders(this),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -652,8 +652,8 @@ class MainActivity : AppCompatActivity() {
                                 viewModel.loadUser(
                                     login,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    TwitchApiHelper.getGQLHeaders(this),
-                                    TwitchApiHelper.getHelixHeaders(this),
+                                    KickApiHelper.getGQLHeaders(this),
+                                    KickApiHelper.getHelixHeaders(this),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -1191,8 +1191,7 @@ class MainActivity : AppCompatActivity() {
                 if (defaultFollowPage != null) {
                     val list = "0:${if (defaultFollowPage == "3") "1" else "0"}:1," +
                             "1:${if (defaultFollowPage == "0") "1" else "0"}:1," +
-                            "2:${if (defaultFollowPage == "1") "1" else "0"}:1," +
-                            "3:${if (defaultFollowPage == "2") "1" else "0"}:1"
+                            "2:${if (defaultFollowPage == "2") "1" else "0"}:1"
                     putString(C.UI_FOLLOWING_TABS, list)
                 }
                 val defaultSavedPage = prefs.getString(C.UI_SAVED_DEFAULT_PAGE, null)

@@ -242,20 +242,6 @@
 
     <SwitchPreferenceCompat
         android:defaultValue="true"
-        android:key="chat_enable_bttv"
-        android:title="@string/enable_bttv"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="true"
-        android:key="chat_enable_ffz"
-        android:title="@string/enable_ffz"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="true"
         android:key="chat_show_usernotice"
         android:title="@string/show_usernotice"
         app:iconSpaceReserved="false"

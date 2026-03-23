@@ -4,7 +4,6 @@ import androidx.fragment.app.Fragment
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import com.github.andreyasadchy.xtra.ui.game.clips.GameClipsFragment
 import com.github.andreyasadchy.xtra.ui.game.streams.GameStreamsFragment
-import com.github.andreyasadchy.xtra.ui.game.videos.GameVideosFragment
 import kotlin.math.max
 
 class GamePagerAdapter(
@@ -14,7 +13,6 @@ class GamePagerAdapter(
 
     override fun createFragment(position: Int): Fragment {
         return when (tabs.getOrNull(position)) {
-            "0" -> GameVideosFragment()
             "1" -> GameStreamsFragment()
             "2" -> GameClipsFragment()
             else -> GameStreamsFragment()

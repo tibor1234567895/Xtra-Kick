@@ -107,12 +107,6 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
-    <Preference
-        android:key="action_get_integrity_token"
-        android:title="@string/get_integrity_token"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
     <ListPreference
         android:defaultValue="OkHttp"
         android:entries="@array/networkLibraryEntries"

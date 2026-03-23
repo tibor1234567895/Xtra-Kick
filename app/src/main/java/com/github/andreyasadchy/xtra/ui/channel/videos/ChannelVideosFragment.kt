@@ -31,7 +31,7 @@ import com.github.andreyasadchy.xtra.ui.common.VideosAdapter
 import com.github.andreyasadchy.xtra.ui.common.VideosSortDialog
 import com.github.andreyasadchy.xtra.ui.download.DownloadDialog
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
@@ -75,8 +75,8 @@ class ChannelVideosFragment : PagedListFragment(), Scrollable, Sortable, VideosS
                 requireContext().filesDir.path,
                 it,
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                TwitchApiHelper.getGQLHeaders(requireContext()),
-                TwitchApiHelper.getHelixHeaders(requireContext()),
+                KickApiHelper.getGQLHeaders(requireContext()),
+                KickApiHelper.getHelixHeaders(requireContext()),
             )
         }, showChannel = false)
         setAdapter(binding.recyclerView, pagingAdapter)

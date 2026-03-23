@@ -30,7 +30,7 @@ import com.github.andreyasadchy.xtra.ui.common.FragmentHost
 import com.github.andreyasadchy.xtra.ui.common.IntegrityDialog
 import com.github.andreyasadchy.xtra.ui.common.Sortable
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.reduceDragSensitivity
@@ -183,7 +183,7 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
                                         checkedId = checkedId,
                                         result = result,
                                         networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                        gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext()),
+                                        gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
                                         enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                     )
                                     viewLifecycleOwner.lifecycleScope.launch {

@@ -81,7 +81,7 @@ import com.github.andreyasadchy.xtra.ui.game.GameMediaFragmentDirections
 import com.github.andreyasadchy.xtra.ui.game.GamePagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.isKeyboardShown
 import com.github.andreyasadchy.xtra.util.prefs
@@ -823,7 +823,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                         !uptimeLayout.isVisible
                                     ) {
                                         stream.startedAt?.let { date ->
-                                            TwitchApiHelper.parseIso8601DateUTC(date)?.let { startedAtMs ->
+                                            KickApiHelper.parseIso8601DateUTC(date)?.let { startedAtMs ->
                                                 updateUptime(startedAtMs)
                                             }
                                         }
@@ -846,7 +846,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     }
                     if (prefs.getBoolean(C.PLAYER_SHOW_UPTIME, true)) {
                         requireArguments().getString(KEY_STARTED_AT)?.let {
-                            TwitchApiHelper.parseIso8601DateUTC(it)?.let { startedAtMs ->
+                            KickApiHelper.parseIso8601DateUTC(it)?.let { startedAtMs ->
                                 updateUptime(startedAtMs)
                             }
                         }
@@ -879,6 +879,16 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 if (it != null) {
                                     startVideo(it, viewModel.playbackPosition, true)
                                     viewModel.videoResult.value = null
+                                }
+                            }
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.videoError.collectLatest {
+                                if (it != null) {
+                                    Toast.makeText(requireContext(), it, Toast.LENGTH_LONG).show()
+                                    viewModel.videoError.value = null
                                 }
                             }
                         }
@@ -1078,7 +1088,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                                 requireArguments().getString(KEY_CHANNEL_LOGIN),
                                                 setting,
                                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                                TwitchApiHelper.getGQLHeaders(requireContext(), true),
+                                                KickApiHelper.getGQLHeaders(requireContext(), true),
                                                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                             )
                                         }
@@ -1093,7 +1103,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                         requireContext().prefs().getBoolean(C.LIVE_NOTIFICATIONS_ENABLED, false),
                                         requireArguments().getString(KEY_STARTED_AT),
                                         requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                        TwitchApiHelper.getGQLHeaders(requireContext(), true),
+                                        KickApiHelper.getGQLHeaders(requireContext(), true),
                                         requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                     )
                                 }
@@ -1359,7 +1369,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     .setMinute(savedValue % 60)
                     .build()
                 picker.addOnPositiveButtonClickListener {
-                    val minutes = TwitchApiHelper.getMinutesLeft(picker.hour, picker.minute)
+                    val minutes = KickApiHelper.getMinutesLeft(picker.hour, picker.minute)
                     onSleepTimerChanged(minutes * 60_000L, minutes / 60, minutes % 60, requireContext().prefs().getBoolean(C.SLEEP_TIMER_LOCK, false))
                     requireContext().prefs().edit {
                         putInt(C.SLEEP_TIMER_TIME, picker.hour * 60 + picker.minute)
@@ -1567,7 +1577,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     fun updateViewerCount(viewerCount: Int?) {
         with(binding.playerControls) {
             if (viewerCount != null) {
-                viewersText.text = TwitchApiHelper.formatCount(viewerCount, requireContext().prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
+                viewersText.text = KickApiHelper.formatCount(viewerCount, requireContext().prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
                 if (prefs.getBoolean(C.PLAYER_VIEWERICON, true)) {
                     viewersIcon.visibility = View.VISIBLE
                 }
@@ -1715,8 +1725,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         viewModel.saveBookmark(
             filesDir = requireContext().filesDir.path,
             networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            helixHeaders = TwitchApiHelper.getHelixHeaders(requireContext()),
-            gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext()),
+            helixHeaders = KickApiHelper.getHelixHeaders(requireContext()),
+            gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
             videoId = requireArguments().getString(KEY_VIDEO_ID),
             title = requireArguments().getString(KEY_TITLE),
             uploadDate = requireArguments().getString(KEY_UPLOAD_DATE),
@@ -2066,8 +2076,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 requireArguments().getString(KEY_CHANNEL_LOGIN),
                 prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                TwitchApiHelper.getGQLHeaders(requireContext(), true),
-                TwitchApiHelper.getHelixHeaders(requireContext()),
+                KickApiHelper.getGQLHeaders(requireContext(), true),
+                KickApiHelper.getHelixHeaders(requireContext()),
             )
             if (videoType == VIDEO) {
                 val videoId = requireArguments().getString(KEY_VIDEO_ID)
@@ -2078,7 +2088,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     viewModel.loadGamesList(
                         videoId,
                         prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        TwitchApiHelper.getGQLHeaders(requireContext()),
+                        KickApiHelper.getGQLHeaders(requireContext()),
                         prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                     )
                 }
@@ -2102,8 +2112,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     !requireContext().tokenPrefs().getString(C.USER_ID, null).isNullOrBlank() &&
                                     com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(requireContext())),
                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    helixHeaders = TwitchApiHelper.getHelixHeaders(requireContext()),
-                    gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext()),
+                    helixHeaders = KickApiHelper.getHelixHeaders(requireContext()),
+                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
                     enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                 )
             }
@@ -2138,7 +2148,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 } else {
                     viewModel.loadClip(
                         networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext()),
+                        gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
                         id = requireArguments().getString(KEY_CLIP_ID),
                         enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                     )
@@ -2171,7 +2181,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
                 viewModel.loadStreamResult(
                     networkLibrary = prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
+                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
                     channelLogin = channelLogin,
                     randomDeviceId = prefs.getBoolean(C.TOKEN_RANDOM_DEVICEID, true),
                     xDeviceId = prefs.getString(C.TOKEN_XDEVICEID, "twitch-web-wall-mason"),
@@ -2201,7 +2211,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
         if (skipAccessToken && !requireArguments().getString(KEY_VIDEO_ANIMATED_PREVIEW).isNullOrBlank()) {
             requireArguments().getString(KEY_VIDEO_ANIMATED_PREVIEW)?.let { preview ->
-                val qualityMap = TwitchApiHelper.getVideoUrlMapFromPreview(preview, requireArguments().getString(KEY_VIDEO_TYPE), viewModel.backupQualities)
+                val qualityMap = KickApiHelper.getVideoUrlMapFromPreview(preview, requireArguments().getString(KEY_VIDEO_TYPE), viewModel.backupQualities)
                 val map = mutableMapOf<String, Pair<String, String?>>()
                 qualityMap.forEach {
                     when (it.key) {
@@ -2233,7 +2243,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             viewModel.playbackPosition = playbackPosition
             viewModel.loadVideo(
                 networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
+                gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
                 videoId = requireArguments().getString(KEY_VIDEO_ID),
                 videoSource = requireArguments().getString(KEY_VIDEO_SOURCE),
                 channelId = requireArguments().getString(KEY_CHANNEL_ID),
@@ -2554,7 +2564,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             requireArguments().getString(KEY_CHANNEL_LOGIN)?.let { channelLogin ->
                                 viewModel.loadStreamResult(
                                     networkLibrary = prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
+                                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
                                     channelLogin = channelLogin,
                                     randomDeviceId = prefs.getBoolean(C.TOKEN_RANDOM_DEVICEID, true),
                                     xDeviceId = prefs.getString(C.TOKEN_XDEVICEID, "twitch-web-wall-mason"),
@@ -2574,15 +2584,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 requireArguments().getString(KEY_CHANNEL_LOGIN),
                                 prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                TwitchApiHelper.getGQLHeaders(requireContext(), true),
-                                TwitchApiHelper.getHelixHeaders(requireContext()),
+                                KickApiHelper.getGQLHeaders(requireContext(), true),
+                                KickApiHelper.getHelixHeaders(requireContext()),
                             )
                         }
                         "refreshVideo" -> {
                             val videoId = requireArguments().getString(KEY_VIDEO_ID)
                             viewModel.loadVideo(
                                 networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
+                                gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
                                 videoId = videoId,
                                 videoSource = requireArguments().getString(KEY_VIDEO_SOURCE),
                                 channelId = requireArguments().getString(KEY_CHANNEL_ID),
@@ -2597,8 +2607,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 requireArguments().getString(KEY_CHANNEL_LOGIN),
                                 prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                TwitchApiHelper.getGQLHeaders(requireContext(), true),
-                                TwitchApiHelper.getHelixHeaders(requireContext()),
+                                KickApiHelper.getGQLHeaders(requireContext(), true),
+                                KickApiHelper.getHelixHeaders(requireContext()),
                             )
                             if (!videoId.isNullOrBlank() &&
                                 !requireArguments().getString(KEY_VIDEO_SOURCE).equals(C.KICK, true) &&
@@ -2607,7 +2617,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 viewModel.loadGamesList(
                                     videoId,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    TwitchApiHelper.getGQLHeaders(requireContext()),
+                                    KickApiHelper.getGQLHeaders(requireContext()),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -2625,7 +2635,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             } else {
                                 viewModel.loadClip(
                                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext()),
+                                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
                                     id = requireArguments().getString(KEY_CLIP_ID),
                                     enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
@@ -2636,8 +2646,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 requireArguments().getString(KEY_CHANNEL_LOGIN),
                                 prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                TwitchApiHelper.getGQLHeaders(requireContext(), true),
-                                TwitchApiHelper.getHelixHeaders(requireContext()),
+                                KickApiHelper.getGQLHeaders(requireContext(), true),
+                                KickApiHelper.getHelixHeaders(requireContext()),
                             )
                         }
                         "follow" -> viewModel.saveFollowChannel(
@@ -2649,7 +2659,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             requireContext().prefs().getBoolean(C.LIVE_NOTIFICATIONS_ENABLED, false),
                             requireArguments().getString(KEY_STARTED_AT),
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            TwitchApiHelper.getGQLHeaders(requireContext(), true),
+                            KickApiHelper.getGQLHeaders(requireContext(), true),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                         "unfollow" -> viewModel.deleteFollowChannel(
@@ -2658,7 +2668,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             requireArguments().getString(KEY_CHANNEL_LOGIN),
                             prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            TwitchApiHelper.getGQLHeaders(requireContext(), true),
+                            KickApiHelper.getGQLHeaders(requireContext(), true),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                     }

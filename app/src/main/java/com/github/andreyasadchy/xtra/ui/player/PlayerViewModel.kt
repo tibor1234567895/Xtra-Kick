@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
+import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.NotificationUser
 import com.github.andreyasadchy.xtra.model.ShownNotification
 import com.github.andreyasadchy.xtra.model.VideoPosition
@@ -31,11 +32,9 @@ import com.github.andreyasadchy.xtra.repository.OfflineRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.repository.ShownNotificationsRepository
 import com.github.andreyasadchy.xtra.repository.TranslateAllMessagesUsersRepository
-import com.github.andreyasadchy.xtra.ui.player.PlaybackService.Companion.MEDIA_PLAYLIST_REGEX
-import com.github.andreyasadchy.xtra.ui.player.PlaybackService.Companion.MULTIVARIANT_PLAYLIST_REGEX
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getByteArrayCronetCallback
 import com.github.andreyasadchy.xtra.util.m3u8.PlaylistUtils
 import dagger.Lazy
@@ -95,6 +94,7 @@ class PlayerViewModel @Inject constructor(
     var stopProxy = false
 
     val videoResult = MutableStateFlow<String?>(null)
+    val videoError = MutableStateFlow<Int?>(null)
     var backupQualities: List<String>? = null
     var playbackPosition: Long? = null
     val savedPosition = MutableStateFlow<Long?>(null)
@@ -122,16 +122,17 @@ class PlayerViewModel @Inject constructor(
 
     @OptIn(UnstableApi::class)
     fun getDataSourceFactory(networkLibrary: String?, proxyMultivariantPlaylist: Boolean = false, proxyMediaPlaylist: Boolean = false, proxyHost: String? = null, proxyPort: Int? = null, proxyUser: String? = null, proxyPassword: String? = null, useProxy: (() -> Boolean)? = { false }): HttpDataSource.Factory {
-        val multivariantPlaylistProxyClient = if (proxyMultivariantPlaylist && !proxyHost.isNullOrBlank() && proxyPort != null) {
+        val validProxyConfiguration = PlaybackProxyUtils.isValidProxyConfiguration(proxyHost, proxyPort)
+        if ((proxyMultivariantPlaylist || proxyMediaPlaylist) && !validProxyConfiguration) {
+            PlaybackProxyUtils.logInvalidProxyConfiguration("player_view_model", proxyHost, proxyPort)
+        }
+        val multivariantPlaylistProxyClient = if (proxyMultivariantPlaylist && validProxyConfiguration) {
+            val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort!!))
             okHttpClient.newBuilder().apply {
                 proxySelector(
                     object : ProxySelector() {
                         override fun select(u: URI): List<Proxy> {
-                            return if (Regex(MULTIVARIANT_PLAYLIST_REGEX).matches(u.host)) {
-                                listOf(Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort)), Proxy.NO_PROXY)
-                            } else {
-                                listOf(Proxy.NO_PROXY)
-                            }
+                            return PlaybackProxyUtils.selectProxy(u, proxy, "multivariant")
                         }
 
                         override fun connectFailed(u: URI, sa: SocketAddress, e: IOException) {}
@@ -146,16 +147,13 @@ class PlayerViewModel @Inject constructor(
                 }
             }.build()
         } else null
-        val mediaPlaylistProxyClient = if (proxyMediaPlaylist && !proxyHost.isNullOrBlank() && proxyPort != null) {
+        val mediaPlaylistProxyClient = if (proxyMediaPlaylist && validProxyConfiguration) {
+            val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort!!))
             okHttpClient.newBuilder().apply {
                 proxySelector(
                     object : ProxySelector() {
                         override fun select(u: URI): List<Proxy> {
-                            return if (Regex(MEDIA_PLAYLIST_REGEX).matches(u.host)) {
-                                listOf(Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort)), Proxy.NO_PROXY)
-                            } else {
-                                listOf(Proxy.NO_PROXY)
-                            }
+                            return PlaybackProxyUtils.selectProxy(u, proxy, "media")
                         }
 
                         override fun connectFailed(u: URI, sa: SocketAddress, e: IOException) {}
@@ -221,13 +219,13 @@ class PlayerViewModel @Inject constructor(
             }
             playlist.segments.lastOrNull()?.let { segment ->
                 segment.title?.let { it.contains("Amazon") || it.contains("Adform") || it.contains("DCM") } == true ||
-                        segment.programDateTime?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { segmentStartTime ->
+                        segment.programDateTime?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { segmentStartTime ->
                             playlist.dateRanges.find { dateRange ->
                                 (dateRange.id.startsWith("stitched-ad-") || dateRange.rangeClass == "twitch-stitched-ad" || dateRange.ad) &&
-                                        dateRange.endDate?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { endTime ->
+                                        dateRange.endDate?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { endTime ->
                                             segmentStartTime < endTime
                                         } == true ||
-                                        dateRange.startDate.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { startTime ->
+                                        dateRange.startDate.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { startTime ->
                                             (dateRange.duration ?: dateRange.plannedDuration)?.let { (it * 1000f).toLong() }?.let { duration ->
                                                 segmentStartTime < (startTime + duration)
                                             } == true
@@ -377,9 +375,11 @@ class PlayerViewModel @Inject constructor(
                         if (!kickUrl.isNullOrBlank()) {
                             videoResult.value = kickUrl
                             backupQualities = null
+                        } else {
+                            videoError.value = R.string.video_source_unavailable
                         }
                     } else {
-                        throw UnsupportedOperationException("Legacy Twitch VOD playback flow has been removed")
+                        videoError.value = R.string.video_source_unavailable
                     }
                 } catch (e: Exception) {
                     if (e.message == "failed integrity check" && integrity.value == null) {
@@ -683,7 +683,7 @@ class PlayerViewModel @Inject constructor(
                     follow.value = Pair(true, null)
                     notificationUsersRepository.saveUser(NotificationUser(followId))
                     if (notificationsEnabled) {
-                        startedAt.takeUnless { it.isNullOrBlank() }?.let { TwitchApiHelper.parseIso8601DateUTC(it) }?.let { started ->
+                        startedAt.takeUnless { it.isNullOrBlank() }?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { started ->
                             shownNotificationsRepository.saveList(listOf(ShownNotification(followId, started)))
                         }
                     }

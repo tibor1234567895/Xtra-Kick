@@ -1,6 +1,6 @@
 package com.github.andreyasadchy.xtra.model.chat
 
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 
 class Raid(
     val raidId: String? = null,
@@ -13,5 +13,5 @@ class Raid(
 ) {
 
     val targetLogo: String?
-        get() = TwitchApiHelper.getTemplateUrl(targetProfileImage, "profileimage")
+        get() = KickApiHelper.getTemplateUrl(targetProfileImage, "profileimage")
 }

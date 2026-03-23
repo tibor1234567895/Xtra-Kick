@@ -70,7 +70,7 @@ import com.github.andreyasadchy.xtra.ui.player.IvsPlayerService
 import com.github.andreyasadchy.xtra.ui.player.LiveLatencySettings
 import com.github.andreyasadchy.xtra.ui.player.PlaybackService
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.applyTheme
 import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
@@ -351,8 +351,8 @@ class SettingsActivity : AppCompatActivity() {
                     viewModel.restoreSettings(
                         list = list,
                         networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext(), true),
-                        helixHeaders = TwitchApiHelper.getHelixHeaders(requireContext())
+                        gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), true),
+                        helixHeaders = KickApiHelper.getHelixHeaders(requireContext())
                     )
                 }
             }
@@ -403,8 +403,8 @@ class SettingsActivity : AppCompatActivity() {
                 viewModel.toggleNotifications(
                     enabled = newValue as Boolean,
                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext(), true),
-                    helixHeaders = TwitchApiHelper.getHelixHeaders(requireContext())
+                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), true),
+                    helixHeaders = KickApiHelper.getHelixHeaders(requireContext())
                 )
                 (requireActivity() as? SettingsActivity)?.setResult()
                 true
@@ -668,8 +668,7 @@ class SettingsActivity : AppCompatActivity() {
                         text = when (split[0]) {
                             "0" -> getString(R.string.games)
                             "1" -> getString(R.string.live)
-                            "2" -> getString(R.string.videos)
-                            "3" -> getString(R.string.channels)
+                            "2" -> getString(R.string.channels)
                             else -> getString(R.string.live)
                         },
                         default = split[1] != "0",
@@ -765,7 +764,6 @@ class SettingsActivity : AppCompatActivity() {
                     SettingsDragListItem(
                         key = split[0],
                         text = when (split[0]) {
-                            "0" -> getString(R.string.videos)
                             "1" -> getString(R.string.live)
                             "2" -> getString(R.string.clips)
                             else -> getString(R.string.live)
@@ -1688,16 +1686,13 @@ class SettingsActivity : AppCompatActivity() {
                     Triple(getString(R.string.streams), C.API_PREFS_STREAMS, C.DEFAULT_API_PREFS_STREAMS),
                     Triple(getString(R.string.followed_games), C.API_PREFS_FOLLOWED_GAMES, C.DEFAULT_API_PREFS_FOLLOWED_GAMES),
                     Triple(getString(R.string.followed_streams), C.API_PREFS_FOLLOWED_STREAMS, C.DEFAULT_API_PREFS_FOLLOWED_STREAMS),
-                    Triple(getString(R.string.followed_videos), C.API_PREFS_FOLLOWED_VIDEOS, C.DEFAULT_API_PREFS_FOLLOWED_VIDEOS),
                     Triple(getString(R.string.followed_channels), C.API_PREFS_FOLLOWED_CHANNELS, C.DEFAULT_API_PREFS_FOLLOWED_CHANNELS),
                     Triple(getString(R.string.channel_videos), C.API_PREFS_CHANNEL_VIDEOS, C.DEFAULT_API_PREFS_CHANNEL_VIDEOS),
                     Triple(getString(R.string.channel_clips), C.API_PREFS_CHANNEL_CLIPS, C.DEFAULT_API_PREFS_CHANNEL_CLIPS),
-                    Triple(getString(R.string.game_videos), C.API_PREFS_GAME_VIDEOS, C.DEFAULT_API_PREFS_GAME_VIDEOS),
                     Triple(getString(R.string.game_streams), C.API_PREFS_GAME_STREAMS, C.DEFAULT_API_PREFS_GAME_STREAMS),
                     Triple(getString(R.string.game_clips), C.API_PREFS_GAME_CLIPS, C.DEFAULT_API_PREFS_GAME_CLIPS),
                     Triple(getString(R.string.search_videos), C.API_PREFS_SEARCH_VIDEOS, C.DEFAULT_API_PREFS_SEARCH_VIDEOS),
                     Triple(getString(R.string.search_streams), C.API_PREFS_SEARCH_STREAMS, C.DEFAULT_API_PREFS_SEARCH_STREAMS),
-                    Triple(getString(R.string.search_channels), C.API_PREFS_SEARCH_CHANNELS, C.DEFAULT_API_PREFS_SEARCH_CHANNELS),
                     Triple(getString(R.string.search_games), C.API_PREFS_SEARCH_GAMES, C.DEFAULT_API_PREFS_SEARCH_GAMES),
                 ).map { item ->
                     newId++
@@ -1788,10 +1783,6 @@ class SettingsActivity : AppCompatActivity() {
                     }
                     true
                 }
-            }
-            findPreference<Preference>("action_get_integrity_token")?.setOnPreferenceClickListener {
-                Toast.makeText(requireContext(), R.string.integrity_token_twitch_only, Toast.LENGTH_LONG).show()
-                true
             }
             val httpEngine = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7
             val cronet = CronetProvider.getAllProviders(requireContext()).any { it.isEnabled }

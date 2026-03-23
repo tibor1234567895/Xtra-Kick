@@ -9,7 +9,7 @@ import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 
 class ChannelVideosDataSource(
     private val channelId: String?,
@@ -102,16 +102,16 @@ class ChannelVideosDataSource(
             }
             .filter { video ->
                 val start = periodStart ?: return@filter true
-                val ts = video.uploadDate?.let { TwitchApiHelper.parseIso8601DateUTC(it) } ?: return@filter false
+                val ts = video.uploadDate?.let { KickApiHelper.parseIso8601DateUTC(it) } ?: return@filter false
                 ts >= start
             }
             .let { sequence ->
                 when (helixSort) {
                     "views" -> sequence.sortedWith(
                         compareByDescending<Video> { it.viewCount ?: -1 }
-                            .thenByDescending { it.uploadDate?.let(TwitchApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
+                            .thenByDescending { it.uploadDate?.let(KickApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
                     )
-                    else -> sequence.sortedByDescending { it.uploadDate?.let(TwitchApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
+                    else -> sequence.sortedByDescending { it.uploadDate?.let(KickApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
                 }
             }
             .take(desiredCount)

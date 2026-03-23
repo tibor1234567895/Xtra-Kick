@@ -10,9 +10,6 @@ import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendRefreshRequest
 import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendRevokeRequest
 import com.github.andreyasadchy.xtra.model.kick.auth.KickTokenIntrospectResponse
 import com.github.andreyasadchy.xtra.model.kick.auth.KickUsersResponse
-import com.github.andreyasadchy.xtra.model.id.DeviceCodeResponse
-import com.github.andreyasadchy.xtra.model.id.TokenResponse
-import com.github.andreyasadchy.xtra.model.id.ValidationResponse
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
 import com.github.andreyasadchy.xtra.util.getByteArrayCronetCallback
 import dagger.Lazy
@@ -42,22 +39,6 @@ class AuthRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val json: Json,
 ) {
-
-    suspend fun validate(networkLibrary: String?, token: String): ValidationResponse {
-        throw UnsupportedOperationException("Legacy Twitch OAuth validation has been removed")
-    }
-
-    suspend fun revoke(networkLibrary: String?, body: String) {
-        throw UnsupportedOperationException("Legacy Twitch OAuth revocation has been removed")
-    }
-
-    suspend fun getDeviceCode(networkLibrary: String?, body: String): DeviceCodeResponse {
-        throw UnsupportedOperationException("Legacy Twitch device code flow has been removed")
-    }
-
-    suspend fun getToken(networkLibrary: String?, body: String): TokenResponse {
-        throw UnsupportedOperationException("Legacy Twitch token flow has been removed")
-    }
 
     suspend fun exchangeKickAuthorizationCode(
         networkLibrary: String?,

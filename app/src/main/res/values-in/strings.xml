@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="games">Game</string>
     <string name="popular">Populer</string>
@@ -159,7 +159,6 @@
     <string name="chat_first">Chat pertama kali</string>
     <string name="chat_reward">Penukaran channel poin</string>
     <string name="always">Selalu</string>
-    <string name="twitch">Twitch</string>
     <string name="local">Lokal</string>
     <string name="days">d</string>
     <string name="seconds">s</string>
@@ -199,12 +198,12 @@
     <string name="irc_notice_already_subs_off">Ruang ini tidak dalam mode khusus subscriber.</string>
     <string name="irc_notice_already_subs_on">Ruang ini sudah dalam mode khusus subscriber.</string>
     <string name="irc_notice_autohost_receive">%1$s sekarang menghosting anda secara otomatis hingga %2$s pemirsa.</string>
-    <string name="irc_notice_bad_ban_admin">"Anda tidak dapat memban admin %s. Silakan kirim email ke support@twitch.tv jika ada admin yang kasar.\n "</string>
+    <string name="irc_notice_bad_ban_admin">"Anda tidak dapat memban admin %s. Silakan kirim email ke Kick support jika ada admin yang kasar.\n "</string>
     <string name="irc_notice_bad_ban_anon">Anda tidak dapat memban pengguna anonim.</string>
     <string name="irc_notice_bad_ban_broadcaster">Anda tidak dapat memban penyiar.</string>
     <string name="irc_notice_bad_ban_mod">Anda tidak dapat memban moderator %s kecuali anda adalah pemilik channel ini.</string>
     <string name="irc_notice_bad_ban_self">Anda tidak dapat memban diri sendiri.</string>
-    <string name="irc_notice_bad_ban_staff">Anda tidak dapat memban staf %s. Silakan kirim email ke support@twitch.tv jika ada anggota staf yang kasar.</string>
+    <string name="irc_notice_bad_ban_staff">Anda tidak dapat memban staf %s. Silakan kirim email ke Kick support jika ada anggota staf yang kasar.</string>
     <string name="irc_notice_bad_commercial_error">Gagal memulai iklan.</string>
     <string name="irc_notice_bad_delete_message_broadcaster">Anda tidak dapat menghapus pesan penyiar.</string>
     <string name="irc_notice_bad_delete_message_mod">Anda tidak dapat menghapus pesan dari moderator lain %s.</string>
@@ -216,13 +215,13 @@
     <string name="irc_notice_bad_mod_banned">%s diban di channel ini. Anda harus membatalkan ban pengguna ini sebelum memberikan status mod.</string>
     <string name="irc_notice_bad_mod_mod">%s sudah menjadi moderator channel ini.</string>
     <string name="irc_notice_bad_slow_duration">Anda tidak dapat menyetel penundaan lambat lebih dari %s detik.</string>
-    <string name="irc_notice_bad_timeout_admin">Anda tidak dapat men-timeout admin %s. Silakan kirim email ke support@twitch.tv jika ada admin yang kasar.</string>
+    <string name="irc_notice_bad_timeout_admin">Anda tidak dapat men-timeout admin %s. Silakan kirim email ke Kick support jika ada admin yang kasar.</string>
     <string name="irc_notice_bad_timeout_anon">Anda tidak dapat men-timeout pengguna anonim.</string>
     <string name="irc_notice_bad_timeout_broadcaster">Anda tidak dapat men-timeout penyiar.</string>
     <string name="irc_notice_bad_timeout_duration">Anda tidak dapat men-timeout pengguna lebih dari %s.</string>
     <string name="irc_notice_bad_timeout_mod">Anda tidak dapat men-timeout moderator %s kecuali anda adalah pemilik channel ini.</string>
     <string name="irc_notice_bad_timeout_self">Anda tidak bisa men-timeout diri sendiri.</string>
-    <string name="irc_notice_bad_timeout_staff">Anda tidak dapat men-timeout staf %s. Silakan kirim email ke support@twitch.tv jika ada anggota staf yang kasar.</string>
+    <string name="irc_notice_bad_timeout_staff">Anda tidak dapat men-timeout staf %s. Silakan kirim email ke Kick support jika ada anggota staf yang kasar.</string>
     <string name="irc_notice_bad_unban_no_ban">%s tidak diban dari channel ini.</string>
     <string name="irc_notice_bad_unhost_error">Terjadi masalah saat keluar dari mode host. Silakan coba lagi dalam satu menit.</string>
     <string name="irc_notice_bad_unmod_mod">%s bukan moderator channel ini.</string>
@@ -232,11 +231,11 @@
     <string name="irc_notice_bad_vip_achievement_incomplete">Tidak dapat menambahkan VIP. Kunjungi halaman Pencapaian di dasbor Anda untuk mempelajari cara membuka kunci fitur ini.</string>
     <string name="irc_notice_bad_unvip_grantee_not_vip">%s bukan VIP channel ini.</string>
     <string name="irc_notice_ban_success">%s sekarang diban dari channel ini.</string>
-    <string name="irc_notice_cmds_available">Perintah tersedia untuk anda di ruangan ini (gunakan /help untuk detail): %s Bantuan lainnya: https://help.twitch.tv/s/article/chat-commands.</string>
+    <string name="irc_notice_cmds_available">Perintah tersedia untuk anda di ruangan ini (gunakan /help untuk detail): %s Bantuan lainnya: Kick chat help.</string>
     <string name="irc_notice_color_changed">Warna Anda telah diubah.</string>
     <string name="irc_notice_commercial_success">Memulai jeda iklan %s detik. Ingat bahwa stream anda masih tayang dan tidak semua orang akan mendapatkan iklan.</string>
     <string name="irc_notice_delete_message_success">Pesan dari %s telah dihapus.</string>
-    <string name="irc_notice_delete_staff_message_success">Anda menghapus pesan dari staf %s. Silakan kirim email kesupport@twitch.tv jika ada anggota staf yang kasar.</string>
+    <string name="irc_notice_delete_staff_message_success">Anda menghapus pesan dari staf %s. Silakan kirim email keKick support jika ada anggota staf yang kasar.</string>
     <string name="irc_notice_emote_only_off">Ruangan ini tidak lagi dalam mode emote saja.</string>
     <string name="irc_notice_emote_only_on">Ruangan ini sekarang dalam mode emote saja.</string>
     <string name="irc_notice_followers_off">Ruang ini tidak lagi dalam mode khusus pengikut.</string>
@@ -264,10 +263,10 @@
     <string name="irc_notice_msg_rejected">Hai! Pesan Anda sedang diperiksa oleh mod dan belum dikirim.</string>
     <string name="irc_notice_msg_rejected_mandatory">Pesan Anda tidak dikirim karena bentrok dengan setelan moderasi channel.</string>
     <string name="irc_notice_msg_slowmode">Ruangan ini dalam mode lambat dan anda mengirim pesan terlalu cepat. Anda akan dapat berbicara lagi dalam %s detik.</string>
-    <string name="irc_notice_msg_subsonly">Ruangan ini dalam mode khusus subscriber. Untuk berbicara, beli subscribsi di https://www.twitch.tv/products/%s/ticket?ref=subscriber_only_mode_chat.</string>
+    <string name="irc_notice_msg_subsonly">Ruangan ini dalam mode khusus subscriber. Untuk berbicara, beli subscribsi di Kick subscriptions.</string>
     <string name="irc_notice_msg_suspended">Anda tidak memiliki izin untuk melakukan aksi tersebut.</string>
     <string name="irc_notice_msg_timedout">Anda di-timeout selama %s detik.</string>
-    <string name="irc_notice_msg_verified_email">Ruangan ini membutuhkan akun terverifikasi untuk mengobrol. Harap verifikasi akun anda di https://www.twitch.tv/settings/security.</string>
+    <string name="irc_notice_msg_verified_email">Ruangan ini membutuhkan akun terverifikasi untuk mengobrol. Harap verifikasi akun anda di your account settings.</string>
     <string name="irc_notice_no_help">Tidak ada bantuan yang tersedia.</string>
     <string name="irc_notice_no_mods">Tidak ada moderator di channel ini.</string>
     <string name="irc_notice_no_vips">Channel ini tidak memiliki VIP.</string>
@@ -291,7 +290,7 @@
     <string name="irc_notice_timeout_success">%1$s telah di-timeout untuk %2$s.</string>
     <string name="irc_notice_tos_ban">Komunitas telah menutup channel %s karena pelanggaran Persyaratan Layanan.</string>
     <string name="irc_notice_turbo_only_color">Hanya pengguna turbo yang dapat bebas menentukan warna hex. Gunakan salah satu dari berikut ini sebagai gantinya: %s.</string>
-    <string name="irc_notice_unavailable_command">Maaf, “%s” tidak tersedia melalui klien ini.</string>
+    <string name="irc_notice_unavailable_command">Maaf, Ã¢â‚¬Å“%sÃ¢â‚¬Â tidak tersedia melalui klien ini.</string>
     <string name="irc_notice_unban_success">%s tidak lagi diban dari channel ini.</string>
     <string name="irc_notice_unmod_success">Anda telah menghapus %s sebagai moderator channel ini.</string>
     <string name="irc_notice_unraid_error_no_active_raid">Anda tidak memiliki raid yang aktif.</string>
@@ -306,7 +305,7 @@
     <string name="irc_notice_usage_color">Penggunaan: \"/color &lt;color&gt;\" - Ubah warna nama pengguna Anda. Warna harus dalam hex (#000000) atau salah satu dari berikut ini: %s.</string>
     <string name="irc_notice_usage_commercial">Penggunaan: \"/commercial [length]\" - Memicu iklan. Panjang (opsional) harus berupa angka positif dalam detik.</string>
     <string name="irc_notice_usage_disconnect">Penggunaan: \"/disconnect\" - Menghubungkan kembali ke chat.</string>
-    <string name="irc_notice_usage_delete">Penggunaan: \"/delete &lt;msg id&gt;\" - Menghapus pesan yang ditentukan. Untuk informasi lebih lanjut, see https://dev.twitch.tv/docs/irc/commands/#clearmsg-twitch-commands.</string>
+    <string name="irc_notice_usage_delete">Penggunaan: \"/delete &lt;msg id&gt;\" - Menghapus pesan yang ditentukan. Untuk informasi lebih lanjut, see Kick chat command help.</string>
     <string name="irc_notice_usage_emote_only_off">Penggunaan: \"/emoteonlyoff\" - Menonaktifkan mode emote saja.</string>
     <string name="irc_notice_usage_emote_only_on">Penggunaan: \"/emoteonly\" - Mengaktifkan mode emote saja (hanya emotikon yang dapat digunakan dalam obrolan). Gunakan \"/emoteonlyoff\" untuk menonaktifkan.</string>
     <string name="irc_notice_usage_followers_off">Penggunaan: \"/followersoff\" - Nonaktifkan mode khusus pengikut.</string>
@@ -423,7 +422,7 @@
     <string name="restart_player">Mulai ulang pemutar</string>
     <string name="sub_only_summary">Konten untuk sub saja</string>
     <string name="follow_button">Tombol ikuti</string>
-    <string name="follow_account">Ikuti menggunakan akun twitch</string>
+    <string name="follow_account">Ikuti menggunakan akun Kick</string>
     <string name="follow_local">Ikuti secara lokal</string>
     <string name="hide">Sembunyikan</string>
     <string name="chat_ssl">Terhubung menggunakan SSL</string>
@@ -475,8 +474,6 @@
     <string name="hide_subtitles">Hide subtitles</string>
     <string name="toggle_subtitles">Toggle subtitles</string>
     <string name="enable_stv">Enable 7TV emotes</string>
-    <string name="enable_bttv">Enable BTTV emotes</string>
-    <string name="enable_ffz">Enable FFZ emotes</string>
     <string name="user_id">User ID</string>
     <string name="user_login">User login</string>
     <string name="waiting_ads">Waiting for ads to finish</string>
@@ -593,11 +590,7 @@
     <string name="show_system_message_emotes">Show emotes on system messages</string>
     <string name="replying_to_message">Replying to %1$s\: %2$s</string>
     <string name="channel_stv_emote">Channel 7TV emote</string>
-    <string name="channel_bttv_emote">Channel BTTV emote</string>
-    <string name="channel_ffz_emote">Channel FFZ emote</string>
     <string name="global_stv_emote">Global 7TV emote</string>
-    <string name="global_bttv_emote">Global BTTV emote</string>
-    <string name="global_ffz_emote">Global FFZ emote</string>
     <string name="channel_sub_emote">%1$s tier %2$s sub emote</string>
     <string name="channel_follower_emote">%s follower emote</string>
     <string name="bits_reward_emote">%d bits reward</string>
@@ -617,9 +610,9 @@
     <string name="prediction_locked">Locked</string>
     <string name="prediction_refunded">Refunded</string>
     <string name="poll_choice">%1$d%% (%2$s): %3$s</string>
-    <string name="poll_choice_winner">🏆%1$d%% (%2$s): %3$s</string>
-    <string name="prediction_outcome">%1$d%% (%2$s💎, %3$s👥): %4$s</string>
-    <string name="prediction_outcome_winner">🏆%1$d%% (%2$s💎, %3$s👥): %4$s</string>
+    <string name="poll_choice_winner">Ã°Å¸Ââ€ %1$d%% (%2$s): %3$s</string>
+    <string name="prediction_outcome">%1$d%% (%2$sÃ°Å¸â€™Å½, %3$sÃ°Å¸â€˜Â¥): %4$s</string>
+    <string name="prediction_outcome_winner">Ã°Å¸Ââ€ %1$d%% (%2$sÃ°Å¸â€™Å½, %3$sÃ°Å¸â€˜Â¥): %4$s</string>
     <string name="api_token_settings">Api token settings</string>
     <string name="download_settings">Downloads</string>
     <string name="update_settings">Update settings</string>
@@ -724,10 +717,12 @@
     <string name="reduced_padding">Reduced padding</string>
     <string name="compact_text">Compact text</string>
     <string name="next">Next</string>
-    <string name="tv_login_message">To get access to all features, you need to login as an Android TV device.\n\nFollow these steps:\n• Copy the code shown on the web page.\n• Press the \"Next\" button at the bottom.\n• Enter the code and press \"Activate\".\n• Press \"Authorize\".</string>
+    <string name="tv_login_message">To get access to all features, you need to login as an Android TV device.\n\nFollow these steps:\nÃ¢â‚¬Â¢ Copy the code shown on the web page.\nÃ¢â‚¬Â¢ Press the \"Next\" button at the bottom.\nÃ¢â‚¬Â¢ Enter the code and press \"Activate\".\nÃ¢â‚¬Â¢ Press \"Authorize\".</string>
     <string name="open_url">Open URL</string>
-    <string name="external_login_message">You can log in using an external browser.\n\nFollow these steps:\n• Press \"Open URL\" to open the login page.\n• Login to your account and press \"Authorize\".\n• A page with an error should appear. Copy the URL of that page, paste the URL into the box below and press \"OK\".</string>
+    <string name="external_login_message">You can log in using an external browser.\n\nFollow these steps:\nÃ¢â‚¬Â¢ Press \"Open URL\" to open the login page.\nÃ¢â‚¬Â¢ Login to your account and press \"Authorize\".\nÃ¢â‚¬Â¢ A page with an error should appear. Copy the URL of that page, paste the URL into the box below and press \"OK\".</string>
     <string name="loading">Loading...</string>
     <string name="copy_code">Copy code</string>
-    <string name="external_tv_login_message">To get access to all features, you need to login as an Android TV device.\n\nFollow these steps:\n• Copy the code shown on the screen.\n• Press the \"Open URL\" button.\n• Enter the code and press \"Activate\".\n• Press \"Authorize\".\n• Return to Xtra and press \"Next\".</string>
+    <string name="external_tv_login_message">To get access to all features, you need to login as an Android TV device.\n\nFollow these steps:\nÃ¢â‚¬Â¢ Copy the code shown on the screen.\nÃ¢â‚¬Â¢ Press the \"Open URL\" button.\nÃ¢â‚¬Â¢ Enter the code and press \"Activate\".\nÃ¢â‚¬Â¢ Press \"Authorize\".\nÃ¢â‚¬Â¢ Return to Xtra and press \"Next\".</string>
 </resources>
+
+

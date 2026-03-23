@@ -17,14 +17,12 @@ import com.github.andreyasadchy.xtra.graphql.GameBoxArtQuery
 import com.github.andreyasadchy.xtra.graphql.GameClipsQuery
 import com.github.andreyasadchy.xtra.graphql.GameQuery
 import com.github.andreyasadchy.xtra.graphql.GameStreamsQuery
-import com.github.andreyasadchy.xtra.graphql.GameVideosQuery
 import com.github.andreyasadchy.xtra.graphql.SearchChannelsQuery
 import com.github.andreyasadchy.xtra.graphql.SearchGamesQuery
 import com.github.andreyasadchy.xtra.graphql.SearchStreamsQuery
 import com.github.andreyasadchy.xtra.graphql.SearchVideosQuery
 import com.github.andreyasadchy.xtra.graphql.SelfFollowingGameQuery
 import com.github.andreyasadchy.xtra.graphql.SelfFollowingUserQuery
-import com.github.andreyasadchy.xtra.graphql.StreamPlaybackAccessTokenQuery
 import com.github.andreyasadchy.xtra.graphql.TagQuery
 import com.github.andreyasadchy.xtra.graphql.TeamLiveMembersQuery
 import com.github.andreyasadchy.xtra.graphql.TeamMembersQuery
@@ -40,7 +38,6 @@ import com.github.andreyasadchy.xtra.graphql.UserEmotesQuery
 import com.github.andreyasadchy.xtra.graphql.UserFollowedGamesQuery
 import com.github.andreyasadchy.xtra.graphql.UserFollowedStreamsQuery
 import com.github.andreyasadchy.xtra.graphql.UserFollowedUsersQuery
-import com.github.andreyasadchy.xtra.graphql.UserFollowedVideosQuery
 import com.github.andreyasadchy.xtra.graphql.UserMessageClickedQuery
 import com.github.andreyasadchy.xtra.graphql.UserQuery
 import com.github.andreyasadchy.xtra.graphql.UserResultIDQuery
@@ -49,7 +46,6 @@ import com.github.andreyasadchy.xtra.graphql.UserVideosQuery
 import com.github.andreyasadchy.xtra.graphql.UsersLastBroadcastQuery
 import com.github.andreyasadchy.xtra.graphql.UsersStreamQuery
 import com.github.andreyasadchy.xtra.graphql.UsersTypeQuery
-import com.github.andreyasadchy.xtra.graphql.VideoPlaybackAccessTokenQuery
 import com.github.andreyasadchy.xtra.graphql.VideoQuery
 import com.github.andreyasadchy.xtra.graphql.type.BadgeImageSize
 import com.github.andreyasadchy.xtra.graphql.type.BroadcastType
@@ -76,12 +72,9 @@ import com.github.andreyasadchy.xtra.model.gql.clip.ClipVideoResponse
 import com.github.andreyasadchy.xtra.model.gql.followed.FollowedChannelsResponse
 import com.github.andreyasadchy.xtra.model.gql.followed.FollowedGamesResponse
 import com.github.andreyasadchy.xtra.model.gql.followed.FollowedStreamsResponse
-import com.github.andreyasadchy.xtra.model.gql.followed.FollowedVideosResponse
 import com.github.andreyasadchy.xtra.model.gql.game.GameClipsResponse
 import com.github.andreyasadchy.xtra.model.gql.game.GameStreamsResponse
-import com.github.andreyasadchy.xtra.model.gql.game.GameVideosResponse
 import com.github.andreyasadchy.xtra.model.gql.game.GamesResponse
-import com.github.andreyasadchy.xtra.model.gql.playlist.PlaybackAccessTokenResponse
 import com.github.andreyasadchy.xtra.model.gql.search.SearchChannelsResponse
 import com.github.andreyasadchy.xtra.model.gql.search.SearchGameTagsResponse
 import com.github.andreyasadchy.xtra.model.gql.search.SearchGamesResponse
@@ -295,20 +288,6 @@ class GraphQLRepository @Inject constructor(
         sendQuery(networkLibrary, headers, query)
     }
 
-    suspend fun loadQueryGameVideos(networkLibrary: String?, headers: Map<String, String>, id: String?, slug: String?, name: String?, languages: List<String>?, sort: VideoSort?, type: List<BroadcastType>?, first: Int?, after: String?): ApolloResponse<GameVideosQuery.Data> = withContext(Dispatchers.IO) {
-        val query = GameVideosQuery(
-            id = if (!id.isNullOrBlank()) Optional.Present(id) else Optional.Absent,
-            slug = if (!slug.isNullOrBlank()) Optional.Present(slug) else Optional.Absent,
-            name = if (!name.isNullOrBlank()) Optional.Present(name) else Optional.Absent,
-            languages = Optional.Present(languages),
-            sort = Optional.Present(sort),
-            type = Optional.Present(type),
-            first = Optional.Present(first),
-            after = Optional.Present(after),
-        )
-        sendQuery(networkLibrary, headers, query)
-    }
-
     suspend fun loadQuerySearchChannels(networkLibrary: String?, headers: Map<String, String>, query: String, first: Int?, after: String?): ApolloResponse<SearchChannelsQuery.Data> = withContext(Dispatchers.IO) {
         val query = SearchChannelsQuery(
             query = query,
@@ -359,11 +338,6 @@ class GraphQLRepository @Inject constructor(
             id = if (!id.isNullOrBlank()) Optional.Present(id) else Optional.Absent,
             login = if (!login.isNullOrBlank()) Optional.Present(login) else Optional.Absent,
         )
-        sendQuery(networkLibrary, headers, query)
-    }
-
-    suspend fun loadQueryStreamPlaybackAccessToken(networkLibrary: String?, headers: Map<String, String>, login: String, platform: String, playerType: String): ApolloResponse<StreamPlaybackAccessTokenQuery.Data> = withContext(Dispatchers.IO) {
-        val query = StreamPlaybackAccessTokenQuery(login, platform, playerType)
         sendQuery(networkLibrary, headers, query)
     }
 
@@ -499,16 +473,6 @@ class GraphQLRepository @Inject constructor(
         sendQuery(networkLibrary, headers, query)
     }
 
-    suspend fun loadQueryUserFollowedVideos(networkLibrary: String?, headers: Map<String, String>, sort: VideoSort?, type: List<BroadcastType>?, first: Int?, after: String?): ApolloResponse<UserFollowedVideosQuery.Data> = withContext(Dispatchers.IO) {
-        val query = UserFollowedVideosQuery(
-            sort = Optional.Present(sort),
-            type = Optional.Present(type),
-            first = Optional.Present(first),
-            after = Optional.Present(after),
-        )
-        sendQuery(networkLibrary, headers, query)
-    }
-
     suspend fun loadQueryUserMessageClicked(networkLibrary: String?, headers: Map<String, String>, id: String? = null, login: String? = null, targetId: String?): ApolloResponse<UserMessageClickedQuery.Data> = withContext(Dispatchers.IO) {
         val query = UserMessageClickedQuery(
             id = if (!id.isNullOrBlank()) Optional.Present(id) else Optional.Absent,
@@ -567,36 +531,6 @@ class GraphQLRepository @Inject constructor(
     suspend fun loadQueryVideo(networkLibrary: String?, headers: Map<String, String>, id: String?): ApolloResponse<VideoQuery.Data> = withContext(Dispatchers.IO) {
         val query = VideoQuery(Optional.Present(id))
         sendQuery(networkLibrary, headers, query)
-    }
-
-    suspend fun loadQueryVideoPlaybackAccessToken(networkLibrary: String?, headers: Map<String, String>, videoId: String, platform: String, playerType: String): ApolloResponse<VideoPlaybackAccessTokenQuery.Data> = withContext(Dispatchers.IO) {
-        val query = VideoPlaybackAccessTokenQuery(videoId, platform, playerType)
-        sendQuery(networkLibrary, headers, query)
-    }
-
-    fun getPlaybackAccessTokenRequestBody(login: String?, vodId: String?, playerType: String?): String {
-        return buildJsonObject {
-            putJsonObject("extensions") {
-                putJsonObject("persistedQuery") {
-                    put("sha256Hash", "ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9")
-                    put("version", 1)
-                }
-            }
-            put("operationName", "PlaybackAccessToken")
-            putJsonObject("variables") {
-                put("isLive", !login.isNullOrBlank())
-                put("login", login ?: "")
-                put("isVod", !vodId.isNullOrBlank())
-                put("vodID", vodId ?: "")
-                put("platform", "web")
-                put("playerType", playerType)
-            }
-        }.toString()
-    }
-
-    suspend fun loadPlaybackAccessToken(networkLibrary: String?, headers: Map<String, String>, login: String? = null, vodId: String? = null, playerType: String?): PlaybackAccessTokenResponse = withContext(Dispatchers.IO) {
-        val body = getPlaybackAccessTokenRequestBody(login, vodId, playerType)
-        json.decodeFromString<PlaybackAccessTokenResponse>(sendPersistedQuery(networkLibrary, headers, body))
     }
 
     suspend fun loadClipUrls(networkLibrary: String?, headers: Map<String, String>, slug: String?): ClipUrlsResponse = withContext(Dispatchers.IO) {
@@ -755,36 +689,6 @@ class GraphQLRepository @Inject constructor(
             }
         }.toString()
         json.decodeFromString<GameStreamsResponse>(sendPersistedQuery(networkLibrary, headers, body))
-    }
-
-    suspend fun loadGameVideos(networkLibrary: String?, headers: Map<String, String>, gameSlug: String?, type: String?, sort: String?, languages: List<String>?, limit: Int?, cursor: String?): GameVideosResponse = withContext(Dispatchers.IO) {
-        val body = buildJsonObject {
-            putJsonObject("extensions") {
-                putJsonObject("persistedQuery") {
-                    put("sha256Hash", "d3f2564d36b095cb5bbe78a66b7f9d0618934fa3f49f5b9321d29c41cd0d2d0c")
-                    put("version", 1)
-                }
-            }
-            put("operationName", "DirectoryVideos_Game")
-            putJsonObject("variables") {
-                if (type != null) {
-                    putJsonArray("broadcastTypes") {
-                        add(type)
-                    }
-                }
-                put("followedCursor", cursor)
-                put("includePreviewBlur", false)
-                putJsonArray("languages") {
-                    languages?.forEach {
-                        add(it)
-                    }
-                }
-                put("slug", gameSlug)
-                put("videoLimit", limit)
-                put("videoSort", sort)
-            }
-        }.toString()
-        json.decodeFromString<GameVideosResponse>(sendPersistedQuery(networkLibrary, headers, body))
     }
 
     suspend fun loadGameClips(networkLibrary: String?, headers: Map<String, String>, gameSlug: String?, period: String?, languages: List<String>?, limit: Int?, cursor: String?): GameClipsResponse = withContext(Dispatchers.IO) {
@@ -1163,24 +1067,6 @@ class GraphQLRepository @Inject constructor(
             }
         }.toString()
         json.decodeFromString<FollowedStreamsResponse>(sendPersistedQuery(networkLibrary, headers, body))
-    }
-
-    suspend fun loadFollowedVideos(networkLibrary: String?, headers: Map<String, String>, limit: Int?, cursor: String?): FollowedVideosResponse = withContext(Dispatchers.IO) {
-        val body = buildJsonObject {
-            putJsonObject("extensions") {
-                putJsonObject("persistedQuery") {
-                    put("sha256Hash", "f2c1304cb0c2c46436ca48778c5b17d486750d7beeabe3bb9719fc47d765f2c8")
-                    put("version", 1)
-                }
-            }
-            put("operationName", "FollowedVideos_CurrentUser")
-            putJsonObject("variables") {
-                put("cursor", cursor)
-                put("includePreviewBlur", false)
-                put("limit", limit)
-            }
-        }.toString()
-        json.decodeFromString<FollowedVideosResponse>(sendPersistedQuery(networkLibrary, headers, body))
     }
 
     suspend fun loadFollowedChannels(networkLibrary: String?, headers: Map<String, String>, limit: Int?, cursor: String?): FollowedChannelsResponse = withContext(Dispatchers.IO) {

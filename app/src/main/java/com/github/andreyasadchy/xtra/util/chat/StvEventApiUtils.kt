@@ -219,6 +219,16 @@ object StvEventApiUtils {
         return Color.argb(value and 0xFF, value shr 24 and 0xFF, value shr 16 and 0xFF, value shr 8 and 0xFF)
     }
 
+    private fun findConnectionId(connections: org.json.JSONArray, platform: String): String? {
+        for (i in 0 until connections.length()) {
+            val connection = connections.get(i) as? JSONObject ?: continue
+            if (connection.optString("platform") == platform) {
+                return if (!connection.isNull("id")) connection.optString("id").takeIf { it.isNotBlank() } else null
+            }
+        }
+        return null
+    }
+
     sealed class Entitlement {
         class Paint(val userId: String, val paintId: String) : Entitlement()
         class Badge(val userId: String, val badgeId: String) : Entitlement()
@@ -233,13 +243,7 @@ object StvEventApiUtils {
             var userId: String? = null
             val connections = user.optJSONArray("connections")
             if (connections != null) {
-                for (i in 0 until connections.length()) {
-                    val connection = connections.get(i) as? JSONObject
-                    if (connection?.optString("platform") == "TWITCH") {
-                        userId = if (!connection.isNull("id")) connection.optString("id").takeIf { it.isNotBlank() } else null
-                        break
-                    }
-                }
+                userId = findConnectionId(connections, "KICK") ?: findConnectionId(connections, "TWITCH")
             }
             if (userId != null) {
                 when (kind) {

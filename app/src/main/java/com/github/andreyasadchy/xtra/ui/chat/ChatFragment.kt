@@ -48,7 +48,7 @@ import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.ui.player.PlayerFragment
 import com.github.andreyasadchy.xtra.ui.view.AutoCompleteAdapter
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.chat.ChatAdapterUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatDividerDecoration
@@ -396,8 +396,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
                             tab.text = when (position) {
                                 0 -> getString(R.string.recent_emotes)
-                                1 -> "Twitch"
-                                else -> "7TV/BTTV/FFZ"
+                                1 -> "Kick"
+                                else -> "7TV"
                             }
                         }.attach()
                         emotes.setOnClickListener {
@@ -431,7 +431,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                             else -> {
                                                 textFollowers.text = getString(
                                                     R.string.room_followers_min,
-                                                    TwitchApiHelper.getDurationFromSeconds(requireContext(), (roomState.followers.toInt() * 60).toString())
+                                                    KickApiHelper.getDurationFromSeconds(requireContext(), (roomState.followers.toInt() * 60).toString())
                                                 )
                                                 textFollowers.visibility = View.VISIBLE
                                             }
@@ -447,7 +447,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                             else -> {
                                                 textSlow.text = getString(
                                                     R.string.room_slow,
-                                                    TwitchApiHelper.getDurationFromSeconds(requireContext(), roomState.slow)
+                                                    KickApiHelper.getDurationFromSeconds(requireContext(), roomState.slow)
                                                 )
                                                 textSlow.visibility = View.VISIBLE
                                             }
@@ -846,6 +846,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 if (adapter?.translateAllMessages == true) {
                                     requestTranslateAllMessages(messages)
                                 }
+                                viewModel.clearAddMessagesReplay()
                             }
                         }
                     }
@@ -1132,8 +1133,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     message = text,
                     replyId = replyId,
                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    gqlHeaders = TwitchApiHelper.getGQLHeaders(requireContext(), true),
-                    helixHeaders = TwitchApiHelper.getHelixHeaders(requireContext()),
+                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), true),
+                    helixHeaders = KickApiHelper.getHelixHeaders(requireContext()),
                     accountId = requireContext().tokenPrefs().getString(C.USER_ID, null),
                     channelId = requireArguments().getString(KEY_CHANNEL_ID),
                     channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),

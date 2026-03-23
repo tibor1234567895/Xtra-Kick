@@ -41,7 +41,7 @@ import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
 import com.github.andreyasadchy.xtra.ui.view.CenteredImageSpan
 import com.github.andreyasadchy.xtra.ui.view.NamePaintImageSpan
 import com.github.andreyasadchy.xtra.ui.view.NamePaintSpan
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import java.util.Collections
 import java.util.Random
 import java.util.WeakHashMap
@@ -104,7 +104,7 @@ object ChatAdapterUtils {
             }
             chatMessage.message.isNullOrBlank() && (chatMessage.systemMsg != null || chatMessage.reward?.title != null) -> {
                 if (chatMessage.timestamp != null && enableTimestamps) {
-                    val timestamp = TwitchApiHelper.getTimestamp(chatMessage.timestamp, timestampFormat)
+                    val timestamp = KickApiHelper.getTimestamp(chatMessage.timestamp, timestampFormat)
                     if (timestamp != null) {
                         builder.append("$timestamp ")
                         builder.setSpan(ForegroundColorSpan(getSavedColor("#999999", savedColors, useReadableColors, isLightTheme)), 0, timestamp.length, SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -165,7 +165,7 @@ object ChatAdapterUtils {
                     builderIndex += chatMessage.systemMsg.length + 1
                 } else {
                     if (chatMessage.msgId != null) {
-                        val msgId = TwitchApiHelper.getMessageIdString(chatMessage.msgId) ?: chatMessage.msgId
+                        val msgId = KickApiHelper.getMessageIdString(chatMessage.msgId) ?: chatMessage.msgId
                         builder.append("$msgId\n")
                         builderIndex += msgId.length + 1
                     }
@@ -201,7 +201,7 @@ object ChatAdapterUtils {
                     }
                 }
                 if (chatMessage.timestamp != null && enableTimestamps) {
-                    val timestamp = TwitchApiHelper.getTimestamp(chatMessage.timestamp, timestampFormat)
+                    val timestamp = KickApiHelper.getTimestamp(chatMessage.timestamp, timestampFormat)
                     if (timestamp != null) {
                         builder.append("$timestamp ")
                         builder.setSpan(ForegroundColorSpan(getSavedColor("#999999", savedColors, useReadableColors, isLightTheme)), builderIndex, builderIndex + timestamp.length, SPAN_EXCLUSIVE_EXCLUSIVE)

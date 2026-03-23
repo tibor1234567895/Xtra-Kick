@@ -8,12 +8,11 @@ import android.view.ViewGroup
 import androidx.core.os.bundleOf
 import com.github.andreyasadchy.xtra.databinding.DialogGamesSortBinding
 import com.github.andreyasadchy.xtra.model.ui.Tag
-import com.github.andreyasadchy.xtra.ui.common.SearchTagsDialog
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.chip.Chip
 
-class GamesSortDialog : BottomSheetDialogFragment(), SearchTagsDialog.OnTagSelectedListener {
+class GamesSortDialog : BottomSheetDialogFragment() {
 
     interface OnFilter {
         fun onChange(tags: Array<Tag>)
@@ -75,9 +74,9 @@ class GamesSortDialog : BottomSheetDialogFragment(), SearchTagsDialog.OnTagSelec
                     }
                 )
             }
-            selectTags.setOnClickListener {
-                SearchTagsDialog.Companion.newInstance(true).show(childFragmentManager, null)
-            }
+            selectTags.visibility = View.GONE
+            tagGroup.visibility = View.GONE
+            selectedTags.clear()
             apply.setOnClickListener {
                 val tags = selectedTags.sortedBy { it.id }
                 if (!tags.mapNotNull { it.id }.toTypedArray().contentEquals(originalTagIds)) {
@@ -87,22 +86,6 @@ class GamesSortDialog : BottomSheetDialogFragment(), SearchTagsDialog.OnTagSelec
                 }
                 dismiss()
             }
-        }
-    }
-
-    override fun onTagSelected(tag: Tag) {
-        if (tag.id != null && selectedTags.find { it.id == tag.id } == null) {
-            selectedTags.add(tag)
-            binding.tagGroup.addView(
-                Chip(requireContext()).apply {
-                    text = tag.name
-                    isCloseIconVisible = true
-                    setOnCloseIconClickListener {
-                        selectedTags.find { it.id == tag.id }?.let { selectedTags.remove(it) }
-                        binding.tagGroup.removeView(this)
-                    }
-                }
-            )
         }
     }
 

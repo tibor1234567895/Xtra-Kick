@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">Xtra Kick</string>
     <string name="notification_downloads_channel_id" translatable="false">xtra_downloads_channel</string>
@@ -6,17 +6,17 @@
     <string name="notification_playback_channel_id" translatable="false">xtra_playback_channel</string>
     <string name="lang_de" translatable="false">Deutsch</string>
     <string name="lang_en" translatable="false">English</string>
-    <string name="lang_es" translatable="false">Español</string>
-    <string name="lang_fr" translatable="false">Français</string>
+    <string name="lang_es" translatable="false">EspaÃƒÂ±ol</string>
+    <string name="lang_fr" translatable="false">FranÃƒÂ§ais</string>
     <string name="lang_in" translatable="false">Indonesia</string>
     <string name="lang_it" translatable="false">Italiano</string>
-    <string name="lang_pt_br" translatable="false">Português - Brasil</string>
-    <string name="lang_tr" translatable="false">Türkçe</string>
-    <string name="lang_ru" translatable="false">Русский</string>
-    <string name="lang_ar" translatable="false">العربية</string>
-    <string name="lang_ja" translatable="false">日本語</string>
-    <string name="lang_zh_tw" translatable="false">中文（繁體）</string>
-    <string name="lang_zh_cn" translatable="false">中文（简体）</string>
+    <string name="lang_pt_br" translatable="false">PortuguÃƒÂªs - Brasil</string>
+    <string name="lang_tr" translatable="false">TÃƒÂ¼rkÃƒÂ§e</string>
+    <string name="lang_ru" translatable="false">ÃÂ Ã‘Æ’Ã‘ÂÃ‘ÂÃÂºÃÂ¸ÃÂ¹</string>
+    <string name="lang_ar" translatable="false">Ã˜Â§Ã™â€žÃ˜Â¹Ã˜Â±Ã˜Â¨Ã™Å Ã˜Â©</string>
+    <string name="lang_ja" translatable="false">Ã¦â€”Â¥Ã¦Å“Â¬Ã¨ÂªÅ¾</string>
+    <string name="lang_zh_tw" translatable="false">Ã¤Â¸Â­Ã¦â€“â€¡Ã¯Â¼Ë†Ã§Â¹ÂÃ©Â«â€Ã¯Â¼â€°</string>
+    <string name="lang_zh_cn" translatable="false">Ã¤Â¸Â­Ã¦â€“â€¡Ã¯Â¼Ë†Ã§Â®â‚¬Ã¤Â½â€œÃ¯Â¼â€°</string>
     <string name="games">Games</string>
     <string name="popular">Popular</string>
     <string name="following">Following</string>
@@ -106,6 +106,8 @@
     <string name="chat_replay_unavailable">Chat replay is unavailable</string>
     <string name="chat_clip_replay_starts" translatable="false">--- Clip chat starts here ---</string>
     <string name="video_subscribers_only">This video is only available to subscribers.</string>
+    <string name="video_source_unavailable">This video source is no longer available.</string>
+    <string name="download_unavailable">This download is not available.</string>
     <string name="player_error">Player error, retrying...</string>
     <string name="picture_in_picture">Picture-in-Picture</string>
     <string name="source_vod_start">Start: %s</string>
@@ -194,7 +196,6 @@
     <string name="chat_first">First time chat</string>
     <string name="chat_reward">Channel point redemption</string>
     <string name="always">Always</string>
-    <string name="twitch">Kick</string>
     <string name="local">Local</string>
     <string name="days">d</string>
     <string name="seconds">s</string>
@@ -238,14 +239,14 @@
     <string name="irc_notice_already_subs_off">This room is not in subscribers-only mode.</string>
     <string name="irc_notice_already_subs_on">This room is already in subscribers-only mode.</string>
     <string name="irc_notice_autohost_receive">%1$s is now auto hosting you for up to %2$s viewers.</string>
-    <string name="irc_notice_bad_ban_admin">You cannot ban admin %s. Please email support@twitch.tv if an admin is being abusive.</string>
+    <string name="irc_notice_bad_ban_admin">You cannot ban admin %s. Please email Kick support if an admin is being abusive.</string>
     <string name="irc_notice_bad_ban_anon">You cannot ban anonymous users.</string>
     <string name="irc_notice_bad_ban_broadcaster">You cannot ban the broadcaster.</string>
     <string name="irc_notice_bad_ban_mod">You cannot ban moderator %s unless you are the owner of this channel.</string>
     <string name="irc_notice_bad_ban_self">You cannot ban yourself.</string>
-    <string name="irc_notice_bad_ban_staff">You cannot ban a staff %s. Please email support@twitch.tv if a staff member is being abusive.</string>
+    <string name="irc_notice_bad_ban_staff">You cannot ban a staff %s. Please email Kick support if a staff member is being abusive.</string>
     <string name="irc_notice_bad_commercial_error">Failed to start the commercial.</string>
-    <string name="irc_notice_bad_delete_message_broadcaster">You cannot delete the broadcaster’s messages.</string>
+    <string name="irc_notice_bad_delete_message_broadcaster">You cannot delete the broadcasterÃ¢â‚¬â„¢s messages.</string>
     <string name="irc_notice_bad_delete_message_mod">You cannot delete messages from another moderator %s.</string>
     <string name="irc_notice_bad_host_error">There was a problem hosting %s. Please try again in a minute.</string>
     <string name="irc_notice_bad_host_hosting">This channel is already hosting %s.</string>
@@ -255,13 +256,13 @@
     <string name="irc_notice_bad_mod_banned">%s is banned in this channel. You must unban this user before granting mod status.</string>
     <string name="irc_notice_bad_mod_mod">%s is already a moderator of this channel.</string>
     <string name="irc_notice_bad_slow_duration">You cannot set slow delay to more than %s seconds.</string>
-    <string name="irc_notice_bad_timeout_admin">You cannot timeout admin %s. Please email support@twitch.tv if an admin is being abusive.</string>
+    <string name="irc_notice_bad_timeout_admin">You cannot timeout admin %s. Please email Kick support if an admin is being abusive.</string>
     <string name="irc_notice_bad_timeout_anon">You cannot timeout anonymous users.</string>
     <string name="irc_notice_bad_timeout_broadcaster">You cannot timeout the broadcaster.</string>
     <string name="irc_notice_bad_timeout_duration">You cannot time a user out for more than %s.</string>
     <string name="irc_notice_bad_timeout_mod">You cannot timeout moderator %s unless you are the owner of this channel.</string>
     <string name="irc_notice_bad_timeout_self">You cannot timeout yourself.</string>
-    <string name="irc_notice_bad_timeout_staff">You cannot timeout staff %s. Please email support@twitch.tv if a staff member is being abusive.</string>
+    <string name="irc_notice_bad_timeout_staff">You cannot timeout staff %s. Please email Kick support if a staff member is being abusive.</string>
     <string name="irc_notice_bad_unban_no_ban">%s is not banned from this channel.</string>
     <string name="irc_notice_bad_unhost_error">There was a problem exiting host mode. Please try again in a minute.</string>
     <string name="irc_notice_bad_unmod_mod">%s is not a moderator of this channel.</string>
@@ -271,11 +272,11 @@
     <string name="irc_notice_bad_vip_achievement_incomplete">Unable to add VIP. Visit the Achievements page on your dashboard to learn how to unlock this feature.</string>
     <string name="irc_notice_bad_unvip_grantee_not_vip">%s is not a VIP of this channel.</string>
     <string name="irc_notice_ban_success">%s is now banned from this channel.</string>
-    <string name="irc_notice_cmds_available">Commands available to you in this room (use /help for details): %s More help: https://help.twitch.tv/s/article/chat-commands.</string>
+    <string name="irc_notice_cmds_available">Commands available to you in this room (use /help for details): %s More help: Kick chat help.</string>
     <string name="irc_notice_color_changed">Your color has been changed.</string>
     <string name="irc_notice_commercial_success">Initiating %s second commercial break. Keep in mind that your stream is still live and not everyone will get a commercial.</string>
     <string name="irc_notice_delete_message_success">The message from %s is now deleted.</string>
-    <string name="irc_notice_delete_staff_message_success">You deleted a message from staff %s. Please email support@twitch.tv if a staff member is being abusive.</string>
+    <string name="irc_notice_delete_staff_message_success">You deleted a message from staff %s. Please email Kick support if a staff member is being abusive.</string>
     <string name="irc_notice_emote_only_off">This room is no longer in emote-only mode.</string>
     <string name="irc_notice_emote_only_on">This room is now in emote-only mode.</string>
     <string name="irc_notice_followers_off">This room is no longer in followers-only mode.</string>
@@ -301,17 +302,17 @@
     <string name="irc_notice_msg_r9k">This room is in unique-chat mode and the message you attempted to send is not unique.</string>
     <string name="irc_notice_msg_ratelimit">Your message was not sent because you are sending messages too quickly.</string>
     <string name="irc_notice_msg_rejected">Hey! Your message is being checked by mods and has not been sent.</string>
-    <string name="irc_notice_msg_rejected_mandatory">Your message wasn’t posted due to conflicts with the channel’s moderation settings.</string>
+    <string name="irc_notice_msg_rejected_mandatory">Your message wasnÃ¢â‚¬â„¢t posted due to conflicts with the channelÃ¢â‚¬â„¢s moderation settings.</string>
     <string name="irc_notice_msg_slowmode">This room is in slow mode and you are sending messages too quickly. You will be able to talk again in %s seconds.</string>
-    <string name="irc_notice_msg_subsonly">This room is in subscribers only mode. To talk, purchase a channel subscription at https://www.twitch.tv/products/%s/ticket?ref=subscriber_only_mode_chat.</string>
-    <string name="irc_notice_msg_suspended">You don’t have permission to perform that action.</string>
+    <string name="irc_notice_msg_subsonly">This room is in subscribers only mode. To talk, purchase a channel subscription at Kick subscriptions.</string>
+    <string name="irc_notice_msg_suspended">You donÃ¢â‚¬â„¢t have permission to perform that action.</string>
     <string name="irc_notice_msg_timedout">You are timed out for %s more seconds.</string>
-    <string name="irc_notice_msg_verified_email">This room requires a verified account to chat. Please verify your account at https://www.twitch.tv/settings/security.</string>
+    <string name="irc_notice_msg_verified_email">This room requires a verified account to chat. Please verify your account at your account settings.</string>
     <string name="irc_notice_no_help">No help available.</string>
     <string name="irc_notice_no_mods">There are no moderators of this channel.</string>
     <string name="irc_notice_no_vips">This channel does not have any VIPs.</string>
     <string name="irc_notice_not_hosting">No channel is currently being hosted.</string>
-    <string name="irc_notice_no_permission">You don’t have permission to perform that action.</string>
+    <string name="irc_notice_no_permission">You donÃ¢â‚¬â„¢t have permission to perform that action.</string>
     <string name="irc_notice_r9k_off">This room is no longer in unique-chat mode.</string>
     <string name="irc_notice_r9k_on">This room is now in unique-chat mode.</string>
     <string name="irc_notice_raid_error_already_raiding">You already have a raid in progress.</string>
@@ -330,14 +331,14 @@
     <string name="irc_notice_timeout_success">%1$s has been timed out for %2$s.</string>
     <string name="irc_notice_tos_ban">The community has closed channel %s due to Terms of Service violations.</string>
     <string name="irc_notice_turbo_only_color">Only turbo users can specify an arbitrary hex color. Use one of the following instead: %s.</string>
-    <string name="irc_notice_unavailable_command">Sorry, “%s” is not available through this client.</string>
+    <string name="irc_notice_unavailable_command">Sorry, Ã¢â‚¬Å“%sÃ¢â‚¬Â is not available through this client.</string>
     <string name="irc_notice_unban_success">%s is no longer banned from this channel.</string>
     <string name="irc_notice_unmod_success">You have removed %s as a moderator of this channel.</string>
     <string name="irc_notice_unraid_error_no_active_raid">You do not have an active raid.</string>
     <string name="irc_notice_unraid_error_unexpected">There was a problem stopping the raid. Please try again in a minute.</string>
     <string name="irc_notice_unraid_success">The raid has been canceled.</string>
     <string name="irc_notice_unrecognized_cmd">Unrecognized command: %s</string>
-    <string name="irc_notice_untimeout_banned">%s is permanently banned. Use “/unban” to remove a ban.</string>
+    <string name="irc_notice_untimeout_banned">%s is permanently banned. Use Ã¢â‚¬Å“/unbanÃ¢â‚¬Â to remove a ban.</string>
     <string name="irc_notice_untimeout_success">%s is no longer timed out in this channel.</string>
     <string name="irc_notice_unvip_success">You have removed %s as a VIP of this channel.</string>
     <string name="irc_notice_usage_ban">Usage: \"/ban &lt;username&gt; [reason]\" - Permanently prevent a user from chatting. Reason is optional and will be shown to the target user and other moderators. Use \"/unban\" to remove a ban.</string>
@@ -345,7 +346,7 @@
     <string name="irc_notice_usage_color">Usage: \"/color &lt;color&gt;\" - Change your username color. Color must be in hex (#000000) or one of the following: %s.</string>
     <string name="irc_notice_usage_commercial">Usage: \"/commercial [length]\" - Triggers a commercial. Length (optional) must be a positive number of seconds.</string>
     <string name="irc_notice_usage_disconnect">Usage: \"/disconnect\" - Reconnects to chat.</string>
-    <string name="irc_notice_usage_delete">Usage: \"/delete &lt;msg id&gt;\" - Deletes the specified message. For more information, see https://dev.twitch.tv/docs/irc/commands/#clearmsg-twitch-commands.</string>
+    <string name="irc_notice_usage_delete">Usage: \"/delete &lt;msg id&gt;\" - Deletes the specified message. For more information, see Kick chat command help.</string>
     <string name="irc_notice_usage_emote_only_off">Usage: \"/emoteonlyoff\" - Disables emote-only mode.</string>
     <string name="irc_notice_usage_emote_only_on">Usage: \"/emoteonly\" - Enables emote-only mode (only emoticons may be used in chat). Use \"/emoteonlyoff\" to disable.</string>
     <string name="irc_notice_usage_followers_off">Usage: \"/followersoff\" - Disables followers-only mode.</string>
@@ -383,7 +384,7 @@
     <string name="irc_notice_whisper_limit_per_min">You are sending whispers too fast. Try again in a minute.</string>
     <string name="irc_notice_whisper_limit_per_sec">You are sending whispers too fast. Try again in a second.</string>
     <string name="irc_notice_whisper_restricted">Your settings prevent you from sending this whisper.</string>
-    <string name="irc_notice_whisper_restricted_recipient">That user’s settings prevent them from receiving this whisper.</string>
+    <string name="irc_notice_whisper_restricted_recipient">That userÃ¢â‚¬â„¢s settings prevent them from receiving this whisper.</string>
     <string name="moderators">Moderators</string>
     <string name="vips">VIPs</string>
     <string name="viewers">Viewers</string>
@@ -517,8 +518,6 @@
     <string name="hide_subtitles">Hide subtitles</string>
     <string name="toggle_subtitles">Toggle subtitles</string>
     <string name="enable_stv">Enable 7TV emotes</string>
-    <string name="enable_bttv">Enable BTTV emotes</string>
-    <string name="enable_ffz">Enable FFZ emotes</string>
     <string name="user_id">User ID</string>
     <string name="user_login">User login</string>
     <string name="waiting_ads">Waiting for ads to finish</string>
@@ -643,11 +642,7 @@
     <string name="show_system_message_emotes">Show emotes on system messages</string>
     <string name="replying_to_message">Replying to %1$s\: %2$s</string>
     <string name="channel_stv_emote">Channel 7TV emote</string>
-    <string name="channel_bttv_emote">Channel BTTV emote</string>
-    <string name="channel_ffz_emote">Channel FFZ emote</string>
     <string name="global_stv_emote">Global 7TV emote</string>
-    <string name="global_bttv_emote">Global BTTV emote</string>
-    <string name="global_ffz_emote">Global FFZ emote</string>
     <string name="channel_sub_emote">%1$s tier %2$s sub emote</string>
     <string name="channel_follower_emote">%s follower emote</string>
     <string name="bits_reward_emote">%d bits reward</string>
@@ -659,7 +654,7 @@
     <string name="kick_not_implemented_action" translatable="false">This account action is not implemented for Kick yet.</string>
     <string name="kick_oauth_not_configured" translatable="false">Kick login is not configured. Set KICK_CLIENT_ID and KICK_OAUTH_BACKEND_BASE_URL in build config.</string>
     <string name="kick_oauth_scope_missing" translatable="false">Kick login requires scopes: user:read and chat:write.</string>
-    <string name="integrity_token_twitch_only" translatable="false">Integrity token debug flow is disabled for Kick login.</string>
+    <string name="integrity_token_Kick_only" translatable="false">Integrity token debug flow is disabled for Kick login.</string>
     <string name="kick_browser_fallback_webview" translatable="false">Could not open browser, continuing in-app.</string>
     <string name="show_stv_badges">Show 7TV badges</string>
     <string name="show_kick_badges" translatable="false">Show Kick badges</string>
@@ -670,7 +665,7 @@
     <string name="chat_delay_mode_custom">Custom</string>
     <string name="chat_delay_custom_secs">Custom delay (seconds)</string>
     <string name="chat_show_delay_indicator">Show chat delay badge</string>
-    <string name="chat_delay_indicator">⏱ ~%ss</string>
+    <string name="chat_delay_indicator">Ã¢ÂÂ± ~%ss</string>
     <string name="stv_live_updates">7TV live emote updates</string>
     <string name="personal_stv_emote">Personal 7TV emote</string>
     <string name="show_polls">Show polls</string>
@@ -681,9 +676,9 @@
     <string name="prediction_locked">Locked</string>
     <string name="prediction_refunded">Refunded</string>
     <string name="poll_choice">%1$d%% (%2$s): %3$s</string>
-    <string name="poll_choice_winner">🏆%1$d%% (%2$s): %3$s</string>
-    <string name="prediction_outcome">%1$d%% (%2$s💎, %3$s👥): %4$s</string>
-    <string name="prediction_outcome_winner">🏆%1$d%% (%2$s💎, %3$s👥): %4$s</string>
+    <string name="poll_choice_winner">Ã°Å¸Ââ€ %1$d%% (%2$s): %3$s</string>
+    <string name="prediction_outcome">%1$d%% (%2$sÃ°Å¸â€™Å½, %3$sÃ°Å¸â€˜Â¥): %4$s</string>
+    <string name="prediction_outcome_winner">Ã°Å¸Ââ€ %1$d%% (%2$sÃ°Å¸â€™Å½, %3$sÃ°Å¸â€˜Â¥): %4$s</string>
     <string name="api_token_settings">API token settings</string>
     <string name="download_settings">Downloads</string>
     <string name="update_settings">Update settings</string>
@@ -804,11 +799,13 @@
     <string name="reduced_padding">Reduced padding</string>
     <string name="compact_text">Compact text</string>
     <string name="next">Next</string>
-    <string name="tv_login_message">To get access to all features, you need to login as an Android TV device.\n\nFollow these steps:\n• Copy the code shown on the web page.\n• Press the \"Next\" button at the bottom.\n• Enter the code and press \"Activate\".\n• Press \"Authorize\".</string>
+    <string name="tv_login_message">To get access to all features, you need to login as an Android TV device.\n\nFollow these steps:\nÃ¢â‚¬Â¢ Copy the code shown on the web page.\nÃ¢â‚¬Â¢ Press the \"Next\" button at the bottom.\nÃ¢â‚¬Â¢ Enter the code and press \"Activate\".\nÃ¢â‚¬Â¢ Press \"Authorize\".</string>
     <string name="open_url">Open URL</string>
     <string name="open_browser_login_recommended" translatable="false">Open in browser (recommended)</string>
-    <string name="external_login_message">You can log in using an external browser.\n\nFollow these steps:\n• Press \"Open URL\" to open the login page.\n• Login to your account and press \"Authorize\".\n• A page with an error should appear. Copy the URL of that page, paste the URL into the box below and press \"OK\".</string>
+    <string name="external_login_message">You can log in using an external browser.\n\nFollow these steps:\nÃ¢â‚¬Â¢ Press \"Open URL\" to open the login page.\nÃ¢â‚¬Â¢ Login to your account and press \"Authorize\".\nÃ¢â‚¬Â¢ A page with an error should appear. Copy the URL of that page, paste the URL into the box below and press \"OK\".</string>
     <string name="loading">Loading...</string>
     <string name="copy_code">Copy code</string>
-    <string name="external_tv_login_message">To get access to all features, you need to login as an Android TV device.\n\nFollow these steps:\n• Copy the code shown on the screen.\n• Press the \"Open URL\" button.\n• Enter the code and press \"Activate\".\n• Press \"Authorize\".\n• Return to Xtra and press \"Next\".</string>
+    <string name="external_tv_login_message">To get access to all features, you need to login as an Android TV device.\n\nFollow these steps:\nÃ¢â‚¬Â¢ Copy the code shown on the screen.\nÃ¢â‚¬Â¢ Press the \"Open URL\" button.\nÃ¢â‚¬Â¢ Enter the code and press \"Activate\".\nÃ¢â‚¬Â¢ Press \"Authorize\".\nÃ¢â‚¬Â¢ Return to Xtra and press \"Next\".</string>
 </resources>
+
+

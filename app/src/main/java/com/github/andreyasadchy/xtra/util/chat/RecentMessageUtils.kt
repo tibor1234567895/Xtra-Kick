@@ -8,7 +8,7 @@ import com.github.andreyasadchy.xtra.model.chat.ChannelPointReward
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.Reply
 import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import kotlin.collections.set
 
 object RecentMessageUtils {
@@ -122,7 +122,7 @@ object RecentMessageUtils {
         val login = if (userIndex != -1) messageInfo.substring(userIndex + 1) else if (index2 != -1) messageInfo.substring(index2 + 1) else null
         val text = if (login != null) {
             if (duration != null) {
-                ContextCompat.getString(context, R.string.chat_timeout).format(login, TwitchApiHelper.getDurationFromSeconds(context, duration))
+                ContextCompat.getString(context, R.string.chat_timeout).format(login, KickApiHelper.getDurationFromSeconds(context, duration))
             } else {
                 ContextCompat.getString(context, R.string.chat_ban).format(login)
             }
@@ -147,7 +147,7 @@ object RecentMessageUtils {
         val index2 = messageInfo.indexOf(" ", messageInfo.indexOf("#") + 1)
         val text = messageInfo.substring(if (msgIndex != -1) msgIndex + 1 else index2 + 1)
         return ChatMessage(
-            systemMsg = TwitchApiHelper.getNoticeString(context, msgId, text),
+            systemMsg = KickApiHelper.getNoticeString(context, msgId, text),
             fullMsg = message
         )
     }

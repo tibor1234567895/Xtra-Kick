@@ -287,16 +287,19 @@ class PlaybackService : MediaSessionService() {
                                 val proxyPort = prefs().getString(C.PROXY_PORT, null)?.toIntOrNull()
                                 val proxyUser = prefs().getString(C.PROXY_USER, null)
                                 val proxyPassword = prefs().getString(C.PROXY_PASSWORD, null)
-                                val multivariantPlaylistProxyClient = if (prefs().getBoolean(C.PROXY_MULTIVARIANT_PLAYLIST, false) && !proxyHost.isNullOrBlank() && proxyPort != null) {
+                                val proxyMultivariantPlaylist = prefs().getBoolean(C.PROXY_MULTIVARIANT_PLAYLIST, false)
+                                val proxyMediaPlaylistEnabled = prefs().getBoolean(C.PROXY_MEDIA_PLAYLIST, true)
+                                val validProxyConfiguration = PlaybackProxyUtils.isValidProxyConfiguration(proxyHost, proxyPort)
+                                if ((proxyMultivariantPlaylist || proxyMediaPlaylistEnabled) && !validProxyConfiguration) {
+                                    PlaybackProxyUtils.logInvalidProxyConfiguration("playback_service", proxyHost, proxyPort)
+                                }
+                                val multivariantPlaylistProxyClient = if (proxyMultivariantPlaylist && validProxyConfiguration) {
+                                    val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort!!))
                                     okHttpClient.newBuilder().apply {
                                         proxySelector(
                                             object : ProxySelector() {
                                                 override fun select(u: URI): List<Proxy> {
-                                                    return if (Regex(MULTIVARIANT_PLAYLIST_REGEX).matches(u.host)) {
-                                                        listOf(Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort)), Proxy.NO_PROXY)
-                                                    } else {
-                                                        listOf(Proxy.NO_PROXY)
-                                                    }
+                                                    return PlaybackProxyUtils.selectProxy(u, proxy, "multivariant")
                                                 }
 
                                                 override fun connectFailed(u: URI, sa: SocketAddress, e: IOException) {}
@@ -311,16 +314,13 @@ class PlaybackService : MediaSessionService() {
                                         }
                                     }.build()
                                 } else null
-                                val mediaPlaylistProxyClient = if (prefs().getBoolean(C.PROXY_MEDIA_PLAYLIST, true) && !proxyHost.isNullOrBlank() && proxyPort != null) {
+                                val mediaPlaylistProxyClient = if (proxyMediaPlaylistEnabled && validProxyConfiguration) {
+                                    val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort!!))
                                     okHttpClient.newBuilder().apply {
                                         proxySelector(
                                             object : ProxySelector() {
                                                 override fun select(u: URI): List<Proxy> {
-                                                    return if (Regex(MEDIA_PLAYLIST_REGEX).matches(u.host)) {
-                                                        listOf(Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort)), Proxy.NO_PROXY)
-                                                    } else {
-                                                        listOf(Proxy.NO_PROXY)
-                                                    }
+                                                    return PlaybackProxyUtils.selectProxy(u, proxy, "media")
                                                 }
 
                                                 override fun connectFailed(u: URI, sa: SocketAddress, e: IOException) {}
@@ -778,9 +778,6 @@ class PlaybackService : MediaSessionService() {
         const val NAMES = "names"
         const val CODECS = "codecs"
         const val URLS = "urls"
-
-        const val MULTIVARIANT_PLAYLIST_REGEX = "^[a-z0-9.-]+$"
-        const val MEDIA_PLAYLIST_REGEX = "^[a-z0-9.-]+$"
 
         const val REQUEST_CODE_RESUME = 2
 

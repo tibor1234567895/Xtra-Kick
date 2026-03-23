@@ -41,7 +41,6 @@ class XtraModule {
             HttpEngine.Builder(application).apply {
                 addQuicHint("7tv.io", 443, 443)
                 addQuicHint("cdn.7tv.app", 443, 443)
-                addQuicHint("api.betterttv.net", 443, 443)
             }.build()
         } else {
             null
@@ -59,7 +58,6 @@ class XtraModule {
                 setQuicOptions(QuicOptions.builder().setHandshakeUserAgent(userAgent).build())
                 addQuicHint("7tv.io", 443, 443)
                 addQuicHint("cdn.7tv.app", 443, 443)
-                addQuicHint("api.betterttv.net", 443, 443)
             }.build().also {
                 if (BuildConfig.DEBUG) {
                     it.addRequestFinishedListener(object : RequestFinishedInfo.Listener(Executors.newSingleThreadExecutor()) {

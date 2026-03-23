@@ -17,7 +17,7 @@ import androidx.fragment.app.FragmentManager
 import androidx.webkit.WebViewClientCompat
 import com.github.andreyasadchy.xtra.databinding.DialogIntegrityBinding
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.tokenPrefs
@@ -45,7 +45,7 @@ class IntegrityDialog : DialogFragment() {
         val builder = context.getAlertDialogBuilder()
             .setView(binding.root)
         CookieManager.getInstance().removeAllCookies(null)
-        val token = TwitchApiHelper.getGQLHeaders(context, true)[C.HEADER_TOKEN]?.removePrefix("OAuth ")
+        val token = KickApiHelper.getGQLHeaders(context, true)[C.HEADER_TOKEN]?.removePrefix("OAuth ")
         if (!token.isNullOrBlank()) {
             CookieManager.getInstance().setCookie("https://kick.com", "auth-token=$token")
         }

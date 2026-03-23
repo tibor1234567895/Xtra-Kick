@@ -25,7 +25,7 @@ import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.ui.search.SearchPagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.settings.SettingsActivity
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.reduceDragSensitivity
@@ -94,7 +94,6 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
                     else -> false
                 }
             }
-            val showVideosTab = !TwitchApiHelper.getGQLHeaders(requireContext(), true)[C.HEADER_TOKEN].isNullOrBlank()
             val tabList = requireContext().prefs().getString(C.UI_FOLLOWING_TABS, null).let { tabPref ->
                 val defaultTabs = C.DEFAULT_FOLLOWING_TABS.split(',')
                 if (tabPref != null) {
@@ -113,7 +112,7 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
                 val split = it.split(':')
                 val key = split[0]
                 val enabled = split[2] != "0"
-                if (enabled && (key != "2" || showVideosTab)) {
+                if (enabled) {
                     key
                 } else {
                     null
@@ -173,8 +172,7 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
                 tab.text = when (tabs.getOrNull(position)) {
                     "0" -> getString(R.string.games)
                     "1" -> getString(R.string.live)
-                    "2" -> getString(R.string.videos)
-                    "3" -> getString(R.string.channels)
+                    "2" -> getString(R.string.channels)
                     else -> getString(R.string.live)
                 }
             }.attach()

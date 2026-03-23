@@ -29,7 +29,7 @@ import com.github.andreyasadchy.xtra.ui.game.GameMediaFragmentDirections
 import com.github.andreyasadchy.xtra.ui.game.GamePagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 
 class VideosAdapter(
@@ -84,7 +84,7 @@ class VideosAdapter(
             with(binding) {
                 if (item != null) {
                     val context = fragment.requireContext()
-                    val getDuration = item.duration?.let { TwitchApiHelper.getDuration(it) }
+                    val getDuration = item.duration?.let { KickApiHelper.getDuration(it) }
                     val position = item.id?.toLongOrNull()?.let { id -> positions?.find { it.id == id }?.position }
                     root.setOnClickListener {
                         (fragment.activity as MainActivity).startVideo(item, position)
@@ -92,7 +92,7 @@ class VideosAdapter(
                     root.setOnLongClickListener { showDownloadDialog(item); true }
                     loadThumbnail(item.thumbnail, item.channelLogo)
                     if (item.uploadDate != null) {
-                        val text = TwitchApiHelper.formatTimeString(context, item.uploadDate)
+                        val text = KickApiHelper.formatTimeString(context, item.uploadDate)
                         if (text != null) {
                             date.visibility = View.VISIBLE
                             date.text = text
@@ -108,7 +108,7 @@ class VideosAdapter(
                         views.text = context.resources.getQuantityString(
                             R.plurals.views,
                             count,
-                            TwitchApiHelper.formatCount(count, context.prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
+                            KickApiHelper.formatCount(count, context.prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
                         )
                     } else {
                         views.visibility = View.GONE
@@ -120,7 +120,7 @@ class VideosAdapter(
                         duration.visibility = View.GONE
                     }
                     if (item.type != null) {
-                        val text = TwitchApiHelper.getType(context, item.type)
+                        val text = KickApiHelper.getType(context, item.type)
                         if (text != null) {
                             type.visibility = View.VISIBLE
                             type.text = text

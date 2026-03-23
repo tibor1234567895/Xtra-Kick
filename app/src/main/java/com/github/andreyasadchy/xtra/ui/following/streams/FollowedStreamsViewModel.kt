@@ -10,7 +10,7 @@ import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -241,7 +241,7 @@ class FollowedStreamsViewModel @Inject constructor(
     }
 
     private suspend fun loadStreamsFromPublicApi(follows: List<LocalFollowChannel>): PublicApiLoadResult? {
-        val headers = TwitchApiHelper.getHelixHeaders(applicationContext)
+        val headers = KickApiHelper.getHelixHeaders(applicationContext)
         if (headers[C.HEADER_TOKEN].isNullOrBlank()) {
             Log.i(LOG_TAG, "Fast followed-live path skipped: missing auth token")
             return null
@@ -420,7 +420,7 @@ class FollowedStreamsViewModel @Inject constructor(
 
     private fun hasUsableThumbnail(url: String?): Boolean {
         val resolved = url?.takeIf { it.isNotBlank() }
-            ?.let { TwitchApiHelper.getTemplateUrl(it, "video") }
+            ?.let { KickApiHelper.getTemplateUrl(it, "video") }
             ?: return false
         return !resolved.contains("://stream.kick.com/", ignoreCase = true) &&
             !resolved.startsWith("https://files.kick.com/images/default-thumbnail", ignoreCase = true)

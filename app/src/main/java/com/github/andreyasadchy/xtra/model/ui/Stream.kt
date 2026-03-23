@@ -1,7 +1,7 @@
 package com.github.andreyasadchy.xtra.model.ui
 
 import android.os.Parcelable
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import kotlinx.parcelize.Parcelize
 
 @Parcelize
@@ -27,10 +27,10 @@ class Stream(
     val thumbnail: String?
         get() {
             val raw = thumbnailUrl?.takeIf { it.isNotBlank() } ?: return null
-            return TwitchApiHelper.getTemplateUrl(raw, "video")
+            return KickApiHelper.getTemplateUrl(raw, "video")
                 ?.takeUnless { it.contains("://stream.kick.com/", ignoreCase = true) }
                 ?.takeUnless { it.startsWith("https://files.kick.com/images/default-thumbnail", ignoreCase = true) }
         }
     val channelLogo: String?
-        get() = TwitchApiHelper.getTemplateUrl(profileImageUrl, "profileimage")
+        get() = KickApiHelper.getTemplateUrl(profileImageUrl, "profileimage")
 }

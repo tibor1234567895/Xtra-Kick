@@ -28,7 +28,7 @@ import com.github.andreyasadchy.xtra.ui.common.StreamsCompactListAdapter
 import com.github.andreyasadchy.xtra.ui.common.StreamsListAdapter
 import com.github.andreyasadchy.xtra.ui.top.TopStreamsFragmentDirections
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
@@ -109,7 +109,7 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
         }
         if (requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false) &&
             requireContext().prefs().getBoolean(C.USE_WEBVIEW_INTEGRITY, true) &&
-            TwitchApiHelper.isIntegrityTokenExpired(requireContext())
+            KickApiHelper.isIntegrityTokenExpired(requireContext())
         ) {
             IntegrityDialog.show(childFragmentManager, "refresh")
         }

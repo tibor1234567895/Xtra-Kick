@@ -9,7 +9,7 @@ import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import kotlin.math.max
 
 class GameClipsDataSource(
@@ -94,8 +94,8 @@ class GameClipsDataSource(
                 else -> null
             }
         }
-        val startMs = startedAt?.let { TwitchApiHelper.parseIso8601DateUTC(it) }
-        val endMs = endedAt?.let { TwitchApiHelper.parseIso8601DateUTC(it) }
+        val startMs = startedAt?.let { KickApiHelper.parseIso8601DateUTC(it) }
+        val endMs = endedAt?.let { KickApiHelper.parseIso8601DateUTC(it) }
         val page = kickRepository.getCategoryClipsPage(
             categorySlug = slug,
             gameId = gameId,
@@ -110,14 +110,14 @@ class GameClipsDataSource(
         )
         val list = page.clips.asSequence()
             .filter { clip ->
-                val ts = clip.uploadDate?.let { TwitchApiHelper.parseIso8601DateUTC(it) } ?: return@filter false
+                val ts = clip.uploadDate?.let { KickApiHelper.parseIso8601DateUTC(it) } ?: return@filter false
                 val afterStart = startMs?.let { ts >= it } ?: true
                 val beforeEnd = endMs?.let { ts <= it } ?: true
                 afterStart && beforeEnd
             }
             .sortedWith(
                 compareByDescending<Clip> { it.viewCount ?: -1 }
-                    .thenByDescending { it.uploadDate?.let(TwitchApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
+                    .thenByDescending { it.uploadDate?.let(KickApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
             )
             .take(params.loadSize)
             .toList()

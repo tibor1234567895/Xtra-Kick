@@ -49,7 +49,7 @@ import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.ui.search.SearchPagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.settings.SettingsActivity
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.reduceDragSensitivity
@@ -144,7 +144,7 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                                             args.gameId,
                                             setting,
                                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                            TwitchApiHelper.getGQLHeaders(requireContext(), true),
+                                            KickApiHelper.getGQLHeaders(requireContext(), true),
                                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                         )
                                     }
@@ -158,8 +158,8 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                                     setting,
                                     requireContext().filesDir.path,
                                     requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    TwitchApiHelper.getGQLHeaders(requireContext(), true),
-                                    TwitchApiHelper.getHelixHeaders(requireContext()),
+                                    KickApiHelper.getGQLHeaders(requireContext(), true),
+                                    KickApiHelper.getHelixHeaders(requireContext()),
                                     requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -307,7 +307,6 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
             viewPager.reduceDragSensitivity()
             TabLayoutMediator(tabLayout, viewPager) { tab, position ->
                 tab.text = when (tabs.getOrNull(position)) {
-                    "0" -> getString(R.string.videos)
                     "1" -> getString(R.string.live)
                     "2" -> getString(R.string.clips)
                     else -> getString(R.string.live)
@@ -326,8 +325,8 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
     override fun initialize() {
         viewModel.loadGame(
             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            TwitchApiHelper.getGQLHeaders(requireContext()),
-            TwitchApiHelper.getHelixHeaders(requireContext()),
+            KickApiHelper.getGQLHeaders(requireContext()),
+            KickApiHelper.getHelixHeaders(requireContext()),
             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
         )
         viewLifecycleOwner.lifecycleScope.launch {
@@ -347,7 +346,7 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                 args.gameName,
                 setting,
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                TwitchApiHelper.getGQLHeaders(requireContext(), true),
+                KickApiHelper.getGQLHeaders(requireContext(), true),
             )
         }
         if (args.updateLocal) {
@@ -356,8 +355,8 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                 args.gameId,
                 args.gameName,
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                TwitchApiHelper.getGQLHeaders(requireContext()),
-                TwitchApiHelper.getHelixHeaders(requireContext()),
+                KickApiHelper.getGQLHeaders(requireContext()),
+                KickApiHelper.getHelixHeaders(requireContext()),
             )
         }
     }
@@ -386,7 +385,7 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                 viewers.text = resources.getQuantityString(
                     R.plurals.viewers,
                     count,
-                    TwitchApiHelper.formatCount(count, requireContext().prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
+                    KickApiHelper.formatCount(count, requireContext().prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
                 )
             } else {
                 viewers.visibility = View.GONE
@@ -397,7 +396,7 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                 broadcastersCount.text = resources.getQuantityString(
                     R.plurals.broadcasters,
                     count,
-                    TwitchApiHelper.formatCount(count, requireContext().prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
+                    KickApiHelper.formatCount(count, requireContext().prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
                 )
             } else {
                 broadcastersCount.visibility = View.GONE
@@ -408,7 +407,7 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                 followers.text = resources.getQuantityString(
                     R.plurals.followers,
                     count,
-                    TwitchApiHelper.formatCount(count, requireContext().prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
+                    KickApiHelper.formatCount(count, requireContext().prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
                 )
             } else {
                 followers.visibility = View.GONE
@@ -467,8 +466,8 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
     override fun onNetworkRestored() {
         viewModel.loadGame(
             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            TwitchApiHelper.getGQLHeaders(requireContext()),
-            TwitchApiHelper.getHelixHeaders(requireContext()),
+            KickApiHelper.getGQLHeaders(requireContext()),
+            KickApiHelper.getHelixHeaders(requireContext()),
             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
         )
     }
@@ -481,8 +480,8 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                         "refresh" -> {
                             viewModel.loadGame(
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                TwitchApiHelper.getGQLHeaders(requireContext()),
-                                TwitchApiHelper.getHelixHeaders(requireContext()),
+                                KickApiHelper.getGQLHeaders(requireContext()),
+                                KickApiHelper.getHelixHeaders(requireContext()),
                                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                             )
                             val setting = requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0
@@ -493,7 +492,7 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                                     args.gameName,
                                     setting,
                                     requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    TwitchApiHelper.getGQLHeaders(requireContext(), true),
+                                    KickApiHelper.getGQLHeaders(requireContext(), true),
                                 )
                             }
                         }
@@ -505,15 +504,15 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                             requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                             requireContext().filesDir.path,
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            TwitchApiHelper.getGQLHeaders(requireContext(), true),
-                            TwitchApiHelper.getHelixHeaders(requireContext()),
+                            KickApiHelper.getGQLHeaders(requireContext(), true),
+                            KickApiHelper.getHelixHeaders(requireContext()),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                         "unfollow" -> viewModel.deleteFollowGame(
                             args.gameId,
                             requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            TwitchApiHelper.getGQLHeaders(requireContext(), true),
+                            KickApiHelper.getGQLHeaders(requireContext(), true),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                     }

@@ -17,7 +17,7 @@ import com.github.andreyasadchy.xtra.databinding.FragmentViewerListBinding
 import com.github.andreyasadchy.xtra.model.ui.ChannelViewerList
 import com.github.andreyasadchy.xtra.ui.common.IntegrityDialog
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
@@ -79,7 +79,7 @@ class PlayerViewerListDialog : BottomSheetDialogFragment(), IntegrityDialog.Call
             viewModel.loadViewerList(
                 requireArguments().getString(LOGIN),
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                TwitchApiHelper.getGQLHeaders(requireContext()),
+                KickApiHelper.getGQLHeaders(requireContext()),
                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             )
             viewLifecycleOwner.lifecycleScope.launch {
@@ -133,7 +133,7 @@ class PlayerViewerListDialog : BottomSheetDialogFragment(), IntegrityDialog.Call
                             }
                             if (fullList.count != null) {
                                 userCount.visibility = View.VISIBLE
-                                userCount.text = getString(R.string.user_count, TwitchApiHelper.formatCount(fullList.count, requireContext().prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true)))
+                                userCount.text = getString(R.string.user_count, KickApiHelper.formatCount(fullList.count, requireContext().prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true)))
                             } else {
                                 userCount.visibility = View.GONE
                             }
@@ -189,7 +189,7 @@ class PlayerViewerListDialog : BottomSheetDialogFragment(), IntegrityDialog.Call
                     viewModel.loadViewerList(
                         requireArguments().getString(LOGIN),
                         requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        TwitchApiHelper.getGQLHeaders(requireContext()),
+                        KickApiHelper.getGQLHeaders(requireContext()),
                         requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                     )
                 }

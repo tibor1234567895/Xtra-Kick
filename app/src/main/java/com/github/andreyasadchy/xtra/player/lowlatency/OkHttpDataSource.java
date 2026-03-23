@@ -36,7 +36,7 @@ import androidx.media3.datasource.HttpDataSource;
 import androidx.media3.datasource.HttpUtil;
 import androidx.media3.datasource.TransferListener;
 
-import com.github.andreyasadchy.xtra.ui.player.PlaybackService;
+import com.github.andreyasadchy.xtra.ui.player.PlaybackProxyUtils;
 import com.google.common.base.Predicate;
 import com.google.common.io.ByteStreams;
 import com.google.common.net.HttpHeaders;
@@ -281,7 +281,7 @@ public class OkHttpDataSource extends BaseDataSource implements HttpDataSource {
     Response response;
     ResponseBody responseBody;
     Call call; // xtra: proxy
-    if (dataSpec.uri.getHost() != null && dataSpec.uri.getHost().matches(PlaybackService.MEDIA_PLAYLIST_REGEX) && mediaPlaylistProxyClient != null && proxyMediaPlaylist.invoke()) {
+    if (PlaybackProxyUtils.shouldProxyPlaylist(dataSpec.uri) && mediaPlaylistProxyClient != null && proxyMediaPlaylist.invoke()) {
       call = mediaPlaylistProxyClient.newCall(request);
     } else {
       call = callFactory.newCall(request);

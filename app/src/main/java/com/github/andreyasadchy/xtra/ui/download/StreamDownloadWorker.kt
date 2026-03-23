@@ -32,12 +32,13 @@ import com.github.andreyasadchy.xtra.model.ui.OfflineVideo
 import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.OfflineRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.chat.ChatReadWebSocket
 import com.github.andreyasadchy.xtra.util.chat.ChatUtils
 import com.github.andreyasadchy.xtra.util.getByteArrayCronetCallback
@@ -107,6 +108,9 @@ class StreamDownloadWorker @AssistedInject constructor(
     lateinit var helixRepository: HelixRepository
 
     @Inject
+    lateinit var kickRepository: KickRepository
+
+    @Inject
     lateinit var playerRepository: PlayerRepository
 
     @Inject
@@ -133,15 +137,11 @@ class StreamDownloadWorker @AssistedInject constructor(
         val proxyPort = context.prefs().getString(C.PROXY_PORT, null)?.toIntOrNull()
         val proxyMultivariantPlaylist = context.prefs().getBoolean(C.PROXY_MULTIVARIANT_PLAYLIST, false)
         val networkLibrary = context.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-        val gqlHeaders = TwitchApiHelper.getGQLHeaders(context, context.prefs().getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true))
-        val randomDeviceId = context.prefs().getBoolean(C.TOKEN_RANDOM_DEVICEID, true)
-        val xDeviceId = context.prefs().getString(C.TOKEN_XDEVICEID, "twitch-web-wall-mason")
-        val playerType = context.prefs().getString(C.TOKEN_PLAYERTYPE, "site")
-        val supportedCodecs = context.prefs().getString(C.TOKEN_SUPPORTED_CODECS, "av1,h265,h264")
-        val proxyPlaybackAccessToken = context.prefs().getBoolean(C.PROXY_PLAYBACK_ACCESS_TOKEN, false)
         val proxyUser = context.prefs().getString(C.PROXY_USER, null)
         val proxyPassword = context.prefs().getString(C.PROXY_PASSWORD, null)
-        var playlistUrl = playerRepository.loadStreamPlaylistUrl(networkLibrary, gqlHeaders, channelLogin, randomDeviceId, xDeviceId, playerType, supportedCodecs, false, proxyHost, proxyPort, proxyUser, proxyPassword, false)
+        var playlistUrl = kickRepository.getChannel(channelLogin)
+            .let { kickRepository.getPlayableUrl(it) }
+            ?: return Result.retry()
         var loop = true
         var startTime = System.currentTimeMillis()
         var endTime = startWait?.let { System.currentTimeMillis() + it }
@@ -211,12 +211,8 @@ class StreamDownloadWorker @AssistedInject constructor(
                     } else {
                         map.values.first()
                     }
-                    val url = if ((proxyPlaybackAccessToken || proxyMultivariantPlaylist) && !proxyHost.isNullOrBlank() && proxyPort != null) {
-                        val url = if (proxyPlaybackAccessToken) {
-                            playerRepository.loadStreamPlaylistUrl(networkLibrary, gqlHeaders, channelLogin, randomDeviceId, xDeviceId, playerType, supportedCodecs, true, proxyHost, proxyPort, proxyUser, proxyPassword, false)
-                        } else {
-                            playlistUrl
-                        }
+                    val url = if (proxyMultivariantPlaylist && !proxyHost.isNullOrBlank() && proxyPort != null) {
+                        val url = playlistUrl
                         val newPlaylist = when {
                             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null && !proxyMultivariantPlaylist -> {
                                 val response = suspendCoroutine { continuation ->
@@ -341,7 +337,9 @@ class StreamDownloadWorker @AssistedInject constructor(
                     setForeground(createForegroundInfo(false, firstVideo))
                     endTime = endWait?.let { System.currentTimeMillis() + it }
                     if (endWait == null || endWait > 0) {
-                        playlistUrl = playerRepository.loadStreamPlaylistUrl(networkLibrary, gqlHeaders, channelLogin, randomDeviceId, xDeviceId, playerType, supportedCodecs, false, proxyHost, proxyPort, proxyUser, proxyPassword, false)
+                        playlistUrl = kickRepository.getChannel(channelLogin)
+                            .let { kickRepository.getPlayableUrl(it) }
+                            ?: return Result.retry()
                     }
                 }
             }
@@ -547,7 +545,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                             val stream = try {
                                 graphQLRepository.loadQueryUsersStream(
                                     networkLibrary = networkLibrary,
-                                    headers = TwitchApiHelper.getGQLHeaders(context),
+                                    headers = KickApiHelper.getGQLHeaders(context),
                                     ids = channelId?.let { listOf(it) },
                                     logins = if (channelId.isNullOrBlank()) listOf(channelLogin) else null,
                                 ).data!!.users?.firstOrNull()?.let {
@@ -568,7 +566,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                                     )
                                 }
                             } catch (e: Exception) {
-                                val helixHeaders = TwitchApiHelper.getHelixHeaders(context)
+                                val helixHeaders = KickApiHelper.getHelixHeaders(context)
                                 if (helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
                                 try {
                                     helixRepository.getStreams(
@@ -595,7 +593,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                                     try {
                                         val response = graphQLRepository.loadViewerCount(
                                             networkLibrary,
-                                            TwitchApiHelper.getGQLHeaders(context),
+                                            KickApiHelper.getGQLHeaders(context),
                                             channelLogin
                                         )
                                         response.data!!.user.stream?.let {
@@ -674,7 +672,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                                     gameId = stream.gameId
                                     gameSlug = stream.gameSlug
                                     gameName = stream.gameName
-                                    uploadDate = stream.startedAt?.let { TwitchApiHelper.parseIso8601DateUTC(it) }
+                                    uploadDate = stream.startedAt?.let { KickApiHelper.parseIso8601DateUTC(it) }
                                 })
                                 attempt += 10
                             }
@@ -1091,8 +1089,8 @@ class StreamDownloadWorker @AssistedInject constructor(
         }
         val downloadEmotes = offlineVideo.downloadChatEmotes
         val networkLibrary = context.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-        val gqlHeaders = TwitchApiHelper.getGQLHeaders(context, true)
-        val helixHeaders = TwitchApiHelper.getHelixHeaders(context)
+        val gqlHeaders = KickApiHelper.getGQLHeaders(context, true)
+        val helixHeaders = KickApiHelper.getHelixHeaders(context)
         val emoteQuality = context.prefs().getString(C.CHAT_IMAGE_QUALITY, "4") ?: "4"
         val useWebp = context.prefs().getBoolean(C.CHAT_USE_WEBP, true)
         val channelId = offlineVideo.channelId
@@ -1115,12 +1113,8 @@ class StreamDownloadWorker @AssistedInject constructor(
             if (downloadEmotes) {
                 if (channelId != null) {
                     try { addAll(playerRepository.loadStvEmotes(networkLibrary, channelId, useWebp).second) } catch (e: Exception) {}
-                    try { addAll(playerRepository.loadBttvEmotes(networkLibrary, channelId, useWebp)) } catch (e: Exception) {}
-                    try { addAll(playerRepository.loadFfzEmotes(networkLibrary, channelId, useWebp)) } catch (e: Exception) {}
                 }
                 try { addAll(playerRepository.loadGlobalStvEmotes(networkLibrary, useWebp)) } catch (e: Exception) {}
-                try { addAll(playerRepository.loadGlobalBttvEmotes(networkLibrary, useWebp)) } catch (e: Exception) {}
-                try { addAll(playerRepository.loadGlobalFfzEmotes(networkLibrary, useWebp)) } catch (e: Exception) {}
             }
         }
         chatFileWriter = if (isShared) {

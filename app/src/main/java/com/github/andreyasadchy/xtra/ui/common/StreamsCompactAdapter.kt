@@ -28,7 +28,7 @@ import com.github.andreyasadchy.xtra.ui.game.GameMediaFragmentDirections
 import com.github.andreyasadchy.xtra.ui.game.GamePagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 
 class StreamsCompactAdapter(
@@ -165,12 +165,12 @@ class StreamsCompactAdapter(
                     }
                     if (item.viewerCount != null) {
                         viewers.visibility = View.VISIBLE
-                        viewers.text = TwitchApiHelper.formatCount(item.viewerCount ?: 0, context.prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
+                        viewers.text = KickApiHelper.formatCount(item.viewerCount ?: 0, context.prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
                     } else {
                         viewers.visibility = View.GONE
                     }
                     if (context.prefs().getBoolean(C.UI_UPTIME, true) && item.startedAt != null) {
-                        val text = TwitchApiHelper.getUptime(startedAt = item.startedAt)
+                        val text = KickApiHelper.getUptime(startedAt = item.startedAt)
                         if (text != null) {
                             uptime.visibility = View.VISIBLE
                             uptime.text = text

@@ -33,7 +33,7 @@ import com.github.andreyasadchy.xtra.ui.game.GameMediaFragmentDirections
 import com.github.andreyasadchy.xtra.ui.game.GamePagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import kotlin.math.min
 
@@ -125,18 +125,18 @@ class DownloadsAdapter(
                     }
                     item.uploadDate?.let {
                         date.visibility = View.VISIBLE
-                        date.text = context.getString(R.string.uploaded_date, TwitchApiHelper.formatTime(context, it))
+                        date.text = context.getString(R.string.uploaded_date, KickApiHelper.formatTime(context, it))
                     } ?: {
                         date.visibility = View.GONE
                     }
                     if (item.downloadDate != null) {
                         downloadDate.visibility = View.VISIBLE
-                        downloadDate.text = context.getString(R.string.downloaded_date, TwitchApiHelper.formatTime(context, item.downloadDate))
+                        downloadDate.text = context.getString(R.string.downloaded_date, KickApiHelper.formatTime(context, item.downloadDate))
                     } else {
                         downloadDate.visibility = View.GONE
                     }
                     if (item.type != null) {
-                        val text = TwitchApiHelper.getType(context, item.type)
+                        val text = KickApiHelper.getType(context, item.type)
                         if (text != null) {
                             type.visibility = View.VISIBLE
                             type.text = text

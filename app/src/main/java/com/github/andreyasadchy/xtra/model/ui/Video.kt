@@ -1,7 +1,7 @@
 package com.github.andreyasadchy.xtra.model.ui
 
 import android.os.Parcelable
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import kotlinx.parcelize.Parcelize
 
 @Parcelize
@@ -27,7 +27,7 @@ class Video(
 ) : Parcelable {
 
     val thumbnail: String?
-        get() = TwitchApiHelper.getTemplateUrl(thumbnailUrl, "video")
+        get() = KickApiHelper.getTemplateUrl(thumbnailUrl, "video")
     val channelLogo: String?
-        get() = TwitchApiHelper.getTemplateUrl(profileImageUrl, "profileimage")
+        get() = KickApiHelper.getTemplateUrl(profileImageUrl, "profileimage")
 }

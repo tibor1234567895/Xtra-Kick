@@ -5,15 +5,9 @@ import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
 import android.util.Base64
-import com.apollographql.apollo.api.CustomScalarAdapters
-import com.apollographql.apollo.api.json.buildJsonString
-import com.apollographql.apollo.api.json.jsonReader
-import com.apollographql.apollo.api.json.writeObject
-import com.apollographql.apollo.api.parseResponse
 import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.db.RecentEmotesDao
 import com.github.andreyasadchy.xtra.db.VideoPositionsDao
-import com.github.andreyasadchy.xtra.graphql.StreamPlaybackAccessTokenQuery
 import com.github.andreyasadchy.xtra.graphql.type.BadgeImageSize
 import com.github.andreyasadchy.xtra.graphql.type.EmoteType
 import com.github.andreyasadchy.xtra.model.VideoPosition
@@ -22,11 +16,6 @@ import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.RecentEmote
 import com.github.andreyasadchy.xtra.model.chat.TwitchBadge
 import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
-import com.github.andreyasadchy.xtra.model.gql.playlist.PlaybackAccessTokenResponse
-import com.github.andreyasadchy.xtra.model.misc.BttvResponse
-import com.github.andreyasadchy.xtra.model.misc.FfzChannelResponse
-import com.github.andreyasadchy.xtra.model.misc.FfzGlobalResponse
-import com.github.andreyasadchy.xtra.model.misc.FfzResponse
 import com.github.andreyasadchy.xtra.model.misc.RecentMessagesResponse
 import com.github.andreyasadchy.xtra.model.misc.StvChannelResponse
 import com.github.andreyasadchy.xtra.model.misc.StvGlobalResponse
@@ -47,7 +36,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
-import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -58,9 +46,6 @@ import org.chromium.net.apihelpers.RedirectHandlers
 import org.chromium.net.apihelpers.UploadDataProviders
 import org.chromium.net.apihelpers.UrlRequestCallbacks
 import org.json.JSONObject
-import java.net.InetSocketAddress
-import java.net.Proxy
-import java.util.UUID
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -80,12 +65,7 @@ class PlayerRepository @Inject constructor(
     private val videoPositions: VideoPositionsDao,
 ) {
 
-    suspend fun loadStreamPlaylistUrl(networkLibrary: String?, gqlHeaders: Map<String, String>, channelLogin: String, randomDeviceId: Boolean?, xDeviceId: String?, playerType: String?, supportedCodecs: String?, proxyPlaybackAccessToken: Boolean, proxyHost: String?, proxyPort: Int?, proxyUser: String?, proxyPassword: String?, enableIntegrity: Boolean): String = withContext(Dispatchers.IO) {
-        throw UnsupportedOperationException("Legacy Twitch stream playlist flow has been removed")
-    }
-
-    suspend fun loadStreamPlaylist(networkLibrary: String?, gqlHeaders: Map<String, String>, channelLogin: String, randomDeviceId: Boolean?, xDeviceId: String?, playerType: String?, supportedCodecs: String?, enableIntegrity: Boolean): String? = withContext(Dispatchers.IO) {
-        val url = loadStreamPlaylistUrl(networkLibrary, gqlHeaders, channelLogin, randomDeviceId, xDeviceId, playerType, supportedCodecs, false, null, null, null, null, enableIntegrity)
+    suspend fun loadTextFromUrl(networkLibrary: String?, url: String): String? = withContext(Dispatchers.IO) {
         when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                 val response = suspendCoroutine { continuation ->
@@ -117,157 +97,6 @@ class PlayerRepository @Inject constructor(
                     if (response.isSuccessful) {
                         response.body.string()
                     } else null
-                }
-            }
-        }
-    }
-
-    private suspend fun loadStreamPlaybackAccessToken(networkLibrary: String?, gqlHeaders: Map<String, String>, channelLogin: String, randomDeviceId: Boolean?, xDeviceId: String?, playerType: String?, proxyPlaybackAccessToken: Boolean, proxyHost: String?, proxyPort: Int?, proxyUser: String?, proxyPassword: String?, enableIntegrity: Boolean): Pair<String?, String?> = withContext(Dispatchers.IO) {
-        val accessTokenHeaders = getPlaybackAccessTokenHeaders(gqlHeaders, randomDeviceId, xDeviceId, enableIntegrity)
-        try {
-            val response = if (proxyPlaybackAccessToken && !proxyHost.isNullOrBlank() && proxyPort != null) {
-                okHttpClient.newBuilder().apply {
-                    proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort)))
-                    if (!proxyUser.isNullOrBlank() && !proxyPassword.isNullOrBlank()) {
-                        proxyAuthenticator { _, response ->
-                            response.request.newBuilder().header(
-                                "Proxy-Authorization", Credentials.basic(proxyUser, proxyPassword)
-                            ).build()
-                        }
-                    }
-                }.build().newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1")
-                    accessTokenHeaders.filterKeys { it == C.HEADER_CLIENT_ID || it == "X-Device-Id" }.forEach {
-                        addHeader(it.key, it.value)
-                    }
-                    header("Content-Type", "application/json")
-                    post(graphQLRepository.getPlaybackAccessTokenRequestBody(channelLogin, "", playerType).toRequestBody())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<PlaybackAccessTokenResponse>(response.body.string())
-                }
-            } else {
-                graphQLRepository.loadPlaybackAccessToken(
-                    networkLibrary = networkLibrary,
-                    headers = accessTokenHeaders,
-                    login = channelLogin,
-                    playerType = playerType
-                )
-            }
-            if (enableIntegrity) {
-                response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
-            }
-            response.data!!.streamPlaybackAccessToken!!.let {
-                it.signature to it.value
-            }
-        } catch (e: Exception) {
-            if (e.message == "failed integrity check") throw e
-            val response = if (proxyPlaybackAccessToken && !proxyHost.isNullOrBlank() && proxyPort != null) {
-                val query = StreamPlaybackAccessTokenQuery(channelLogin, "web", playerType ?: "")
-                val body = buildJsonString {
-                    query.apply {
-                        writeObject {
-                            name("variables")
-                            writeObject {
-                                serializeVariables(this, CustomScalarAdapters.Empty, false)
-                            }
-                            name("query")
-                            value(document().replaceFirst(name(), "null"))
-                        }
-                    }
-                }
-                okHttpClient.newBuilder().apply {
-                    proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort)))
-                    if (!proxyUser.isNullOrBlank() && !proxyPassword.isNullOrBlank()) {
-                        proxyAuthenticator { _, response ->
-                            response.request.newBuilder().header(
-                                "Proxy-Authorization", Credentials.basic(proxyUser, proxyPassword)
-                            ).build()
-                        }
-                    }
-                }.build().newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1")
-                    accessTokenHeaders.filterKeys { it == C.HEADER_CLIENT_ID || it == "X-Device-Id" }.forEach {
-                        addHeader(it.key, it.value)
-                    }
-                    header("Content-Type", "application/json")
-                    post(body.toRequestBody())
-                }.build()).execute().use { response ->
-                    response.body.byteStream().source().buffer().jsonReader().use {
-                        query.parseResponse(it)
-                    }
-                }
-            } else {
-                graphQLRepository.loadQueryStreamPlaybackAccessToken(
-                    networkLibrary = networkLibrary,
-                    headers = accessTokenHeaders,
-                    login = channelLogin,
-                    platform = "web",
-                    playerType = playerType ?: ""
-                )
-            }
-            if (enableIntegrity) {
-                response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
-            }
-            response.data!!.streamPlaybackAccessToken!!.let {
-                it.signature to it.value
-            }
-        }
-    }
-
-    suspend fun loadVideoPlaylistUrl(networkLibrary: String?, gqlHeaders: Map<String, String>, videoId: String?, playerType: String?, supportedCodecs: String?, enableIntegrity: Boolean): Pair<String, List<String>> = withContext(Dispatchers.IO) {
-        throw UnsupportedOperationException("Legacy Twitch VOD playlist flow has been removed")
-    }
-
-    suspend fun loadVideoPlaylist(networkLibrary: String?, gqlHeaders: Map<String, String>, videoId: String?, playerType: String?, supportedCodecs: String?, enableIntegrity: Boolean): Pair<String?, List<String>> = withContext(Dispatchers.IO) {
-        val result = loadVideoPlaylistUrl(networkLibrary, gqlHeaders, videoId, playerType, supportedCodecs, enableIntegrity)
-        val url = result.first
-        val backupQualities = result.second
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    String(response.second)
-                } else null
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        response.responseBody as String
-                    } else null
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        String(response.second)
-                    } else null
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        response.body.string()
-                    } else null
-                }
-            }
-        } to backupQualities
-    }
-
-    private fun getPlaybackAccessTokenHeaders(gqlHeaders: Map<String, String>, randomDeviceId: Boolean?, xDeviceId: String? = null, enableIntegrity: Boolean): Map<String, String> {
-        return if (enableIntegrity) {
-            gqlHeaders
-        } else {
-            gqlHeaders.toMutableMap().apply {
-                if (randomDeviceId != false) {
-                    val randomId = UUID.randomUUID().toString().replace("-", "").substring(0, 32) //X-Device-Id or Device-ID removes "commercial break in progress" (length 16 or 32)
-                    put("X-Device-Id", randomId)
-                } else {
-                    xDeviceId?.let { put("X-Device-Id", it) }
                 }
             }
         }
@@ -673,7 +502,7 @@ class PlayerRepository @Inject constructor(
             put("passive", self)
             put("session_id", if (self) sessionId else "undefined")
             putJsonObject("data") {
-                put("platform", "TWITCH")
+                put("platform", "KICK")
                 put("id", channelId)
             }
         }.toString()
@@ -713,256 +542,6 @@ class PlayerRepository @Inject constructor(
                     header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                     post(body.toRequestBody())
                 }.build()).execute()
-            }
-        }
-    }
-
-    suspend fun loadGlobalBttvEmotes(networkLibrary: String?, useWebp: Boolean): List<Emote> = withContext(Dispatchers.IO) {
-        val response = when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.betterttv.net/3/cached/emotes/global", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                }
-                json.decodeFromString<List<BttvResponse>>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.betterttv.net/3/cached/emotes/global", request.callback, cronetExecutor).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<List<BttvResponse>>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.betterttv.net/3/cached/emotes/global", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                        }.build().start()
-                    }
-                    json.decodeFromString<List<BttvResponse>>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.betterttv.net/3/cached/emotes/global")
-                    header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                }.build()).execute().use { response ->
-                    json.decodeFromString<List<BttvResponse>>(response.body.string())
-                }
-            }
-        }
-        parseBttvEmotes(response, useWebp, Emote.GLOBAL_BTTV)
-    }
-
-    suspend fun loadBttvEmotes(networkLibrary: String?, channelId: String, useWebp: Boolean): List<Emote> = withContext(Dispatchers.IO) {
-        val response = when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.betterttv.net/3/cached/users/kick/${channelId}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                }
-                json.decodeFromString<Map<String, JsonElement>>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.betterttv.net/3/cached/users/kick/${channelId}", request.callback, cronetExecutor).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<Map<String, JsonElement>>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.betterttv.net/3/cached/users/kick/${channelId}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                        }.build().start()
-                    }
-                    json.decodeFromString<Map<String, JsonElement>>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.betterttv.net/3/cached/users/kick/${channelId}")
-                    header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                }.build()).execute().use { response ->
-                    json.decodeFromString<Map<String, JsonElement>>(response.body.string())
-                }
-            }
-        }
-        parseBttvEmotes(
-            response.entries.filter { it.key != "bots" && it.value is JsonArray }.map { entry ->
-                (entry.value as JsonArray).map { json.decodeFromJsonElement<BttvResponse>(it) }
-            }.flatten(),
-            useWebp,
-            Emote.CHANNEL_BTTV
-        )
-    }
-
-    suspend fun loadBttvEmotesByLogin(networkLibrary: String?, channelLogin: String, useWebp: Boolean): List<Emote> = withContext(Dispatchers.IO) {
-        val kickUserId = runCatching {
-            resolveTwitchUserIdFromFfzRoom(networkLibrary, channelLogin)
-        }.getOrNull() ?: return@withContext emptyList()
-        loadBttvEmotes(networkLibrary, kickUserId, useWebp)
-    }
-
-    private fun parseBttvEmotes(response: List<BttvResponse>, useWebp: Boolean, source: Int): List<Emote> {
-        val list = listOf("IceCold", "SoSnowy", "SantaHat", "TopHat", "CandyCane", "ReinDeer", "cvHazmat", "cvMask")
-        return response.mapNotNull { emote ->
-            emote.code?.takeIf { it.isNotBlank() }?.let { name ->
-                emote.id?.takeIf { it.isNotBlank() }?.let { id ->
-                    Emote(
-                        name = name,
-                        url1x = if (useWebp) "https://cdn.betterttv.net/emote/$id/1x.webp" else "https://cdn.betterttv.net/emote/$id/1x",
-                        url2x = if (useWebp) "https://cdn.betterttv.net/emote/$id/2x.webp" else "https://cdn.betterttv.net/emote/$id/2x",
-                        url3x = if (useWebp) "https://cdn.betterttv.net/emote/$id/2x.webp" else "https://cdn.betterttv.net/emote/$id/2x",
-                        url4x = if (useWebp) "https://cdn.betterttv.net/emote/$id/3x.webp" else "https://cdn.betterttv.net/emote/$id/3x",
-                        format = if (useWebp) "webp" else null,
-                        isAnimated = emote.animated != false,
-                        isOverlayEmote = list.contains(name),
-                        source = source,
-                    )
-                }
-            }
-        }
-    }
-
-    suspend fun loadGlobalFfzEmotes(networkLibrary: String?, useWebp: Boolean): List<Emote> = withContext(Dispatchers.IO) {
-        val response = when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.frankerfacez.com/v1/set/global", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                }
-                json.decodeFromString<FfzGlobalResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.frankerfacez.com/v1/set/global", request.callback, cronetExecutor).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<FfzGlobalResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.frankerfacez.com/v1/set/global", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                        }.build().start()
-                    }
-                    json.decodeFromString<FfzGlobalResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.frankerfacez.com/v1/set/global")
-                    header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                }.build()).execute().use { response ->
-                    json.decodeFromString<FfzGlobalResponse>(response.body.string())
-                }
-            }
-        }
-        response.sets.entries.filter { it.key.toIntOrNull()?.let { set -> response.globalSets.contains(set) } == true }.flatMap {
-            it.value.emoticons?.let { emotes -> parseFfzEmotes(emotes, useWebp, Emote.GLOBAL_FFZ) } ?: emptyList()
-        }
-    }
-
-    suspend fun loadFfzEmotes(networkLibrary: String?, channelId: String, useWebp: Boolean): List<Emote> = withContext(Dispatchers.IO) {
-        val response = loadFfzChannelResponse(networkLibrary, "https://api.frankerfacez.com/v1/room/id/${channelId}")
-        response.sets.entries.flatMap {
-            it.value.emoticons?.let { emotes -> parseFfzEmotes(emotes, useWebp, Emote.CHANNEL_FFZ) } ?: emptyList()
-        }
-    }
-
-    suspend fun loadFfzEmotesByLogin(networkLibrary: String?, channelLogin: String, useWebp: Boolean): List<Emote> = withContext(Dispatchers.IO) {
-        val response = loadFfzChannelResponse(networkLibrary, "https://api.frankerfacez.com/v1/room/${channelLogin}")
-        response.sets.entries.flatMap {
-            it.value.emoticons?.let { emotes -> parseFfzEmotes(emotes, useWebp, Emote.CHANNEL_FFZ) } ?: emptyList()
-        }
-    }
-
-    private suspend fun loadFfzChannelResponse(networkLibrary: String?, url: String): FfzChannelResponse {
-        return json.decodeFromString(loadUrlAsString(networkLibrary, url))
-    }
-
-    private suspend fun resolveTwitchUserIdFromFfzRoom(networkLibrary: String?, channelLogin: String): String? {
-        val response = loadUrlAsString(networkLibrary, "https://api.frankerfacez.com/v1/room/${channelLogin}")
-        return json.parseToJsonElement(response)
-            .jsonObject["room"]
-            ?.jsonObject
-            ?.get("kick_id")
-            ?.jsonPrimitive
-            ?.contentOrNull
-    }
-
-    private suspend fun loadUrlAsString(networkLibrary: String?, url: String): String {
-        return when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                }
-                String(response.second)
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                    request.future.get().responseBody as String
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                        }.build().start()
-                    }
-                    String(response.second)
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url(url)
-                    header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                }.build()).execute().use { response ->
-                    response.body.string()
-                }
-            }
-        }
-    }
-
-    private fun parseFfzEmotes(response: List<FfzResponse.Emote>, useWebp: Boolean, source: Int): List<Emote> {
-        return response.mapNotNull { emote ->
-            emote.name?.takeIf { it.isNotBlank() }?.let { name ->
-                val isAnimated = emote.animated != null
-                if (isAnimated) {
-                    if (useWebp) {
-                        emote.animated
-                    } else {
-                        FfzResponse.Urls(
-                            url1x = emote.animated.url1x + ".gif",
-                            url2x = emote.animated.url2x + ".gif",
-                            url4x = emote.animated.url4x + ".gif",
-                        )
-                    }
-                } else {
-                    emote.urls
-                }?.let { urls ->
-                    Emote(
-                        name = name,
-                        url1x = urls.url1x,
-                        url2x = urls.url2x,
-                        url3x = urls.url2x,
-                        url4x = urls.url4x,
-                        format = if (isAnimated && useWebp) "webp" else null,
-                        isAnimated = isAnimated,
-                        source = source,
-                    )
-                }
             }
         }
     }

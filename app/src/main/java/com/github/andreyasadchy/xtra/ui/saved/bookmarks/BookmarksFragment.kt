@@ -28,7 +28,7 @@ import com.github.andreyasadchy.xtra.ui.common.Scrollable
 import com.github.andreyasadchy.xtra.ui.common.Sortable
 import com.github.andreyasadchy.xtra.ui.download.DownloadDialog
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
@@ -74,8 +74,8 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                 requireContext().filesDir.path,
                 it,
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                TwitchApiHelper.getGQLHeaders(requireContext()),
-                TwitchApiHelper.getHelixHeaders(requireContext()),
+                KickApiHelper.getGQLHeaders(requireContext()),
+                KickApiHelper.getHelixHeaders(requireContext()),
                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             )
         }, {
@@ -165,7 +165,7 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                                 if (it.type?.lowercase() == "archive") {
                                     val userType = it.userType ?: it.userBroadcasterType
                                     if (userType != null && it.createdAt != null) {
-                                        val time = TwitchApiHelper.parseIso8601DateUTC(it.createdAt)
+                                        val time = KickApiHelper.parseIso8601DateUTC(it.createdAt)
                                         val days = when (userType.lowercase()) {
                                             "" -> 14
                                             "affiliate" -> 14
@@ -193,7 +193,7 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                                 } else null
                             })
                             BookmarksSortDialog.SORT_CREATED_AT -> list.sortedWith(compareBy(nullsLast()) {
-                                it.createdAt?.let { createdAt -> TwitchApiHelper.parseIso8601DateUTC(createdAt) }
+                                it.createdAt?.let { createdAt -> KickApiHelper.parseIso8601DateUTC(createdAt) }
                             })
                             else -> list.sortedWith(compareBy(nullsLast()) { it.id })
                         }
@@ -203,7 +203,7 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                                 if (it.type?.lowercase() == "archive") {
                                     val userType = it.userType ?: it.userBroadcasterType
                                     if (userType != null && it.createdAt != null) {
-                                        val time = TwitchApiHelper.parseIso8601DateUTC(it.createdAt)
+                                        val time = KickApiHelper.parseIso8601DateUTC(it.createdAt)
                                         val days = when (userType.lowercase()) {
                                             "" -> 14
                                             "affiliate" -> 14
@@ -231,7 +231,7 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                                 } else null
                             })
                             BookmarksSortDialog.SORT_CREATED_AT -> list.sortedWith(compareByDescending(nullsFirst()) {
-                                it.createdAt?.let { createdAt -> TwitchApiHelper.parseIso8601DateUTC(createdAt) }
+                                it.createdAt?.let { createdAt -> KickApiHelper.parseIso8601DateUTC(createdAt) }
                             })
                             else -> list.sortedWith(compareByDescending(nullsFirst()) { it.id })
                         }
@@ -243,7 +243,7 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
         }
         if (requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false) &&
             requireContext().prefs().getBoolean(C.USE_WEBVIEW_INTEGRITY, true) &&
-            TwitchApiHelper.isIntegrityTokenExpired(requireContext())
+            KickApiHelper.isIntegrityTokenExpired(requireContext())
         ) {
             IntegrityDialog.show(childFragmentManager, "refresh")
         }
@@ -266,12 +266,12 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
             }
             viewModel.updateUsers(
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                TwitchApiHelper.getGQLHeaders(requireContext()),
-                TwitchApiHelper.getHelixHeaders(requireContext()),
+                KickApiHelper.getGQLHeaders(requireContext()),
+                KickApiHelper.getHelixHeaders(requireContext()),
                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             )
         }
-        val helixHeaders = TwitchApiHelper.getHelixHeaders(requireContext())
+        val helixHeaders = KickApiHelper.getHelixHeaders(requireContext())
         if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
             viewModel.updateVideos(requireContext().filesDir.path, requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), helixHeaders)
         }
@@ -331,8 +331,8 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                     when (callback) {
                         "users" -> viewModel.updateUsers(
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            TwitchApiHelper.getGQLHeaders(requireContext()),
-                            TwitchApiHelper.getHelixHeaders(requireContext()),
+                            KickApiHelper.getGQLHeaders(requireContext()),
+                            KickApiHelper.getHelixHeaders(requireContext()),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                     }

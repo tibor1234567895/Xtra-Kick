@@ -7,13 +7,10 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.github.andreyasadchy.xtra.model.ui.RecentSearch
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.RecentSearchRepository
 import com.github.andreyasadchy.xtra.repository.datasource.SearchChannelsDataSource
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -28,8 +25,6 @@ import javax.inject.Inject
 class ChannelSearchViewModel @Inject constructor(
     @ApplicationContext applicationContext: Context,
     private val recentSearchRepository: RecentSearchRepository,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
     private val kickRepository: KickRepository,
 ) : ViewModel() {
 
@@ -44,19 +39,7 @@ class ChannelSearchViewModel @Inject constructor(
         ) {
             SearchChannelsDataSource(
                 query = query,
-                helixHeaders = TwitchApiHelper.getHelixHeaders(applicationContext),
-                helixRepository = helixRepository,
-                gqlHeaders = TwitchApiHelper.getGQLHeaders(applicationContext),
-                graphQLRepository = graphQLRepository,
                 kickRepository = kickRepository,
-                enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                apiPref = (applicationContext.prefs().getString(C.API_PREFS_SEARCH_CHANNELS, null) ?: C.DEFAULT_API_PREFS_SEARCH_CHANNELS).split(',').mapNotNull {
-                    val split = it.split(':')
-                    val key = split[0]
-                    val enabled = split[1] != "0"
-                    if (enabled) key else null
-                },
-                networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
                 useLegacyKickSearch = applicationContext.prefs().getBoolean(C.DEBUG_KICK_LEGACY_SEARCH, false),
             )
         }.flow

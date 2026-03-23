@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.drawable.Icon
 import android.media.MediaMetadata
+import android.media.audiofx.DynamicsProcessing
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.net.Uri
@@ -24,6 +25,7 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.media3.common.util.BitmapLoader
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSourceBitmapLoader
@@ -65,6 +67,8 @@ class IvsPlayerService : Service() {
     private var surfaceAttached = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var dynamicsProcessing: DynamicsProcessing? = null
+    private var dynamicsProcessingAudioSessionId: Int? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -100,6 +104,9 @@ class IvsPlayerService : Service() {
                 override fun onStateChanged(state: Player.State) {
                     if (state == Player.State.PLAYING) {
                         hasStablePlayback = true
+                    }
+                    if (state == Player.State.READY || state == Player.State.PLAYING) {
+                        syncDynamicsProcessingWithPreference()
                     }
                     Log.d(
                         TAG,
@@ -196,6 +203,7 @@ class IvsPlayerService : Service() {
         this.channelLogo = channelLogo
         hasStablePlayback = false
         retryCount = 0
+        releaseDynamicsProcessing()
         Log.d(TAG, "playStream channel=$channelName title=$title")
         player?.apply {
             setLiveLowLatencyEnabled(true)
@@ -221,6 +229,13 @@ class IvsPlayerService : Service() {
     }
 
     fun isBackgroundPlaybackEnabled(): Boolean = backgroundPlaybackEnabled
+
+    fun toggleDynamicsProcessing(): Boolean {
+        val enabled = !prefs().getBoolean(C.PLAYER_AUDIO_COMPRESSOR, false)
+        prefs().edit { putBoolean(C.PLAYER_AUDIO_COMPRESSOR, enabled) }
+        syncDynamicsProcessingWithPreference()
+        return enabled
+    }
 
     fun stopPlayback() {
         backgroundPlaybackEnabled = false
@@ -437,12 +452,62 @@ class IvsPlayerService : Service() {
         }
     }
 
+    private fun syncDynamicsProcessingWithPreference() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            return
+        }
+        if (!prefs().getBoolean(C.PLAYER_AUDIO_COMPRESSOR, false)) {
+            dynamicsProcessing?.enabled = false
+            return
+        }
+        val audioSessionId = player?.audioSessionId?.takeIf { it > 0 } ?: return
+        if (dynamicsProcessingAudioSessionId != audioSessionId || dynamicsProcessing == null) {
+            reinitializeDynamicsProcessing(audioSessionId)
+        } else if (dynamicsProcessing?.enabled != true) {
+            dynamicsProcessing?.enabled = true
+        }
+    }
+
+    private fun reinitializeDynamicsProcessing(audioSessionId: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            releaseDynamicsProcessing()
+            dynamicsProcessing = DynamicsProcessing(0, audioSessionId, null).apply {
+                for (channelIdx in 0 until channelCount) {
+                    for (bandIdx in 0 until getMbcByChannelIndex(channelIdx).bandCount) {
+                        setMbcBandByChannelIndex(
+                            channelIdx,
+                            bandIdx,
+                            getMbcBandByChannelIndex(channelIdx, bandIdx).apply {
+                                attackTime = 0f
+                                releaseTime = 0.25f
+                                ratio = 1.6f
+                                threshold = -50f
+                                kneeWidth = 40f
+                                preGain = 0f
+                                postGain = 10f
+                            }
+                        )
+                    }
+                }
+                enabled = true
+            }
+            dynamicsProcessingAudioSessionId = audioSessionId
+        }
+    }
+
+    private fun releaseDynamicsProcessing() {
+        dynamicsProcessing?.release()
+        dynamicsProcessing = null
+        dynamicsProcessingAudioSessionId = null
+    }
+
     override fun onDestroy() {
         metadataBitmapCallback = null
         notificationBitmapCallback = null
         applicationHandler?.removeCallbacksAndMessages(null)
         notificationManager?.cancel(NOTIFICATION_ID)
         session?.release()
+        releaseDynamicsProcessing()
         player?.release()
         player = null
         wakeLock?.takeIf { it.isHeld }?.release()

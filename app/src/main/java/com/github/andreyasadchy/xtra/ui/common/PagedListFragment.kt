@@ -10,7 +10,7 @@ import androidx.paging.PagingDataAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.github.andreyasadchy.xtra.databinding.CommonRecyclerViewLayoutBinding
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -89,7 +89,7 @@ abstract class PagedListFragment : BaseNetworkFragment(), IntegrityDialog.Callba
         }
         if (requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false) &&
             requireContext().prefs().getBoolean(C.USE_WEBVIEW_INTEGRITY, true) &&
-            TwitchApiHelper.isIntegrityTokenExpired(requireContext())
+            KickApiHelper.isIntegrityTokenExpired(requireContext())
         ) {
             IntegrityDialog.show(childFragmentManager, "refresh")
         }

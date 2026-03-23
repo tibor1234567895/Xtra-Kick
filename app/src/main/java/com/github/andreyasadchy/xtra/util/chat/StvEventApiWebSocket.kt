@@ -46,7 +46,7 @@ class StvEventApiWebSocket(
                     put("type", type)
                     put("condition", JSONObject().apply {
                         put("ctx", "channel")
-                        put("platform", "TWITCH")
+                        put("platform", "KICK")
                         put("id", channelId)
                     })
                 })

@@ -153,12 +153,11 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun initialize() {
-        binding.playerControls.audioOnly.visibility = View.GONE
-        binding.playerControls.audioCompressor.visibility = View.GONE
         if (player != null && !viewModel.started) {
             startPlayer()
         }
         super.initialize()
+        binding.playerControls.audioOnly.visibility = View.GONE
     }
 
     private fun updatePlayingState() {
@@ -319,6 +318,15 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun startAudioOnly() {
         fallbackToStandardPlayer(showMessage = false)
+    }
+
+    override fun toggleAudioCompressor() {
+        val enabled = playbackService?.toggleDynamicsProcessing()
+        if (enabled == true) {
+            binding.playerControls.audioCompressor.setImageResource(R.drawable.baseline_audio_compressor_on_24dp)
+        } else {
+            binding.playerControls.audioCompressor.setImageResource(R.drawable.baseline_audio_compressor_off_24dp)
+        }
     }
 
     override fun downloadVideo() {

@@ -33,7 +33,7 @@ import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickOAuthConfig
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.tokenPrefs
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -59,6 +59,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Request
 import java.util.Collections
 import java.io.IOException
+import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -280,6 +281,40 @@ class KickRepository @Inject constructor(
             }
             maybeRefreshKickBadgeCatalogInBackground(channel)
         }
+    }
+
+    suspend fun resolveDedicatedChatroomCandidates(channelOrId: String): List<String> {
+        val candidate = channelOrId.trim()
+        if (candidate.isBlank()) {
+            return emptyList()
+        }
+        val urls = buildList {
+            add("https://kick.com/api/v2/channels/${urlEncode(candidate)}/chatroom")
+            if (!candidate.all(Char::isDigit)) {
+                add("https://kick.com/api/v1/${urlEncode(candidate)}/chatroom")
+            }
+        }
+        val results = linkedSetOf<String>()
+        urls.forEach { url ->
+            runCatching {
+                val root = json.parseToJsonElement(getRaw(url)).jsonObject
+                listOfNotNull(
+                    root.primitiveOrNull("id"),
+                    root.primitiveOrNull("channel_id"),
+                    root.primitiveOrNull("user_id"),
+                    (root["chatroom"] as? JsonObject)?.primitiveOrNull("id"),
+                    (root["chatroom"] as? JsonObject)?.primitiveOrNull("channel_id"),
+                    (root["chatroom"] as? JsonObject)?.primitiveOrNull("user_id"),
+                    (root["data"] as? JsonObject)?.primitiveOrNull("id"),
+                    (root["data"] as? JsonObject)?.primitiveOrNull("channel_id"),
+                    (root["data"] as? JsonObject)?.primitiveOrNull("user_id"),
+                )
+            }.getOrNull().orEmpty()
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .forEach(results::add)
+        }
+        return results.toList()
     }
 
     suspend fun getChannelLivestream(channelSlug: String, forceRefresh: Boolean = false): KickChannelLivestream? {
@@ -1005,7 +1040,18 @@ class KickRepository @Inject constructor(
     }
 
     suspend fun getRecentMessages(channelOrChatroomId: String): KickMessagesData {
-        return get<KickMessagesEnvelope>("https://kick.com/api/v2/channels/${urlEncode(channelOrChatroomId)}/messages").data ?: KickMessagesData()
+        val raw = getRaw("https://kick.com/api/v2/channels/${urlEncode(channelOrChatroomId)}/messages")
+        val root = runCatching { json.parseToJsonElement(raw) }.getOrElse { error ->
+            throw error
+        }
+        return parseKickMessagesData(root, raw).also { parsed ->
+            if (parsed.messages.isEmpty()) {
+                Log.w(
+                    "KickRecentChat",
+                    "empty recent source=$channelOrChatroomId body=${raw.take(600).replace('\n', ' ')}"
+                )
+            }
+        }
     }
 
     suspend fun getChatHistory(channelOrChatroomId: String, startTime: String, cursor: String? = null): KickMessagesData {
@@ -1023,15 +1069,67 @@ class KickRepository @Inject constructor(
         val root = runCatching { json.parseToJsonElement(raw) }.getOrElse { error ->
             throw error
         }
-        val dataObject = (root as? JsonObject)?.get("data") as? JsonObject ?: (root as? JsonObject)
-        val messagesElement = dataObject?.get("messages") as? JsonArray
+        return parseKickMessagesData(root, raw).also { parsed ->
+            if (parsed.messages.isEmpty()) {
+                Log.w(
+                    "KickRecentChat",
+                    "empty history source=$channelOrChatroomId start=$startTime cursor=${cursor ?: "-"} body=${raw.take(600).replace('\n', ' ')}"
+                )
+            }
+        }
+    }
+
+    suspend fun getLiveChatHistory(channelOrChatroomId: String): KickMessagesData {
+        val raw = getRaw(
+            "https://web.kick.com/api/v1/chat/${urlEncode(channelOrChatroomId)}/history",
+            isKickWeb = true
+        )
+        val root = runCatching { json.parseToJsonElement(raw) }.getOrElse { error ->
+            throw error
+        }
+        return parseKickMessagesData(root, raw).also { parsed ->
+            if (parsed.messages.isEmpty()) {
+                Log.w(
+                    "KickRecentChat",
+                    "empty live history source=$channelOrChatroomId body=${raw.take(600).replace('\n', ' ')}"
+                )
+            }
+        }
+    }
+
+    private fun parseKickMessagesData(root: JsonElement, raw: String): KickMessagesData {
+        fun decodeMessagesArray(element: JsonElement?): List<KickMessage>? {
+            val array = element as? JsonArray ?: return null
+            return runCatching {
+                array.mapNotNull { item ->
+                    runCatching { json.decodeFromJsonElement(KickMessage.serializer(), item) }.getOrNull()
+                }
+            }.getOrNull()
+        }
+
+        val rootObject = root as? JsonObject
+        val dataElement = rootObject?.get("data")
+        val dataObject = dataElement as? JsonObject
+        val topLevelMessages = decodeMessagesArray(rootObject?.get("messages"))
+        val nestedMessages = decodeMessagesArray(dataObject?.get("messages"))
+        val directMessages = decodeMessagesArray(dataElement)
+        val rootArrayMessages = decodeMessagesArray(root)
         val cursor = (dataObject?.get("cursor") as? JsonPrimitive)?.contentOrNull
-        val messages = runCatching {
-            messagesElement?.mapNotNull { element ->
-                runCatching { json.decodeFromJsonElement(KickMessage.serializer(), element) }.getOrNull()
-            }.orEmpty()
-        }.getOrDefault(emptyList())
-        return KickMessagesData(messages = messages, cursor = cursor)
+            ?: (rootObject?.get("cursor") as? JsonPrimitive)?.contentOrNull
+
+        return when {
+            rootArrayMessages != null -> KickMessagesData(messages = rootArrayMessages)
+            topLevelMessages != null -> KickMessagesData(messages = topLevelMessages, cursor = cursor)
+            nestedMessages != null -> KickMessagesData(messages = nestedMessages, cursor = cursor)
+            directMessages != null -> KickMessagesData(messages = directMessages, cursor = cursor)
+            else -> runCatching {
+                dataObject?.let { json.decodeFromString<KickMessagesData>(it.toString()) }
+                    ?: json.decodeFromString<KickMessagesEnvelope>(raw).data
+                    ?: KickMessagesData()
+            }.getOrElse {
+                KickMessagesData()
+            }
+        }
     }
 
     suspend fun getClipPlaylistStartTimeMs(clipUrl: String): Long? = withContext(Dispatchers.IO) {
@@ -1061,7 +1159,7 @@ class KickRepository @Inject constructor(
                 ?: return@withContext null
             return@withContext runCatching {
                 normalizeDate(firstProgramDateTime)?.let { normalized ->
-                    TwitchApiHelper.parseIso8601DateUTC(normalized)
+                    KickApiHelper.parseIso8601DateUTC(normalized)
                 }
             }.getOrNull()
         }
@@ -1315,7 +1413,7 @@ class KickRepository @Inject constructor(
                 if (login != null && durationSeconds != null) {
                     ContextCompat.getString(context, R.string.chat_timeout).format(
                         login,
-                        TwitchApiHelper.getDurationFromSeconds(context, durationSeconds.toString())
+                        KickApiHelper.getDurationFromSeconds(context, durationSeconds.toString())
                     )
                 } else if (login != null) {
                     ContextCompat.getString(context, R.string.chat_ban).format(login)
@@ -1354,7 +1452,7 @@ class KickRepository @Inject constructor(
                 KickModerationType.NONE -> null
             },
             reply = reply,
-            timestamp = normalizeDate(message.createdAt)?.let { TwitchApiHelper.parseIso8601DateUTC(it) },
+            timestamp = normalizeDate(message.createdAt)?.let { KickApiHelper.parseIso8601DateUTC(it) },
             fullMsg = rawContent ?: content ?: message.type ?: eventName
         )
     }
@@ -1580,8 +1678,8 @@ class KickRepository @Inject constructor(
         return channel.livestream?.playbackUrl ?: channel.playbackUrl
     }
 
-    fun getChatId(channel: KickChannelResponse): String? {
-        return channel.chatroom?.id?.toString() ?: channel.id?.toString()
+    fun getChatroomId(channel: KickChannelResponse): String? {
+        return channel.chatroom?.id?.toString()
     }
 
     private fun cacheKickBadgeUrls(channel: KickChannelResponse): Boolean {
@@ -2076,10 +2174,36 @@ class KickRepository @Inject constructor(
                 if (isKickWeb) {
                     header("Origin", "https://kick.com")
                     header("Referer", "https://kick.com/")
+                    header("Accept", "application/json, text/plain, */*")
+                    header("x-kick-platform", "web")
                     AuthStateHelper.getKickBearerToken(context)?.let { bearer ->
                         header("Authorization", bearer)
                     }
+                    getKickCookieHeader()?.let { cookies ->
+                        header("Cookie", cookies)
+                        extractKickXsrfToken(cookies)?.let { xsrfToken ->
+                            header("X-XSRF-TOKEN", xsrfToken)
+                        }
+                    }
                 }
+            }
+    }
+
+    private fun getKickCookieHeader(): String? {
+        return CookieManager.getInstance().getCookie("https://kick.com")?.takeIf { it.isNotBlank() }
+            ?: CookieManager.getInstance().getCookie("https://web.kick.com")?.takeIf { it.isNotBlank() }
+    }
+
+    private fun extractKickXsrfToken(cookieHeader: String): String? {
+        return cookieHeader
+            .split(';')
+            .asSequence()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("XSRF-TOKEN=", ignoreCase = true) }
+            ?.substringAfter('=')
+            ?.takeIf { it.isNotBlank() }
+            ?.let { token ->
+                runCatching { URLDecoder.decode(token, Charsets.UTF_8.name()) }.getOrDefault(token)
             }
     }
 

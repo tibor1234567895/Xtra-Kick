@@ -26,7 +26,7 @@ import com.github.andreyasadchy.xtra.model.ui.Tag
 import com.github.andreyasadchy.xtra.ui.game.GameMediaFragmentDirections
 import com.github.andreyasadchy.xtra.ui.game.GamePagerFragmentDirections
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 
 class FollowedGamesAdapter(
@@ -102,7 +102,7 @@ class FollowedGamesAdapter(
                         viewers.text = context.resources.getQuantityString(
                             R.plurals.viewers,
                             count,
-                            TwitchApiHelper.formatCount(count, context.prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
+                            KickApiHelper.formatCount(count, context.prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
                         )
                     } else {
                         viewers.visibility = View.GONE
@@ -113,7 +113,7 @@ class FollowedGamesAdapter(
                         broadcastersCount.text = context.resources.getQuantityString(
                             R.plurals.broadcasters,
                             count,
-                            TwitchApiHelper.formatCount(count, context.prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
+                            KickApiHelper.formatCount(count, context.prefs().getBoolean(C.UI_TRUNCATEVIEWCOUNT, true))
                         )
                     } else {
                         broadcastersCount.visibility = View.GONE
@@ -158,9 +158,9 @@ class FollowedGamesAdapter(
                         tagsLayout.visibility = View.GONE
                     }
                     if (item.followAccount) {
-                        twitchText.visibility = View.VISIBLE
+                        platformText.visibility = View.VISIBLE
                     } else {
-                        twitchText.visibility = View.GONE
+                        platformText.visibility = View.GONE
                     }
                     if (item.followLocal) {
                         localText.visibility = View.VISIBLE

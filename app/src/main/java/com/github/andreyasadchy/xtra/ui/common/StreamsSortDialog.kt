@@ -10,15 +10,13 @@ import androidx.core.os.bundleOf
 import androidx.core.view.isVisible
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.DialogStreamsSortBinding
-import com.github.andreyasadchy.xtra.model.ui.Tag
 import com.github.andreyasadchy.xtra.ui.game.streams.GameStreamsFragment
 import com.github.andreyasadchy.xtra.ui.top.TopStreamsFragment
 import com.github.andreyasadchy.xtra.util.C
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-import com.google.android.material.chip.Chip
 
-class StreamsSortDialog : BottomSheetDialogFragment(), SearchTagsDialog.OnTagSelectedListener, SelectLanguagesDialog.OnSelectedLanguagesChanged {
+class StreamsSortDialog : BottomSheetDialogFragment(), SelectLanguagesDialog.OnSelectedLanguagesChanged {
 
     interface OnFilter {
         fun onChange(sort: String, sortText: CharSequence, tags: Array<String>, languages: Array<String>, changed: Boolean, saveFilters: Boolean, saveSort: Boolean, saveDefault: Boolean)
@@ -46,7 +44,6 @@ class StreamsSortDialog : BottomSheetDialogFragment(), SearchTagsDialog.OnTagSel
     private val binding get() = _binding!!
     private lateinit var listener: OnFilter
 
-    private var selectedTags = mutableListOf<String>()
     private var selectedLanguages: Array<String> = emptyArray()
 
     override fun onAttach(context: Context) {
@@ -86,23 +83,9 @@ class StreamsSortDialog : BottomSheetDialogFragment(), SearchTagsDialog.OnTagSel
                 deleteSavedSort.visibility = View.GONE
             }
             sort.check(originalSortId)
-            selectedTags = originalTags.toMutableList()
             selectedLanguages = originalLanguages
-            originalTags.forEach { name ->
-                tagGroup.addView(
-                    Chip(requireContext()).apply {
-                        text = name
-                        isCloseIconVisible = true
-                        setOnCloseIconClickListener {
-                            selectedTags.remove(name)
-                            tagGroup.removeView(this)
-                        }
-                    }
-                )
-            }
-            selectTags.setOnClickListener {
-                SearchTagsDialog.newInstance(false).show(childFragmentManager, null)
-            }
+            tagGroup.isVisible = false
+            selectTags.isVisible = false
             selectLanguages.setOnClickListener {
                 SelectLanguagesDialog.newInstance(selectedLanguages).show(childFragmentManager, "closeOnPip")
             }
@@ -132,7 +115,7 @@ class StreamsSortDialog : BottomSheetDialogFragment(), SearchTagsDialog.OnTagSel
     private fun applyFilters(originalSortId: Int, originalTags: Array<String>, originalLanguages: Array<String>, saveFilters: Boolean, saveSort: Boolean, saveDefault: Boolean) {
         with(binding) {
             val checkedSortId = sort.checkedRadioButtonId
-            val tags = selectedTags.toTypedArray().sortedArray()
+            val tags = emptyArray<String>()
             val sortBtn = requireView().findViewById<RadioButton>(checkedSortId)
             listener.onChange(
                 when (checkedSortId) {
@@ -144,29 +127,11 @@ class StreamsSortDialog : BottomSheetDialogFragment(), SearchTagsDialog.OnTagSel
                 sortBtn.text,
                 tags,
                 selectedLanguages,
-                checkedSortId != originalSortId || !tags.contentEquals(originalTags) || !selectedLanguages.contentEquals(originalLanguages),
+                checkedSortId != originalSortId || originalTags.isNotEmpty() || !selectedLanguages.contentEquals(originalLanguages),
                 saveFilters,
                 saveSort,
                 saveDefault
             )
-        }
-    }
-
-    override fun onTagSelected(tag: Tag) {
-        tag.name?.let { name ->
-            if (!selectedTags.contains(name)) {
-                selectedTags.add(name)
-                binding.tagGroup.addView(
-                    Chip(requireContext()).apply {
-                        text = name
-                        isCloseIconVisible = true
-                        setOnCloseIconClickListener {
-                            selectedTags.remove(name)
-                            binding.tagGroup.removeView(this)
-                        }
-                    }
-                )
-            }
         }
     }
 

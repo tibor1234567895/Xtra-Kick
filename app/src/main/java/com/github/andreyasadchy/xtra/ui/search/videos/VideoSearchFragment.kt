@@ -27,7 +27,7 @@ import com.github.andreyasadchy.xtra.ui.search.RecentSearchAdapter
 import com.github.andreyasadchy.xtra.ui.search.SearchPagerFragment
 import com.github.andreyasadchy.xtra.ui.search.Searchable
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
@@ -71,8 +71,8 @@ class VideoSearchFragment : PagedListFragment(), Searchable {
                 requireContext().filesDir.path,
                 it,
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                TwitchApiHelper.getGQLHeaders(requireContext()),
-                TwitchApiHelper.getHelixHeaders(requireContext()),
+                KickApiHelper.getGQLHeaders(requireContext()),
+                KickApiHelper.getHelixHeaders(requireContext()),
             )
         })
         setAdapter(binding.recyclerView, pagingAdapter)
@@ -129,7 +129,7 @@ class VideoSearchFragment : PagedListFragment(), Searchable {
         }
         if (requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false) &&
             requireContext().prefs().getBoolean(C.USE_WEBVIEW_INTEGRITY, true) &&
-            TwitchApiHelper.isIntegrityTokenExpired(requireContext())
+            KickApiHelper.isIntegrityTokenExpired(requireContext())
         ) {
             IntegrityDialog.show(childFragmentManager, "refresh")
         }

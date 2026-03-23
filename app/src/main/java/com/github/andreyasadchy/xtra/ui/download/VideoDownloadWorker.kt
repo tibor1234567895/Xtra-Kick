@@ -38,7 +38,7 @@ import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
-import com.github.andreyasadchy.xtra.util.TwitchApiHelper
+import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getByteArrayCronetCallback
 import com.github.andreyasadchy.xtra.util.m3u8.PlaylistUtils
 import com.github.andreyasadchy.xtra.util.m3u8.Segment
@@ -1016,8 +1016,8 @@ class VideoDownloadWorker @AssistedInject constructor(
                 }
                 val downloadEmotes = offlineVideo.downloadChatEmotes
                 val networkLibrary = context.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-                val gqlHeaders = TwitchApiHelper.getGQLHeaders(context, true)
-                val helixHeaders = TwitchApiHelper.getGQLHeaders(context)
+                val gqlHeaders = KickApiHelper.getGQLHeaders(context, true)
+                val helixHeaders = KickApiHelper.getGQLHeaders(context)
                 val emoteQuality = context.prefs().getString(C.CHAT_IMAGE_QUALITY, "4") ?: "4"
                 val useWebp = context.prefs().getBoolean(C.CHAT_USE_WEBP, true)
                 val channelId = offlineVideo.channelId
@@ -1041,12 +1041,8 @@ class VideoDownloadWorker @AssistedInject constructor(
                     if (downloadEmotes) {
                         if (channelId != null) {
                             try { addAll(playerRepository.loadStvEmotes(networkLibrary, channelId, useWebp).second) } catch (e: Exception) {}
-                            try { addAll(playerRepository.loadBttvEmotes(networkLibrary, channelId, useWebp)) } catch (e: Exception) {}
-                            try { addAll(playerRepository.loadFfzEmotes(networkLibrary, channelId, useWebp)) } catch (e: Exception) {}
                         }
                         try { addAll(playerRepository.loadGlobalStvEmotes(networkLibrary, useWebp)) } catch (e: Exception) {}
-                        try { addAll(playerRepository.loadGlobalBttvEmotes(networkLibrary, useWebp)) } catch (e: Exception) {}
-                        try { addAll(playerRepository.loadGlobalFfzEmotes(networkLibrary, useWebp)) } catch (e: Exception) {}
                     }
                 }
                 if (isShared) {
