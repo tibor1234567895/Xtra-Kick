@@ -19,6 +19,22 @@ object AuthStateHelper {
         return context.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)?.takeIf { it.isNotBlank() }?.let { "Bearer $it" }
     }
 
+    fun hasPendingUnexpectedLogoutNotice(context: Context): Boolean {
+        return context.tokenPrefs().getBoolean(C.KICK_UNEXPECTED_LOGOUT_PENDING, false)
+    }
+
+    fun markUnexpectedLogout(context: Context) {
+        context.tokenPrefs().edit {
+            putBoolean(C.KICK_UNEXPECTED_LOGOUT_PENDING, true)
+        }
+    }
+
+    fun clearUnexpectedLogoutNotice(context: Context) {
+        context.tokenPrefs().edit {
+            remove(C.KICK_UNEXPECTED_LOGOUT_PENDING)
+        }
+    }
+
     fun clearKickAuth(context: Context) {
         context.tokenPrefs().edit {
             remove(C.KICK_ACCESS_TOKEN)

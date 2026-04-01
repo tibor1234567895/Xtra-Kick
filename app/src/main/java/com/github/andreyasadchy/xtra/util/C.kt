@@ -275,6 +275,7 @@ object C {
     const val KICK_USER_LOGIN = "kick_user_login"
     const val KICK_AUTH_STATE = "kick_auth_state"
     const val KICK_PKCE_VERIFIER = "kick_pkce_verifier"
+    const val KICK_UNEXPECTED_LOGOUT_PENDING = "kick_unexpected_logout_pending"
     const val VALIDATE_TOKENS = "validate_tokens"
     const val API_PREFS_GAMES = "api_prefs_games_v2"
     const val API_PREFS_STREAMS = "api_prefs_streams_v2"

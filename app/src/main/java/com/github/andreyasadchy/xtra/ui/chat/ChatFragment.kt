@@ -52,6 +52,7 @@ import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.chat.ChatAdapterUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatDividerDecoration
+import com.github.andreyasadchy.xtra.util.chat.ChatListParityUtils
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.reduceDragSensitivity
@@ -817,6 +818,15 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                             }
                                         }
                                         adapter.notifyItemRangeRemoved(0, removeCount)
+                                        val remainingCount = synchronized(viewModel.chatMessages) {
+                                            viewModel.chatMessages.size
+                                        }
+                                        ChatListParityUtils.rebindRangeAfterHeadRemoval(
+                                            removedCount = removeCount,
+                                            totalCountAfterRemoval = remainingCount
+                                        )?.let {
+                                            adapter.notifyItemRangeChanged(it.start, it.count, ChatAdapter.PAYLOAD_REFORMAT)
+                                        }
                                     }
                                     if (!isChatTouched && binding.btnDown.isGone) {
                                         binding.recyclerView.scrollToPosition(lastIndex - removeCount)
@@ -837,6 +847,15 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 val lastIndex = result.second
                                 adapter?.let { adapter ->
                                     adapter.notifyItemRangeInserted(0, messages.size)
+                                    val totalCount = synchronized(viewModel.chatMessages) {
+                                        viewModel.chatMessages.size
+                                    }
+                                    ChatListParityUtils.rebindRangeAfterPrepend(
+                                        insertedCount = messages.size,
+                                        totalCountAfterInsert = totalCount
+                                    )?.let {
+                                        adapter.notifyItemRangeChanged(it.start, it.count, ChatAdapter.PAYLOAD_REFORMAT)
+                                    }
                                     if (!isChatTouched && binding.btnDown.isGone) {
                                         binding.recyclerView.scrollToPosition(lastIndex)
                                     }

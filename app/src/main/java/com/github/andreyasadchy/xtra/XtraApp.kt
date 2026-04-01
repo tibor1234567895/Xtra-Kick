@@ -48,11 +48,13 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
 
     companion object {
         lateinit var INSTANCE: Application
+        var showUnexpectedLogoutNoticeThisProcess = false
     }
 
     override fun onCreate() {
         super.onCreate()
         INSTANCE = this
+        showUnexpectedLogoutNoticeThisProcess = AuthStateHelper.hasPendingUnexpectedLogoutNotice(this)
         var startedActivities = 0
         registerActivityLifecycleCallbacks(
             object : ActivityLifecycleCallbacks {

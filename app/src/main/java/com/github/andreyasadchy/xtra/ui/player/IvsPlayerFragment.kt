@@ -24,7 +24,6 @@ import com.amazonaws.ivs.player.PlayerException
 import com.amazonaws.ivs.player.Quality
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.ui.Stream
-import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
 
 @OptIn(UnstableApi::class)
@@ -40,7 +39,7 @@ class IvsPlayerFragment : PlayerFragment() {
     private val updateProgressAction = Runnable { if (view != null) updateProgress() }
     private val qualitiesByKey = linkedMapOf<String, Quality>()
     private var currentUrl: String? = null
-    private var fallbackTriggered = false
+    private var recoveryInProgress = false
     private var resumeOnStart = false
 
     override fun onStart() {
@@ -100,7 +99,7 @@ class IvsPlayerFragment : PlayerFragment() {
                             TAG,
                             "IVS playback error code=${exception.code} type=${exception.errorType} source=${exception.source} session=${player?.sessionId}: ${exception.errorMessage}"
                         )
-                        fallbackToStandardPlayer(showMessage = true)
+                        retryIvsPlayback(showMessage = true)
                     }
 
                     override fun onRebuffering() {
@@ -212,10 +211,11 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun startStream(url: String?) {
         val resolvedUrl = url?.takeIf { it.isNotBlank() } ?: return
-        fallbackTriggered = false
+        recoveryInProgress = false
         currentUrl = resolvedUrl
         requireArguments().putString(KEY_RESOLVED_STREAM_URL, resolvedUrl)
         viewModel.playlistUrl = null
+        viewModel.loaded.value = false
         binding.playerSurface.visibility = View.VISIBLE
         binding.playerControls.progressBar.setDuration(0L)
         binding.playerControls.duration.text = null
@@ -317,7 +317,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun startAudioOnly() {
-        fallbackToStandardPlayer(showMessage = false)
+        Toast.makeText(requireContext(), R.string.ivs_feature_not_supported, Toast.LENGTH_SHORT).show()
     }
 
     override fun toggleAudioCompressor() {
@@ -357,7 +357,7 @@ class IvsPlayerFragment : PlayerFragment() {
         val shouldKeepPlaying = ivsPlayer?.let { shouldContinueIvsInBackground(it) } ?: false
         Log.d(
             TAG,
-            "onStop state=${ivsPlayer?.state} shouldKeepPlaying=$shouldKeepPlaying urlPresent=${!currentUrl.isNullOrBlank()} fallbackTriggered=$fallbackTriggered"
+            "onStop state=${ivsPlayer?.state} shouldKeepPlaying=$shouldKeepPlaying urlPresent=${!currentUrl.isNullOrBlank()} recoveryInProgress=$recoveryInProgress"
         )
         if (ivsPlayer != null) {
             if (shouldKeepPlaying) {
@@ -400,27 +400,26 @@ class IvsPlayerFragment : PlayerFragment() {
         }
     }
 
-    private fun fallbackToStandardPlayer(showMessage: Boolean) {
-        if (fallbackTriggered || !isAdded) {
-            Log.d(TAG, "fallbackToStandardPlayer ignored fallbackTriggered=$fallbackTriggered isAdded=$isAdded")
+    private fun retryIvsPlayback(showMessage: Boolean) {
+        val resolvedUrl = currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL)
+        if (recoveryInProgress || !isAdded || resolvedUrl.isNullOrBlank()) {
+            Log.d(
+                TAG,
+                "retryIvsPlayback ignored recoveryInProgress=$recoveryInProgress isAdded=$isAdded urlPresent=${!resolvedUrl.isNullOrBlank()}"
+            )
             return
         }
         resumeOnStart = false
-        fallbackTriggered = true
+        recoveryInProgress = true
         Log.d(
             TAG,
-            "fallbackToStandardPlayer showMessage=$showMessage stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)} resolvedUrlPresent=${!(currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL)).isNullOrBlank()}"
+            "retryIvsPlayback showMessage=$showMessage stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)} resolvedUrlPresent=true"
         )
         if (showMessage) {
             Toast.makeText(requireContext(), R.string.ivs_fallback_to_standard_player, Toast.LENGTH_SHORT).show()
         }
         playbackService?.stopPlayback()
-        val activity = activity as? MainActivity ?: return
-        activity.startStream(
-            stream = getCurrentStream(),
-            resolvedUrl = currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL),
-            forceStandardLiveEngine = true
-        )
+        startStream(resolvedUrl)
     }
 
     private fun shouldContinueIvsInBackground(player: Player): Boolean {

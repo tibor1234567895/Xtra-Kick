@@ -909,6 +909,7 @@ class MainViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 if (e is IllegalStateException && e.message == "401") {
+                    AuthStateHelper.markUnexpectedLogout(activity)
                     Toast.makeText(activity, R.string.token_expired, Toast.LENGTH_LONG).show()
                     AuthStateHelper.clearKickAuth(activity)
                     AuthStateHelper.clearLegacyTwitchAuth(activity)

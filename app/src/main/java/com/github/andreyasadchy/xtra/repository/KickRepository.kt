@@ -37,6 +37,7 @@ import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.tokenPrefs
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -129,11 +130,20 @@ class KickRepository @Inject constructor(
     private val channelCache = ConcurrentHashMap<String, Pair<Long, KickChannelResponse>>()
     private val channelLivestreamCache = ConcurrentHashMap<String, Pair<Long, KickChannelLivestream?>>()
     private val websiteSearchCache = ConcurrentHashMap<String, Pair<Long, KickWebsiteSearchResponse>>()
+    private val dedicatedChatroomCache = ConcurrentHashMap<String, Pair<Long, List<String>>>()
+    private val recentMessagesCache = ConcurrentHashMap<String, Pair<Long, KickMessagesData>>()
+    private val recentMessagesFailureCache = ConcurrentHashMap<String, Pair<Long, Int>>()
     private val kickBadgeCatalogRefreshAt = ConcurrentHashMap<String, Long>()
     private val kickBadgeCatalogRefreshInProgress = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    private val inFlightChannelRequests = ConcurrentHashMap<String, CompletableDeferred<KickChannelResponse>>()
+    private val inFlightChatroomRequests = ConcurrentHashMap<String, CompletableDeferred<List<String>>>()
+    private val inFlightRecentMessagesRequests = ConcurrentHashMap<String, CompletableDeferred<KickMessagesData>>()
     private val badgeCacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile
     private var badgePersistScheduled = false
+    private val recentMessagesCacheTtlMs = 5_000L
+    private val recentMessagesFailureCacheTtlMs = 45_000L
+    private val dedicatedChatroomCacheTtlMs = 30_000L
 
     private fun isKickBadgeDebugEnabled(): Boolean {
         return BuildConfig.DEBUG && context.prefs().getBoolean(C.DEBUG_KICK_BADGE_LOGS, false)
@@ -263,23 +273,25 @@ class KickRepository @Inject constructor(
                 return cachedChannel
             }
         }
-        val decoded = json.decodeFromString<KickChannelResponse>(
-            getRaw("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}")
-        )
-        return decoded.also { channel ->
-            val cachedAt = System.currentTimeMillis()
-            channelCache[normalizedKey] = cachedAt to channel
-            channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
-            channel.id?.toString()?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
-            val livestream = channel.livestream
-            channelLivestreamCache[normalizedKey] = cachedAt to livestream
-            channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelLivestreamCache[it] = cachedAt to livestream }
-            channel.id?.toString()?.takeIf { it.isNotBlank() }?.let { channelLivestreamCache[it] = cachedAt to livestream }
-            val changed = cacheKickBadgeUrls(channel)
-            if (changed) {
-                schedulePersistBadgeCache()
+        return coalesceRequest(inFlightChannelRequests, normalizedKey) {
+            val decoded = json.decodeFromString<KickChannelResponse>(
+                getRaw("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}")
+            )
+            decoded.also { channel ->
+                val cachedAt = System.currentTimeMillis()
+                channelCache[normalizedKey] = cachedAt to channel
+                channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
+                channel.id?.toString()?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
+                val livestream = channel.livestream
+                channelLivestreamCache[normalizedKey] = cachedAt to livestream
+                channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelLivestreamCache[it] = cachedAt to livestream }
+                channel.id?.toString()?.takeIf { it.isNotBlank() }?.let { channelLivestreamCache[it] = cachedAt to livestream }
+                val changed = cacheKickBadgeUrls(channel)
+                if (changed) {
+                    schedulePersistBadgeCache()
+                }
+                maybeRefreshKickBadgeCatalogInBackground(channel)
             }
-            maybeRefreshKickBadgeCatalogInBackground(channel)
         }
     }
 
@@ -288,33 +300,44 @@ class KickRepository @Inject constructor(
         if (candidate.isBlank()) {
             return emptyList()
         }
-        val urls = buildList {
-            add("https://kick.com/api/v2/channels/${urlEncode(candidate)}/chatroom")
-            if (!candidate.all(Char::isDigit)) {
-                add("https://kick.com/api/v1/${urlEncode(candidate)}/chatroom")
+        val normalizedKey = candidate.lowercase(Locale.ROOT)
+        val now = System.currentTimeMillis()
+        dedicatedChatroomCache[normalizedKey]?.let { (cachedAt, cachedResults) ->
+            if (now - cachedAt <= dedicatedChatroomCacheTtlMs) {
+                return cachedResults
             }
         }
-        val results = linkedSetOf<String>()
-        urls.forEach { url ->
-            runCatching {
-                val root = json.parseToJsonElement(getRaw(url)).jsonObject
-                listOfNotNull(
-                    root.primitiveOrNull("id"),
-                    root.primitiveOrNull("channel_id"),
-                    root.primitiveOrNull("user_id"),
-                    (root["chatroom"] as? JsonObject)?.primitiveOrNull("id"),
-                    (root["chatroom"] as? JsonObject)?.primitiveOrNull("channel_id"),
-                    (root["chatroom"] as? JsonObject)?.primitiveOrNull("user_id"),
-                    (root["data"] as? JsonObject)?.primitiveOrNull("id"),
-                    (root["data"] as? JsonObject)?.primitiveOrNull("channel_id"),
-                    (root["data"] as? JsonObject)?.primitiveOrNull("user_id"),
-                )
-            }.getOrNull().orEmpty()
-                .map(String::trim)
-                .filter(String::isNotBlank)
-                .forEach(results::add)
+        return coalesceRequest(inFlightChatroomRequests, normalizedKey) {
+            val urls = buildList {
+                add("https://kick.com/api/v2/channels/${urlEncode(candidate)}/chatroom")
+                if (!candidate.all(Char::isDigit)) {
+                    add("https://kick.com/api/v1/${urlEncode(candidate)}/chatroom")
+                }
+            }
+            val results = linkedSetOf<String>()
+            urls.forEach { url ->
+                runCatching {
+                    val root = json.parseToJsonElement(getRaw(url)).jsonObject
+                    listOfNotNull(
+                        root.primitiveOrNull("id"),
+                        root.primitiveOrNull("channel_id"),
+                        root.primitiveOrNull("user_id"),
+                        (root["chatroom"] as? JsonObject)?.primitiveOrNull("id"),
+                        (root["chatroom"] as? JsonObject)?.primitiveOrNull("channel_id"),
+                        (root["chatroom"] as? JsonObject)?.primitiveOrNull("user_id"),
+                        (root["data"] as? JsonObject)?.primitiveOrNull("id"),
+                        (root["data"] as? JsonObject)?.primitiveOrNull("channel_id"),
+                        (root["data"] as? JsonObject)?.primitiveOrNull("user_id"),
+                    )
+                }.getOrNull().orEmpty()
+                    .map(String::trim)
+                    .filter(String::isNotBlank)
+                    .forEach(results::add)
+            }
+            results.toList().also { resolved ->
+                dedicatedChatroomCache[normalizedKey] = System.currentTimeMillis() to resolved
+            }
         }
-        return results.toList()
     }
 
     suspend fun getChannelLivestream(channelSlug: String, forceRefresh: Boolean = false): KickChannelLivestream? {
@@ -1040,17 +1063,70 @@ class KickRepository @Inject constructor(
     }
 
     suspend fun getRecentMessages(channelOrChatroomId: String): KickMessagesData {
-        val raw = getRaw("https://kick.com/api/v2/channels/${urlEncode(channelOrChatroomId)}/messages")
-        val root = runCatching { json.parseToJsonElement(raw) }.getOrElse { error ->
-            throw error
-        }
-        return parseKickMessagesData(root, raw).also { parsed ->
-            if (parsed.messages.isEmpty()) {
-                Log.w(
-                    "KickRecentChat",
-                    "empty recent source=$channelOrChatroomId body=${raw.take(600).replace('\n', ' ')}"
-                )
+        val normalizedKey = channelOrChatroomId.trim().lowercase(Locale.ROOT)
+        val now = System.currentTimeMillis()
+        recentMessagesCache[normalizedKey]?.let { (cachedAt, cachedResults) ->
+            if (now - cachedAt <= recentMessagesCacheTtlMs) {
+                return cachedResults
             }
+        }
+        recentMessagesFailureCache[normalizedKey]?.let { (cachedAt, statusCode) ->
+            if (now - cachedAt <= recentMessagesFailureCacheTtlMs) {
+                throw IOException(
+                    "Kick recent source temporarily degraded ($statusCode) for $channelOrChatroomId"
+                )
+            } else {
+                recentMessagesFailureCache.remove(normalizedKey, cachedAt to statusCode)
+            }
+        }
+        return coalesceRequest(inFlightRecentMessagesRequests, normalizedKey) {
+            try {
+                val raw = getRaw("https://kick.com/api/v2/channels/${urlEncode(channelOrChatroomId)}/messages")
+                val root = runCatching { json.parseToJsonElement(raw) }.getOrElse { error ->
+                    throw error
+                }
+                parseKickMessagesData(root, raw).also { parsed ->
+                    recentMessagesCache[normalizedKey] = System.currentTimeMillis() to parsed
+                    recentMessagesFailureCache.remove(normalizedKey)
+                    if (parsed.messages.isEmpty()) {
+                        Log.w(
+                            "KickRecentChat",
+                            "empty recent source=$channelOrChatroomId body=${raw.take(600).replace('\n', ' ')}"
+                        )
+                    }
+                }
+            } catch (e: IOException) {
+                val statusCode = Regex("""\((\d{3})\)""")
+                    .find(e.message.orEmpty())
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.toIntOrNull()
+                if (statusCode != null && statusCode >= 500) {
+                    recentMessagesFailureCache[normalizedKey] = System.currentTimeMillis() to statusCode
+                }
+                throw e
+            }
+        }
+    }
+
+    private suspend fun <T> coalesceRequest(
+        requests: ConcurrentHashMap<String, CompletableDeferred<T>>,
+        key: String,
+        block: suspend () -> T,
+    ): T {
+        requests[key]?.let { return it.await() }
+        val deferred = CompletableDeferred<T>()
+        val existing = requests.putIfAbsent(key, deferred)
+        if (existing != null) {
+            return existing.await()
+        }
+        try {
+            return block().also(deferred::complete)
+        } catch (t: Throwable) {
+            deferred.completeExceptionally(t)
+            throw t
+        } finally {
+            requests.remove(key, deferred)
         }
     }
 

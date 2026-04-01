@@ -1,6 +1,0 @@
-query VideoPlaybackAccessToken($id: ID!, $platform: String!, $playerType: String!) {
-    videoPlaybackAccessToken(id: $id, params: { platform: $platform, playerType: $playerType }) {
-        signature
-        value
-    }
-}

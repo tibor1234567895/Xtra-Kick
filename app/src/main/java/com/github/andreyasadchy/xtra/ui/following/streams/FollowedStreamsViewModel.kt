@@ -19,11 +19,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.json.JSONObject
@@ -42,8 +45,9 @@ class FollowedStreamsViewModel @Inject constructor(
         private const val LOG_TAG = "FollowedStreams"
         private const val FOLLOWED_STREAMS_CACHE_KEY = "followed_streams_cache_v1"
         private const val FOLLOWED_STREAMS_CACHE_TTL_MS = 45_000L
-        private const val FOLLOWED_STREAMS_BATCH_SIZE = 12
-        private const val FOLLOWED_STREAMS_PUBLIC_BATCH_SIZE = 50
+        private const val FOLLOWED_STREAMS_BATCH_SIZE = 4
+        private const val FOLLOWED_STREAMS_USER_LOOKUP_BATCH_SIZE = 100
+        private const val FOLLOWED_STREAMS_LIVESTREAM_BATCH_SIZE = 50
     }
 
     @Serializable
@@ -97,6 +101,11 @@ class FollowedStreamsViewModel @Inject constructor(
     )
 
     private data class PublicApiLoadResult(
+        val items: List<Stream>,
+        val unresolvedFollows: List<LocalFollowChannel>,
+    )
+
+    private data class BulkFallbackLoadResult(
         val items: List<Stream>,
         val unresolvedFollows: List<LocalFollowChannel>,
     )
@@ -178,12 +187,35 @@ class FollowedStreamsViewModel @Inject constructor(
 
                 val followsForFallback = fastResult?.unresolvedFollows ?: follows
 
-                followsForFallback.chunked(FOLLOWED_STREAMS_BATCH_SIZE).forEach { batch ->
-                    ensureActive()
+                val bulkFallbackResult = runCatching { loadStreamsFromBulkFallback(followsForFallback) }
+                    .onFailure { error -> Log.w(LOG_TAG, "Bulk followed-live fallback failed, using per-channel fallback: ${error.message}") }
+                    .getOrNull()
+
+                bulkFallbackResult?.items?.forEach { stream ->
+                    resolved[stream.cacheKey()] = stream
+                }
+                if (bulkFallbackResult != null) {
+                    val sorted = resolved.values.toList().sortedForFollowedLive()
+                    updateStateForGeneration(
+                        generation = generation,
+                        items = sorted,
+                        isInitialLoading = false,
+                        isRefreshing = bulkFallbackResult.unresolvedFollows.isNotEmpty(),
+                        showEmpty = false,
+                        hasLoadedOnce = true,
+                    )
+                }
+
+                val followsForPerChannelFallback = bulkFallbackResult?.unresolvedFollows ?: followsForFallback
+
+                if (followsForPerChannelFallback.isNotEmpty()) {
+                    val requestLimiter = Semaphore(FOLLOWED_STREAMS_BATCH_SIZE)
                     val batchResults = coroutineScope {
-                        batch.map { follow ->
+                        followsForPerChannelFallback.map { follow ->
                             async {
-                                loadStreamForFollow(follow)
+                                requestLimiter.withPermit {
+                                    loadStreamForFollow(follow)
+                                }
                             }
                         }
                     }.mapNotNull { it.await() }
@@ -191,16 +223,6 @@ class FollowedStreamsViewModel @Inject constructor(
                     batchResults.forEach { stream ->
                         resolved[stream.cacheKey()] = stream
                     }
-
-                    val sorted = resolved.values.toList().sortedForFollowedLive()
-                    updateStateForGeneration(
-                        generation = generation,
-                        items = sorted,
-                        isInitialLoading = false,
-                        isRefreshing = true,
-                        showEmpty = false,
-                        hasLoadedOnce = true,
-                    )
                 }
 
                 val finalItems = resolved.values.toList().sortedForFollowedLive()
@@ -263,7 +285,7 @@ class FollowedStreamsViewModel @Inject constructor(
 
         val resolved = LinkedHashMap<String, Stream>()
 
-        followsByBroadcasterId.keys.chunked(FOLLOWED_STREAMS_PUBLIC_BATCH_SIZE).forEach { ids ->
+        followsByBroadcasterId.keys.chunked(FOLLOWED_STREAMS_LIVESTREAM_BATCH_SIZE).forEach { ids ->
             val response = helixRepository.getLivestreams(
                 networkLibrary = networkLibrary,
                 headers = headers,
@@ -287,6 +309,88 @@ class FollowedStreamsViewModel @Inject constructor(
         }
 
         return PublicApiLoadResult(
+            items = resolved.values.toList().sortedForFollowedLive(),
+            unresolvedFollows = unresolvedFollows,
+        )
+    }
+
+    private suspend fun loadStreamsFromBulkFallback(follows: List<LocalFollowChannel>): BulkFallbackLoadResult? {
+        if (follows.isEmpty()) {
+            return BulkFallbackLoadResult(emptyList(), emptyList())
+        }
+
+        val headers = KickApiHelper.getHelixHeaders(applicationContext)
+        if (headers[C.HEADER_TOKEN].isNullOrBlank()) {
+            Log.i(LOG_TAG, "Bulk followed-live fallback skipped: missing auth token")
+            return null
+        }
+        val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
+        val followByLogin = follows
+            .mapNotNull { follow ->
+                follow.userLogin
+                    ?.takeIf { it.isNotBlank() }
+                    ?.lowercase()
+                    ?.let { login -> login to follow }
+            }
+            .toMap(LinkedHashMap())
+        if (followByLogin.isEmpty()) {
+            Log.i(LOG_TAG, "Bulk followed-live fallback skipped: no unresolved logins")
+            return BulkFallbackLoadResult(emptyList(), follows)
+        }
+
+        val broadcasterIdCache = loadBroadcasterIdCache()
+        val followsByBroadcasterId = LinkedHashMap<String, LocalFollowChannel>()
+        var cacheChanged = false
+
+        followByLogin.keys.chunked(FOLLOWED_STREAMS_USER_LOOKUP_BATCH_SIZE).forEach { logins ->
+            currentCoroutineContext().ensureActive()
+            val response = helixRepository.getUsers(
+                networkLibrary = networkLibrary,
+                headers = headers,
+                logins = logins,
+            )
+            response.data.forEach { user ->
+                val login = user.channelLogin?.takeIf { it.isNotBlank() }?.lowercase() ?: return@forEach
+                val broadcasterId = user.channelId?.takeIf { it.isNotBlank() } ?: return@forEach
+                val follow = followByLogin[login] ?: return@forEach
+                followsByBroadcasterId[broadcasterId] = follow
+                if (broadcasterIdCache[login] != broadcasterId) {
+                    broadcasterIdCache[login] = broadcasterId
+                    cacheChanged = true
+                }
+            }
+        }
+
+        if (cacheChanged) {
+            persistBroadcasterIdCache(broadcasterIdCache)
+        }
+
+        val resolved = LinkedHashMap<String, Stream>()
+        followsByBroadcasterId.keys.chunked(FOLLOWED_STREAMS_LIVESTREAM_BATCH_SIZE).forEach { ids ->
+            currentCoroutineContext().ensureActive()
+            val response = helixRepository.getLivestreams(
+                networkLibrary = networkLibrary,
+                headers = headers,
+                broadcasterUserIds = ids,
+                categoryId = null,
+                language = null,
+                limit = ids.size,
+                sort = "viewer_count",
+            )
+            response.data.forEach { stream ->
+                val follow = stream.broadcasterUserId?.toString()?.let(followsByBroadcasterId::get)
+                val mapped = stream.toUiStream(follow)
+                resolved[mapped.cacheKey()] = mapped
+            }
+        }
+
+        val resolvedFollows = followsByBroadcasterId.values.toSet()
+        val unresolvedFollows = follows.filter { it !in resolvedFollows }
+        if (unresolvedFollows.isNotEmpty()) {
+            Log.i(LOG_TAG, "Bulk followed-live fallback left ${unresolvedFollows.size} follows for per-channel fallback")
+        }
+
+        return BulkFallbackLoadResult(
             items = resolved.values.toList().sortedForFollowedLive(),
             unresolvedFollows = unresolvedFollows,
         )
@@ -447,10 +551,14 @@ class FollowedStreamsViewModel @Inject constructor(
         val cache = loadBroadcasterIdCache()
         if (cache[normalizedLogin] == normalizedId) return
         cache[normalizedLogin] = normalizedId
+        persistBroadcasterIdCache(cache)
+        Log.i(LOG_TAG, "Cached broadcaster id for $normalizedLogin")
+    }
+
+    private fun persistBroadcasterIdCache(cache: Map<String, String>) {
         val encoded = JSONObject(cache as Map<*, *>).toString()
         applicationContext.prefs().edit()
             .putString(KICK_BROADCASTER_ID_CACHE_KEY, encoded)
             .apply()
-        Log.i(LOG_TAG, "Cached broadcaster id for $normalizedLogin")
     }
 }

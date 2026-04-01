@@ -54,12 +54,11 @@ class HelixRepository @Inject constructor(
 ) {
 
     suspend fun getGames(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, names: List<String>? = null): GamesResponse = withContext(Dispatchers.IO) {
-        val query = mutableMapOf<String, String>().apply {
-            ids?.forEach { put("id", it) }
-            names?.forEach { put("name", it) }
-        }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
-        } ?: ""
+        val queryParams = mutableListOf<String>().apply {
+            ids?.forEach { add("id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            names?.forEach { add("name=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+        }
+        val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
         when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                 val response = suspendCoroutine { continuation ->
@@ -142,16 +141,15 @@ class HelixRepository @Inject constructor(
     }
 
     suspend fun getStreams(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, logins: List<String>? = null, gameId: String? = null, languages: List<String>? = null, limit: Int? = null, offset: String? = null): StreamsResponse = withContext(Dispatchers.IO) {
-        val query = mutableMapOf<String, String>().apply {
-            ids?.forEach { put("user_id", it) }
-            logins?.forEach { put("user_login", it) }
-            gameId?.let { put("game_id", it) }
-            languages?.forEach { put("language", it) }
-            limit?.let { put("first", it.toString()) }
-            offset?.let { put("after", it) }
-        }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
-        } ?: ""
+        val queryParams = mutableListOf<String>().apply {
+            ids?.forEach { add("user_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            logins?.forEach { add("user_login=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            gameId?.let { add("game_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            languages?.forEach { add("language=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            limit?.let { add("first=${URLEncoder.encode(it.toString(), Charsets.UTF_8.name())}") }
+            offset?.let { add("after=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+        }
+        val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
         when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                 val response = suspendCoroutine { continuation ->
@@ -381,12 +379,11 @@ class HelixRepository @Inject constructor(
     }
 
     suspend fun getUsers(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, logins: List<String>? = null): UsersResponse = withContext(Dispatchers.IO) {
-        val query = mutableMapOf<String, String>().apply {
-            ids?.forEach { put("id", it) }
-            logins?.forEach { put("login", it) }
-        }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
-        } ?: ""
+        val queryParams = mutableListOf<String>().apply {
+            ids?.forEach { add("id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            logins?.forEach { add("login=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+        }
+        val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
         when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                 val response = suspendCoroutine { continuation ->

@@ -64,6 +64,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.github.andreyasadchy.xtra.R
+import com.github.andreyasadchy.xtra.XtraApp
 import com.github.andreyasadchy.xtra.databinding.ActivityMainBinding
 import com.github.andreyasadchy.xtra.model.ui.Clip
 import com.github.andreyasadchy.xtra.model.ui.OfflineVideo
@@ -84,6 +85,7 @@ import com.github.andreyasadchy.xtra.ui.player.PlaybackService
 import com.github.andreyasadchy.xtra.ui.player.PlayerFragment
 import com.github.andreyasadchy.xtra.ui.team.TeamFragmentDirections
 import com.github.andreyasadchy.xtra.ui.top.TopStreamsFragmentDirections
+import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.KickApiHelper
@@ -127,6 +129,7 @@ class MainActivity : AppCompatActivity() {
     var playerFragment: PlayerFragment? = null
         private set
     private var pendingBackgroundStreamHandoff: BackgroundStreamHandoff? = null
+    private var playerRestoreCheckedWithoutFragment = false
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             lifecycleScope.launch {
@@ -186,6 +189,7 @@ class MainActivity : AppCompatActivity() {
         applyTheme()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        maybeShowUnexpectedLogoutNotice()
         setNavBarColor(resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT)
         val ignoreCutouts = prefs.getBoolean(C.UI_DRAW_BEHIND_CUTOUTS, false)
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, windowInsets ->
@@ -497,8 +501,23 @@ class MainActivity : AppCompatActivity() {
             pendingBackgroundStreamHandoff = null
             return
         }
+        if (playerFragment == null && playerRestoreCheckedWithoutFragment) {
+            Log.d(TAG, "onResume skipping redundant player restore with no fragment")
+            return
+        }
         Log.d(TAG, "onResume restoring existing playerFragment=${playerFragment?.javaClass?.simpleName}")
         restorePlayerFragment()
+    }
+
+    private fun maybeShowUnexpectedLogoutNotice() {
+        if (!XtraApp.showUnexpectedLogoutNoticeThisProcess) {
+            return
+        }
+        XtraApp.showUnexpectedLogoutNoticeThisProcess = false
+        AuthStateHelper.clearUnexpectedLogoutNotice(this)
+        if (!AuthStateHelper.isKickLoggedIn(this)) {
+            Toast.makeText(this, R.string.token_expired, Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onDestroy() {
@@ -865,6 +884,7 @@ class MainActivity : AppCompatActivity() {
             TAG,
             "startPlayer fragment=${fragment.javaClass.simpleName} replacing=${playerFragment?.javaClass?.simpleName}"
         )
+        playerRestoreCheckedWithoutFragment = false
         playerFragment?.close()
         playerFragment = fragment
         supportFragmentManager.beginTransaction()
@@ -885,6 +905,7 @@ class MainActivity : AppCompatActivity() {
             .remove(supportFragmentManager.findFragmentById(R.id.playerContainer)!!)
             .commit()
         playerFragment = null
+        playerRestoreCheckedWithoutFragment = true
         viewModel.isPlayerOpened = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
@@ -896,8 +917,10 @@ class MainActivity : AppCompatActivity() {
     private fun restorePlayerFragment() {
         if (playerFragment == null) {
             playerFragment = supportFragmentManager.findFragmentById(R.id.playerContainer) as? PlayerFragment
+            playerRestoreCheckedWithoutFragment = playerFragment == null
             Log.d(TAG, "restorePlayerFragment found=${playerFragment?.javaClass?.simpleName}")
         } else {
+            playerRestoreCheckedWithoutFragment = false
             val fragment = playerFragment
             Log.d(
                 TAG,

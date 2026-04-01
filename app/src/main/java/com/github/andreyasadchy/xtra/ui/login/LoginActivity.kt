@@ -324,6 +324,7 @@ class LoginActivity : AppCompatActivity() {
             } catch (e: Exception) {
 
             }
+            AuthStateHelper.clearUnexpectedLogoutNotice(this@LoginActivity)
             AuthStateHelper.clearKickAuth(this@LoginActivity)
             AuthStateHelper.clearLegacyTwitchAuth(this@LoginActivity)
             Toast.makeText(this@LoginActivity, R.string.logout_success_toast, Toast.LENGTH_SHORT).show()
