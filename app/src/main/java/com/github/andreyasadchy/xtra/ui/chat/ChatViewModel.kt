@@ -30,7 +30,6 @@ import com.github.andreyasadchy.xtra.model.chat.StvBadge
 import com.github.andreyasadchy.xtra.model.chat.StvUser
 import com.github.andreyasadchy.xtra.model.chat.TwitchBadge
 import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
-import com.github.andreyasadchy.xtra.model.kick.KickChannelResponse
 import com.github.andreyasadchy.xtra.model.kick.KickMessage
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
@@ -59,13 +58,10 @@ import com.github.andreyasadchy.xtra.util.tokenPrefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -129,8 +125,6 @@ class ChatViewModel @Inject constructor(
     private var kickChatJob: Job? = null
     private val kickMessageIds = LinkedHashSet<String>()
     private val kickBroadcasterUserIds = ConcurrentHashMap<String, Long>()
-    private val kickChannelContexts = ConcurrentHashMap<String, Pair<Long, KickChannelContext>>()
-    private val kickLiveChatContexts = ConcurrentHashMap<String, Pair<Long, KickLiveChatContext>>()
     private var kickReplayFallbackEnabled = false
     private var kickReplayFallbackChannelId: String? = null
     private var kickReplayFallbackChannelLogin: String? = null
@@ -218,21 +212,6 @@ class ChatViewModel @Inject constructor(
             else -> 0L
         }
     }
-
-    private data class KickChannelContext(
-        val channel: KickChannelResponse? = null,
-        val channelId: String? = null,
-        val channelLogin: String? = null,
-        val broadcasterUserId: Long? = null,
-        val messageSources: List<String> = emptyList(),
-        val realtimeChatroomId: String? = null,
-    )
-
-    private data class KickLiveChatContext(
-        val messageSources: List<String> = emptyList(),
-        val realtimeChatroomId: String? = null,
-    )
-
     val userEmotesUpdated = MutableSharedFlow<Unit>()
     val thirdPartyEmotesUpdated = MutableSharedFlow<Unit>()
 
@@ -339,7 +318,7 @@ class ChatViewModel @Inject constructor(
             viewModelScope.launch {
                 try {
                     // Populate Kick badge URL cache regardless of third-party emote settings.
-                    resolveKickChannelContext(channelId, channelLogin)
+                    kickRepository.getChannel(channelLogin)
                     if (BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_BADGE_LOGS, false)) {
                         Log.d("KickBadgeDebug", "prefetchByLogin success login=$channelLogin")
                     }
@@ -623,8 +602,7 @@ class ChatViewModel @Inject constructor(
             val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false)
             try {
                 val list = if (isKickPreferred() && !channelId.isNullOrBlank()) {
-                    val kickContext = resolveKickLiveChatContext(channelId, channelLogin)
-                    val kickMessageSources = kickContext.messageSources
+                    val kickMessageSources = resolveKickMessageSources(channelId, channelLogin)
                     Log.w("KickRecentChat", "preload start channelId=$channelId channelLogin=$channelLogin sources=$kickMessageSources")
                     val fetchedMessages = fetchKickMessages(kickMessageSources).ifEmpty {
                         val liveHistorySources = buildList {
@@ -749,90 +727,28 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private suspend fun resolveKickChannelContext(channelId: String?, channelLogin: String?): KickChannelContext {
-        val idValue = channelId?.trim().takeUnless { it.isNullOrBlank() }
-        val loginValue = channelLogin?.trim().takeUnless { it.isNullOrBlank() }
-        val cacheKey = "${idValue ?: "-"}|${loginValue?.lowercase(Locale.ROOT) ?: "-"}"
-        val now = System.currentTimeMillis()
-        kickChannelContexts[cacheKey]?.let { (cachedAt, context) ->
-            if (now - cachedAt <= 15_000L) {
-                return context
-            }
-        }
-        val channel = when {
-            loginValue != null -> runCatching { kickRepository.getChannel(loginValue) }.getOrNull()
-            idValue != null -> runCatching { kickRepository.getChannel(idValue) }.getOrNull()
-            else -> null
-        } ?: when {
-            idValue != null && idValue != loginValue -> runCatching { kickRepository.getChannel(idValue) }.getOrNull()
-            else -> null
-        }
-        val resolvedChannelId = channel?.userId?.toString()
-            ?: channel?.user?.id?.toString()
-            ?: channel?.id?.toString()
-            ?: idValue
-        val resolvedChannelLogin = channel?.slug?.takeIf { it.isNotBlank() } ?: loginValue
-        val chatroomCandidates = linkedSetOf<String>().apply {
-            channel?.let(kickRepository::getChatroomId)?.takeIf { it.isNotBlank() }?.let(::add)
-            // Keep slug-derived dedicated candidates even when the channel already exposes a chatroom id.
-            // Some streams preload history from a different dedicated source than the realtime chatroom id.
-            resolvedChannelLogin?.let {
-                runCatching { kickRepository.resolveDedicatedChatroomCandidates(it) }.getOrNull().orEmpty().forEach(::add)
-            }
-        }
-        val context = KickChannelContext(
-            channel = channel,
-            channelId = resolvedChannelId,
-            channelLogin = resolvedChannelLogin,
-            broadcasterUserId = channel?.userId ?: channel?.user?.id,
-            messageSources = LinkedHashSet<String>().apply {
-                addAll(chatroomCandidates)
-                channel?.userId?.toString()?.takeIf { it.isNotBlank() }?.let(::add)
-                channel?.user?.id?.toString()?.takeIf { it.isNotBlank() }?.let(::add)
-                resolvedChannelId?.let(::add)
-                resolvedChannelLogin?.let(::add)
-            }.toList(),
-            realtimeChatroomId = chatroomCandidates.firstOrNull() ?: resolvedChannelId ?: resolvedChannelLogin,
-        )
-        kickChannelContexts[cacheKey] = System.currentTimeMillis() to context
-        return context
-    }
-
-    private suspend fun resolveKickLiveChatContext(channelId: String?, channelLogin: String?): KickLiveChatContext {
-        val idValue = channelId?.trim().takeUnless { it.isNullOrBlank() }
-        val loginValue = channelLogin?.trim().takeUnless { it.isNullOrBlank() }
-        val cacheKey = "${idValue ?: "-"}|${loginValue?.lowercase(Locale.ROOT) ?: "-"}"
-        val now = System.currentTimeMillis()
-        kickLiveChatContexts[cacheKey]?.let { (cachedAt, context) ->
-            if (now - cachedAt <= 15_000L) {
-                return context
-            }
-        }
-        val chatroomCandidates = linkedSetOf<String>().apply {
-            loginValue?.let {
-                runCatching { kickRepository.resolveDedicatedChatroomCandidates(it) }.getOrNull().orEmpty().forEach(::add)
-            }
-        }
-        val context = KickLiveChatContext(
-            messageSources = LinkedHashSet<String>().apply {
-                addAll(chatroomCandidates)
-                idValue?.let(::add)
-                if (isEmpty()) {
-                    loginValue?.let(::add)
-                }
-            }.toList(),
-            realtimeChatroomId = chatroomCandidates.firstOrNull() ?: idValue ?: loginValue,
-        )
-        kickLiveChatContexts[cacheKey] = System.currentTimeMillis() to context
-        return context
-    }
-
     private suspend fun resolveKickMessageSources(channelId: String, channelLogin: String): List<String> {
-        return resolveKickChannelContext(channelId, channelLogin).messageSources
+        val channel = runCatching { kickRepository.getChannel(channelLogin) }.getOrNull()
+            ?: runCatching { kickRepository.getChannel(channelId) }.getOrNull()
+        val resolvedChatroomIds = linkedSetOf<String>().apply {
+            runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelLogin) }.getOrNull().orEmpty().forEach(::add)
+            runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelId) }.getOrNull().orEmpty().forEach(::add)
+            kickRepository.getChatroomId(channel ?: return@apply)?.takeIf { it.isNotBlank() }?.let(::add)
+        }
+        return LinkedHashSet<String>().apply {
+            addAll(resolvedChatroomIds)
+            channel?.userId?.toString()?.takeIf { it.isNotBlank() }?.let(::add)
+            channel?.user?.id?.toString()?.takeIf { it.isNotBlank() }?.let(::add)
+            add(channelId)
+            add(channelLogin)
+        }.filter { it.isNotBlank() }
     }
 
     private suspend fun resolveKickRealtimeChatroomId(channelId: String, channelLogin: String): String {
-        return resolveKickChannelContext(channelId, channelLogin).realtimeChatroomId ?: channelId
+        return runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelLogin) }.getOrNull().orEmpty().firstOrNull()
+            ?: runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelId) }.getOrNull().orEmpty().firstOrNull()
+            ?: runCatching { kickRepository.getChannel(channelLogin) }.getOrNull()?.let(kickRepository::getChatroomId)
+            ?: channelId
     }
 
     private suspend fun resolveKickBroadcasterUserId(channelId: String?, channelLogin: String?): Long? {
@@ -855,11 +771,6 @@ class ChatViewModel @Inject constructor(
                 channelLoginValue?.let { kickBroadcasterUserIds[it] = resolved }
                 return resolved
             }
-        }
-        resolveKickChannelContext(channelId, channelLogin).broadcasterUserId?.let { resolved ->
-            channelIdValue?.let { kickBroadcasterUserIds[it] = resolved }
-            channelLoginValue?.let { kickBroadcasterUserIds[it] = resolved }
-            return resolved
         }
         return null
     }
@@ -1126,24 +1037,21 @@ class ChatViewModel @Inject constructor(
         return mappedMessages
     }
 
-    private data class KickSourceMessagesResult(
-        val source: String,
-        val rawCount: Int,
-        val messages: List<ChatMessage>,
-    )
-
-    private suspend fun fetchKickMessagesForSource(source: String, debugKickRealtimeChat: Boolean): KickSourceMessagesResult? {
-        return try {
-            val response = kickRepository.getRecentMessages(source)
-            val rawMessages = response.messages
-            val rawCount = rawMessages.size
-            val messages = mapKickMessages(rawMessages).sortedBy { it.timestamp }
-            if (debugKickRealtimeChat) {
-                Log.d("KickRecentChat", "source=$source rawCount=$rawCount mappedCount=${messages.size}")
-            }
-            if (rawCount == 0) {
-                null
-            } else {
+    private suspend fun fetchKickMessages(messageSources: List<String>): List<ChatMessage> {
+        val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false)
+        for (source in messageSources) {
+            try {
+                val response = kickRepository.getRecentMessages(source)
+                val rawMessages = response.messages
+                val rawCount = rawMessages.size
+                val messages = mapKickMessages(rawMessages)
+                    .sortedBy { it.timestamp }
+                if (debugKickRealtimeChat) {
+                    Log.d("KickRecentChat", "source=$source rawCount=$rawCount mappedCount=${messages.size}")
+                }
+                if (rawCount == 0) {
+                    continue
+                }
                 var newKickEmotesAdded = false
                 messages.forEach { message ->
                     if (addKickInlineEmotes(message.fullMsg)) {
@@ -1159,30 +1067,16 @@ class ChatViewModel @Inject constructor(
                     }
                     thirdPartyEmotesUpdated.emit(Unit)
                 }
-                KickSourceMessagesResult(
-                    source = source,
-                    rawCount = rawCount,
-                    messages = messages,
-                )
-            }
-        } catch (e: Exception) {
-            if (debugKickRealtimeChat) {
-                Log.w("KickRecentChat", "source=$source fetch failed", e)
-            }
-            null
-        }
-    }
-
-    private suspend fun fetchKickMessages(messageSources: List<String>): List<ChatMessage> {
-        val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false)
-        val results = coroutineScope {
-            messageSources.map { source ->
-                async {
-                    fetchKickMessagesForSource(source, debugKickRealtimeChat)
+                if (messages.isNotEmpty()) {
+                    return messages
                 }
-            }.awaitAll()
-        }.filterNotNull()
-        return results.firstOrNull { it.messages.isNotEmpty() }?.messages.orEmpty()
+            } catch (e: Exception) {
+                if (debugKickRealtimeChat) {
+                    Log.w("KickRecentChat", "source=$source fetch failed", e)
+                }
+            }
+        }
+        return emptyList()
     }
 
     private suspend fun fetchKickHistoryMessages(
@@ -1317,9 +1211,10 @@ class ChatViewModel @Inject constructor(
             return emptyList()
         }
         val threadParentId = selectedMessage.reply?.threadParentId ?: selectedMessage.id ?: return emptyList()
-        val kickContext = resolveKickChannelContext(channelId, channelLogin)
-        val resolvedChannelId = kickContext.channelId ?: channelId?.takeIf { it.isNotBlank() } ?: return emptyList()
-        val messageSources = kickContext.messageSources.ifEmpty { resolveKickMessageSources(resolvedChannelId, channelLogin) }
+        val resolvedChannelId = channelId?.takeIf { it.isNotBlank() }
+            ?: kickRepository.getChannel(channelLogin).id?.toString()
+            ?: return emptyList()
+        val messageSources = resolveKickMessageSources(resolvedChannelId, channelLogin)
         val historyMessages = fetchKickMessages(messageSources).ifEmpty {
             fetchKickLiveHistoryMessages(messageSources).ifEmpty {
                 fetchKickHistoryMessages(
@@ -1405,8 +1300,13 @@ class ChatViewModel @Inject constructor(
         }
         addChatter(channelName)
         kickChatJob = viewModelScope.launch {
-            val kickContext = resolveKickLiveChatContext(channelId, channelLogin)
-            val kickMessageSources = kickContext.messageSources.ifEmpty { listOf(channelId) }
+            runCatching {
+                // Warm badge URL cache before first message fetch so Kick badges can resolve immediately.
+                kickRepository.getChannel(channelLogin)
+            }.onFailure {
+                runCatching { kickRepository.getChannel(channelId) }
+            }
+            val kickMessageSources = resolveKickMessageSources(channelId, channelLogin)
             onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_join).format(channelLogin)))
             delay(1500)
             while (currentCoroutineContext().isActive) {
@@ -1488,8 +1388,12 @@ class ChatViewModel @Inject constructor(
             }
             val initialPlaybackPositionMs = currentPlaybackPositionMs
             val initialPlaybackTimestampMs = effectiveReplayStartTimeMs + initialPlaybackPositionMs
-            val kickContext = resolveKickChannelContext(channelId, channelLogin)
-            val kickMessageSources = kickContext.messageSources
+            runCatching {
+                kickRepository.getChannel(channelLogin)
+            }.onFailure {
+            runCatching { kickRepository.getChannel(channelId) }
+            }
+            val kickMessageSources = resolveKickMessageSources(channelId, channelLogin)
                 .map { it.trim() }
                 .filter { source -> source.isNotBlank() && source.all(Char::isDigit) }
                 .ifEmpty { listOf(channelId.trim()) }
@@ -1683,9 +1587,12 @@ class ChatViewModel @Inject constructor(
                 kickMessageIds.clear()
             }
             chatReadJob = viewModelScope.launch {
-                val kickContext = resolveKickLiveChatContext(channelId, channelLogin)
                 val fallbackId = channelId?.takeIf { it.isNotBlank() } ?: channelLogin
-                val kickChatroomId = kickContext.realtimeChatroomId ?: fallbackId
+                val kickChatroomId = if (!channelId.isNullOrBlank()) {
+                    resolveKickRealtimeChatroomId(channelId, channelLogin)
+                } else {
+                    fallbackId
+                }
                 if (debugKickRealtimeChat) {
                     Log.d("KickRealtimeChat", "resolved chatroomId=$kickChatroomId channelId=$channelId channelLogin=$channelLogin")
                 }

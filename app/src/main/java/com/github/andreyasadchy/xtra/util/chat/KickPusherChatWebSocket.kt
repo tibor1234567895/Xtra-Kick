@@ -2,7 +2,6 @@ package com.github.andreyasadchy.xtra.util.chat
 
 import android.util.Log
 import com.github.andreyasadchy.xtra.util.WebSocket
-import com.github.andreyasadchy.xtra.util.WebSocketRuntime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -91,7 +90,6 @@ class KickPusherChatWebSocket(
                         if (debugLogging) {
                             Log.d(tag, "subscription_succeeded channel=${root.optString("channel")}")
                         }
-                        WebSocketRuntime.onSubscriptionHealthy()
                         listener.onConnect()
                     }
                     "pusher:ping" -> {

@@ -312,10 +312,10 @@ class ChannelPagerViewModel @Inject constructor(
         if (_isFollowing.value == null) {
             viewModelScope.launch {
                 try {
-                    val followId = channelId ?: channelLogin
-                    if (!followId.isNullOrBlank()) {
-                        _isFollowing.value = localFollowsChannel.getFollowByUserId(followId) != null
-                        _notificationsEnabled.value = notificationUsersRepository.getByUserId(followId) != null
+                    val followKey = channelId ?: channelLogin
+                    if (!followKey.isNullOrBlank()) {
+                        _isFollowing.value = localFollowsChannel.getFollow(channelId, channelLogin) != null
+                        _notificationsEnabled.value = notificationUsersRepository.getByUserId(followKey) != null
                     }
                 } catch (e: Exception) {
 
@@ -351,7 +351,7 @@ class ChannelPagerViewModel @Inject constructor(
             try {
                 val followId = channelId ?: channelLogin
                 if (!followId.isNullOrBlank()) {
-                    localFollowsChannel.getFollowByUserId(followId)?.let { localFollowsChannel.deleteFollow(it) }
+                    localFollowsChannel.getFollow(channelId, channelLogin)?.let { localFollowsChannel.deleteFollow(it) }
                     _isFollowing.value = false
                     follow.value = Pair(false, null)
                     notificationUsersRepository.deleteUser(NotificationUser(followId))
@@ -423,7 +423,7 @@ class ChannelPagerViewModel @Inject constructor(
                         }
                         path
                     }
-                    localFollowsChannel.getFollowByUserId(userId)?.let {
+                    localFollowsChannel.getFollow(userId, user.channelLogin)?.let {
                         localFollowsChannel.updateFollow(it.apply {
                             userLogin = user.channelLogin
                             userName = user.channelName

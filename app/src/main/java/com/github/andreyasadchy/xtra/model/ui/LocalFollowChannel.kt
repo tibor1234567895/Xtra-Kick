@@ -5,7 +5,7 @@ import androidx.room.PrimaryKey
 
 @Entity(tableName = "local_follows")
 class LocalFollowChannel(
-    val userId: String? = null,
+    var userId: String? = null,
     var userLogin: String? = null,
     var userName: String? = null,
     var channelLogo: String? = null,

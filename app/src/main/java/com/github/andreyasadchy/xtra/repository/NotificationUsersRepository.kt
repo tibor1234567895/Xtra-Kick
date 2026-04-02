@@ -24,6 +24,10 @@ class NotificationUsersRepository @Inject constructor(
         notificationUsersDao.insert(item)
     }
 
+    suspend fun deleteAllUsers() = withContext(Dispatchers.IO) {
+        notificationUsersDao.deleteAll()
+    }
+
     suspend fun deleteUser(item: NotificationUser) = withContext(Dispatchers.IO) {
         notificationUsersDao.delete(item)
     }

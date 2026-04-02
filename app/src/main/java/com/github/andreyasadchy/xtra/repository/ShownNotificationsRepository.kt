@@ -169,4 +169,8 @@ class ShownNotificationsRepository @Inject constructor(
     suspend fun saveList(list: List<ShownNotification>) = withContext(Dispatchers.IO) {
         shownNotificationsDao.insertList(list)
     }
+
+    suspend fun deleteAll() = withContext(Dispatchers.IO) {
+        shownNotificationsDao.deleteAll()
+    }
 }

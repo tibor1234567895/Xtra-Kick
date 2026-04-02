@@ -7,6 +7,13 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
+    <Preference
+        android:key="action_delete_all_followed_channels"
+        android:summary="@string/debug_delete_all_followed_channels_summary"
+        android:title="@string/debug_delete_all_followed_channels"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
     <SwitchPreferenceCompat
         android:defaultValue="false"
         android:key="debug_chat_fullmsg"

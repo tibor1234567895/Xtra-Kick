@@ -63,6 +63,7 @@ class IvsPlayerService : Service() {
     private var notificationBitmapCallback: FutureCallback<Bitmap>? = null
     private var backgroundPlaybackEnabled = false
     private var hasStablePlayback = false
+    private var playbackRequested = false
     private var retryCount = 0
     private var surfaceAttached = false
     private var wakeLock: PowerManager.WakeLock? = null
@@ -152,18 +153,19 @@ class IvsPlayerService : Service() {
             setCallback(
                 object : MediaSession.Callback() {
                     override fun onPlay() {
-                        player?.play()
+                        play()
                         updatePlaybackState()
                         updateNotification()
                     }
 
                     override fun onPause() {
-                        player?.pause()
+                        pause(clearPlaybackRequest = true)
                         updatePlaybackState()
                         updateNotification()
                     }
 
                     override fun onStop() {
+                        playbackRequested = false
                         player?.pause()
                         updatePlaybackState()
                         updateNotification()
@@ -205,6 +207,7 @@ class IvsPlayerService : Service() {
         retryCount = 0
         releaseDynamicsProcessing()
         Log.d(TAG, "playStream channel=$channelName title=$title")
+        playbackRequested = true
         player?.apply {
             setLiveLowLatencyEnabled(true)
             setRebufferToLive(true)
@@ -230,6 +233,20 @@ class IvsPlayerService : Service() {
 
     fun isBackgroundPlaybackEnabled(): Boolean = backgroundPlaybackEnabled
 
+    fun isPlaybackRequested(): Boolean = playbackRequested
+
+    fun play() {
+        playbackRequested = true
+        player?.play()
+    }
+
+    fun pause(clearPlaybackRequest: Boolean) {
+        if (clearPlaybackRequest) {
+            playbackRequested = false
+        }
+        player?.pause()
+    }
+
     fun toggleDynamicsProcessing(): Boolean {
         val enabled = !prefs().getBoolean(C.PLAYER_AUDIO_COMPRESSOR, false)
         prefs().edit { putBoolean(C.PLAYER_AUDIO_COMPRESSOR, enabled) }
@@ -239,6 +256,7 @@ class IvsPlayerService : Service() {
 
     fun stopPlayback() {
         backgroundPlaybackEnabled = false
+        playbackRequested = false
         surfaceAttached = false
         player?.setSurface(null)
         player?.pause()
@@ -422,9 +440,9 @@ class IvsPlayerService : Service() {
             INTENT_PLAY_PAUSE -> {
                 val ivsPlayer = player
                 if (ivsPlayer?.state == Player.State.PLAYING) {
-                    ivsPlayer.pause()
+                    pause(clearPlaybackRequest = true)
                 } else {
-                    ivsPlayer?.play()
+                    play()
                 }
                 updatePlaybackState()
                 updateNotification()
@@ -436,7 +454,7 @@ class IvsPlayerService : Service() {
     override fun onBind(intent: Intent?): IBinder = ServiceBinder()
 
     override fun onUnbind(intent: Intent?): Boolean {
-        if (!backgroundPlaybackEnabled && player?.state != Player.State.PLAYING) {
+        if (!backgroundPlaybackEnabled && !playbackRequested) {
             stopSelf()
         }
         return super.onUnbind(intent)

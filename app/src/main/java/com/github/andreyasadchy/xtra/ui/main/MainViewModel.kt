@@ -32,6 +32,7 @@ import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.repository.AuthRepository
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickAuthRequestException
 import com.github.andreyasadchy.xtra.repository.OfflineRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.ui.download.StreamDownloadWorker
@@ -891,7 +892,7 @@ class MainViewModel @Inject constructor(
                 val user = try {
                     authRepository.getKickCurrentUser(networkLibrary, activeToken).data.firstOrNull()
                 } catch (e: Exception) {
-                    if (e.message?.contains("(401)") == true) {
+                    if (KickAuthRequestException.isUnauthorized(e)) {
                         throw IllegalStateException("401")
                     }
                     throw e
@@ -914,6 +915,8 @@ class MainViewModel @Inject constructor(
                     AuthStateHelper.clearKickAuth(activity)
                     AuthStateHelper.clearLegacyTwitchAuth(activity)
                     (activity as? MainActivity)?.loginResultLauncher?.launch(Intent(activity, LoginActivity::class.java))
+                } else if (KickAuthRequestException.isBackendUnavailable(e)) {
+                    Toast.makeText(activity, R.string.kick_oauth_backend_unreachable, Toast.LENGTH_LONG).show()
                 }
             }
         }

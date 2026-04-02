@@ -58,9 +58,6 @@ object ChatAdapterUtils {
     private const val TWO_PI_DEGREES = 360f
     private val preparedMessages = Collections.synchronizedMap(WeakHashMap<ChatMessage, MutableMap<Long, MessageResult>>())
     private val translatingMessages = Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap<ChatMessage, Boolean>()))
-    private val inFlightImageLoads = mutableMapOf<String, MutableList<(Drawable) -> Unit>>()
-    private val recentImageLoadCache = mutableMapOf<String, Pair<Long, Drawable.ConstantState>>()
-    private const val recentImageLoadCacheTtlMs = 3_000L
 
     private fun resolveReplyDisplayName(chatMessage: ChatMessage, nameDisplay: String?): String? {
         val replyLogin = chatMessage.replyParent?.userLogin ?: chatMessage.reply?.userLogin
@@ -864,12 +861,12 @@ object ChatAdapterUtils {
             }
         }
         images.forEach { image ->
-            val imageSize = if (image.isEmote) {
-                emoteSize
-            } else {
-                badgeSize
-            }
-            loadImage(imageLibrary, fragment, image, emoteQuality, imageSize) { result ->
+            loadImage(imageLibrary, fragment, image, emoteQuality) { result ->
+                val imageSize = if (image.isEmote) {
+                    emoteSize
+                } else {
+                    badgeSize
+                }
                 val widthRatio = result.intrinsicWidth.toFloat() / result.intrinsicHeight.toFloat()
                 val size = if (widthRatio == 1f) {
                     imageSize to imageSize
@@ -908,7 +905,7 @@ object ChatAdapterUtils {
     }
 
     private fun nextOverlayEmote(imageLibrary: String?, fragment: Fragment, drawables: Array<Drawable>, image: Image, bottomImage: Image, itemView: View, bind: (SpannableStringBuilder) -> Unit, builder: SpannableStringBuilder, translated: Boolean, emoteSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, chatMessage: ChatMessage, savedColors: HashMap<String, Int>, useReadableColors: Boolean, isLightTheme: Boolean, showLanguageDownloadDialog: (ChatMessage, String) -> Unit, hideErrors: Boolean) {
-        loadImage(imageLibrary, fragment, image, emoteQuality, emoteSize) { result ->
+        loadImage(imageLibrary, fragment, image, emoteQuality) { result ->
             val widthRatio = result.intrinsicWidth.toFloat() / result.intrinsicHeight.toFloat()
             val size = if (widthRatio == 1f) {
                 emoteSize to emoteSize
@@ -949,70 +946,15 @@ object ChatAdapterUtils {
         }
     }
 
-    private fun cloneDrawable(fragment: Fragment, drawable: Drawable): Drawable {
-        return drawable.constantState?.newDrawable(fragment.resources)?.mutate() ?: drawable
-    }
-
-    private fun imageRequestKey(imageLibrary: String?, image: Image, emoteQuality: String, requestedSizePx: Int): String? {
-        if (image.localData != null) return null
-        val url = when (emoteQuality) {
-            "4" -> image.url4x ?: image.url3x ?: image.url2x ?: image.url1x
-            "3" -> image.url3x ?: image.url2x ?: image.url1x
-            "2" -> image.url2x ?: image.url1x
-            else -> image.url1x
-        } ?: return null
-        return listOf(
-            imageLibrary ?: "-",
-            requestedSizePx.toString(),
-            image.format ?: "-",
-            image.thirdParty.toString(),
-            url
-        ).joinToString("|")
-    }
-
-    private fun loadImage(imageLibrary: String?, fragment: Fragment, image: Image, emoteQuality: String, requestedSizePx: Int, onLoaded: (Drawable) -> Unit) {
-        val requestKey = imageRequestKey(imageLibrary, image, emoteQuality, requestedSizePx)
-        if (requestKey != null) {
-            val now = System.currentTimeMillis()
-            synchronized(inFlightImageLoads) {
-                recentImageLoadCache.entries.removeAll { now - it.value.first > recentImageLoadCacheTtlMs }
-                recentImageLoadCache[requestKey]?.let { (_, constantState) ->
-                    onLoaded(constantState.newDrawable(fragment.resources).mutate())
-                    return
-                }
-                val callbacks = inFlightImageLoads[requestKey]
-                if (callbacks != null) {
-                    callbacks.add { drawable -> onLoaded(cloneDrawable(fragment, drawable)) }
-                    return
-                }
-                inFlightImageLoads[requestKey] = mutableListOf<(Drawable) -> Unit>({ drawable ->
-                    onLoaded(cloneDrawable(fragment, drawable))
-                })
-            }
-        }
-        val wrappedOnLoaded: (Drawable) -> Unit = { drawable ->
-            if (requestKey == null) {
-                onLoaded(drawable)
-            } else {
-                drawable.constantState?.let { constantState ->
-                    synchronized(inFlightImageLoads) {
-                        recentImageLoadCache[requestKey] = System.currentTimeMillis() to constantState
-                    }
-                }
-                val callbacks = synchronized(inFlightImageLoads) {
-                    inFlightImageLoads.remove(requestKey)
-                }.orEmpty()
-                callbacks.forEach { callback -> callback(drawable) }
-            }
-        }
+    private fun loadImage(imageLibrary: String?, fragment: Fragment, image: Image, emoteQuality: String, onLoaded: (Drawable) -> Unit) {
         if (imageLibrary == "0" || (imageLibrary == "1" && !image.format.equals("webp", true))) {
-            loadCoil(fragment, image, emoteQuality, requestedSizePx, wrappedOnLoaded)
+            loadCoil(fragment, image, emoteQuality, onLoaded)
         } else {
-            loadGlide(fragment, image, emoteQuality, requestedSizePx, wrappedOnLoaded)
+            loadGlide(fragment, image, emoteQuality, onLoaded)
         }
     }
 
-    private fun loadCoil(fragment: Fragment, image: Image, emoteQuality: String, requestedSizePx: Int, onLoaded: (Drawable) -> Unit) {
+    private fun loadCoil(fragment: Fragment, image: Image, emoteQuality: String, onLoaded: (Drawable) -> Unit) {
         fragment.requireContext().imageLoader.enqueue(
             ImageRequest.Builder(fragment.requireContext()).apply {
                 data(image.localData ?: when (emoteQuality) {
@@ -1021,7 +963,6 @@ object ChatAdapterUtils {
                     "2" -> image.url2x ?: image.url1x
                     else -> image.url1x
                 })
-                size(requestedSizePx, requestedSizePx)
                 if (image.thirdParty) {
                     httpHeaders(NetworkHeaders.Builder().apply {
                         add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
@@ -1036,7 +977,7 @@ object ChatAdapterUtils {
         )
     }
 
-    private fun loadGlide(fragment: Fragment, image: Image, emoteQuality: String, requestedSizePx: Int, onLoaded: (Drawable) -> Unit) {
+    private fun loadGlide(fragment: Fragment, image: Image, emoteQuality: String, onLoaded: (Drawable) -> Unit) {
         Glide.with(fragment)
             .load(image.localData ?: when (emoteQuality) {
                 "4" -> image.url4x ?: image.url3x ?: image.url2x ?: image.url1x
@@ -1048,7 +989,6 @@ object ChatAdapterUtils {
                     GlideUrl(it) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) }
                 } else it
             })
-            .override(requestedSizePx, requestedSizePx)
             .diskCacheStrategy(DiskCacheStrategy.DATA)
             .into(object : CustomTarget<Drawable>() {
                 override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {

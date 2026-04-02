@@ -16,6 +16,9 @@ interface ShownNotificationsDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertList(items: List<ShownNotification>)
 
+    @Query("DELETE FROM shown_notifications")
+    fun deleteAll()
+
     @Delete
     fun deleteList(items: List<ShownNotification>)
 }

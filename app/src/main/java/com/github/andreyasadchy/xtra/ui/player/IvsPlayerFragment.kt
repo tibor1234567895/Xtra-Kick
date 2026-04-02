@@ -125,7 +125,7 @@ class IvsPlayerFragment : PlayerFragment() {
                 player?.addListener(listener)
                 playerListener = listener
                 if (resumeOnStart && player?.state != Player.State.PLAYING) {
-                    player?.play()
+                    boundService.play()
                     resumeOnStart = false
                     updatePlayingState()
                 }
@@ -237,10 +237,10 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun playPause() {
         when (player?.state) {
-            Player.State.PLAYING -> player?.pause()
+            Player.State.PLAYING -> playbackService?.pause(clearPlaybackRequest = true)
             Player.State.READY,
             Player.State.IDLE,
-            Player.State.ENDED -> player?.play()
+            Player.State.ENDED -> playbackService?.play()
             else -> Unit
         }
         updatePlayingState()
@@ -258,7 +258,7 @@ class IvsPlayerFragment : PlayerFragment() {
             ivsPlayer.seekTo(duration)
         } else {
             currentUrl?.let { ivsPlayer.load(Uri.parse(it)) }
-            ivsPlayer.play()
+            playbackService?.play()
         }
     }
 
@@ -366,9 +366,9 @@ class IvsPlayerFragment : PlayerFragment() {
                 resumeOnStart = false
             } else {
                 playbackService?.setBackgroundPlaybackEnabled(false)
-                resumeOnStart = ivsPlayer.state == Player.State.PLAYING
-                if (resumeOnStart) {
-                    ivsPlayer.pause()
+                resumeOnStart = playbackService?.isPlaybackRequested() == true
+                if (ivsPlayer.state == Player.State.PLAYING) {
+                    playbackService?.pause(clearPlaybackRequest = false)
                     updatePlayingState()
                 }
             }
@@ -423,7 +423,10 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     private fun shouldContinueIvsInBackground(player: Player): Boolean {
-        return player.state == Player.State.PLAYING && shouldContinuePlaybackInBackground()
+        return playbackService?.isPlaybackRequested() == true &&
+            !currentUrl.isNullOrBlank() &&
+            player.state != Player.State.ENDED &&
+            shouldContinuePlaybackInBackground()
     }
 
     companion object {

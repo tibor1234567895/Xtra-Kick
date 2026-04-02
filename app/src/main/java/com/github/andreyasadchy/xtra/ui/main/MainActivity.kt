@@ -128,8 +128,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var navController: NavController
     var playerFragment: PlayerFragment? = null
         private set
+    private var launchingSettings = false
     private var pendingBackgroundStreamHandoff: BackgroundStreamHandoff? = null
-    private var playerRestoreCheckedWithoutFragment = false
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             lifecycleScope.launch {
@@ -209,6 +209,7 @@ class MainActivity : AppCompatActivity() {
             windowInsets
         }
         settingsResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            launchingSettings = false
             if (result.resultCode == RESULT_OK) {
                 recreate()
             }
@@ -491,6 +492,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        launchingSettings = false
         pendingBackgroundStreamHandoff?.let { handoff ->
             Log.d(
                 TAG,
@@ -499,10 +501,6 @@ class MainActivity : AppCompatActivity() {
             )
             startPlayer(Media3Fragment.newInstance(handoff.stream, handoff.resolvedUrl, true, attachToExistingPlayback = true))
             pendingBackgroundStreamHandoff = null
-            return
-        }
-        if (playerFragment == null && playerRestoreCheckedWithoutFragment) {
-            Log.d(TAG, "onResume skipping redundant player restore with no fragment")
             return
         }
         Log.d(TAG, "onResume restoring existing playerFragment=${playerFragment?.javaClass?.simpleName}")
@@ -746,6 +744,13 @@ class MainActivity : AppCompatActivity() {
         startPlayer(fragment)
     }
 
+    fun launchSettings() {
+        launchingSettings = true
+        settingsResultLauncher?.launch(Intent(this, com.github.andreyasadchy.xtra.ui.settings.SettingsActivity::class.java))
+    }
+
+    fun isLaunchingSettings(): Boolean = launchingSettings
+
     fun startStreamForBackgroundHandoff(stream: Stream, resolvedUrl: String? = null) {
         val streamUrl = resolvedUrl?.takeIf { it.isNotBlank() } ?: return
         if (isFinishing || isDestroyed) {
@@ -884,7 +889,6 @@ class MainActivity : AppCompatActivity() {
             TAG,
             "startPlayer fragment=${fragment.javaClass.simpleName} replacing=${playerFragment?.javaClass?.simpleName}"
         )
-        playerRestoreCheckedWithoutFragment = false
         playerFragment?.close()
         playerFragment = fragment
         supportFragmentManager.beginTransaction()
@@ -905,7 +909,6 @@ class MainActivity : AppCompatActivity() {
             .remove(supportFragmentManager.findFragmentById(R.id.playerContainer)!!)
             .commit()
         playerFragment = null
-        playerRestoreCheckedWithoutFragment = true
         viewModel.isPlayerOpened = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
@@ -917,10 +920,8 @@ class MainActivity : AppCompatActivity() {
     private fun restorePlayerFragment() {
         if (playerFragment == null) {
             playerFragment = supportFragmentManager.findFragmentById(R.id.playerContainer) as? PlayerFragment
-            playerRestoreCheckedWithoutFragment = playerFragment == null
             Log.d(TAG, "restorePlayerFragment found=${playerFragment?.javaClass?.simpleName}")
         } else {
-            playerRestoreCheckedWithoutFragment = false
             val fragment = playerFragment
             Log.d(
                 TAG,

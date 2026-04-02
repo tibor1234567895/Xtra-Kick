@@ -1982,6 +1982,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     protected fun shouldContinuePlaybackInBackground(): Boolean {
+        if ((activity as? com.github.andreyasadchy.xtra.ui.main.MainActivity)?.isLaunchingSettings() == true) {
+            return true
+        }
         val isInteractive = (requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
         val isInPipMode = when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> requireActivity().isInPictureInPictureMode

@@ -25,8 +25,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.json.JSONObject
@@ -45,7 +43,7 @@ class FollowedStreamsViewModel @Inject constructor(
         private const val LOG_TAG = "FollowedStreams"
         private const val FOLLOWED_STREAMS_CACHE_KEY = "followed_streams_cache_v1"
         private const val FOLLOWED_STREAMS_CACHE_TTL_MS = 45_000L
-        private const val FOLLOWED_STREAMS_BATCH_SIZE = 4
+        private const val FOLLOWED_STREAMS_BATCH_SIZE = 12
         private const val FOLLOWED_STREAMS_USER_LOOKUP_BATCH_SIZE = 100
         private const val FOLLOWED_STREAMS_LIVESTREAM_BATCH_SIZE = 50
     }
@@ -208,14 +206,12 @@ class FollowedStreamsViewModel @Inject constructor(
 
                 val followsForPerChannelFallback = bulkFallbackResult?.unresolvedFollows ?: followsForFallback
 
-                if (followsForPerChannelFallback.isNotEmpty()) {
-                    val requestLimiter = Semaphore(FOLLOWED_STREAMS_BATCH_SIZE)
+                followsForPerChannelFallback.chunked(FOLLOWED_STREAMS_BATCH_SIZE).forEach { batch ->
+                    ensureActive()
                     val batchResults = coroutineScope {
-                        followsForPerChannelFallback.map { follow ->
+                        batch.map { follow ->
                             async {
-                                requestLimiter.withPermit {
-                                    loadStreamForFollow(follow)
-                                }
+                                loadStreamForFollow(follow)
                             }
                         }
                     }.mapNotNull { it.await() }
@@ -223,6 +219,16 @@ class FollowedStreamsViewModel @Inject constructor(
                     batchResults.forEach { stream ->
                         resolved[stream.cacheKey()] = stream
                     }
+
+                    val sorted = resolved.values.toList().sortedForFollowedLive()
+                    updateStateForGeneration(
+                        generation = generation,
+                        items = sorted,
+                        isInitialLoading = false,
+                        isRefreshing = true,
+                        showEmpty = false,
+                        hasLoadedOnce = true,
+                    )
                 }
 
                 val finalItems = resolved.values.toList().sortedForFollowedLive()

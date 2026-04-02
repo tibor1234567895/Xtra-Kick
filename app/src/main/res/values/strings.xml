@@ -502,6 +502,8 @@
     <string name="api_validate_tokens">Validate tokens on startup</string>
     <string name="followed_only">Followed only</string>
     <string name="debug_api_commands">Use API chat commands</string>
+    <string name="debug_delete_all_followed_channels">Delete all followed channels</string>
+    <string name="debug_delete_all_followed_channels_summary">Debug action. Permanently removes every followed channel imported or added locally, and clears follow notifications for them.</string>
     <string name="skip_video_access_token">Skip video access token</string>
     <string name="skipVideoTokenEntries1">Always skip</string>
     <string name="skipVideoTokenEntries2">Skip by default, don\'t skip if playback fails</string>
@@ -654,8 +656,10 @@
     <string name="kick_not_implemented_action" translatable="false">This account action is not implemented for Kick yet.</string>
     <string name="kick_oauth_not_configured" translatable="false">Kick login is not configured. Set KICK_CLIENT_ID and KICK_OAUTH_BACKEND_BASE_URL in build config.</string>
     <string name="kick_oauth_scope_missing" translatable="false">Kick login requires scopes: user:read and chat:write.</string>
+    <string name="kick_oauth_backend_unreachable" translatable="false">Kick login is temporarily unavailable because the OAuth backend server is offline or not reachable. Try again in a moment.</string>
     <string name="integrity_token_Kick_only" translatable="false">Integrity token debug flow is disabled for Kick login.</string>
     <string name="kick_browser_fallback_webview" translatable="false">Could not open browser, continuing in-app.</string>
+    <string name="retry">Retry</string>
     <string name="show_stv_badges">Show 7TV badges</string>
     <string name="show_kick_badges" translatable="false">Show Kick badges</string>
     <string name="show_stv_personal_emotes">Show 7TV personal emotes</string>
@@ -770,6 +774,8 @@
     <string name="filters">Filters</string>
     <string name="sort_by">Sort by: %1$s</string>
     <string name="following_tabs">Following tabs</string>
+    <string name="debug_delete_all_followed_channels_message">This will permanently delete your entire followed channels list in Xtra, including imported follows and locally added follows. Follow notifications for those channels will also be cleared.\n\nThis cannot be undone.</string>
+    <string name="debug_delete_all_followed_channels_done">Deleted all followed channels and cleared related follow notifications</string>
     <string name="saved_tabs">Saved tabs</string>
     <string name="channel_tabs">Channel tabs</string>
     <string name="game_tabs">Game tabs</string>

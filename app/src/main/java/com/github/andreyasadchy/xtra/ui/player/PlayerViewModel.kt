@@ -662,9 +662,8 @@ class PlayerViewModel @Inject constructor(
         if (_isFollowing.value == null) {
             viewModelScope.launch {
                 try {
-                    val followId = channelId ?: channelLogin
-                    if (!followId.isNullOrBlank()) {
-                        _isFollowing.value = localFollowsChannel.getFollowByUserId(followId) != null
+                    if (!(channelId ?: channelLogin).isNullOrBlank()) {
+                        _isFollowing.value = localFollowsChannel.getFollow(channelId, channelLogin) != null
                     }
                 } catch (e: Exception) {
 
@@ -699,7 +698,7 @@ class PlayerViewModel @Inject constructor(
             try {
                 val followId = channelId ?: channelLogin
                 if (!followId.isNullOrBlank()) {
-                    localFollowsChannel.getFollowByUserId(followId)?.let { localFollowsChannel.deleteFollow(it) }
+                    localFollowsChannel.getFollow(channelId, channelLogin)?.let { localFollowsChannel.deleteFollow(it) }
                     _isFollowing.value = false
                     follow.value = Pair(false, null)
                     notificationUsersRepository.deleteUser(NotificationUser(followId))

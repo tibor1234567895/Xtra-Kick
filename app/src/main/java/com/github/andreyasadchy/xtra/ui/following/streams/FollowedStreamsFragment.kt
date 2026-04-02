@@ -116,18 +116,12 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
     }
 
     override fun setupSortBar(sortBar: SortBarBinding) {
-        sortBar.root.post {
-            sortBar.root.visibility = View.VISIBLE
-            sortBar.root.setOnClickListener(null)
-        }
+        sortBar.root.visibility = View.VISIBLE
+        sortBar.root.setOnClickListener(null)
         viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.sortText.collectLatest {
-                    sortBar.root.post {
-                        if (sortBar.sortText.text != it) {
-                            sortBar.sortText.text = it
-                        }
-                    }
+                    sortBar.sortText.text = it
                 }
             }
         }

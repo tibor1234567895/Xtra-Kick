@@ -80,7 +80,8 @@ class OfflineRepository @Inject constructor(
     suspend fun deleteOldImages() = withContext(Dispatchers.IO) {
         localFollowsChannelDao.getAll().forEach { item ->
             item.channelLogo?.let {
-                if (it.isNotBlank() && !item.userId.isNullOrBlank() && bookmarksDao.getByUserId(item.userId).isEmpty() && videosDao.getByUserId(item.userId).isEmpty()) {
+                val userId = item.userId
+                if (it.isNotBlank() && !userId.isNullOrBlank() && bookmarksDao.getByUserId(userId).isEmpty() && videosDao.getByUserId(userId).isEmpty()) {
                     File(it).delete()
                 }
             }

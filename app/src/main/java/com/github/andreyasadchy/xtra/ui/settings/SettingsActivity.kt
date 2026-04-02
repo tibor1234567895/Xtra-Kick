@@ -64,6 +64,9 @@ import com.github.andreyasadchy.xtra.SettingsNavGraphDirections
 import com.github.andreyasadchy.xtra.databinding.ActivitySettingsBinding
 import com.github.andreyasadchy.xtra.model.ui.SettingsDragListItem
 import com.github.andreyasadchy.xtra.model.ui.SettingsSearchItem
+import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
+import com.github.andreyasadchy.xtra.repository.NotificationUsersRepository
+import com.github.andreyasadchy.xtra.repository.ShownNotificationsRepository
 import com.github.andreyasadchy.xtra.ui.common.IntegrityDialog
 import com.github.andreyasadchy.xtra.ui.player.ExoPlayerService
 import com.github.andreyasadchy.xtra.ui.player.IvsPlayerService
@@ -89,6 +92,7 @@ import kotlinx.coroutines.launch
 import org.chromium.net.CronetProvider
 import java.util.Collections
 import java.util.Locale
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class SettingsActivity : AppCompatActivity() {
@@ -1672,7 +1676,17 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    @AndroidEntryPoint
     class DebugSettingsFragment : MaterialPreferenceFragment() {
+        @Inject
+        lateinit var localFollowChannelRepository: LocalFollowChannelRepository
+
+        @Inject
+        lateinit var notificationUsersRepository: NotificationUsersRepository
+
+        @Inject
+        lateinit var shownNotificationsRepository: ShownNotificationsRepository
+
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.debug_preferences, rootKey)
             findPreference<Preference>("action_api_settings")?.setOnPreferenceClickListener { preference ->
@@ -1768,6 +1782,22 @@ class SettingsActivity : AppCompatActivity() {
                                 })
                             }
                             (requireActivity() as? SettingsActivity)?.setResult()
+                        }
+                    }
+                    .setNegativeButton(getString(android.R.string.cancel), null)
+                    .show()
+                true
+            }
+            findPreference<Preference>("action_delete_all_followed_channels")?.setOnPreferenceClickListener {
+                requireActivity().getAlertDialogBuilder()
+                    .setTitle(getString(R.string.debug_delete_all_followed_channels))
+                    .setMessage(getString(R.string.debug_delete_all_followed_channels_message))
+                    .setPositiveButton(getString(R.string.yes)) { _, _ ->
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            localFollowChannelRepository.deleteAllFollows()
+                            notificationUsersRepository.deleteAllUsers()
+                            shownNotificationsRepository.deleteAll()
+                            Toast.makeText(requireContext(), getString(R.string.debug_delete_all_followed_channels_done), Toast.LENGTH_LONG).show()
                         }
                     }
                     .setNegativeButton(getString(android.R.string.cancel), null)

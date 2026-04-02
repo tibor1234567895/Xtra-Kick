@@ -71,7 +71,7 @@ class GamesFragment : PagedListFragment(), Scrollable, GamesSortDialog.OnFilter 
                         true
                     }
                     R.id.settings -> {
-                        activity.settingsResultLauncher?.launch(Intent(activity, SettingsActivity::class.java))
+                        activity.launchSettings()
                         true
                     }
                     R.id.login -> {

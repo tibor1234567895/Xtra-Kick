@@ -23,6 +23,7 @@ import com.github.andreyasadchy.xtra.databinding.ActivityLoginBinding
 import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendExchangeRequest
 import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendRevokeRequest
 import com.github.andreyasadchy.xtra.repository.AuthRepository
+import com.github.andreyasadchy.xtra.repository.KickAuthRequestException
 import com.github.andreyasadchy.xtra.ui.settings.SettingsActivity
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
@@ -38,11 +39,20 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class LoginActivity : AppCompatActivity() {
 
+    private data class PendingKickCallback(
+        val code: String,
+        val verifier: String,
+        val redirectUri: String,
+        val configuredScopes: String,
+        val backendBaseUrl: String,
+    )
+
     @Inject
     lateinit var authRepository: AuthRepository
 
     private lateinit var binding: ActivityLoginBinding
     private var callbackHandled = false
+    private var pendingKickCallback: PendingKickCallback? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,8 +82,9 @@ class LoginActivity : AppCompatActivity() {
         binding.copyCode.visibility = View.GONE
         binding.openUrl.visibility = View.GONE
         binding.next.visibility = View.GONE
-        binding.havingTrouble.visibility = View.VISIBLE
         binding.havingTrouble.setOnClickListener { startKickLoginExternal() }
+        binding.openUrl.setOnClickListener { startKickLoginExternal() }
+        binding.next.setOnClickListener { retryPendingKickCallback() }
 
         configureWebView()
 
@@ -160,56 +171,14 @@ class LoginActivity : AppCompatActivity() {
             return true
         }
 
-        binding.progressBar.visibility = View.VISIBLE
-        lifecycleScope.launch {
-            try {
-                val networkLibrary = prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-                val tokenResponse = authRepository.exchangeKickAuthorizationCode(
-                    networkLibrary = networkLibrary,
-                    backendBaseUrl = backendBaseUrl,
-                    request = KickBackendExchangeRequest(
-                        code = code,
-                        codeVerifier = verifier,
-                        redirectUri = redirectUri,
-                    ),
-                )
-                val accessToken = tokenResponse.accessToken?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("missing access token")
-                val grantedScopes = tokenResponse.scope ?: configuredScopes
-                if (!KickOAuthConfig.hasRequiredScopes(grantedScopes)) {
-                    throw IllegalStateException("missing scopes")
-                }
-                val refreshToken = tokenResponse.refreshToken
-                val expiresAt = (System.currentTimeMillis() / 1000L) + (tokenResponse.expiresIn ?: 0L)
-                val userResponse = authRepository.getKickCurrentUser(networkLibrary, accessToken)
-                val user = userResponse.data.firstOrNull()
-                val loginName = user?.name ?: user?.channelSlug ?: user?.id
-
-                AuthStateHelper.clearLegacyTwitchAuth(this@LoginActivity)
-                tokenPrefs().edit {
-                    putString(C.KICK_ACCESS_TOKEN, accessToken)
-                    putString(C.KICK_REFRESH_TOKEN, refreshToken)
-                    putLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, expiresAt)
-                    putString(C.KICK_TOKEN_TYPE, tokenResponse.tokenType)
-                    putString(C.KICK_USER_ID, user?.id)
-                    putString(C.KICK_USER_LOGIN, loginName)
-                    remove(C.KICK_AUTH_STATE)
-                    remove(C.KICK_PKCE_VERIFIER)
-                    putString(C.USER_ID, user?.id)
-                    putString(C.USERNAME, loginName)
-                }
-                Toast.makeText(this@LoginActivity, getString(R.string.login_success_toast, loginName ?: ""), Toast.LENGTH_SHORT).show()
-                setResult(RESULT_OK)
-            } catch (e: Exception) {
-                val messageId = if (e is IllegalStateException && e.message == "missing scopes") {
-                    R.string.kick_oauth_scope_missing
-                } else {
-                    R.string.connection_error
-                }
-                Toast.makeText(this@LoginActivity, messageId, Toast.LENGTH_LONG).show()
-            }
-            finish()
-        }
+        pendingKickCallback = PendingKickCallback(
+            code = code,
+            verifier = verifier,
+            redirectUri = redirectUri,
+            configuredScopes = configuredScopes,
+            backendBaseUrl = backendBaseUrl,
+        )
+        exchangePendingKickCallback(requireNotNull(pendingKickCallback))
         return true
     }
 
@@ -223,12 +192,14 @@ class LoginActivity : AppCompatActivity() {
 
     private fun startKickLogin() {
         callbackHandled = false
+        pendingKickCallback = null
         val url = prepareKickLoginUrl() ?: return
         showKickLoginInWebView(url)
     }
 
     private fun startKickLoginExternal() {
         callbackHandled = false
+        pendingKickCallback = null
         val url = prepareKickLoginUrl() ?: return
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
             addCategory(Intent.CATEGORY_BROWSABLE)
@@ -288,7 +259,103 @@ class LoginActivity : AppCompatActivity() {
     private fun showKickLoginInWebView(url: String) {
         binding.progressBar.visibility = View.GONE
         binding.webView.visibility = View.VISIBLE
+        binding.secondaryWebView.visibility = View.GONE
+        binding.codeText.visibility = View.GONE
+        binding.copyCode.visibility = View.GONE
+        binding.openUrl.visibility = View.GONE
+        binding.next.visibility = View.GONE
+        binding.havingTrouble.visibility = View.VISIBLE
         binding.webView.loadUrl(url)
+    }
+
+    private fun showKickExchangeLoading() {
+        binding.progressBar.visibility = View.VISIBLE
+        binding.webView.visibility = View.GONE
+        binding.secondaryWebView.visibility = View.GONE
+        binding.codeText.visibility = View.GONE
+        binding.copyCode.visibility = View.GONE
+        binding.openUrl.visibility = View.GONE
+        binding.next.visibility = View.GONE
+        binding.havingTrouble.visibility = View.GONE
+    }
+
+    private fun showKickBackendOfflineError() {
+        binding.progressBar.visibility = View.GONE
+        binding.webView.visibility = View.GONE
+        binding.secondaryWebView.visibility = View.GONE
+        binding.copyCode.visibility = View.GONE
+        binding.codeText.text = getString(R.string.kick_oauth_backend_unreachable)
+        binding.codeText.visibility = View.VISIBLE
+        binding.openUrl.text = getString(R.string.open_browser_login_recommended)
+        binding.openUrl.visibility = View.VISIBLE
+        binding.next.text = getString(R.string.retry)
+        binding.next.visibility = View.VISIBLE
+        binding.havingTrouble.visibility = View.GONE
+    }
+
+    private fun retryPendingKickCallback() {
+        pendingKickCallback?.let(::exchangePendingKickCallback) ?: startKickLogin()
+    }
+
+    private fun exchangePendingKickCallback(callback: PendingKickCallback) {
+        showKickExchangeLoading()
+        lifecycleScope.launch {
+            try {
+                val networkLibrary = prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
+                val tokenResponse = authRepository.exchangeKickAuthorizationCode(
+                    networkLibrary = networkLibrary,
+                    backendBaseUrl = callback.backendBaseUrl,
+                    request = KickBackendExchangeRequest(
+                        code = callback.code,
+                        codeVerifier = callback.verifier,
+                        redirectUri = callback.redirectUri,
+                    ),
+                )
+                val accessToken = tokenResponse.accessToken?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException("missing access token")
+                val grantedScopes = tokenResponse.scope ?: callback.configuredScopes
+                if (!KickOAuthConfig.hasRequiredScopes(grantedScopes)) {
+                    throw IllegalStateException("missing scopes")
+                }
+                val refreshToken = tokenResponse.refreshToken
+                val expiresAt = (System.currentTimeMillis() / 1000L) + (tokenResponse.expiresIn ?: 0L)
+                val userResponse = authRepository.getKickCurrentUser(networkLibrary, accessToken)
+                val user = userResponse.data.firstOrNull()
+                val loginName = user?.name ?: user?.channelSlug ?: user?.id
+
+                AuthStateHelper.clearLegacyTwitchAuth(this@LoginActivity)
+                tokenPrefs().edit {
+                    putString(C.KICK_ACCESS_TOKEN, accessToken)
+                    putString(C.KICK_REFRESH_TOKEN, refreshToken)
+                    putLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, expiresAt)
+                    putString(C.KICK_TOKEN_TYPE, tokenResponse.tokenType)
+                    putString(C.KICK_USER_ID, user?.id)
+                    putString(C.KICK_USER_LOGIN, loginName)
+                    remove(C.KICK_AUTH_STATE)
+                    remove(C.KICK_PKCE_VERIFIER)
+                    putString(C.USER_ID, user?.id)
+                    putString(C.USERNAME, loginName)
+                }
+                pendingKickCallback = null
+                Toast.makeText(this@LoginActivity, getString(R.string.login_success_toast, loginName ?: ""), Toast.LENGTH_SHORT).show()
+                setResult(RESULT_OK)
+                finish()
+            } catch (e: Exception) {
+                when {
+                    e is IllegalStateException && e.message == "missing scopes" -> {
+                        Toast.makeText(this@LoginActivity, R.string.kick_oauth_scope_missing, Toast.LENGTH_LONG).show()
+                        finish()
+                    }
+                    KickAuthRequestException.isBackendUnavailable(e) -> {
+                        showKickBackendOfflineError()
+                    }
+                    else -> {
+                        Toast.makeText(this@LoginActivity, R.string.connection_error, Toast.LENGTH_LONG).show()
+                        finish()
+                    }
+                }
+            }
+        }
     }
 
     private fun logoutAndFinish() {

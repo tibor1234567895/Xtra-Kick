@@ -18,6 +18,9 @@ interface NotificationUsersDao {
     @Insert()
     fun insert(item: NotificationUser)
 
+    @Query("DELETE FROM notifications")
+    fun deleteAll()
+
     @Delete
     fun delete(item: NotificationUser)
 }
