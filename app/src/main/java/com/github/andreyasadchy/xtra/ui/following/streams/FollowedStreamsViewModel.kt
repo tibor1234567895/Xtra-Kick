@@ -18,6 +18,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -46,6 +47,7 @@ class FollowedStreamsViewModel @Inject constructor(
         private const val FOLLOWED_STREAMS_BATCH_SIZE = 12
         private const val FOLLOWED_STREAMS_USER_LOOKUP_BATCH_SIZE = 100
         private const val FOLLOWED_STREAMS_LIVESTREAM_BATCH_SIZE = 50
+        private const val FOLLOWED_STREAMS_PUBLIC_API_PARALLELISM = 3
     }
 
     @Serializable
@@ -55,6 +57,7 @@ class FollowedStreamsViewModel @Inject constructor(
         val channelId: String? = null,
         val channelLogin: String? = null,
         val channelName: String? = null,
+        val playbackUrl: String? = null,
         val gameId: String? = null,
         val gameSlug: String? = null,
         val gameName: String? = null,
@@ -71,6 +74,7 @@ class FollowedStreamsViewModel @Inject constructor(
                 channelId = channelId,
                 channelLogin = channelLogin,
                 channelName = channelName,
+                playbackUrl = playbackUrl,
                 gameId = gameId,
                 gameSlug = gameSlug,
                 gameName = gameName,
@@ -291,21 +295,32 @@ class FollowedStreamsViewModel @Inject constructor(
 
         val resolved = LinkedHashMap<String, Stream>()
 
-        followsByBroadcasterId.keys.chunked(FOLLOWED_STREAMS_LIVESTREAM_BATCH_SIZE).forEach { ids ->
-            val response = helixRepository.getLivestreams(
-                networkLibrary = networkLibrary,
-                headers = headers,
-                broadcasterUserIds = ids,
-                categoryId = null,
-                language = null,
-                limit = ids.size,
-                sort = "viewer_count",
-            )
-            response.data.forEach { stream ->
-                val follow = stream.broadcasterUserId?.toString()?.let(followsByBroadcasterId::get)
-                val mapped = stream.toUiStream(follow)
-                resolved[mapped.cacheKey()] = mapped
-            }
+        coroutineScope {
+            followsByBroadcasterId.keys
+                .chunked(FOLLOWED_STREAMS_LIVESTREAM_BATCH_SIZE)
+                .chunked(FOLLOWED_STREAMS_PUBLIC_API_PARALLELISM)
+                .forEach { requestWindow ->
+                    currentCoroutineContext().ensureActive()
+                    requestWindow.map { ids ->
+                        async {
+                            helixRepository.getLivestreams(
+                                networkLibrary = networkLibrary,
+                                headers = headers,
+                                broadcasterUserIds = ids,
+                                categoryId = null,
+                                language = null,
+                                limit = ids.size,
+                                sort = "viewer_count",
+                            )
+                        }
+                    }.awaitAll().forEach { response ->
+                        response.data.forEach { stream ->
+                            val follow = stream.broadcasterUserId?.toString()?.let(followsByBroadcasterId::get)
+                            val mapped = stream.toUiStream(follow)
+                            resolved[mapped.cacheKey()] = mapped
+                        }
+                    }
+                }
         }
 
         val followsWithCachedBroadcasterIds = followsByBroadcasterId.values.toSet()
@@ -348,23 +363,33 @@ class FollowedStreamsViewModel @Inject constructor(
         val followsByBroadcasterId = LinkedHashMap<String, LocalFollowChannel>()
         var cacheChanged = false
 
-        followByLogin.keys.chunked(FOLLOWED_STREAMS_USER_LOOKUP_BATCH_SIZE).forEach { logins ->
-            currentCoroutineContext().ensureActive()
-            val response = helixRepository.getUsers(
-                networkLibrary = networkLibrary,
-                headers = headers,
-                logins = logins,
-            )
-            response.data.forEach { user ->
-                val login = user.channelLogin?.takeIf { it.isNotBlank() }?.lowercase() ?: return@forEach
-                val broadcasterId = user.channelId?.takeIf { it.isNotBlank() } ?: return@forEach
-                val follow = followByLogin[login] ?: return@forEach
-                followsByBroadcasterId[broadcasterId] = follow
-                if (broadcasterIdCache[login] != broadcasterId) {
-                    broadcasterIdCache[login] = broadcasterId
-                    cacheChanged = true
+        coroutineScope {
+            followByLogin.keys
+                .chunked(FOLLOWED_STREAMS_USER_LOOKUP_BATCH_SIZE)
+                .chunked(FOLLOWED_STREAMS_PUBLIC_API_PARALLELISM)
+                .forEach { requestWindow ->
+                    currentCoroutineContext().ensureActive()
+                    requestWindow.map { logins ->
+                        async {
+                            helixRepository.getUsers(
+                                networkLibrary = networkLibrary,
+                                headers = headers,
+                                logins = logins,
+                            )
+                        }
+                    }.awaitAll().forEach { response ->
+                        response.data.forEach { user ->
+                            val login = user.channelLogin?.takeIf { it.isNotBlank() }?.lowercase() ?: return@forEach
+                            val broadcasterId = user.channelId?.takeIf { it.isNotBlank() } ?: return@forEach
+                            val follow = followByLogin[login] ?: return@forEach
+                            followsByBroadcasterId[broadcasterId] = follow
+                            if (broadcasterIdCache[login] != broadcasterId) {
+                                broadcasterIdCache[login] = broadcasterId
+                                cacheChanged = true
+                            }
+                        }
+                    }
                 }
-            }
         }
 
         if (cacheChanged) {
@@ -372,22 +397,32 @@ class FollowedStreamsViewModel @Inject constructor(
         }
 
         val resolved = LinkedHashMap<String, Stream>()
-        followsByBroadcasterId.keys.chunked(FOLLOWED_STREAMS_LIVESTREAM_BATCH_SIZE).forEach { ids ->
-            currentCoroutineContext().ensureActive()
-            val response = helixRepository.getLivestreams(
-                networkLibrary = networkLibrary,
-                headers = headers,
-                broadcasterUserIds = ids,
-                categoryId = null,
-                language = null,
-                limit = ids.size,
-                sort = "viewer_count",
-            )
-            response.data.forEach { stream ->
-                val follow = stream.broadcasterUserId?.toString()?.let(followsByBroadcasterId::get)
-                val mapped = stream.toUiStream(follow)
-                resolved[mapped.cacheKey()] = mapped
-            }
+        coroutineScope {
+            followsByBroadcasterId.keys
+                .chunked(FOLLOWED_STREAMS_LIVESTREAM_BATCH_SIZE)
+                .chunked(FOLLOWED_STREAMS_PUBLIC_API_PARALLELISM)
+                .forEach { requestWindow ->
+                    currentCoroutineContext().ensureActive()
+                    requestWindow.map { ids ->
+                        async {
+                            helixRepository.getLivestreams(
+                                networkLibrary = networkLibrary,
+                                headers = headers,
+                                broadcasterUserIds = ids,
+                                categoryId = null,
+                                language = null,
+                                limit = ids.size,
+                                sort = "viewer_count",
+                            )
+                        }
+                    }.awaitAll().forEach { response ->
+                        response.data.forEach { stream ->
+                            val follow = stream.broadcasterUserId?.toString()?.let(followsByBroadcasterId::get)
+                            val mapped = stream.toUiStream(follow)
+                            resolved[mapped.cacheKey()] = mapped
+                        }
+                    }
+                }
         }
 
         val resolvedFollows = followsByBroadcasterId.values.toSet()
@@ -407,7 +442,12 @@ class FollowedStreamsViewModel @Inject constructor(
         val id = follow.userId?.takeIf { it.isNotBlank() }
         return when {
             !login.isNullOrBlank() -> {
-                val channel = runCatching { kickRepository.getChannel(login) }.getOrNull() ?: return null
+                val channel = runCatching {
+                    kickRepository.getChannel(
+                        channelSlug = login,
+                        prefetchBadgeCatalog = false,
+                    )
+                }.getOrNull() ?: return null
                 rememberBroadcasterId(channel.slug ?: login, channel.userId?.toString() ?: channel.user?.id?.toString())
                 val livestream = channel.livestream ?: return null
                 val enrichedLivestream = if (
@@ -421,7 +461,12 @@ class FollowedStreamsViewModel @Inject constructor(
                 kickRepository.toStream(channel, enrichedLivestream)
             }
             !id.isNullOrBlank() -> {
-                val channel = runCatching { kickRepository.getChannel(id) }.getOrNull() ?: return null
+                val channel = runCatching {
+                    kickRepository.getChannel(
+                        channelSlug = id,
+                        prefetchBadgeCatalog = false,
+                    )
+                }.getOrNull() ?: return null
                 rememberBroadcasterId(channel.slug, channel.userId?.toString() ?: channel.user?.id?.toString())
                 val livestream = channel.livestream ?: return null
                 val livestreamLogin = channel.slug?.takeIf { it.isNotBlank() }
@@ -446,6 +491,7 @@ class FollowedStreamsViewModel @Inject constructor(
             channelId = broadcasterUserId?.toString() ?: follow?.userId,
             channelLogin = slug ?: follow?.userLogin,
             channelName = follow?.userName ?: slug,
+            playbackUrl = null,
             gameId = category?.id?.toString(),
             gameSlug = null,
             gameName = category?.name,
@@ -481,6 +527,7 @@ class FollowedStreamsViewModel @Inject constructor(
                     channelId = it.channelId,
                     channelLogin = it.channelLogin,
                     channelName = it.channelName,
+                    playbackUrl = it.playbackUrl,
                     gameId = it.gameId,
                     gameSlug = it.gameSlug,
                     gameName = it.gameName,

@@ -728,17 +728,18 @@ class MainActivity : AppCompatActivity() {
 //Navigation listeners
 
     fun startStream(stream: Stream, resolvedUrl: String? = null, forceStandardLiveEngine: Boolean = false) {
+        val effectiveResolvedUrl = resolvedUrl?.takeIf { it.isNotBlank() } ?: stream.playbackUrl
         val fragment = when (prefs.getString(C.PLAYER, "ExoPlayer")) {
             "MediaPlayer" -> {
                 if (stream.source == C.KICK) {
                     Toast.makeText(this, R.string.media_player_live_stream_fallback, Toast.LENGTH_LONG).show()
-                    createStreamFragment(stream, resolvedUrl, forceStandardLiveEngine)
+                    createStreamFragment(stream, effectiveResolvedUrl, forceStandardLiveEngine)
                 } else {
                     MediaPlayerFragment.newInstance(stream)
                 }
             }
             else -> {
-                createStreamFragment(stream, resolvedUrl, forceStandardLiveEngine)
+                createStreamFragment(stream, effectiveResolvedUrl, forceStandardLiveEngine)
             }
         }
         startPlayer(fragment)

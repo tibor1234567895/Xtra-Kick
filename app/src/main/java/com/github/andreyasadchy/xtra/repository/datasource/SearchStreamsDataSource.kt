@@ -157,7 +157,9 @@ class SearchStreamsDataSource(
                     channelLogin = stream.channelLogin,
                     fallback = stream.id
                 )?.let { key ->
-                    streamsByChannel.putIfAbsent(key, stream)
+                    if (streamsByChannel[key] == null) {
+                        streamsByChannel[key] = stream
+                    }
                 }
             }
         val liveChannels = kickResponse.channels
@@ -196,9 +198,8 @@ class SearchStreamsDataSource(
                             channelLogin = matchedChannel.slug,
                             fallback = null
                         ) ?: return@forEach
-                        streamsByChannel.putIfAbsent(
-                            channelKey,
-                            Stream(
+                        if (streamsByChannel[channelKey] == null) {
+                            streamsByChannel[channelKey] = Stream(
                                 id = item.channelId?.toString(),
                                 source = C.KICK,
                                 channelId = item.broadcasterUserId?.toString() ?: matchedChannel.userId?.toString(),
@@ -214,7 +215,7 @@ class SearchStreamsDataSource(
                                 profileImageUrl = item.profilePicture ?: matchedChannel.user?.profileImage,
                                 tags = item.customTags,
                             )
-                        )
+                        }
                     }
                 }
             }.onFailure { error ->

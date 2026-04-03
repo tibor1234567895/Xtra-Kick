@@ -44,6 +44,22 @@ class KickFollowImportResolverTest {
     }
 
     @Test
+    fun staysOnManualLoginWhenStillMissingWebsiteSession() {
+        val resolution = KickFollowImportResolver.resolve(
+            url = KICK_HOME_URL,
+            waitingForManualLogin = true,
+            importAttempted = false,
+            importCompleted = false,
+            kickCookieHeader = "auth-token=abc123",
+        )
+
+        assertEquals(
+            KickFollowImportResolution(waitingForManualLogin = true),
+            resolution
+        )
+    }
+
+    @Test
     fun redirectsAuthenticatedHomeToFollowingBeforeImport() {
         val resolution = KickFollowImportResolver.resolve(
             url = KICK_HOME_URL,
@@ -98,5 +114,12 @@ class KickFollowImportResolverTest {
     fun websiteSessionRequiresMoreThanAuthToken() {
         assertFalse(KickFollowImportResolver.hasKickWebsiteSession("auth-token=abc123"))
         assertTrue(KickFollowImportResolver.hasKickWebsiteSession("auth-token=abc123; XSRF-TOKEN=token"))
+    }
+
+    @Test
+    fun recognizesKickHomeUrlVariants() {
+        assertTrue(KickFollowImportResolver.isKickHomeUrl("https://kick.com"))
+        assertTrue(KickFollowImportResolver.isKickHomeUrl("https://kick.com/"))
+        assertFalse(KickFollowImportResolver.isKickHomeUrl(KICK_FOLLOWING_URL))
     }
 }

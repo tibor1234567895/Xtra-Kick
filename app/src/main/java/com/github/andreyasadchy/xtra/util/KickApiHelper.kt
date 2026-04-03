@@ -355,6 +355,10 @@ object KickApiHelper {
                     put(C.HEADER_CLIENT_ID, it)
                 }
             }
+            put("Accept", "application/json, text/plain, */*")
+            put("Origin", "https://kick.com")
+            put("Referer", "https://kick.com/")
+            put("x-kick-platform", "web")
             AuthStateHelper.getKickBearerToken(context)?.let {
                 put(C.HEADER_TOKEN, it)
             }

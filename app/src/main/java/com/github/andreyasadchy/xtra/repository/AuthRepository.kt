@@ -3,6 +3,8 @@ package com.github.andreyasadchy.xtra.repository
 import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
+import androidx.annotation.RequiresApi
+import androidx.annotation.RequiresExtension
 import com.github.andreyasadchy.xtra.model.kick.auth.KickOAuthTokenResponse
 import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendExchangeRequest
 import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendIntrospectRequest
@@ -113,12 +115,7 @@ class AuthRepository @Inject constructor(
 
     private suspend fun get(networkLibrary: String?, url: String, headers: Map<String, String>): String = withContext(Dispatchers.IO) {
         when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = awaitTimedHttpEngineResponse(url) {
-                    headers.forEach { (k, v) -> addHeader(k, v) }
-                }
-                response.asHttpEngineStringBody()
-            }
+            networkLibrary == "HttpEngine" && canUseHttpEngine() -> executeHttpEngineGet(url, headers)
             networkLibrary == "Cronet" && cronetEngine != null -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
@@ -164,13 +161,7 @@ class AuthRepository @Inject constructor(
 
     private suspend fun postJson(networkLibrary: String?, url: String, body: String): String = withContext(Dispatchers.IO) {
         when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = awaitTimedHttpEngineResponse(url) {
-                    addHeader("Content-Type", "application/json")
-                    setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
-                }
-                response.asHttpEngineStringBody()
-            }
+            networkLibrary == "HttpEngine" && canUseHttpEngine() -> executeHttpEnginePostJson(url, body)
             networkLibrary == "Cronet" && cronetEngine != null -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
@@ -205,6 +196,31 @@ class AuthRepository @Inject constructor(
         }
     }
 
+    private fun canUseHttpEngine(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+            httpEngine != null
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
+    private suspend fun executeHttpEngineGet(url: String, headers: Map<String, String>): String {
+        val response = awaitTimedHttpEngineResponse(url) {
+            headers.forEach { (k, v) -> addHeader(k, v) }
+        }
+        return response.asHttpEngineStringBody()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
+    private suspend fun executeHttpEnginePostJson(url: String, body: String): String {
+        val response = awaitTimedHttpEngineResponse(url) {
+            addHeader("Content-Type", "application/json")
+            setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
+        }
+        return response.asHttpEngineStringBody()
+    }
+
     private suspend fun <T> executeRequest(isBackendRequest: Boolean, block: suspend () -> T): T {
         return try {
             block()
@@ -216,6 +232,8 @@ class AuthRepository @Inject constructor(
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.R)
+    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
     private suspend fun awaitTimedHttpEngineResponse(
         url: String,
         configure: android.net.http.UrlRequest.Builder.() -> Unit,
@@ -255,6 +273,8 @@ class AuthRepository @Inject constructor(
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.R)
+    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
     private fun Pair<android.net.http.UrlResponseInfo, ByteArray>.asHttpEngineStringBody(): String {
         val statusCode = first.httpStatusCode
         if (statusCode in 200..299) {

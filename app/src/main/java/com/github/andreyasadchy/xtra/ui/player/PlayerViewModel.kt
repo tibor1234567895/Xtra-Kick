@@ -302,8 +302,12 @@ class PlayerViewModel @Inject constructor(
             viewModelScope.launch {
                 try {
                     streamResult.value = kickRepository
-                        .getChannel(channelLogin)
-                        .let { kickRepository.getPlayableUrl(it) }
+                        .getChannelLivestream(channelLogin)
+                        ?.playbackUrl
+                        ?.takeIf { it.isNotBlank() }
+                        ?: kickRepository
+                            .getChannel(channelLogin)
+                            .let { kickRepository.getPlayableUrl(it) }
                         .takeIf { !it.isNullOrBlank() }
                         ?: throw Exception("Kick playback URL unavailable")
                 } catch (e: Exception) {

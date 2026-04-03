@@ -75,7 +75,6 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.text.SimpleDateFormat
-import java.time.Instant
 import java.util.Date
 import java.util.Locale
 import java.util.PriorityQueue
@@ -141,7 +140,10 @@ class ChatViewModel @Inject constructor(
     private val kickReplayEmitIntervalMs = 750L
     private val kickReplayEmitLeadMs = 500L
     private val kickReplyThreadHistoryWindowMs = 6L * 60L * 60L * 1000L
-    private val kickReplayPendingMessages = PriorityQueue<ChatMessage>(
+    private val kickRealtimeChatroomIdPrefix = "kick_realtime_chatroom_id"
+    private val kickPreferredMessageSourcePrefix = "kick_preferred_message_source"
+    private val kickReplayPendingMessages = PriorityQueue(
+        11,
         compareBy<ChatMessage> { it.timestamp ?: Long.MIN_VALUE }
             .thenBy { kickMessageKey(it) }
     )
@@ -604,7 +606,11 @@ class ChatViewModel @Inject constructor(
                 val list = if (isKickPreferred() && !channelId.isNullOrBlank()) {
                     val kickMessageSources = resolveKickMessageSources(channelId, channelLogin)
                     Log.w("KickRecentChat", "preload start channelId=$channelId channelLogin=$channelLogin sources=$kickMessageSources")
-                    val fetchedMessages = fetchKickMessages(kickMessageSources).ifEmpty {
+                    val fetchedMessages = fetchKickMessages(
+                        messageSources = kickMessageSources,
+                        channelId = channelId,
+                        channelLogin = channelLogin
+                    ).ifEmpty {
                         val liveHistorySources = buildList {
                             add(channelId)
                             addAll(kickMessageSources)
@@ -613,14 +619,20 @@ class ChatViewModel @Inject constructor(
                             "KickRecentChat",
                             "preload live history fallback channelId=$channelId channelLogin=$channelLogin sources=$liveHistorySources"
                         )
-                        fetchKickLiveHistoryMessages(liveHistorySources).ifEmpty {
-                            val historyStartTime = Instant.ofEpochMilli(
+                        fetchKickLiveHistoryMessages(
+                            messageSources = liveHistorySources,
+                            channelId = channelId,
+                            channelLogin = channelLogin
+                        ).ifEmpty {
+                            val historyStartTime = formatIso8601Utc(
                                 System.currentTimeMillis() - 5L * 60L * 1000L
-                            ).toString()
+                            )
                             Log.w("KickRecentChat", "preload history fallback channelId=$channelId channelLogin=$channelLogin start=$historyStartTime")
                             fetchKickHistoryMessages(
                                 messageSources = kickMessageSources,
                                 startTime = historyStartTime,
+                                channelId = channelId,
+                                channelLogin = channelLogin,
                                 debugPhase = "live_preload",
                                 maxPages = 2
                             )
@@ -731,11 +743,12 @@ class ChatViewModel @Inject constructor(
         val channel = runCatching { kickRepository.getChannel(channelLogin) }.getOrNull()
             ?: runCatching { kickRepository.getChannel(channelId) }.getOrNull()
         val resolvedChatroomIds = linkedSetOf<String>().apply {
+            getCachedKickRealtimeChatroomId(channelId, channelLogin)?.let(::add)
             runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelLogin) }.getOrNull().orEmpty().forEach(::add)
-            runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelId) }.getOrNull().orEmpty().forEach(::add)
             kickRepository.getChatroomId(channel ?: return@apply)?.takeIf { it.isNotBlank() }?.let(::add)
         }
         return LinkedHashSet<String>().apply {
+            getCachedKickPreferredMessageSource(channelId, channelLogin)?.let(::add)
             addAll(resolvedChatroomIds)
             channel?.userId?.toString()?.takeIf { it.isNotBlank() }?.let(::add)
             channel?.user?.id?.toString()?.takeIf { it.isNotBlank() }?.let(::add)
@@ -744,11 +757,73 @@ class ChatViewModel @Inject constructor(
         }.filter { it.isNotBlank() }
     }
 
+    private fun getKickRealtimeChatroomPreferenceKeys(channelId: String?, channelLogin: String?): List<String> {
+        return buildList {
+            channelId?.trim()?.takeIf { it.isNotBlank() }?.let { add("$kickRealtimeChatroomIdPrefix:id:${it.lowercase(Locale.ROOT)}") }
+            channelLogin?.trim()?.takeIf { it.isNotBlank() }?.let { add("$kickRealtimeChatroomIdPrefix:login:${it.lowercase(Locale.ROOT)}") }
+        }
+    }
+
+    private fun getCachedKickRealtimeChatroomId(channelId: String?, channelLogin: String?): String? {
+        val prefs = applicationContext.prefs()
+        return getKickRealtimeChatroomPreferenceKeys(channelId, channelLogin)
+            .asSequence()
+            .mapNotNull { key -> prefs.getString(key, null)?.trim() }
+            .firstOrNull { it.isNotBlank() }
+    }
+
+    private fun cacheKickRealtimeChatroomId(chatroomId: String, channelId: String?, channelLogin: String?) {
+        val normalizedChatroomId = chatroomId.trim()
+        if (normalizedChatroomId.isBlank()) {
+            return
+        }
+        val keys = getKickRealtimeChatroomPreferenceKeys(channelId, channelLogin)
+        if (keys.isEmpty()) {
+            return
+        }
+        applicationContext.prefs().edit().apply {
+            keys.forEach { key -> putString(key, normalizedChatroomId) }
+        }.apply()
+    }
+
+    private fun getKickMessageSourcePreferenceKeys(channelId: String?, channelLogin: String?): List<String> {
+        return buildList {
+            channelId?.trim()?.takeIf { it.isNotBlank() }?.let { add("$kickPreferredMessageSourcePrefix:id:${it.lowercase(Locale.ROOT)}") }
+            channelLogin?.trim()?.takeIf { it.isNotBlank() }?.let { add("$kickPreferredMessageSourcePrefix:login:${it.lowercase(Locale.ROOT)}") }
+        }
+    }
+
+    private fun getCachedKickPreferredMessageSource(channelId: String?, channelLogin: String?): String? {
+        val prefs = applicationContext.prefs()
+        return getKickMessageSourcePreferenceKeys(channelId, channelLogin)
+            .asSequence()
+            .mapNotNull { key -> prefs.getString(key, null)?.trim() }
+            .firstOrNull { it.isNotBlank() }
+    }
+
+    private fun cacheKickPreferredMessageSource(source: String, channelId: String?, channelLogin: String?) {
+        val normalizedSource = source.trim()
+        if (normalizedSource.isBlank()) {
+            return
+        }
+        val keys = getKickMessageSourcePreferenceKeys(channelId, channelLogin)
+        if (keys.isEmpty()) {
+            return
+        }
+        val prefs = applicationContext.prefs()
+        prefs.edit().apply {
+            keys.forEach { key -> putString(key, normalizedSource) }
+        }.apply()
+    }
+
     private suspend fun resolveKickRealtimeChatroomId(channelId: String, channelLogin: String): String {
-        return runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelLogin) }.getOrNull().orEmpty().firstOrNull()
+        getCachedKickRealtimeChatroomId(channelId, channelLogin)?.let { return it }
+        val resolvedChatroomId = runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelLogin) }.getOrNull().orEmpty().firstOrNull()
             ?: runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelId) }.getOrNull().orEmpty().firstOrNull()
             ?: runCatching { kickRepository.getChannel(channelLogin) }.getOrNull()?.let(kickRepository::getChatroomId)
             ?: channelId
+        cacheKickRealtimeChatroomId(resolvedChatroomId, channelId, channelLogin)
+        return resolvedChatroomId
     }
 
     private suspend fun resolveKickBroadcasterUserId(channelId: String?, channelLogin: String?): Long? {
@@ -1037,7 +1112,11 @@ class ChatViewModel @Inject constructor(
         return mappedMessages
     }
 
-    private suspend fun fetchKickMessages(messageSources: List<String>): List<ChatMessage> {
+    private suspend fun fetchKickMessages(
+        messageSources: List<String>,
+        channelId: String? = null,
+        channelLogin: String? = null
+    ): List<ChatMessage> {
         val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false)
         for (source in messageSources) {
             try {
@@ -1068,6 +1147,7 @@ class ChatViewModel @Inject constructor(
                     thirdPartyEmotesUpdated.emit(Unit)
                 }
                 if (messages.isNotEmpty()) {
+                    cacheKickPreferredMessageSource(source, channelId, channelLogin)
                     return messages
                 }
             } catch (e: Exception) {
@@ -1082,6 +1162,8 @@ class ChatViewModel @Inject constructor(
     private suspend fun fetchKickHistoryMessages(
         messageSources: List<String>,
         startTime: String,
+        channelId: String? = null,
+        channelLogin: String? = null,
         debugSessionKey: String? = null,
         debugPhase: String = "timeline",
         maxPages: Int = 1,
@@ -1137,6 +1219,7 @@ class ChatViewModel @Inject constructor(
                     .distinctBy(::kickMessageKey)
                     .sortedBy { it.timestamp }
                 if (dedupedMessages.isNotEmpty()) {
+                    cacheKickPreferredMessageSource(source, channelId, channelLogin)
                     return dedupedMessages
                 }
             } catch (e: Exception) {
@@ -1158,7 +1241,11 @@ class ChatViewModel @Inject constructor(
         return emptyList()
     }
 
-    private suspend fun fetchKickLiveHistoryMessages(messageSources: List<String>): List<ChatMessage> {
+    private suspend fun fetchKickLiveHistoryMessages(
+        messageSources: List<String>,
+        channelId: String? = null,
+        channelLogin: String? = null
+    ): List<ChatMessage> {
         val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false)
         for (source in messageSources) {
             try {
@@ -1190,6 +1277,7 @@ class ChatViewModel @Inject constructor(
                     thirdPartyEmotesUpdated.emit(Unit)
                 }
                 if (messages.isNotEmpty()) {
+                    cacheKickPreferredMessageSource(source, channelId, channelLogin)
                     return messages
                 }
             } catch (e: Exception) {
@@ -1215,11 +1303,21 @@ class ChatViewModel @Inject constructor(
             ?: kickRepository.getChannel(channelLogin).id?.toString()
             ?: return emptyList()
         val messageSources = resolveKickMessageSources(resolvedChannelId, channelLogin)
-        val historyMessages = fetchKickMessages(messageSources).ifEmpty {
-            fetchKickLiveHistoryMessages(messageSources).ifEmpty {
+        val historyMessages = fetchKickMessages(
+            messageSources = messageSources,
+            channelId = resolvedChannelId,
+            channelLogin = channelLogin
+        ).ifEmpty {
+            fetchKickLiveHistoryMessages(
+                messageSources = messageSources,
+                channelId = resolvedChannelId,
+                channelLogin = channelLogin
+            ).ifEmpty {
                 fetchKickHistoryMessages(
                     messageSources = messageSources,
                     startTime = formatIso8601Utc(historyStartTimeMs.coerceAtLeast(0L)),
+                    channelId = resolvedChannelId,
+                    channelLogin = channelLogin,
                     debugPhase = "reply_thread"
                 )
             }
@@ -1311,7 +1409,11 @@ class ChatViewModel @Inject constructor(
             delay(1500)
             while (currentCoroutineContext().isActive) {
                 try {
-                    fetchKickMessages(kickMessageSources)
+                    fetchKickMessages(
+                        messageSources = kickMessageSources,
+                        channelId = channelId,
+                        channelLogin = channelLogin
+                    )
                         .forEach { message ->
                             val key = message.id ?: "${message.timestamp}:${message.userName}:${message.message}"
                             val shouldEmit = synchronized(kickMessageIds) {
@@ -1410,6 +1512,8 @@ class ChatViewModel @Inject constructor(
                     val preloadMessages = fetchKickHistoryMessages(
                         messageSources = kickMessageSources,
                         startTime = preloadStartTime,
+                        channelId = channelId,
+                        channelLogin = channelLogin,
                         debugSessionKey = sessionKey,
                         debugPhase = "preload",
                         maxPages = 4
@@ -1459,6 +1563,8 @@ class ChatViewModel @Inject constructor(
                         val timelineMessages = fetchKickHistoryMessages(
                             messageSources = kickMessageSources,
                             startTime = startTime,
+                            channelId = channelId,
+                            channelLogin = channelLogin,
                             debugSessionKey = sessionKey,
                             debugPhase = "timeline"
                         )

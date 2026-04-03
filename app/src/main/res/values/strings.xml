@@ -577,9 +577,11 @@
     <string name="import_files">Import files</string>
     <string name="import_kick_followed">Import Kick follows</string>
     <string name="import_kick_followed_title">Import Kick follows</string>
-    <string name="import_kick_followed_status_login">Loading Kick website session. If import fails, sign in to Kick in this dialog and wait for it to continue.</string>
+    <string name="import_kick_followed_status_login">Checking for an existing Kick website session in this app. If one is available, import will continue automatically.</string>
+    <string name="import_kick_followed_status_checking">Checking for an existing Kick website session in this app...</string>
+    <string name="import_kick_followed_status_reusing">Existing Kick website session found. Preparing import...</string>
     <string name="import_kick_followed_status_loading">Importing followed channels from Kick...</string>
-    <string name="import_kick_followed_status_sign_in">Kick website login is required for this import. The app OAuth login is not enough here. Sign in to kick.com in this dialog, then import will continue automatically.</string>
+    <string name="import_kick_followed_status_sign_in">Kick website login is required for import. If you already signed in to Kick in this app before, import may continue automatically. Otherwise, sign in in this dialog.</string>
     <string name="import_kick_followed_success">Imported %d followed channels</string>
     <string name="import_kick_followed_empty">No followed channels found</string>
     <string name="import_kick_followed_error">Kick follow import failed: %s</string>

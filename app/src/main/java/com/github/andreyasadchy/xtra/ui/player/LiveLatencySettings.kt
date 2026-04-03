@@ -4,6 +4,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.core.content.edit
 import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import com.github.andreyasadchy.xtra.util.C
 
@@ -118,6 +119,7 @@ object LiveLatencySettings {
         return true
     }
 
+    @UnstableApi
     fun toLoadControl(config: LiveLatencyConfig): DefaultLoadControl {
         return DefaultLoadControl.Builder().apply {
             setBufferDurationsMs(

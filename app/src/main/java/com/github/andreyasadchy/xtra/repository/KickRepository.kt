@@ -37,6 +37,7 @@ import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.tokenPrefs
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -131,6 +132,10 @@ class KickRepository @Inject constructor(
     private val websiteSearchCache = ConcurrentHashMap<String, Pair<Long, KickWebsiteSearchResponse>>()
     private val kickBadgeCatalogRefreshAt = ConcurrentHashMap<String, Long>()
     private val kickBadgeCatalogRefreshInProgress = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    private val channelRequestLock = Any()
+    private val inFlightChannelRequests = mutableMapOf<String, CompletableDeferred<KickChannelResponse>>()
+    private val channelLivestreamRequestLock = Any()
+    private val inFlightChannelLivestreamRequests = mutableMapOf<String, CompletableDeferred<KickChannelLivestream?>>()
     private val badgeCacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile
     private var badgePersistScheduled = false
@@ -215,9 +220,7 @@ class KickRepository @Inject constructor(
     }
 
     suspend fun getFollowedChannelsWebPage(cursor: String? = null): KickFollowedChannelsPage = withContext(Dispatchers.IO) {
-        val accessToken = context.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)?.takeIf { it.isNotBlank() }
-            ?: throw IOException("missing kick auth token")
-        val cookieHeader = CookieManager.getInstance().getCookie("https://kick.com")?.takeIf { it.isNotBlank() }
+        val cookieHeader = getKickCookieHeader()
             ?: throw IOException("missing kick web cookies")
         val url = buildString {
             append("https://kick.com/api/v2/channels/followed")
@@ -226,12 +229,19 @@ class KickRepository @Inject constructor(
                 append(urlEncode(cursor))
             }
         }
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36")
+            .header("Origin", "https://kick.com")
+            .header("Referer", "https://kick.com/")
+            .header("Accept", "application/json, text/plain, */*")
+            .header("x-kick-platform", "web")
+            .header("Cookie", cookieHeader)
+        extractKickXsrfToken(cookieHeader)?.let { xsrfToken ->
+            requestBuilder.header("X-XSRF-TOKEN", xsrfToken)
+        }
         okHttpClient.newCall(
-            createRequestBuilder(url, isKickWeb = true)
-                .header("Authorization", "Bearer $accessToken")
-                .header("Cookie", cookieHeader)
-                .header("Accept", "application/json")
-                .build()
+            requestBuilder.build()
         ).execute().use { response ->
             val body = response.body.string()
             if (!response.isSuccessful) {
@@ -255,7 +265,10 @@ class KickRepository @Inject constructor(
         }
     }
 
-    suspend fun getChannel(channelSlug: String): KickChannelResponse {
+    suspend fun getChannel(
+        channelSlug: String,
+        prefetchBadgeCatalog: Boolean = true,
+    ): KickChannelResponse {
         val normalizedKey = channelSlug.trim().lowercase(Locale.ROOT)
         val now = System.currentTimeMillis()
         channelCache[normalizedKey]?.let { (cachedAt, cachedChannel) ->
@@ -263,23 +276,45 @@ class KickRepository @Inject constructor(
                 return cachedChannel
             }
         }
-        val decoded = json.decodeFromString<KickChannelResponse>(
-            getRaw("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}")
-        )
-        return decoded.also { channel ->
-            val cachedAt = System.currentTimeMillis()
-            channelCache[normalizedKey] = cachedAt to channel
-            channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
-            channel.id?.toString()?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
-            val livestream = channel.livestream
-            channelLivestreamCache[normalizedKey] = cachedAt to livestream
-            channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelLivestreamCache[it] = cachedAt to livestream }
-            channel.id?.toString()?.takeIf { it.isNotBlank() }?.let { channelLivestreamCache[it] = cachedAt to livestream }
-            val changed = cacheKickBadgeUrls(channel)
-            if (changed) {
-                schedulePersistBadgeCache()
+        val deferred = CompletableDeferred<KickChannelResponse>()
+        val inFlight = synchronized(channelRequestLock) {
+            inFlightChannelRequests[normalizedKey]?.also { return@synchronized it }
+                ?: deferred.also { inFlightChannelRequests[normalizedKey] = it }
+        }
+        if (inFlight !== deferred) {
+            return inFlight.await()
+        }
+        try {
+            val decoded = json.decodeFromString<KickChannelResponse>(
+                getRaw("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}")
+            )
+            return decoded.also { channel ->
+                val cachedAt = System.currentTimeMillis()
+                channelCache[normalizedKey] = cachedAt to channel
+                channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
+                channel.id?.toString()?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
+                val livestream = channel.livestream
+                channelLivestreamCache[normalizedKey] = cachedAt to livestream
+                channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelLivestreamCache[it] = cachedAt to livestream }
+                channel.id?.toString()?.takeIf { it.isNotBlank() }?.let { channelLivestreamCache[it] = cachedAt to livestream }
+                val changed = cacheKickBadgeUrls(channel)
+                if (changed) {
+                    schedulePersistBadgeCache()
+                }
+                if (prefetchBadgeCatalog) {
+                    maybeRefreshKickBadgeCatalogInBackground(channel)
+                }
+                deferred.complete(channel)
             }
-            maybeRefreshKickBadgeCatalogInBackground(channel)
+        } catch (t: Throwable) {
+            deferred.completeExceptionally(t)
+            throw t
+        } finally {
+            synchronized(channelRequestLock) {
+                if (inFlightChannelRequests[normalizedKey] === deferred) {
+                    inFlightChannelRequests.remove(normalizedKey)
+                }
+            }
         }
     }
 
@@ -327,17 +362,37 @@ class KickRepository @Inject constructor(
                 }
             }
         }
-        val livestream = parseChannelLivestream(
-            json.parseToJsonElement(
-                getRaw(
-                    url = "https://kick.com/api/v2/channels/${urlEncode(channelSlug)}/livestream",
-                    isKickWeb = true
+        val deferred = CompletableDeferred<KickChannelLivestream?>()
+        val inFlight = synchronized(channelLivestreamRequestLock) {
+            inFlightChannelLivestreamRequests[normalizedKey]?.also { return@synchronized it }
+                ?: deferred.also { inFlightChannelLivestreamRequests[normalizedKey] = it }
+        }
+        if (inFlight !== deferred) {
+            return inFlight.await()
+        }
+        try {
+            val livestream = parseChannelLivestream(
+                json.parseToJsonElement(
+                    getRaw(
+                        url = "https://kick.com/api/v2/channels/${urlEncode(channelSlug)}/livestream",
+                        isKickWeb = true
+                    )
                 )
             )
-        )
-        return livestream.also {
-            val cachedAt = System.currentTimeMillis()
-            channelLivestreamCache[normalizedKey] = cachedAt to livestream
+            return livestream.also {
+                val cachedAt = System.currentTimeMillis()
+                channelLivestreamCache[normalizedKey] = cachedAt to livestream
+                deferred.complete(livestream)
+            }
+        } catch (t: Throwable) {
+            deferred.completeExceptionally(t)
+            throw t
+        } finally {
+            synchronized(channelLivestreamRequestLock) {
+                if (inFlightChannelLivestreamRequests[normalizedKey] === deferred) {
+                    inFlightChannelLivestreamRequests.remove(normalizedKey)
+                }
+            }
         }
     }
 
@@ -700,7 +755,11 @@ class KickRepository @Inject constructor(
                     gameName = gameName,
                 ) ?: break
                 page.clips.forEach { clip ->
-                    clip.id?.let { id -> collected.putIfAbsent(id, clip) }
+                    clip.id?.let { id ->
+                        if (collected[id] == null) {
+                            collected[id] = clip
+                        }
+                    }
                 }
                 nextCursor = page.nextCursor
                 val nextExplicit = page.nextPageUrl
@@ -1287,6 +1346,7 @@ class KickRepository @Inject constructor(
             channelId = item.channel?.id?.toString() ?: item.channelId?.toString(),
             channelLogin = channelLogin,
             channelName = item.channel?.user?.username,
+            playbackUrl = item.channel?.playbackUrl,
             gameId = gameId ?: category?.id?.toString(),
             gameSlug = gameSlug ?: category?.slug,
             gameName = gameName ?: category?.name,
@@ -1307,6 +1367,7 @@ class KickRepository @Inject constructor(
             channelId = channel.id?.toString(),
             channelLogin = channel.slug,
             channelName = channel.user?.username,
+            playbackUrl = livestream?.playbackUrl ?: channel.playbackUrl,
             gameId = livestream?.category?.id?.toString(),
             gameSlug = livestream?.category?.slug,
             gameName = livestream?.category?.name,
@@ -1369,7 +1430,7 @@ class KickRepository @Inject constructor(
             if (!directImageUrl.isNullOrBlank()) {
                 kickBadgeTypeCandidates(type).forEach { candidate ->
                     kickBadgeUrls["kick:$candidate:$version"] = directImageUrl
-                    kickBadgeUrls.putIfAbsent("kick:$candidate:default", directImageUrl)
+                    cacheKickBadgeUrlIfAbsent("kick:$candidate:default", directImageUrl)
                 }
             }
             val resolvedImageUrl = directImageUrl
@@ -1400,6 +1461,12 @@ class KickRepository @Inject constructor(
                 url3x = resolvedImageUrl,
                 url4x = resolvedImageUrl,
             )
+        }.distinctBy { badge ->
+            listOf(
+                badge.setId,
+                badge.version,
+                badge.url4x ?: badge.url3x ?: badge.url2x ?: badge.url1x
+            ).joinToString("|")
         }.takeIf { it.isNotEmpty() }
         val reply = extractKickReply(message)
         val targetLogin = targetUser?.login
@@ -1715,7 +1782,7 @@ class KickRepository @Inject constructor(
                 if (kickBadgeUrls.put(key, imageUrl) != imageUrl) {
                     changed = true
                 }
-                if (kickBadgeUrls.putIfAbsent("kick:$candidate:default", imageUrl) == null) {
+                if (cacheKickBadgeUrlIfAbsent("kick:$candidate:default", imageUrl)) {
                     changed = true
                 }
                 if (isKickBadgeDebugEnabled() && candidate in setOf("moderator", "vip", "verified", "og", "founder", "sub_gifter", "broadcaster", "staff")) {
@@ -1931,7 +1998,7 @@ class KickRepository @Inject constructor(
                                 if (kickBadgeUrls.put(key, imageUrl) == null) {
                                     added += 1
                                 }
-                                kickBadgeUrls.putIfAbsent("kick:$candidate:default", imageUrl)
+                                cacheKickBadgeUrlIfAbsent("kick:$candidate:default", imageUrl)
                             }
                         }
                     }
@@ -1984,6 +2051,16 @@ class KickRepository @Inject constructor(
                 }
                 null
             }
+        }
+    }
+
+    private fun cacheKickBadgeUrlIfAbsent(key: String, imageUrl: String): Boolean {
+        synchronized(kickBadgeUrls) {
+            if (kickBadgeUrls.containsKey(key)) {
+                return false
+            }
+            kickBadgeUrls[key] = imageUrl
+            return true
         }
     }
 

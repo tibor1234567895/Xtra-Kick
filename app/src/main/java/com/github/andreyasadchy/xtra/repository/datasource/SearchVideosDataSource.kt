@@ -90,7 +90,9 @@ class SearchVideosDataSource(
                     .forEach { video ->
                         val key = video.id?.takeIf { it.isNotBlank() }
                             ?: "${video.channelLogin}:${video.title}:${video.uploadDate}"
-                        videosById.putIfAbsent(key, video)
+                        if (videosById[key] == null) {
+                            videosById[key] = video
+                        }
                     }
                 if (videosById.size >= params.loadSize) return@forEach
             }
