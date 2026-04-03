@@ -20,14 +20,11 @@ import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatDividerDecoration
-import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-import com.google.mlkit.nl.translate.TranslateLanguage
 import dagger.hilt.android.AndroidEntryPoint
-import java.util.Locale
 
 @AndroidEntryPoint
 class ReplyClickedDialog : BottomSheetDialogFragment() {
@@ -37,14 +34,11 @@ class ReplyClickedDialog : BottomSheetDialogFragment() {
         fun onLoadReplyThreadHistory(selectedMessage: ChatMessage, historyStartTimeMs: Long)
         fun onReplyClicked(replyId: String?, userLogin: String?, userName: String?, message: String?)
         fun onCopyMessageClicked(message: String)
-        fun onTranslateMessageClicked(chatMessage: ChatMessage, languageTag: String?)
     }
 
     companion object {
         private const val KEY_MESSAGING = "messaging"
         private const val THREAD_HISTORY_WINDOW_MS = 6L * 60L * 60L * 1000L
-        private var selectedLanguage: String? = null
-
         fun newInstance(messagingEnabled: Boolean): ReplyClickedDialog {
             return ReplyClickedDialog().apply {
                 arguments = bundleOf(
@@ -210,33 +204,8 @@ class ReplyClickedDialog : BottomSheetDialogFragment() {
                 clipboard?.setPrimaryClip(ClipData.newPlainText("label", chatMessage.fullMsg))
                 dismiss()
             }
-            if (requireContext().prefs().getBoolean(C.CHAT_TRANSLATE, false) && (chatMessage.message != null || chatMessage.systemMsg != null) && Build.SUPPORTED_64_BIT_ABIS.firstOrNull() == "arm64-v8a") {
-                translateMessage.visibility = View.VISIBLE
-                translateMessage.setOnClickListener {
-                    listener.onTranslateMessageClicked(chatMessage, null)
-                }
-                translateMessageSelectLanguage.visibility = View.VISIBLE
-                translateMessageSelectLanguage.setOnClickListener {
-                    val languages = TranslateLanguage.getAllLanguages()
-                    val names = languages.map { Locale.forLanguageTag(it).displayName }.toTypedArray()
-                    requireContext().getAlertDialogBuilder()
-                        .setSingleChoiceItems(names, languages.indexOf(selectedLanguage)) { _, which ->
-                            languages.getOrNull(which)?.let { language ->
-                                selectedLanguage = language
-                            }
-                        }
-                        .setPositiveButton(android.R.string.ok) { _, _ ->
-                            selectedLanguage?.let {
-                                listener.onTranslateMessageClicked(chatMessage, it)
-                            }
-                        }
-                        .setNegativeButton(getString(android.R.string.cancel), null)
-                        .show()
-                }
-            } else {
-                translateMessage.visibility = View.GONE
-                translateMessageSelectLanguage.visibility = View.GONE
-            }
+            translateMessage.visibility = View.GONE
+            translateMessageSelectLanguage.visibility = View.GONE
         }
     }
 
@@ -250,16 +219,6 @@ class ReplyClickedDialog : BottomSheetDialogFragment() {
                 }
             }.forEach {
                 adapter.notifyItemChanged(it)
-            }
-        }
-    }
-
-    fun updateTranslation(chatMessage: ChatMessage) {
-        adapter?.let { adapter ->
-            synchronized(adapter.messages) {
-                adapter.messages.indexOf(chatMessage).takeIf { it != -1 }
-            }?.let {
-                adapter.notifyItemChanged(it, ChatAdapter.PAYLOAD_REFORMAT)
             }
         }
     }

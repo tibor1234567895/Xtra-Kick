@@ -202,7 +202,7 @@ class SearchStreamsDataSource(
                             streamsByChannel[channelKey] = Stream(
                                 id = item.channelId?.toString(),
                                 source = C.KICK,
-                                channelId = item.broadcasterUserId?.toString() ?: matchedChannel.userId?.toString(),
+                                channelId = item.broadcasterUserId.toString(),
                                 channelLogin = item.slug ?: matchedChannel.slug,
                                 channelName = matchedChannel.user?.username ?: item.slug,
                                 gameId = item.category?.id?.toString(),

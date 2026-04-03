@@ -137,6 +137,7 @@ class KickRepository @Inject constructor(
     private val channelLivestreamRequestLock = Any()
     private val inFlightChannelLivestreamRequests = mutableMapOf<String, CompletableDeferred<KickChannelLivestream?>>()
     private val badgeCacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val livestreamPrefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile
     private var badgePersistScheduled = false
 
@@ -394,6 +395,21 @@ class KickRepository @Inject constructor(
                 }
             }
         }
+    }
+
+    fun prefetchChannelLivestreams(channelSlugs: List<String>, forceRefresh: Boolean = false) {
+        channelSlugs
+            .asSequence()
+            .map { it.trim().lowercase(Locale.ROOT) }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .forEach { channelSlug ->
+                livestreamPrefetchScope.launch {
+                    runCatching {
+                        getChannelLivestream(channelSlug, forceRefresh = forceRefresh)
+                    }
+                }
+            }
     }
 
     suspend fun getChannelVideos(channelSlug: String, channelId: String? = null, limit: Int = 30): List<Video> {

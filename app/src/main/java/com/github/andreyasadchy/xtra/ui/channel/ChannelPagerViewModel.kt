@@ -78,7 +78,7 @@ class ChannelPagerViewModel @Inject constructor(
             viewModelScope.launch {
                 _stream.value = if (!args.channelLogin.isNullOrBlank()) {
                     try {
-                        val channelLogin = args.channelLogin!!
+                        val channelLogin = requireNotNull(args.channelLogin)
                         val channel = kickRepository.getChannel(channelLogin)
                         val stream = kickRepository.toStream(channel)
                         Stream(
@@ -192,7 +192,8 @@ class ChannelPagerViewModel @Inject constructor(
             viewModelScope.launch {
                 _user.value = if (!args.channelLogin.isNullOrBlank()) {
                     try {
-                        kickRepository.getChannel(args.channelLogin!!).let { kickRepository.toUser(it) }
+                        val channelLogin = requireNotNull(args.channelLogin)
+                        kickRepository.getChannel(channelLogin).let { kickRepository.toUser(it) }
                     } catch (_: Exception) {
                         null
                     }

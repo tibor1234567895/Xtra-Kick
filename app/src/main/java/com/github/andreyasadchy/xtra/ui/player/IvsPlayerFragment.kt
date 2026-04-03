@@ -8,7 +8,9 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import android.view.SurfaceHolder
@@ -24,6 +26,7 @@ import com.amazonaws.ivs.player.PlayerException
 import com.amazonaws.ivs.player.Quality
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.ui.Stream
+import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
 
 @OptIn(UnstableApi::class)
@@ -41,9 +44,15 @@ class IvsPlayerFragment : PlayerFragment() {
     private var currentUrl: String? = null
     private var recoveryInProgress = false
     private var resumeOnStart = false
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var activeNetworkIsCellular: Boolean? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var backgroundAudioTransitionRequested = false
 
     override fun onStart() {
         super.onStart()
+        registerNetworkCallback()
         val callback = object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 surfaceCreated = true
@@ -124,6 +133,10 @@ class IvsPlayerFragment : PlayerFragment() {
                 }
                 player?.addListener(listener)
                 playerListener = listener
+                if (viewModel.restoreQuality) {
+                    viewModel.restoreQuality = false
+                    changeQuality(viewModel.previousQuality)
+                }
                 if (resumeOnStart && player?.state != Player.State.PLAYING) {
                     boundService.play()
                     resumeOnStart = false
@@ -156,7 +169,6 @@ class IvsPlayerFragment : PlayerFragment() {
             startPlayer()
         }
         super.initialize()
-        binding.playerControls.audioOnly.visibility = View.GONE
     }
 
     private fun updatePlayingState() {
@@ -201,6 +213,7 @@ class IvsPlayerFragment : PlayerFragment() {
             qualitiesByKey[key] = quality
             map[key] = KickLivePlayback.qualityLabel(quality) to null
         }
+        map[AUDIO_ONLY_QUALITY] = getString(R.string.audio_only) to null
         if (map != viewModel.qualities) {
             viewModel.qualities = map
             setDefaultQuality()
@@ -292,8 +305,18 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun changeQuality(selectedQuality: String?) {
-        viewModel.previousQuality = viewModel.quality
+        if (selectedQuality == AUDIO_ONLY_QUALITY) {
+            startAudioOnly()
+            return
+        }
+        val wasAudioOnly = viewModel.quality == AUDIO_ONLY_QUALITY
+        if (!wasAudioOnly) {
+            viewModel.previousQuality = viewModel.quality
+        }
         viewModel.quality = selectedQuality
+        if (wasAudioOnly) {
+            exitAudioOnlyMode()
+        }
         val ivsPlayer = player ?: return
         when (selectedQuality) {
             AUTO_QUALITY -> ivsPlayer.setAutoQualityMode(true)
@@ -304,6 +327,52 @@ class IvsPlayerFragment : PlayerFragment() {
         }
         persistSelectedQuality(selectedQuality)
         setQualityText()
+    }
+
+    private fun registerNetworkCallback() {
+        if (networkCallback != null || videoType != STREAM) {
+            return
+        }
+        val manager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        connectivityManager = manager
+        activeNetworkIsCellular = isActiveNetworkCellular()
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: android.net.Network, networkCapabilities: NetworkCapabilities) {
+                val isActiveNetwork = connectivityManager?.activeNetwork == network
+                if (!isActiveNetwork || !networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                    return
+                }
+                val isCellular = networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                mainHandler.post {
+                    handleNetworkTransportChanged(isCellular)
+                }
+            }
+        }
+        networkCallback = callback
+        manager.registerDefaultNetworkCallback(callback)
+    }
+
+    private fun unregisterNetworkCallback() {
+        networkCallback?.let { callback ->
+            try {
+                connectivityManager?.unregisterNetworkCallback(callback)
+            } catch (_: Exception) {
+            }
+        }
+        networkCallback = null
+        connectivityManager = null
+    }
+
+    private fun handleNetworkTransportChanged(isCellular: Boolean) {
+        val previousTransport = activeNetworkIsCellular
+        activeNetworkIsCellular = isCellular
+        if (previousTransport == null || previousTransport == isCellular || videoType != STREAM) {
+            return
+        }
+        val preferredQuality = resolvePreferredQuality(isCellular) ?: return
+        if (preferredQuality != viewModel.quality) {
+            changeQuality(preferredQuality)
+        }
     }
 
     private fun persistSelectedQuality(selectedQuality: String?) {
@@ -317,7 +386,17 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun startAudioOnly() {
-        Toast.makeText(requireContext(), R.string.ivs_feature_not_supported, Toast.LENGTH_SHORT).show()
+        if (viewModel.quality == AUDIO_ONLY_QUALITY) {
+            return
+        }
+        backgroundAudioTransitionRequested = true
+        viewModel.restoreQuality = true
+        viewModel.previousQuality = viewModel.quality
+        viewModel.quality = AUDIO_ONLY_QUALITY
+        playbackService?.attachSurface(null)
+        binding.playerSurface.visibility = View.GONE
+        changePlayerMode()
+        setQualityText()
     }
 
     override fun toggleAudioCompressor() {
@@ -353,6 +432,7 @@ class IvsPlayerFragment : PlayerFragment() {
     override fun onStop() {
         super.onStop()
         binding.playerControls.root.removeCallbacks(updateProgressAction)
+        unregisterNetworkCallback()
         val ivsPlayer = player
         val shouldKeepPlaying = ivsPlayer?.let { shouldContinueIvsInBackground(it) } ?: false
         Log.d(
@@ -372,6 +452,7 @@ class IvsPlayerFragment : PlayerFragment() {
                     updatePlayingState()
                 }
             }
+            backgroundAudioTransitionRequested = false
             playerListener?.let { ivsPlayer.removeListener(it) }
             playerListener = null
         }
@@ -419,14 +500,32 @@ class IvsPlayerFragment : PlayerFragment() {
             Toast.makeText(requireContext(), R.string.ivs_fallback_to_standard_player, Toast.LENGTH_SHORT).show()
         }
         playbackService?.stopPlayback()
-        startStream(resolvedUrl)
+        requireArguments().putBoolean(KEY_FORCE_STANDARD_LIVE_ENGINE, true)
+        (activity as? MainActivity)?.startStream(
+            stream = getCurrentStream(),
+            resolvedUrl = resolvedUrl,
+            forceStandardLiveEngine = true
+        )
     }
 
     private fun shouldContinueIvsInBackground(player: Player): Boolean {
-        return playbackService?.isPlaybackRequested() == true &&
-            !currentUrl.isNullOrBlank() &&
+        return !currentUrl.isNullOrBlank() &&
             player.state != Player.State.ENDED &&
-            shouldContinuePlaybackInBackground()
+            if (backgroundAudioTransitionRequested) {
+                true
+            } else {
+                playbackService?.isPlaybackRequested() == true &&
+                    shouldContinuePlaybackInBackground()
+            }
+    }
+
+    private fun exitAudioOnlyMode() {
+        binding.playerSurface.visibility = View.VISIBLE
+        if (surfaceCreated) {
+            playbackService?.attachSurface(binding.playerSurface.holder.surface)
+        }
+        changePlayerMode()
+        updatePlayingState()
     }
 
     companion object {

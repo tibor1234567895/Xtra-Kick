@@ -417,6 +417,9 @@ class Media3Fragment : PlayerFragment() {
                                                 responseCode == 404 -> {
                                                     Toast.makeText(requireContext(), R.string.stream_ended, Toast.LENGTH_LONG).show()
                                                 }
+                                                responseCode == 403 && retryKickStreamWithFreshResolvedUrl() -> {
+                                                    Toast.makeText(requireContext(), R.string.player_error, Toast.LENGTH_SHORT).show()
+                                                }
                                                 viewModel.useCustomProxy && responseCode >= 400 -> {
                                                     Toast.makeText(requireContext(), R.string.proxy_error, Toast.LENGTH_LONG).show()
                                                     viewModel.useCustomProxy = false
@@ -427,6 +430,9 @@ class Media3Fragment : PlayerFragment() {
                                                         } catch (e: Exception) {
                                                         }
                                                     }
+                                                }
+                                                responseCode == 403 -> {
+                                                    Toast.makeText(requireContext(), R.string.player_error, Toast.LENGTH_LONG).show()
                                                 }
                                                 else -> {
                                                     Toast.makeText(requireContext(), R.string.player_error, Toast.LENGTH_SHORT).show()

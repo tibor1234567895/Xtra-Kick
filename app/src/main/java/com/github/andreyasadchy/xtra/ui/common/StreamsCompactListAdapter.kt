@@ -87,7 +87,7 @@ class StreamsCompactListAdapter(
                 if (item.channelName != null) {
                     username.visibility = View.VISIBLE
                     username.text = if (item.channelLogin != null && !item.channelLogin.equals(item.channelName, true)) {
-                        when (context.prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                        when (context.prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                             "0" -> "${item.channelName}(${item.channelLogin})"
                             "1" -> item.channelName
                             else -> item.channelLogin

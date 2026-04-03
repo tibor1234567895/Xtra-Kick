@@ -56,7 +56,7 @@ class LiveNotificationWorker @AssistedInject constructor(
                     setGroup(GROUP_KEY)
                     setContentTitle(ContextCompat.getString(context, R.string.live_notification).format(
                         if (it.channelLogin != null && !it.channelLogin.equals(it.channelName, true)) {
-                            when (context.prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                            when (context.prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                                 "0" -> "${it.channelName}(${it.channelLogin})"
                                 "1" -> it.channelName
                                 else -> it.channelLogin

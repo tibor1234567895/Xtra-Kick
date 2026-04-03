@@ -664,7 +664,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 val channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)
                 val channelName = requireArguments().getString(KEY_CHANNEL_NAME)
                 val displayName = if (channelLogin != null && !channelLogin.equals(channelName, true)) {
-                    when (prefs.getString(C.UI_NAME_DISPLAY, "0")) {
+                    when (prefs.getString(C.UI_NAME_DISPLAY, "1")) {
                         "0" -> "${channelName}(${channelLogin})"
                         "1" -> channelName
                         else -> channelLogin
@@ -1412,26 +1412,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         PlayerVolumeDialog.newInstance(getCurrentVolume()).show(childFragmentManager, "closeOnPip")
     }
 
-    fun getTranslateAllMessages(): Boolean? {
-        return if (!requireArguments().getString(KEY_CHANNEL_ID).isNullOrBlank()) {
-            chatFragment?.getTranslateAllMessages()
-        } else null
-    }
-
-    fun saveTranslateAllMessagesUser() {
-        requireArguments().getString(KEY_CHANNEL_ID)?.let {
-            chatFragment?.toggleTranslateAllMessages(true)
-            viewModel.saveTranslateAllMessagesUser(it)
-        }
-    }
-
-    fun deleteTranslateAllMessagesUser() {
-        requireArguments().getString(KEY_CHANNEL_ID)?.let {
-            chatFragment?.toggleTranslateAllMessages(false)
-            viewModel.deleteTranslateAllMessagesUser(it)
-        }
-    }
-
     fun toggleChatBar() {
         with(binding) {
             requireView().findViewById<LinearLayout>(R.id.messageView)?.let {
@@ -1691,6 +1671,26 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
+    protected fun retryKickStreamWithFreshResolvedUrl(): Boolean {
+        val hasCachedResolvedUrl = requireArguments().getString(KEY_RESOLVED_STREAM_URL)?.isNotBlank() == true
+        val isKickStream =
+            videoType == STREAM &&
+                requireArguments().getString(KEY_STREAM_SOURCE).equals(C.KICK, true)
+        if (!isKickStream || !hasCachedResolvedUrl || !viewModel.shouldRetry) {
+            return false
+        }
+        viewModel.shouldRetry = false
+        requireArguments().putString(KEY_RESOLVED_STREAM_URL, null)
+        viewLifecycleOwner.lifecycleScope.launch {
+            delay(1500L)
+            try {
+                restartPlayer()
+            } catch (e: Exception) {
+            }
+        }
+        return true
+    }
+
     private fun updateRestartButtonUi() {
         val isRetryIvsAction =
             videoType == STREAM &&
@@ -1745,15 +1745,27 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     protected fun setDefaultQuality() {
+        viewModel.quality = resolvePreferredQualityForCurrentNetwork()
+    }
+
+    protected fun isActiveNetworkCellular(): Boolean {
         val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-        val cellular = networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+        return networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+    }
+
+    protected fun resolvePreferredQualityForCurrentNetwork(): String? {
+        return resolvePreferredQuality(isActiveNetworkCellular())
+            ?: viewModel.qualities.entries.firstOrNull()?.key
+    }
+
+    protected fun resolvePreferredQuality(cellular: Boolean): String? {
         val defaultQuality = if (cellular) {
             prefs.getString(C.PLAYER_DEFAULT_CELLULAR_QUALITY, "saved")
         } else {
             prefs.getString(C.PLAYER_DEFAULTQUALITY, "saved")
         }?.substringBefore(" ")
-        viewModel.quality = when (defaultQuality) {
+        return when (defaultQuality) {
             "saved" -> {
                 val savedQuality = prefs.getString(C.PLAYER_QUALITY, "720p60")?.substringBefore(" ")
                 when (savedQuality) {
@@ -1768,7 +1780,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             AUDIO_ONLY_QUALITY -> viewModel.qualities.entries.find { it.key == AUDIO_ONLY_QUALITY }?.key
             CHAT_ONLY_QUALITY -> viewModel.qualities.entries.find { it.key == CHAT_ONLY_QUALITY }?.key
             else -> findQuality(defaultQuality)
-        } ?: viewModel.qualities.entries.firstOrNull()?.key
+        }
     }
 
     private fun findQuality(targetQualityString: String?): String? {

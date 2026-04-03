@@ -139,27 +139,6 @@
 
     <SwitchPreferenceCompat
         android:defaultValue="false"
-        android:key="chat_translate"
-        android:title="@string/translate_chat_messages"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <Preference
-        android:key="downloaded_languages"
-        android:title="@string/downloaded_languages"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <ListPreference
-        android:defaultValue="en"
-        android:key="chat_translate_target"
-        android:summary="%s"
-        android:title="@string/translate_target_language"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
         android:key="player_keep_chat_open"
         android:title="@string/keep_chat_open"
         app:iconSpaceReserved="false"

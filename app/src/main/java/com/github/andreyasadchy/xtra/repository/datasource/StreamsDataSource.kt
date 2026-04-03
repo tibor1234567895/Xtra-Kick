@@ -181,6 +181,11 @@ class StreamsDataSource(
             sort = if (gqlSort == "VIEWER_COUNT_ASC") "asc" else "desc",
         )
         val list = response.data.map { kickRepository.toStream(it) }
+        if (page == 1) {
+            kickRepository.prefetchChannelLivestreams(
+                list.mapNotNull { it.channelLogin }.take(12)
+            )
+        }
         return LoadResult.Page(
             data = list,
             prevKey = null,

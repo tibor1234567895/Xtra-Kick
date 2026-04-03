@@ -129,7 +129,7 @@
         app:singleLineTitle="false" />
 
     <ListPreference
-        android:defaultValue="0"
+        android:defaultValue="1"
         android:entries="@array/nameDisplayEntries"
         android:entryValues="@array/nameDisplayValues"
         android:key="ui_name_display"

@@ -35,6 +35,7 @@ import androidx.media3.exoplayer.hls.playlist.HlsPlaylistParserFactory
 import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.ParsingLoadable
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -75,6 +76,16 @@ import kotlin.concurrent.scheduleAtFixedRate
 @OptIn(UnstableApi::class)
 @AndroidEntryPoint
 class PlaybackService : MediaSessionService() {
+
+    private class StreamLoadErrorHandlingPolicy : DefaultLoadErrorHandlingPolicy(6) {
+        override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+            val exception = loadErrorInfo.exception as? HttpDataSource.InvalidResponseCodeException
+            if (exception?.responseCode == 403) {
+                return androidx.media3.common.C.TIME_UNSET
+            }
+            return super.getRetryDelayMsFor(loadErrorInfo)
+        }
+    }
 
     @Inject
     @JvmField
@@ -371,7 +382,7 @@ class PlaybackService : MediaSessionService() {
                                         )
                                     ).apply {
                                         setPlaylistParserFactory(CustomHlsPlaylistParserFactory())
-                                        setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(6))
+                                        setLoadErrorHandlingPolicy(StreamLoadErrorHandlingPolicy())
                                     }.createMediaSource(
                                         MediaItem.Builder().apply {
                                             setUri(uri?.toUri())

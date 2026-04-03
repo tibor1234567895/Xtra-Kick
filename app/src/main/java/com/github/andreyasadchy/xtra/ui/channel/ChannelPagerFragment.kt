@@ -137,7 +137,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     userLayout.visibility = View.VISIBLE
                     userName.visibility = View.VISIBLE
                     userName.text = if (args.channelLogin != null && !args.channelLogin.equals(it, true)) {
-                        when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                        when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                             "0" -> "${it}(${args.channelLogin})"
                             "1" -> it
                             else -> args.channelLogin
@@ -216,7 +216,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                 requireContext().getAlertDialogBuilder()
                                     .setMessage(getString(R.string.unfollow_channel,
                                         if (args.channelLogin != null && !args.channelLogin.equals(args.channelName, true)) {
-                                            when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                                            when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                                                 "0" -> "${args.channelName}(${args.channelLogin})"
                                                 "1" -> args.channelName
                                                 else -> args.channelLogin
@@ -378,7 +378,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                             getString(
                                                 R.string.now_following,
                                                 if (args.channelLogin != null && !args.channelLogin.equals(args.channelName, true)) {
-                                                    when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                                                    when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                                                         "0" -> "${args.channelName}(${args.channelLogin})"
                                                         "1" -> args.channelName
                                                         else -> args.channelLogin
@@ -394,7 +394,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                             getString(
                                                 R.string.unfollowed,
                                                 if (args.channelLogin != null && !args.channelLogin.equals(args.channelName, true)) {
-                                                    when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                                                    when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                                                         "0" -> "${args.channelName}(${args.channelLogin})"
                                                         "1" -> args.channelName
                                                         else -> args.channelLogin
@@ -600,7 +600,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     userLayout.visibility = View.VISIBLE
                     userName.visibility = View.VISIBLE
                     userName.text = if (stream?.channelLogin != null && !stream.channelLogin.equals(it, true)) {
-                        when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                        when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                             "0" -> "${it}(${stream.channelLogin})"
                             "1" -> it
                             else -> stream.channelLogin

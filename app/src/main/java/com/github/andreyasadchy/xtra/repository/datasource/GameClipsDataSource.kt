@@ -150,7 +150,7 @@ class GameClipsDataSource(
         if (response.data?.game == null || data == null) {
             throw IllegalStateException("Game clips GraphQL returned no game/clips data")
         }
-        val items = data?.edges.orEmpty()
+        val items = data.edges.orEmpty()
         val list = items.mapNotNull { item ->
             item?.node?.let {
                 Clip(
@@ -178,7 +178,7 @@ class GameClipsDataSource(
             }
         }
         offset = items.lastOrNull()?.cursor?.toString()
-        val nextPage = data?.pageInfo?.hasNextPage != false
+        val nextPage = data.pageInfo?.hasNextPage != false
         return LoadResult.Page(
             data = list,
             prevKey = null,

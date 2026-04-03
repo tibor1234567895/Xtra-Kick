@@ -25,7 +25,7 @@ class ShownNotificationsRepository @Inject constructor(
         notificationUsersRepository: NotificationUsersRepository,
     ): List<Stream> = withContext(Dispatchers.IO) {
         val channelIds = notificationUsersRepository.loadUsers()
-            .mapNotNull { it.channelId?.takeIf { id -> id.isNotBlank() } }
+            .mapNotNull { it.channelId.takeIf { id -> id.isNotBlank() } }
             .distinct()
         if (channelIds.isEmpty()) {
             return@withContext emptyList()

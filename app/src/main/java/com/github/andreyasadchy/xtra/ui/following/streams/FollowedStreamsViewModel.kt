@@ -177,6 +177,9 @@ class FollowedStreamsViewModel @Inject constructor(
                 if (fastResult != null) {
                     Log.i(LOG_TAG, "Fast followed-live path resolved ${fastResult.items.size} items and left ${fastResult.unresolvedFollows.size} for fallback")
                     val sorted = resolved.values.toList().sortedForFollowedLive()
+                    kickRepository.prefetchChannelLivestreams(
+                        sorted.mapNotNull { it.channelLogin }.take(FOLLOWED_STREAMS_BATCH_SIZE)
+                    )
                     updateStateForGeneration(
                         generation = generation,
                         items = sorted,
@@ -198,6 +201,9 @@ class FollowedStreamsViewModel @Inject constructor(
                 }
                 if (bulkFallbackResult != null) {
                     val sorted = resolved.values.toList().sortedForFollowedLive()
+                    kickRepository.prefetchChannelLivestreams(
+                        sorted.mapNotNull { it.channelLogin }.take(FOLLOWED_STREAMS_BATCH_SIZE)
+                    )
                     updateStateForGeneration(
                         generation = generation,
                         items = sorted,

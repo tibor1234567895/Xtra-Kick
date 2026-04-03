@@ -74,7 +74,6 @@ class ChatAdapter(
     private val emoteQuality: String,
     private val animateGifs: Boolean,
     private val enableOverlayEmotes: Boolean,
-    private val showLanguageDownloadDialog: (ChatMessage, String) -> Unit,
     private val channelId: String?,
     private val loggedInUser: String?,
     private val messageClickListener: ((String?) -> Unit)?,
@@ -86,7 +85,6 @@ class ChatAdapter(
         const val PAYLOAD_REFORMAT = "payload_reformat"
     }
 
-    var translateAllMessages = false
     private var selectedMessage: ChatMessage? = null
     private val random = Random()
     private val userColors = HashMap<String, Int>()
@@ -154,15 +152,13 @@ class ChatAdapter(
             chatMessage, renderSignature(), enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg,
             rewardChatMsg, replyMessage, null, useRandomColors, random, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints,
             namePaints, showStvBadges, showKickBadges, stvBadges, showPersonalEmotes, personalEmoteSets, stvUsers, enableOverlayEmotes, showSystemMessageEmotes,
-            loggedInUser, chatUrl, getEmoteBytes, userColors, savedColors, showLanguageDownloadDialog,
-            true, localTwitchEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalTwitchEmotes, savedLocalBadges,
+            loggedInUser, chatUrl, getEmoteBytes, userColors, savedColors, localTwitchEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalTwitchEmotes, savedLocalBadges,
             savedLocalCheerEmotes, savedLocalEmotes
         )
         holder.bind(chatMessage, result.builder, position, result.backgroundRes)
         ChatAdapterUtils.loadImages(
             fragment, holder.textView, { holder.bind(chatMessage, it, position, result.backgroundRes) }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
-            backgroundColor, imageLibrary, result.builder, result.translated, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes,
-            chatMessage, savedColors, useReadableColors, isLightTheme, showLanguageDownloadDialog, true
+            backgroundColor, imageLibrary, result.builder, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes
         )
     }
 
@@ -174,7 +170,7 @@ class ChatAdapter(
             { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClickListener?.invoke(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, showStvBadges, showKickBadges, showPersonalEmotes,
             enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize, badgeSize,
-            emoteQuality, animateGifs, enableOverlayEmotes, showLanguageDownloadDialog, random, userColors,
+            emoteQuality, animateGifs, enableOverlayEmotes, random, userColors,
             savedColors, savedLocalTwitchEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessage
         )
     }
@@ -186,7 +182,7 @@ class ChatAdapter(
             { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClickListener?.invoke(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, showStvBadges, showKickBadges, showPersonalEmotes,
             enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize, badgeSize,
-            emoteQuality, animateGifs, enableOverlayEmotes, showLanguageDownloadDialog, random, userColors,
+            emoteQuality, animateGifs, enableOverlayEmotes, random, userColors,
             savedColors, savedLocalTwitchEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessage
         )
     }

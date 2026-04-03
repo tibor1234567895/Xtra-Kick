@@ -728,7 +728,11 @@ class MainActivity : AppCompatActivity() {
 //Navigation listeners
 
     fun startStream(stream: Stream, resolvedUrl: String? = null, forceStandardLiveEngine: Boolean = false) {
-        val effectiveResolvedUrl = resolvedUrl?.takeIf { it.isNotBlank() } ?: stream.playbackUrl
+        val effectiveResolvedUrl = when {
+            !resolvedUrl.isNullOrBlank() -> resolvedUrl
+            stream.source == C.KICK -> null
+            else -> stream.playbackUrl
+        }
         val fragment = when (prefs.getString(C.PLAYER, "ExoPlayer")) {
             "MediaPlayer" -> {
                 if (stream.source == C.KICK) {

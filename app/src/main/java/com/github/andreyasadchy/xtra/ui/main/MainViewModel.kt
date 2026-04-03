@@ -900,12 +900,12 @@ class MainViewModel @Inject constructor(
                 if (user == null) {
                     throw IllegalStateException("401")
                 }
-                val loginName = user?.name ?: user?.channelSlug ?: user?.id
+                val loginName = user.name ?: user.channelSlug ?: user.id
                 Log.i(kickAuthValidateTag, "Kick OAuth validated via /public/v1/users. userId=${user.id} login=${loginName ?: "unknown"}")
                 activity.tokenPrefs().edit {
-                    putString(C.KICK_USER_ID, user?.id)
+                    putString(C.KICK_USER_ID, user.id)
                     putString(C.KICK_USER_LOGIN, loginName)
-                    putString(C.USER_ID, user?.id)
+                    putString(C.USER_ID, user.id)
                     putString(C.USERNAME, loginName)
                 }
             } catch (e: Exception) {

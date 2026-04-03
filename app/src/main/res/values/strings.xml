@@ -734,7 +734,7 @@
     <string name="kick_live_player_engine">Kick live stream engine</string>
     <string name="kick_live_player_engine_exo_only">ExoPlayer only</string>
     <string name="kick_live_player_engine_ivs">Amazon IVS for Kick live</string>
-    <string name="ivs_fallback_to_standard_player">IVS playback failed. Resetting the player and retrying.</string>
+    <string name="ivs_fallback_to_standard_player">IVS playback failed. Switching to the standard player.</string>
     <string name="ivs_feature_not_supported">This action is not supported in the IVS live player.</string>
     <string name="delete_video_positions_message">Are you sure you want to delete all saved video positions?</string>
     <string name="enabled_setting">Enabled</string>
