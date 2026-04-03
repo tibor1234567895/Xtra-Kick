@@ -1,0 +1,46 @@
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <Preference
+        android:key="nav_general_settings"
+        android:title="@string/general"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="nav_appearance_settings"
+        android:title="@string/appearance"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="nav_navigation_settings"
+        android:title="@string/navigation"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="nav_chat_settings"
+        android:title="@string/chat_settings"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="nav_player_overview"
+        android:title="@string/player_settings"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="nav_download_settings"
+        android:title="@string/download_settings"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="nav_advanced_settings"
+        android:title="@string/advanced"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+</androidx.preference.PreferenceScreen>

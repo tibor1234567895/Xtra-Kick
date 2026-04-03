@@ -1,0 +1,57 @@
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <ListPreference
+        android:defaultValue="3"
+        android:entries="@array/loginApiEntries"
+        android:entryValues="@array/loginApiValues"
+        android:key="api_login"
+        android:summary="%s"
+        android:title="@string/api_login"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <EditTextPreference
+        android:defaultValue="user:read chat:write"
+        android:key="kick_scopes"
+        android:title="@string/api_kick_scopes"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <PreferenceCategory
+        android:title="@string/api_current_login"
+        app:iconSpaceReserved="false" />
+
+    <EditTextPreference
+        android:key="kick_user_id"
+        android:title="@string/api_user_id"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <EditTextPreference
+        android:key="kick_user_login"
+        android:title="@string/api_user_login"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <EditTextPreference
+        android:key="kick_access_token"
+        android:title="@string/api_kick_access_token"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <EditTextPreference
+        android:key="kick_refresh_token"
+        android:title="@string/api_kick_refresh_token"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="validate_tokens"
+        android:title="@string/api_validate_tokens"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+</androidx.preference.PreferenceScreen>

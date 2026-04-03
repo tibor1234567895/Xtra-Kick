@@ -1,0 +1,53 @@
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="player_picture_in_picture"
+        android:title="@string/picture_in_picture"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="player_background_audio"
+        android:title="@string/use_background_audio"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="player_background_audio_locked"
+        android:title="@string/use_background_audio_locked"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <PreferenceCategory
+        android:title="@string/player"
+        app:iconSpaceReserved="false" />
+
+    <Preference
+        android:key="nav_player_behavior"
+        android:title="@string/player_behavior"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="nav_player_button_settings"
+        android:title="@string/player_buttons"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="nav_player_menu_settings_root"
+        android:title="@string/player_menu_settings"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
+        android:key="nav_buffer_settings"
+        android:title="@string/buffer_settings"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+</androidx.preference.PreferenceScreen>
