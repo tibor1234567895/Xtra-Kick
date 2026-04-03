@@ -15,7 +15,6 @@ import com.github.andreyasadchy.xtra.db.SavedFiltersDao
 import com.github.andreyasadchy.xtra.db.ShownNotificationsDao
 import com.github.andreyasadchy.xtra.db.SortChannelDao
 import com.github.andreyasadchy.xtra.db.SortGameDao
-import com.github.andreyasadchy.xtra.db.TranslateAllMessagesUsersDao
 import com.github.andreyasadchy.xtra.db.VideoPositionsDao
 import com.github.andreyasadchy.xtra.db.VideosDao
 import com.github.andreyasadchy.xtra.db.VodBookmarkIgnoredUsersDao
@@ -30,7 +29,6 @@ import com.github.andreyasadchy.xtra.repository.SavedFiltersRepository
 import com.github.andreyasadchy.xtra.repository.ShownNotificationsRepository
 import com.github.andreyasadchy.xtra.repository.SortChannelRepository
 import com.github.andreyasadchy.xtra.repository.SortGameRepository
-import com.github.andreyasadchy.xtra.repository.TranslateAllMessagesUsersRepository
 import com.github.andreyasadchy.xtra.repository.VodBookmarkIgnoredUsersRepository
 import dagger.Module
 import dagger.Provides
@@ -83,10 +81,6 @@ class DatabaseModule {
 
     @Singleton
     @Provides
-    fun providesTranslateAllMessagesUsersRepository(translateAllMessagesUsersDao: TranslateAllMessagesUsersDao): TranslateAllMessagesUsersRepository = TranslateAllMessagesUsersRepository(translateAllMessagesUsersDao)
-
-    @Singleton
-    @Provides
     fun providesSavedFiltersRepository(savedFiltersDao: SavedFiltersDao): SavedFiltersRepository = SavedFiltersRepository(savedFiltersDao)
 
     @Singleton
@@ -136,10 +130,6 @@ class DatabaseModule {
     @Singleton
     @Provides
     fun providesNotificationUsersDao(database: AppDatabase): NotificationUsersDao = database.notificationsDao()
-
-    @Singleton
-    @Provides
-    fun providesTranslateAllMessagesUsersDao(database: AppDatabase): TranslateAllMessagesUsersDao = database.translateAllMessagesUsersDao()
 
     @Singleton
     @Provides
@@ -348,6 +338,11 @@ class DatabaseModule {
                 object : Migration(33, 34) {
                     override fun migrate(db: SupportSQLiteDatabase) {
                         db.execSQL("ALTER TABLE local_follows ADD COLUMN sourceMask INTEGER NOT NULL DEFAULT 1")
+                    }
+                },
+                object : Migration(34, 35) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL("DROP TABLE IF EXISTS translate_all_messages")
                     }
                 },
             )

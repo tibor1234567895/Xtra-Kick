@@ -35,7 +35,6 @@ import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
-import com.github.andreyasadchy.xtra.repository.TranslateAllMessagesUsersRepository
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.WebSocketRuntime
@@ -90,7 +89,6 @@ import kotlin.concurrent.scheduleAtFixedRate
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
-    private val translateAllMessagesUsersRepository: TranslateAllMessagesUsersRepository,
     private val graphQLRepository: GraphQLRepository,
     private val helixRepository: HelixRepository,
     private val kickRepository: KickRepository,
@@ -189,7 +187,6 @@ class ChatViewModel @Inject constructor(
     val stvUsers = mutableListOf<StvUser>()
     var channelStvEmoteSetId: String? = null
     var userStvEmoteSetId: String? = null
-    val translateAllMessages = MutableStateFlow<Boolean?>(null)
 
     val reloadMessages = MutableStateFlow(false)
     val hideRaid = MutableStateFlow(false)
@@ -1597,12 +1594,6 @@ class ChatViewModel @Inject constructor(
             logKickReplayChat(stage = "session_end", sessionKey = sessionKey) {
                 "reason=job_inactive"
             }
-        }
-    }
-
-    fun checkTranslateAllMessages(id: String) {
-        viewModelScope.launch {
-            translateAllMessages.value = translateAllMessagesUsersRepository.getByUserId(id) != null
         }
     }
 

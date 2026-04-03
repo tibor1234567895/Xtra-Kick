@@ -78,7 +78,6 @@ class MessageClickedChatAdapter(
     private val emoteQuality: String,
     private val animateGifs: Boolean,
     private val enableOverlayEmotes: Boolean,
-    private val showLanguageDownloadDialog: (ChatMessage, String) -> Unit,
     private val random: Random,
     private val userColors: HashMap<String, Int>,
     private val savedColors: HashMap<String, Int>,
@@ -164,7 +163,7 @@ class MessageClickedChatAdapter(
             rewardChatMsg, replyMessage, { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClick(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, random, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, namePaints, showStvBadges,
             showKickBadges, stvBadges, showPersonalEmotes, personalEmoteSets, stvUsers, enableOverlayEmotes, showSystemMessageEmotes, loggedInUser, chatUrl,
-            getEmoteBytes, userColors, savedColors, showLanguageDownloadDialog, false, localTwitchEmotes,
+            getEmoteBytes, userColors, savedColors, localTwitchEmotes,
             thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalTwitchEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes
         )
         holder.bind(chatMessage, result.builder, position, result.backgroundRes)
@@ -178,8 +177,7 @@ class MessageClickedChatAdapter(
                     holder.textView.setBackgroundColor(resolveSelectedBackgroundColor(holder.textView.context))
                 }
             }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
-            backgroundColor, imageLibrary, result.builder, result.translated, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes,
-            chatMessage, savedColors, useReadableColors, isLightTheme, showLanguageDownloadDialog, false
+            backgroundColor, imageLibrary, result.builder, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes
         )
         if (chatMessage == selectedMessage) {
             holder.textView.setBackgroundColor(resolveSelectedBackgroundColor(holder.textView.context))

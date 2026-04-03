@@ -179,23 +179,6 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
                     dismiss()
                 }
             }
-            if (requireContext().prefs().getBoolean(C.CHAT_TRANSLATE, false) && Build.SUPPORTED_64_BIT_ABIS.firstOrNull() == "arm64-v8a") {
-                val translateAll = (parentFragment as? PlayerFragment)?.getTranslateAllMessages()
-                if (translateAll != null) {
-                    menuTranslateAll.visibility = View.VISIBLE
-                    if (translateAll) {
-                        menuTranslateAll.setOnClickListener {
-                            (parentFragment as? PlayerFragment)?.deleteTranslateAllMessagesUser()
-                            dismiss()
-                        }
-                    } else {
-                        menuTranslateAll.setOnClickListener {
-                            (parentFragment as? PlayerFragment)?.saveTranslateAllMessagesUser()
-                            dismiss()
-                        }
-                    }
-                }
-            }
             (parentFragment as? PlayerFragment)?.setSubtitlesButton()
             if ((videoType == PlayerFragment.STREAM || videoType == PlayerFragment.VIDEO) &&
                 !requireContext().prefs().getBoolean(C.CHAT_DISABLE, false) &&

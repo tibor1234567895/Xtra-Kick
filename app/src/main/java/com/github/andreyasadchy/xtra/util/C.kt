@@ -204,8 +204,6 @@ object C {
     const val CHAT_TIMESTAMP_FORMAT = "chat_timestamp_format"
     const val CHAT_RECENT = "chat_recent"
     const val CHAT_RECENT_LIMIT = "chat_recent_limit"
-    const val CHAT_TRANSLATE = "chat_translate"
-    const val CHAT_TRANSLATE_TARGET = "chat_translate_target"
     const val CHAT_SHOW_USERNOTICE = "chat_show_usernotice"
     const val CHAT_SHOW_CLEARMSG = "chat_show_clearmsg"
     const val CHAT_SHOW_CLEARCHAT = "chat_show_clearchat"
