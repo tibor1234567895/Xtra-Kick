@@ -5,18 +5,60 @@ import androidx.core.content.edit
 
 object AuthStateHelper {
 
+    private const val ACCESS_TOKEN_EXPIRY_BUFFER_SECONDS = 30L
+
     fun isKickLoggedIn(context: Context, nowEpochSeconds: Long = System.currentTimeMillis() / 1000L): Boolean {
         val prefs = context.tokenPrefs()
-        val token = prefs.getString(C.KICK_ACCESS_TOKEN, null)
-        val user = prefs.getString(C.KICK_USER_LOGIN, null)
-        val userId = prefs.getString(C.KICK_USER_ID, null)
-        val expiresAt = prefs.getLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L)
-        val notExpiredOrUnknown = expiresAt <= 0L || expiresAt > nowEpochSeconds + 30L
-        return !token.isNullOrBlank() && notExpiredOrUnknown && (!user.isNullOrBlank() || !userId.isNullOrBlank())
+        return isKickSessionAvailable(
+            accessToken = prefs.getString(C.KICK_ACCESS_TOKEN, null),
+            refreshToken = prefs.getString(C.KICK_REFRESH_TOKEN, null),
+            user = prefs.getString(C.KICK_USER_LOGIN, null),
+            userId = prefs.getString(C.KICK_USER_ID, null),
+            expiresAt = prefs.getLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L),
+            nowEpochSeconds = nowEpochSeconds,
+        )
+    }
+
+    internal fun isKickSessionAvailable(
+        accessToken: String?,
+        refreshToken: String?,
+        user: String?,
+        userId: String?,
+        expiresAt: Long,
+        nowEpochSeconds: Long,
+    ): Boolean {
+        val hasIdentity = !user.isNullOrBlank() || !userId.isNullOrBlank()
+        val hasAccessToken = !accessToken.isNullOrBlank()
+        val hasRefreshToken = !refreshToken.isNullOrBlank()
+        val accessTokenUsable = isKickAccessTokenUsable(expiresAt, nowEpochSeconds)
+        return hasIdentity && ((hasAccessToken && accessTokenUsable) || hasRefreshToken)
+    }
+
+    internal fun isKickAccessTokenUsable(expiresAt: Long, nowEpochSeconds: Long): Boolean {
+        return expiresAt <= 0L || expiresAt > nowEpochSeconds + ACCESS_TOKEN_EXPIRY_BUFFER_SECONDS
+    }
+
+    internal fun getKickBearerToken(
+        accessToken: String?,
+        expiresAt: Long,
+        nowEpochSeconds: Long,
+    ): String? {
+        if (accessToken.isNullOrBlank()) {
+            return null
+        }
+        if (!isKickAccessTokenUsable(expiresAt, nowEpochSeconds)) {
+            return null
+        }
+        return "Bearer $accessToken"
     }
 
     fun getKickBearerToken(context: Context): String? {
-        return context.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)?.takeIf { it.isNotBlank() }?.let { "Bearer $it" }
+        val nowEpochSeconds = System.currentTimeMillis() / 1000L
+        return getKickBearerToken(
+            accessToken = context.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null),
+            expiresAt = context.tokenPrefs().getLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L),
+            nowEpochSeconds = nowEpochSeconds,
+        )
     }
 
     fun hasPendingUnexpectedLogoutNotice(context: Context): Boolean {

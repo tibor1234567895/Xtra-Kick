@@ -224,18 +224,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         var initialized = savedInstanceState != null
-        initNavigation()
         val connectivityManager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-        if (!initialized) {
-            val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-            val isNetworkAvailable = networkCapabilities != null
-                    && networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                    && networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-            if (!isNetworkAvailable) {
-                initialized = true
-                Toast.makeText(this, R.string.no_connection, Toast.LENGTH_SHORT).show()
-            }
+        val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
+        val isNetworkAvailableOnCreate = networkCapabilities != null
+                && networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        viewModel.isNetworkAvailable.value = isNetworkAvailableOnCreate
+        if (isNetworkAvailableOnCreate) {
+            viewModel.startKickValidationIfNeeded(this)
+        } else if (!initialized) {
+            initialized = true
+            Toast.makeText(this, R.string.no_connection, Toast.LENGTH_SHORT).show()
         }
+        initNavigation()
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.checkNetworkStatus.collectLatest {
@@ -253,18 +254,7 @@ class MainActivity : AppCompatActivity() {
                                 initialized = true
                             }
                             if (isNetworkAvailable) {
-                                if (!KickApiHelper.checkedValidation && prefs.getBoolean(C.VALIDATE_TOKENS, true)) {
-                                    viewModel.validate(
-                                        prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                        KickApiHelper.getGQLHeaders(this@MainActivity, true),
-                                        prefs.getString(C.GQL_CLIENT_ID_WEB, "kimne78kx3ncx6brgo4mv6wki5h1ko"),
-                                        tokenPrefs().getString(C.GQL_TOKEN_WEB, null)?.takeIf { it.isNotBlank() }?.let { KickApiHelper.addTokenPrefixGQL(it) },
-                                        KickApiHelper.getHelixHeaders(this@MainActivity),
-                                        this@MainActivity.tokenPrefs().getString(C.KICK_USER_ID, null),
-                                        this@MainActivity.tokenPrefs().getString(C.KICK_USER_LOGIN, null),
-                                        this@MainActivity
-                                    )
-                                }
+                                viewModel.startKickValidationIfNeeded(this@MainActivity)
                                 if (!KickApiHelper.checkedUpdates &&
                                     prefs.getBoolean(C.UPDATE_CHECK_ENABLED, false) &&
                                     (prefs.getString(C.UPDATE_CHECK_FREQUENCY, "7")?.toIntOrNull() ?: 7) * 86400000 + tokenPrefs().getLong(C.UPDATE_LAST_CHECKED, 0) < System.currentTimeMillis()

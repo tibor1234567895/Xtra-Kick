@@ -11,6 +11,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.github.andreyasadchy.xtra.ui.main.MainViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -20,15 +21,19 @@ abstract class BaseNetworkFragment : Fragment() {
         const val LAST_KEY = "last"
         const val RESTORE_KEY = "restore"
         const val CREATED_KEY = "created"
+        const val KICK_VALIDATION_TIMEOUT_MS = 5000L
     }
 
     private val mainViewModel: MainViewModel by activityViewModels()
 
     protected open var enableNetworkCheck = true
+    protected open var gateFirstInitializationOnKickValidation = true
     private var lastIsOnlineState = false
     private var shouldRestore = false
     protected var isInitialized = false
     private var created = false
+    private var initJob: Job? = null
+    private var hasAppliedKickValidationGate = false
 
     abstract fun initialize()
     abstract fun onNetworkRestored()
@@ -104,6 +109,8 @@ abstract class BaseNetworkFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        initJob?.cancel()
+        initJob = null
         if (enableNetworkCheck) {
             isInitialized = false
         }
@@ -119,8 +126,29 @@ abstract class BaseNetworkFragment : Fragment() {
     }
 
     private fun init() {
-        initialize()
-        isInitialized = true
-        created = true
+        if (initJob?.isActive == true) {
+            return
+        }
+        initJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                if (enableNetworkCheck &&
+                    gateFirstInitializationOnKickValidation &&
+                    !hasAppliedKickValidationGate &&
+                    lastIsOnlineState
+                ) {
+                    mainViewModel.startKickValidationIfNeeded(requireActivity())
+                    mainViewModel.awaitKickValidationComplete(KICK_VALIDATION_TIMEOUT_MS)
+                    hasAppliedKickValidationGate = true
+                }
+                if (!isAdded || view == null) {
+                    return@launch
+                }
+                initialize()
+                isInitialized = true
+                created = true
+            } finally {
+                initJob = null
+            }
+        }
     }
 }
