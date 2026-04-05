@@ -212,7 +212,7 @@ class TeamFragment : PagedListFragment(), Scrollable, IntegrityDialog.CallbackLi
                 teamOwner.text = getString(
                     R.string.owner,
                     if (team.ownerLogin != null && !team.ownerLogin.equals(team.ownerName, true)) {
-                        when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                        when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                             "0" -> "${team.ownerName}(${team.ownerLogin})"
                             "1" -> team.ownerName
                             else -> team.ownerLogin

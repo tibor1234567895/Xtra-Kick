@@ -322,7 +322,7 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
                 userLayout.visibility = View.VISIBLE
                 userName.visibility = View.VISIBLE
                 userName.text = if (user.channelLogin != null && !user.channelLogin.equals(user.channelName, true)) {
-                    when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                    when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                         "0" -> "${user.channelName}(${user.channelLogin})"
                         "1" -> user.channelName
                         else -> user.channelLogin

@@ -169,7 +169,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         isLightTheme = requireContext().obtainStyledAttributes(intArrayOf(androidx.appcompat.R.attr.isLightTheme)).use {
                             it.getBoolean(0, false)
                         },
-                        nameDisplay = requireContext().prefs().getString(C.UI_NAME_DISPLAY, "0"),
+                        nameDisplay = requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1"),
                         useBoldNames = requireContext().prefs().getBoolean(C.CHAT_BOLDNAMES, false),
                         showNamePaints = requireContext().prefs().getBoolean(C.CHAT_SHOW_PAINTS, true),
                         showStvBadges = requireContext().prefs().getBoolean(C.CHAT_SHOW_STV_BADGES, true),
@@ -497,7 +497,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                             raidText.text = getString(
                                                 R.string.raid_text,
                                                 if (raid.targetLogin != null && !raid.targetLogin.equals(raid.targetName, true)) {
-                                                    when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                                                    when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                                                         "0" -> "${raid.targetName}(${raid.targetLogin})"
                                                         "1" -> raid.targetName
                                                         else -> raid.targetLogin
@@ -1118,7 +1118,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 replyView.visibility = View.VISIBLE
                 replyText.text = message?.let {
                     val name = if (userName != null && userLogin != null && !userLogin.equals(userName, true)) {
-                        when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                        when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                             "0" -> "${userName}(${userLogin})"
                             "1" -> userName
                             else -> userLogin

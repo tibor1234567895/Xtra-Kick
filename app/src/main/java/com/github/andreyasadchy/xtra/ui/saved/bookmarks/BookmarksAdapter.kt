@@ -208,7 +208,7 @@ class BookmarksAdapter(
                     if (item.userName != null) {
                         username.visibility = View.VISIBLE
                         username.text = if (item.userLogin != null && !item.userLogin.equals(item.userName, true)) {
-                            when (context.prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                            when (context.prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                                 "0" -> "${item.userName}(${item.userLogin})"
                                 "1" -> item.userName
                                 else -> item.userLogin

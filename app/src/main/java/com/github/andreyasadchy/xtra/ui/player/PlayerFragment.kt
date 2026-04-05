@@ -664,7 +664,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 val channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)
                 val channelName = requireArguments().getString(KEY_CHANNEL_NAME)
                 val displayName = if (channelLogin != null && !channelLogin.equals(channelName, true)) {
-                    when (prefs.getString(C.UI_NAME_DISPLAY, "0")) {
+                    when (prefs.getString(C.UI_NAME_DISPLAY, "1")) {
                         "0" -> "${channelName}(${channelLogin})"
                         "1" -> channelName
                         else -> channelLogin

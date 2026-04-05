@@ -50,9 +50,14 @@ import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -86,9 +91,22 @@ class MainViewModel @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val json: Json,
 ) : ViewModel() {
+
+    enum class KickValidationState {
+        IDLE,
+        RUNNING,
+        COMPLETE,
+    }
+
     private val kickAuthValidateTag = "KickAuthValidate"
+    private var kickValidationJob: Job? = null
 
     val integrity = MutableStateFlow<String?>(null)
+
+    private val _kickValidationState = MutableStateFlow(
+        if (KickApiHelper.checkedValidation) KickValidationState.COMPLETE else KickValidationState.IDLE
+    )
+    val kickValidationState: StateFlow<KickValidationState> = _kickValidationState.asStateFlow()
 
     val checkNetworkStatus = MutableStateFlow(false)
     val isNetworkAvailable = MutableStateFlow<Boolean?>(null)
@@ -105,6 +123,38 @@ class MainViewModel @Inject constructor(
     val tag = MutableStateFlow<Tag?>(null)
 
     val updateUrl = MutableSharedFlow<String?>()
+
+    private fun markKickValidationComplete() {
+        _kickValidationState.value = KickValidationState.COMPLETE
+        KickApiHelper.checkedValidation = true
+    }
+
+    fun startKickValidationIfNeeded(activity: Activity) {
+        if (!activity.prefs().getBoolean(C.VALIDATE_TOKENS, true)) {
+            markKickValidationComplete()
+            return
+        }
+        validate(
+            networkLibrary = activity.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
+            gqlHeaders = emptyMap(),
+            gqlWebClientId = null,
+            gqlWebToken = null,
+            helixHeaders = emptyMap(),
+            accountId = activity.tokenPrefs().getString(C.KICK_USER_ID, null),
+            accountLogin = activity.tokenPrefs().getString(C.KICK_USER_LOGIN, null),
+            activity = activity,
+        )
+    }
+
+    suspend fun awaitKickValidationComplete(timeoutMs: Long): Boolean {
+        if (_kickValidationState.value == KickValidationState.COMPLETE) {
+            return true
+        }
+        return withTimeoutOrNull(timeoutMs) {
+            kickValidationState.first { it == KickValidationState.COMPLETE }
+            true
+        } ?: false
+    }
 
     fun loadVideo(videoId: String?, offset: Long?, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (video.value == null) {
@@ -839,7 +889,15 @@ class MainViewModel @Inject constructor(
     }
 
     fun validate(networkLibrary: String?, gqlHeaders: Map<String, String>, gqlWebClientId: String?, gqlWebToken: String?, helixHeaders: Map<String, String>, accountId: String?, accountLogin: String?, activity: Activity) {
-        viewModelScope.launch {
+        if (_kickValidationState.value == KickValidationState.COMPLETE) {
+            KickApiHelper.checkedValidation = true
+            return
+        }
+        if (kickValidationJob?.isActive == true) {
+            return
+        }
+        _kickValidationState.value = KickValidationState.RUNNING
+        kickValidationJob = viewModelScope.launch {
             try {
                 val accessToken = activity.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)
                 if (accessToken.isNullOrBlank()) {
@@ -918,9 +976,11 @@ class MainViewModel @Inject constructor(
                 } else if (KickAuthRequestException.isBackendUnavailable(e)) {
                     Toast.makeText(activity, R.string.kick_oauth_backend_unreachable, Toast.LENGTH_LONG).show()
                 }
+            } finally {
+                markKickValidationComplete()
+                kickValidationJob = null
             }
         }
-        KickApiHelper.checkedValidation = true
     }
 
     fun checkUpdates(networkLibrary: String?, url: String, lastChecked: Long) {

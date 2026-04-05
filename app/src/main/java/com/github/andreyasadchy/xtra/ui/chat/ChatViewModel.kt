@@ -671,7 +671,7 @@ class ChatViewModel @Inject constructor(
                                 if (applicationContext.prefs().getBoolean(C.CHAT_SHOW_CLEARMSG, true)) {
                                     val pair = RecentMessageUtils.parseClearMessage(message)
                                     val deletedMessage = pair.second?.let { targetId -> recentList.find { it.id == targetId } }
-                                    getClearMessage(pair.first, deletedMessage, applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "0"))
+                                    getClearMessage(pair.first, deletedMessage, applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "1"))
                                 } else null
                             }
                             message.contains("CLEARCHAT") -> {
@@ -1078,7 +1078,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun mapKickMessages(rawMessages: List<KickMessage>): List<ChatMessage> {
-        val nameDisplay = applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "0")
+        val nameDisplay = applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "1")
         val showClearMsg = applicationContext.prefs().getBoolean(C.CHAT_SHOW_CLEARMSG, true)
         val showClearChat = applicationContext.prefs().getBoolean(C.CHAT_SHOW_CLEARCHAT, true)
         val mappedMessages = mutableListOf<ChatMessage>()
@@ -1671,7 +1671,7 @@ class ChatViewModel @Inject constructor(
         val showUserNotice = applicationContext.prefs().getBoolean(C.CHAT_SHOW_USERNOTICE, true)
         val showClearMsg = applicationContext.prefs().getBoolean(C.CHAT_SHOW_CLEARMSG, true)
         val showClearChat = applicationContext.prefs().getBoolean(C.CHAT_SHOW_CLEARCHAT, true)
-        val nameDisplay = applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "0")
+        val nameDisplay = applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "1")
         val useApiChatMessages = applicationContext.prefs().getBoolean(C.DEBUG_API_CHAT_MESSAGES, true)
         val showWebSocketDebugInfo = applicationContext.prefs().getBoolean(C.DEBUG_WEBSOCKET_INFO, false)
         if (showWebSocketDebugInfo) {
@@ -3628,7 +3628,7 @@ class ChatViewModel @Inject constructor(
     private fun readChatFile(url: String, channelId: String?, channelLogin: String?) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val nameDisplay = applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "0")
+                val nameDisplay = applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "1")
                 val messages = mutableListOf<ChatMessage>()
                 var startTimeMs = 0L
                 val twitchEmotes = mutableListOf<TwitchEmote>()

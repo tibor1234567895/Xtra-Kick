@@ -157,7 +157,7 @@ class ImageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callback
                         viewModel.emoteCard.collectLatest { emoteCard ->
                             if (emoteCard != null) {
                                 val name = if (emoteCard.channelLogin != null && !emoteCard.channelLogin.equals(emoteCard.channelName, true)) {
-                                    when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "0")) {
+                                    when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
                                         "0" -> "${emoteCard.channelName}(${emoteCard.channelLogin})"
                                         "1" -> emoteCard.channelName
                                         else -> emoteCard.channelLogin
