@@ -380,6 +380,18 @@ object ChatAdapterUtils {
                     wasMentioned = result
                     builderIndex = builder.length
                 }
+                if (chatMessage.isDeleted) {
+                    val deletedSuffix = " (Deleted)"
+                    builder.append(deletedSuffix)
+                    builder.setSpan(
+                        ForegroundColorSpan(getSavedColor("#B95C5C", savedColors, useReadableColors, isLightTheme)),
+                        builderIndex,
+                        builderIndex + deletedSuffix.length,
+                        SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                    builder.setSpan(StyleSpan(Typeface.ITALIC), builderIndex, builderIndex + deletedSuffix.length, SPAN_EXCLUSIVE_EXCLUSIVE)
+                    builderIndex += deletedSuffix.length
+                }
                 when {
                     chatMessage.isFirst && firstMsgVisibility < 2 -> backgroundRes = R.color.chatMessageFirst
                     chatMessage.reward?.id != null && firstMsgVisibility < 2 -> backgroundRes = R.color.chatMessageReward
@@ -892,12 +904,7 @@ object ChatAdapterUtils {
     private fun loadCoil(fragment: Fragment, image: Image, emoteQuality: String, onLoaded: (Drawable) -> Unit) {
         fragment.requireContext().imageLoader.enqueue(
             ImageRequest.Builder(fragment.requireContext()).apply {
-                data(image.localData ?: when (emoteQuality) {
-                    "4" -> image.url4x ?: image.url3x ?: image.url2x ?: image.url1x
-                    "3" -> image.url3x ?: image.url2x ?: image.url1x
-                    "2" -> image.url2x ?: image.url1x
-                    else -> image.url1x
-                })
+                data(resolveImageSource(image, emoteQuality))
                 if (image.thirdParty) {
                     httpHeaders(NetworkHeaders.Builder().apply {
                         add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
@@ -913,14 +920,10 @@ object ChatAdapterUtils {
     }
 
     private fun loadGlide(fragment: Fragment, image: Image, emoteQuality: String, onLoaded: (Drawable) -> Unit) {
+        val source = resolveImageSource(image, emoteQuality)
         Glide.with(fragment)
-            .load(image.localData ?: when (emoteQuality) {
-                "4" -> image.url4x ?: image.url3x ?: image.url2x ?: image.url1x
-                "3" -> image.url3x ?: image.url2x ?: image.url1x
-                "2" -> image.url2x ?: image.url1x
-                else -> image.url1x
-            }.let {
-                if (image.thirdParty) {
+            .load(source.let {
+                if (image.thirdParty && it is String) {
                     GlideUrl(it) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) }
                 } else it
             })
@@ -934,4 +937,18 @@ object ChatAdapterUtils {
                 }
             })
     }
+
+    private fun resolveImageSource(image: Image, emoteQuality: String): Any? {
+        return image.localData ?: if (image.isEmote) {
+            when (emoteQuality) {
+                "4" -> image.url4x ?: image.url3x ?: image.url2x ?: image.url1x
+                "3" -> image.url3x ?: image.url2x ?: image.url1x
+                "2" -> image.url2x ?: image.url1x
+                else -> image.url1x
+            }
+        } else {
+            image.url4x ?: image.url3x ?: image.url2x ?: image.url1x
+        }
+    }
+
 }

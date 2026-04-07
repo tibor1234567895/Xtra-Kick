@@ -12,6 +12,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.core.view.isVisible
 import androidx.appcompat.widget.TooltipCompat
 import androidx.core.content.ContextCompat
 import androidx.core.text.getSpans
@@ -29,6 +30,7 @@ import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
 import com.github.andreyasadchy.xtra.ui.view.NamePaintImageSpan
 import com.github.andreyasadchy.xtra.util.chat.ChatAdapterUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
+import com.github.andreyasadchy.xtra.util.chat.ChatListParityUtils
 import java.util.Random
 
 class ChatAdapter(
@@ -162,7 +164,7 @@ class ChatAdapter(
         )
     }
 
-    fun createMessageClickedChatAdapter(): MessageClickedChatAdapter {
+    fun createMessageClickedChatAdapter(selectedMessageOverride: ChatMessage? = selectedMessage): MessageClickedChatAdapter {
         return MessageClickedChatAdapter(
             messages, localTwitchEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, namePaints, stvBadges, personalEmoteSets,
             stvUsers, enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg, rewardChatMsg, replyMessage,
@@ -171,7 +173,7 @@ class ChatAdapter(
             useRandomColors, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, showStvBadges, showKickBadges, showPersonalEmotes,
             enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize, badgeSize,
             emoteQuality, animateGifs, enableOverlayEmotes, random, userColors,
-            savedColors, savedLocalTwitchEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessage
+            savedColors, savedLocalTwitchEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessageOverride
         )
     }
 
@@ -193,12 +195,25 @@ class ChatAdapter(
 
     private fun resolveMessageBackgroundColor(context: Context, position: Int, backgroundRes: Int): Int {
         val overlayColor = backgroundRes.takeIf { it != 0 }?.let { ContextCompat.getColor(context, it) }
+        val visualParityPosition = synchronized(messages) {
+            ChatListParityUtils.resolveVisualParityPosition(messages, position)
+        }
         return ChatBackgroundUtils.resolveMessageBackgroundColor(
             surfaceColor = backgroundColor,
             overlayColor = overlayColor,
             alternatingLineShadowEnabled = enableAlternatingLineShadows,
             alternatingLineShadowStrength = alternatingLineShadowStrength,
-            position = position,
+            position = visualParityPosition,
+        )
+    }
+
+    private fun resolveDividerColor(position: Int, backgroundColor: Int): ChatBackgroundUtils.DividerColors? {
+        if (!enableAlternatingLineShadows || position <= 0) {
+            return null
+        }
+        return ChatBackgroundUtils.resolveDividerColors(
+            surfaceColor = backgroundColor,
+            dividerStrength = alternatingLineShadowStrength,
         )
     }
 
@@ -273,13 +288,18 @@ class ChatAdapter(
 
     inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
 
-        val textView = itemView as TextView
+        private val dividerView: View = itemView.findViewById(R.id.chatLineDivider)
+        private val dividerHighlightView: View = itemView.findViewById(R.id.chatLineDividerHighlight)
+        private val dividerShadowView: View = itemView.findViewById(R.id.chatLineDividerShadow)
+        val textView: TextView = itemView.findViewById(R.id.chatMessageText)
 
         fun bind(chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder, position: Int, backgroundRes: Int) {
+            val resolvedBackgroundColor = resolveMessageBackgroundColor(textView.context, position, backgroundRes)
+            val dividerColors = resolveDividerColor(position, resolvedBackgroundColor)
             textView.apply {
                 text = formattedMessage
                 textSize = messageTextSize
-                setBackgroundColor(resolveMessageBackgroundColor(context, position, backgroundRes))
+                setBackgroundColor(resolvedBackgroundColor)
                 if (chatMessage.isReply) {
                     movementMethod = null
                     maxLines = 2
@@ -303,6 +323,11 @@ class ChatAdapter(
                         }
                     }
                 }
+            }
+            dividerView.isVisible = dividerColors != null
+            dividerColors?.let {
+                dividerHighlightView.setBackgroundColor(it.highlightColor)
+                dividerShadowView.setBackgroundColor(it.shadowColor)
             }
         }
     }

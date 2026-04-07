@@ -10,6 +10,7 @@ class ChatMessage(
     val emotes: List<TwitchEmote>? = null,
     val badges: List<Badge>? = null,
     val isAction: Boolean = false,
+    val isDeleted: Boolean = false,
     val isFirst: Boolean = false,
     val bits: Int? = null,
     val systemMsg: String? = null,

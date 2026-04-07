@@ -11,6 +11,7 @@ import kotlin.math.roundToInt
 class ChatDividerDecoration(
     @ColorInt dividerColor: Int,
     density: Float,
+    private val shouldDrawDividerAbove: ((position: Int) -> Boolean)? = null,
 ) : RecyclerView.ItemDecoration() {
     private val dividerHeightPx = (density.coerceAtLeast(1f)).roundToInt().coerceAtLeast(1)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -20,7 +21,11 @@ class ChatDividerDecoration(
 
     override fun getItemOffsets(outRect: Rect, view: View, parent: RecyclerView, state: RecyclerView.State) {
         val position = parent.getChildAdapterPosition(view)
-        if (position != RecyclerView.NO_POSITION && position > 0 && paint.alpha > 0) {
+        if (position != RecyclerView.NO_POSITION &&
+            position > 0 &&
+            paint.alpha > 0 &&
+            (shouldDrawDividerAbove?.invoke(position) != false)
+        ) {
             outRect.top = dividerHeightPx
         }
     }
@@ -32,7 +37,7 @@ class ChatDividerDecoration(
         for (i in 0 until parent.childCount) {
             val child = parent.getChildAt(i)
             val position = parent.getChildAdapterPosition(child)
-            if (position == RecyclerView.NO_POSITION || position == 0) continue
+            if (position == RecyclerView.NO_POSITION || position == 0 || shouldDrawDividerAbove?.invoke(position) == false) continue
             val top = (child.top - dividerHeightPx).toFloat()
             val bottom = child.top.toFloat()
             canvas.drawRect(left, top, right, bottom, paint)

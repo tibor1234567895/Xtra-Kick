@@ -4,10 +4,13 @@ import android.content.Context
 import android.util.Log
 import android.webkit.CookieManager
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.model.chat.Badge
+import com.github.andreyasadchy.xtra.model.chat.ChannelPointReward
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
+import com.github.andreyasadchy.xtra.model.chat.PinnedGift
 import com.github.andreyasadchy.xtra.model.chat.Reply
 import com.github.andreyasadchy.xtra.model.kick.KickCategory
 import com.github.andreyasadchy.xtra.model.kick.KickChannelResponse
@@ -118,6 +121,8 @@ class KickRepository @Inject constructor(
 
     private val tag = "KickRepository"
     private val badgeDebugTag = "KickBadgeDebug"
+    private val pointsDebugTag = "KickPointsDebug"
+    private val pinnedDebugTag = "KickPinnedDebug"
     private val emoteRegex = Regex("\\[emote:\\d+:([^\\]]+)]")
     private val kickBadgeFallbackBaseUrl = "https://www.kickdatabase.com/kickBadges/"
     private val kickBadgeCacheKey = "kick_badge_url_cache_v1"
@@ -132,17 +137,23 @@ class KickRepository @Inject constructor(
     private val websiteSearchCache = ConcurrentHashMap<String, Pair<Long, KickWebsiteSearchResponse>>()
     private val kickBadgeCatalogRefreshAt = ConcurrentHashMap<String, Long>()
     private val kickBadgeCatalogRefreshInProgress = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    private val channelPointRewardsCache = ConcurrentHashMap<String, Pair<Long, ChannelPointRewardsResult>>()
     private val channelRequestLock = Any()
     private val inFlightChannelRequests = mutableMapOf<String, CompletableDeferred<KickChannelResponse>>()
     private val channelLivestreamRequestLock = Any()
     private val inFlightChannelLivestreamRequests = mutableMapOf<String, CompletableDeferred<KickChannelLivestream?>>()
     private val badgeCacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val livestreamPrefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val channelPointRewardsCacheTtlMs = 60_000L
     @Volatile
     private var badgePersistScheduled = false
 
     private fun isKickBadgeDebugEnabled(): Boolean {
         return BuildConfig.DEBUG && context.prefs().getBoolean(C.DEBUG_KICK_BADGE_LOGS, false)
+    }
+
+    private fun isKickFeatureDebugEnabled(): Boolean {
+        return BuildConfig.DEBUG
     }
 
     init {
@@ -155,6 +166,39 @@ class KickRepository @Inject constructor(
         val id: String?,
         val login: String?,
     )
+
+    data class KickIdentity(
+        val id: String? = null,
+        val login: String? = null,
+    )
+
+    data class ChannelPointRewardsResult(
+        val rewards: List<ChannelPointReward> = emptyList(),
+        val available: Boolean = false,
+        val balance: Int? = null,
+    )
+
+    data class PinnedGiftUpdate(
+        val pinnedGift: PinnedGift? = null,
+        val cleared: Boolean = false,
+    )
+
+    private fun ChannelPointRewardsResult.merge(other: ChannelPointRewardsResult): ChannelPointRewardsResult {
+        val mergedRewards = LinkedHashMap<String, ChannelPointReward>()
+        rewards.forEach { reward ->
+            val key = reward.id ?: "${reward.title.orEmpty()}|${reward.cost ?: -1}"
+            mergedRewards[key] = reward
+        }
+        other.rewards.forEach { reward ->
+            val key = reward.id ?: "${reward.title.orEmpty()}|${reward.cost ?: -1}"
+            mergedRewards[key] = reward
+        }
+        return ChannelPointRewardsResult(
+            rewards = mergedRewards.values.sortedWith(compareBy<ChannelPointReward> { it.cost ?: Int.MAX_VALUE }.thenBy { it.title.orEmpty() }),
+            available = available || other.available,
+            balance = balance ?: other.balance,
+        )
+    }
 
     private suspend fun resolveKickCurrentUser(accessToken: String): KickCurrentUser? {
         val raw = runCatching {
@@ -182,6 +226,30 @@ class KickRepository @Inject constructor(
             ?: user.primitiveOrNull("channel_slug")
             ?: user.objOrNull("channel")?.primitiveOrNull("slug")
         return KickCurrentUser(id = id, login = login)
+    }
+
+    suspend fun ensureKickCurrentUserIdentity(): KickIdentity? {
+        val prefs = context.tokenPrefs()
+        val cachedId = prefs.getString(C.KICK_USER_ID, null)?.takeIf { it.isNotBlank() }
+        val cachedLogin = prefs.getString(C.KICK_USER_LOGIN, null)?.takeIf { it.isNotBlank() }
+        if (!cachedId.isNullOrBlank() || !cachedLogin.isNullOrBlank()) {
+            return KickIdentity(
+                id = cachedId,
+                login = cachedLogin,
+            )
+        }
+        val accessToken = prefs.getString(C.KICK_ACCESS_TOKEN, null)?.takeIf { it.isNotBlank() } ?: return null
+        val resolved = resolveKickCurrentUser(accessToken) ?: return null
+        if (!resolved.id.isNullOrBlank() || !resolved.login.isNullOrBlank()) {
+            prefs.edit {
+                resolved.id?.takeIf { it.isNotBlank() }?.let { putString(C.KICK_USER_ID, it) }
+                resolved.login?.takeIf { it.isNotBlank() }?.let { putString(C.KICK_USER_LOGIN, it) }
+            }
+        }
+        return KickIdentity(
+            id = resolved.id?.takeIf { it.isNotBlank() },
+            login = resolved.login?.takeIf { it.isNotBlank() },
+        )
     }
 
     suspend fun getLivestreams(
@@ -317,6 +385,150 @@ class KickRepository @Inject constructor(
                 }
             }
         }
+    }
+
+    suspend fun getChannelPointRewards(
+        channelSlug: String?,
+        channelId: String? = null,
+        forceRefresh: Boolean = false,
+    ): ChannelPointRewardsResult {
+        val cacheKey = listOfNotNull(
+            channelId?.trim()?.takeIf { it.isNotBlank() },
+            channelSlug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
+        ).joinToString("|")
+        if (cacheKey.isNotBlank() && !forceRefresh) {
+            channelPointRewardsCache[cacheKey]?.let { (cachedAt, cached) ->
+                if (System.currentTimeMillis() - cachedAt <= channelPointRewardsCacheTtlMs) {
+                    return cached
+                }
+            }
+        }
+        val candidates = buildList {
+            channelId?.trim()?.takeIf { it.isNotBlank() }?.let { value ->
+                add("https://kick.com/api/v2/channels/${urlEncode(value)}/points")
+                add("https://kick.com/api/v2/channels/${urlEncode(value)}/community-points/rewards")
+                add("https://kick.com/api/v1/channels/${urlEncode(value)}/community-points/rewards")
+                add("https://kick.com/api/v2/channels/${urlEncode(value)}/me")
+                add("https://kick.com/api/v2/channels/${urlEncode(value)}/rewards")
+            }
+            channelSlug?.trim()?.takeIf { it.isNotBlank() }?.let { value ->
+                add("https://kick.com/api/v2/channels/${urlEncode(value)}/points")
+                add("https://kick.com/api/v2/channels/${urlEncode(value)}/community-points/rewards")
+                add("https://kick.com/api/v1/channels/${urlEncode(value)}/community-points/rewards")
+                add("https://kick.com/api/v2/channels/${urlEncode(value)}/me")
+                add("https://kick.com/api/v2/channels/${urlEncode(value)}/rewards")
+                add("https://kick.com/api/v1/channels/${urlEncode(value)}/rewards")
+            }
+        }
+        var best = ChannelPointRewardsResult()
+        for (url in candidates) {
+            val rawResult = runCatching {
+                getRaw(url, isKickWeb = true)
+            }
+            val raw = rawResult.getOrNull()
+            if (raw == null) {
+                if (isKickFeatureDebugEnabled()) {
+                    Log.d(
+                        pointsDebugTag,
+                        "rewards url=$url failed=${rawResult.exceptionOrNull()?.message ?: "unknown"}"
+                    )
+                }
+                continue
+            }
+            val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
+            val result = root?.let(::parseChannelPointRewardsResponse)
+                ?: runCatching { parseChannelPointRewardsResponse(raw) }.getOrNull()
+                ?: continue
+            if (isKickFeatureDebugEnabled()) {
+                Log.d(
+                    pointsDebugTag,
+                    "rewards url=$url topLevel=${summarizeTopLevelKeys(root)} rewards=${result.rewards.size} available=${result.available} balance=${result.balance ?: "null"} balanceKeys=${findBalanceKeyPaths(root).take(6)} sample=${extractRewardsSample(root)} raw=${raw.compactDebugSnippet()}"
+                )
+            }
+            best = best.merge(result)
+            if ((best.balance != null && (best.available || best.rewards.isNotEmpty())) ||
+                (best.balance != null && url.contains("/me"))
+            ) {
+                break
+            }
+        }
+        return best.also { result ->
+            if (cacheKey.isNotBlank()) {
+                channelPointRewardsCache[cacheKey] = System.currentTimeMillis() to result
+            }
+        }
+    }
+
+    fun parsePinnedGiftUpdate(eventName: String?, messageJson: String): PinnedGiftUpdate? {
+        return KickFeatureParsingUtils.parsePinnedGiftUpdate(eventName, messageJson)
+    }
+
+    fun parseChannelPointRewardsResponse(raw: String): ChannelPointRewardsResult {
+        return KickFeatureParsingUtils.parseChannelPointRewardsResponse(raw, json)
+    }
+
+    fun parseChannelPointRewardsResponse(root: JsonElement): ChannelPointRewardsResult {
+        return KickFeatureParsingUtils.parseChannelPointRewardsResponse(root)
+    }
+
+    suspend fun getInitialPinnedGift(
+        channelSlug: String?,
+        channelId: String? = null,
+    ): PinnedGiftUpdate? {
+        val candidates = linkedSetOf<String>()
+        val resolvedChannel = listOfNotNull(
+            channelSlug?.trim()?.takeIf { it.isNotBlank() },
+            channelId?.trim()?.takeIf { it.isNotBlank() }
+        ).firstNotNullOfOrNull { candidate ->
+            runCatching { getChannel(candidate) }.getOrNull()
+        }
+        resolvedChannel?.id?.toString()?.takeIf { it.isNotBlank() }?.let { resolvedChannelId ->
+            candidates += "https://web.kick.com/api/v1/chat/${urlEncode(resolvedChannelId)}/history"
+        }
+        channelSlug?.trim()?.takeIf { it.isNotBlank() }?.let { slug ->
+            val encoded = urlEncode(slug)
+            candidates += "https://kick.com/api/v2/channels/$encoded"
+            candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
+            candidates += "https://kick.com/api/v1/$encoded/chatroom"
+            candidates += "https://kick.com/api/v2/channels/$encoded/info"
+            candidates += "https://kick.com/api/internal/v1/channels/$encoded/chatroom/pinned-message"
+        }
+        channelId?.trim()?.takeIf { it.isNotBlank() }?.let { id ->
+            val encoded = urlEncode(id)
+            candidates += "https://kick.com/api/v2/channels/$encoded"
+            candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
+            candidates += "https://kick.com/api/v1/channels/$encoded"
+            candidates += "https://kick.com/api/internal/v1/channels/$encoded/chatroom/pinned-message"
+        }
+        resolveDedicatedChatroomCandidates(channelId?.takeIf { !it.isNullOrBlank() } ?: channelSlug.orEmpty())
+            .forEach { chatroomId ->
+                val encoded = urlEncode(chatroomId)
+                candidates += "https://kick.com/api/v1/chatrooms/$encoded"
+                candidates += "https://kick.com/api/v2/chatrooms/$encoded"
+            }
+        candidates.forEach { url ->
+            val raw = runCatching { getRaw(url, isKickWeb = true) }.getOrNull() ?: return@forEach
+            val update = runCatching {
+                parsePinnedGiftUpdate(
+                    eventName = if (url.contains("pinned-message", ignoreCase = true)) "pinned_message" else "initial_state",
+                    messageJson = raw
+                )
+            }.getOrNull()
+            if (isKickFeatureDebugEnabled()) {
+                val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
+                val pinnedKeyPaths = findInterestingKeyPaths(root, setOf("pin", "gift", "message")).take(10)
+                val parsedState = update?.pinnedGift?.id ?: if (update?.cleared == true) "cleared" else "null"
+                val preview = update?.pinnedGift?.message?.take(80) ?: "null"
+                Log.d(
+                    pinnedDebugTag,
+                    "initial url=$url topLevel=${summarizeTopLevelKeys(root)} pinnedKeys=$pinnedKeyPaths pinnedSnippet=${extractKeySnippet(root, "pinned_message")} parsed=$parsedState preview=$preview raw=${raw.compactDebugSnippet()}"
+                )
+            }
+            if (update?.pinnedGift != null || update?.cleared == true) {
+                return update
+            }
+        }
+        return null
     }
 
     suspend fun resolveDedicatedChatroomCandidates(channelOrId: String): List<String> {
@@ -2351,6 +2563,98 @@ class KickRepository @Inject constructor(
 
     private fun JsonObject.arrayOrNull(key: String): JsonArray? {
         return this[key] as? JsonArray
+    }
+
+    private fun summarizeTopLevelKeys(root: JsonElement?): String {
+        val obj = root as? JsonObject ?: return "n/a"
+        return obj.keys.take(12).joinToString(",")
+    }
+
+    private fun findBalanceKeyPaths(root: JsonElement?): List<String> {
+        return findInterestingKeyPaths(
+            root,
+            setOf("balance", "points", "currency", "wallet")
+        )
+    }
+
+    private fun extractKeySnippet(root: JsonElement?, targetKey: String): String {
+        val normalized = targetKey.lowercase(Locale.ROOT)
+
+        fun find(element: JsonElement?): JsonElement? {
+            return when (element) {
+                is JsonObject -> {
+                    element.entries.firstOrNull { it.key.lowercase(Locale.ROOT) == normalized }?.value
+                        ?: element.values.firstNotNullOfOrNull(::find)
+                }
+                is JsonArray -> element.firstNotNullOfOrNull(::find)
+                else -> null
+            }
+        }
+
+        return find(root)
+            ?.toString()
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.take(220)
+            ?: "null"
+    }
+
+    private fun extractRewardsSample(root: JsonElement?): String {
+        val sample = when (root) {
+            is JsonObject -> {
+                when (val data = root["data"]) {
+                    is JsonArray -> data.firstOrNull()?.toString()
+                    is JsonObject -> data.toString()
+                    else -> null
+                } ?: root.entries.firstOrNull { !it.key.equals("message", true) }?.value?.toString()
+            }
+            is JsonArray -> root.firstOrNull()?.toString()
+            else -> null
+        }
+        return sample
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.take(220)
+            ?: "null"
+    }
+
+    private fun String.compactDebugSnippet(limit: Int = 260): String {
+        return replace(Regex("\\s+"), " ")
+            .trim()
+            .take(limit)
+    }
+
+    private fun findInterestingKeyPaths(root: JsonElement?, fragments: Set<String>): List<String> {
+        if (root == null) return emptyList()
+        val matches = mutableListOf<String>()
+
+        fun walk(element: JsonElement, path: List<String>) {
+            when (element) {
+                is JsonObject -> {
+                    element.forEach { (key, value) ->
+                        val lower = key.lowercase(Locale.ROOT)
+                        val nextPath = path + key
+                        if (fragments.any { lower.contains(it) }) {
+                            matches += nextPath.joinToString(".")
+                        }
+                        if (matches.size < 32) {
+                            walk(value, nextPath)
+                        }
+                    }
+                }
+                is JsonArray -> {
+                    element.forEachIndexed { index, child ->
+                        if (matches.size < 32) {
+                            walk(child, path + "[$index]")
+                        }
+                    }
+                }
+                else -> Unit
+            }
+        }
+
+        walk(root, emptyList())
+        return matches.distinct()
     }
 
     private fun JsonElement?.asJsonObjectOrNull(): JsonObject? {

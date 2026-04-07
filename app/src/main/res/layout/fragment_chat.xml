@@ -52,7 +52,38 @@
                 android:visibility="gone"
                 tools:text="⏱ ~10s"
                 tools:visibility="visible" />
+
+            <ImageButton
+                android:id="@+id/pinnedGiftRestore"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_gravity="top|end"
+                android:layout_margin="4dp"
+                android:background="?attr/chatStatus"
+                android:contentDescription="@string/pinned_message_restore"
+                android:padding="6dp"
+                android:src="@drawable/outline_push_pin_black_24"
+                android:visibility="gone"
+                app:tint="?attr/colorControlNormal"
+                tools:visibility="visible" />
         </FrameLayout>
+
+        <TextView
+            android:id="@+id/channelPointsButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginEnd="4dp"
+            android:background="?attr/chatStatus"
+            android:paddingStart="8dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="6dp"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:visibility="gone"
+            tools:text="12,345 channel points"
+            tools:visibility="visible" />
 
         <LinearLayout
             android:id="@+id/replyView"
@@ -249,6 +280,90 @@
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/pinnedGiftLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="4dp"
+        android:layout_marginTop="4dp"
+        android:layout_marginEnd="4dp"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_pinned_message"
+        android:clickable="true"
+        android:elevation="6dp"
+        android:focusable="true"
+        android:paddingStart="4dp"
+        android:paddingTop="2dp"
+        android:paddingEnd="4dp"
+        android:paddingBottom="2dp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/chatStatus"
+        tools:visibility="visible">
+
+        <ImageView
+            android:id="@+id/pinnedGiftAvatar"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginBottom="10dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:src="@tools:sample/avatars" />
+
+        <TextView
+            android:id="@+id/pinnedGiftTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:clickable="true"
+            android:focusable="false"
+            android:layout_marginStart="8dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="4dp"
+            android:textColor="#FFF3F3F3"
+            android:textAppearance="?attr/textAppearanceTitleMedium"
+            app:layout_constraintEnd_toStartOf="@id/pinnedGiftClose"
+            app:layout_constraintStart_toEndOf="@id/pinnedGiftAvatar"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:text="Pinned by Viewer for 60s" />
+
+        <TextView
+            android:id="@+id/pinnedGiftText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:clickable="true"
+            android:focusable="false"
+            android:layout_marginStart="8dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginEnd="4dp"
+            android:layout_marginBottom="8dp"
+            android:lineSpacingExtra="2dp"
+            android:maxLines="4"
+            android:autoLink="web"
+            android:linksClickable="true"
+            android:textColor="#FFFFFFFF"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/pinnedGiftClose"
+            app:layout_constraintStart_toEndOf="@id/pinnedGiftAvatar"
+            app:layout_constraintTop_toBottomOf="@id/pinnedGiftTitle"
+            tools:text="Pinned gift message text" />
+
+        <ImageView
+            android:id="@+id/pinnedGiftClose"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_margin="4dp"
+            android:contentDescription="@string/close"
+            android:src="@drawable/baseline_close_black_36"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:tint="?attr/colorControlNormal" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/raidLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -260,7 +375,7 @@
         android:visibility="gone"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/chatStatus"
+        app:layout_constraintTop_toBottomOf="@id/pinnedGiftLayout"
         tools:visibility="visible">
 
         <ImageView

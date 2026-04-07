@@ -15,12 +15,14 @@ import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.chat.Badge
 import com.github.andreyasadchy.xtra.model.chat.ChannelPointReward
+import com.github.andreyasadchy.xtra.model.chat.ChannelPointsSummary
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.Chatter
 import com.github.andreyasadchy.xtra.model.chat.CheerEmote
 import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.NamePaint
 import com.github.andreyasadchy.xtra.model.chat.Poll
+import com.github.andreyasadchy.xtra.model.chat.PinnedGift
 import com.github.andreyasadchy.xtra.model.chat.Prediction
 import com.github.andreyasadchy.xtra.model.chat.Raid
 import com.github.andreyasadchy.xtra.model.chat.RecentEmote
@@ -181,6 +183,7 @@ class ChatViewModel @Inject constructor(
     val playbackMessage: StateFlow<PubSubUtils.PlaybackMessage?> = _playbackMessage
     var streamId: String? = null
     private val rewardList = mutableListOf<ChatMessage>()
+    private var lastPinnedGiftId: String? = null
     val namePaints = mutableListOf<NamePaint>()
     val stvBadges = mutableListOf<StvBadge>()
     val personalEmoteSets = mutableMapOf<String, List<Emote>>()
@@ -192,12 +195,19 @@ class ChatViewModel @Inject constructor(
     val hideRaid = MutableStateFlow(false)
     val hidePoll = MutableStateFlow(false)
     val hidePrediction = MutableStateFlow(false)
+    val pinnedGift = MutableStateFlow<PinnedGift?>(null)
+    val pinnedGiftDismissed = MutableStateFlow(false)
+    val channelPointsBalance = MutableStateFlow<Int?>(null)
+    val channelPointRewards = MutableStateFlow<List<ChannelPointReward>>(emptyList())
+    val channelPointRewardsAvailable = MutableStateFlow(false)
+    val channelPointsSummary = MutableStateFlow(ChannelPointsSummary())
 
     val newMessage = MutableSharedFlow<Triple<ChatMessage, Int, Int>>()
     val addMessages = MutableSharedFlow<Pair<List<ChatMessage>, Int>>(replay = 1, extraBufferCapacity = 1)
     val appendMessages = MutableSharedFlow<Pair<List<ChatMessage>, Int>>()
     val removeMessages = MutableSharedFlow<Int>()
     val updateUserMessages = MutableSharedFlow<String>()
+    val updateMessage = MutableSharedFlow<Pair<Int, ChatMessage>>()
     val liveLatencyMs = MutableStateFlow(0L)
 
     fun setLiveLatency(ms: Long) {
@@ -210,6 +220,64 @@ class ChatViewModel @Inject constructor(
             "2" -> applicationContext.prefs().getInt(C.CHAT_DELAY_CUSTOM_SECS, 5) * 1000L
             else -> 0L
         }
+    }
+
+    fun dismissPinnedGift() {
+        pinnedGiftDismissed.value = true
+    }
+
+    fun restorePinnedGift() {
+        pinnedGift.value?.let {
+            pinnedGiftDismissed.value = false
+        }
+    }
+
+    private fun clearPinnedGift() {
+        pinnedGift.value = null
+        pinnedGiftDismissed.value = false
+        lastPinnedGiftId = null
+    }
+
+    private fun updatePinnedGift(nextPinnedGift: PinnedGift?) {
+        if (nextPinnedGift == null) {
+            clearPinnedGift()
+            return
+        }
+        val isReplacement = lastPinnedGiftId != nextPinnedGift.id
+        pinnedGift.value = nextPinnedGift
+        if (isReplacement) {
+            pinnedGiftDismissed.value = false
+        }
+        lastPinnedGiftId = nextPinnedGift.id
+    }
+
+    private fun updateChannelPointsSummary() {
+        channelPointsSummary.value = ChannelPointsSummary(
+            balance = channelPointsBalance.value,
+            rewards = channelPointRewards.value,
+            rewardsAvailable = channelPointRewardsAvailable.value
+        )
+    }
+
+    private fun updateChannelPointsBalance(balance: Int?) {
+        channelPointsBalance.value = balance
+        updateChannelPointsSummary()
+    }
+
+    private fun updateChannelPointRewards(rewards: List<ChannelPointReward>, available: Boolean) {
+        channelPointRewards.value = rewards
+        channelPointRewardsAvailable.value = available
+        updateChannelPointsSummary()
+    }
+
+    private fun getKickAccountId(): String? {
+        return applicationContext.tokenPrefs().getString(C.KICK_USER_ID, null)?.takeIf { it.isNotBlank() }
+            ?: applicationContext.tokenPrefs().getString(C.USER_ID, null)?.takeIf { it.isNotBlank() }
+    }
+
+    private fun getKickAccountLogin(): String? {
+        return applicationContext.tokenPrefs().getString(C.KICK_USER_LOGIN, null)?.takeIf { it.isNotBlank() }
+            ?: applicationContext.tokenPrefs().getString(C.USERNAME, null)?.takeIf { it.isNotBlank() }
     }
     val userEmotesUpdated = MutableSharedFlow<Unit>()
     val thirdPartyEmotesUpdated = MutableSharedFlow<Unit>()
@@ -670,8 +738,13 @@ class ChatViewModel @Inject constructor(
                             message.contains("CLEARMSG") -> {
                                 if (applicationContext.prefs().getBoolean(C.CHAT_SHOW_CLEARMSG, true)) {
                                     val pair = RecentMessageUtils.parseClearMessage(message)
-                                    val deletedMessage = pair.second?.let { targetId -> recentList.find { it.id == targetId } }
-                                    getClearMessage(pair.first, deletedMessage, applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "1"))
+                                    val deletedMessageIndex = pair.second?.let { targetId -> recentList.indexOfLast { it.id == targetId } } ?: -1
+                                    if (deletedMessageIndex != -1) {
+                                        recentList[deletedMessageIndex] = createDeletedMessage(recentList[deletedMessageIndex])
+                                        null
+                                    } else {
+                                        getClearMessage(pair.first, null, applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "1"))
+                                    }
                                 } else null
                             }
                             message.contains("CLEARCHAT") -> {
@@ -1089,12 +1162,24 @@ class ChatViewModel @Inject constructor(
                     if (!showClearMsg) {
                         return@forEach
                     }
-                    val deletedMessage = kickRepository.getKickModerationTargetMessageId(rawMessage)?.let { targetId ->
-                        mappedMessages.findLast { it.id == targetId } ?: synchronized(chatMessages) {
-                            chatMessages.findLast { it.id == targetId }
+                    val targetId = kickRepository.getKickModerationTargetMessageId(rawMessage)
+                    val deletedMessageIndex = targetId?.let { id -> mappedMessages.indexOfLast { it.id == id } } ?: -1
+                    val deletedMessage = when {
+                        deletedMessageIndex != -1 -> createDeletedMessage(mappedMessages[deletedMessageIndex]).also { mappedMessages[deletedMessageIndex] = it }
+                        else -> targetId?.let { id ->
+                            synchronized(chatMessages) {
+                                chatMessages.findLast { it.id == id }
+                            }
                         }
                     }
-                    mappedMessages += getClearMessage(chatMessage, deletedMessage, nameDisplay)
+                    if (deletedMessageIndex != -1) {
+                        return@forEach
+                    }
+                    if (deletedMessage != null) {
+                        mappedMessages += getClearMessage(chatMessage, deletedMessage, nameDisplay)
+                    } else {
+                        mappedMessages += getClearMessage(chatMessage, null, nameDisplay)
+                    }
                 }
                 chatMessage.msgId == "kick_moderation" -> {
                     if (showClearChat) {
@@ -1627,6 +1712,49 @@ class ChatViewModel @Inject constructor(
         )
     }
 
+    private fun createDeletedMessage(chatMessage: ChatMessage): ChatMessage {
+        return ChatMessage(
+            id = chatMessage.id,
+            userId = chatMessage.userId,
+            userLogin = chatMessage.userLogin,
+            userName = chatMessage.userName,
+            message = chatMessage.message,
+            color = chatMessage.color,
+            emotes = chatMessage.emotes,
+            badges = chatMessage.badges,
+            isAction = chatMessage.isAction,
+            isDeleted = true,
+            isFirst = chatMessage.isFirst,
+            bits = chatMessage.bits,
+            systemMsg = chatMessage.systemMsg,
+            msgId = chatMessage.msgId,
+            reward = chatMessage.reward,
+            reply = chatMessage.reply,
+            isReply = chatMessage.isReply,
+            replyParent = chatMessage.replyParent,
+            timestamp = chatMessage.timestamp,
+            fullMsg = chatMessage.fullMsg
+        )
+    }
+
+    private suspend fun markMessageDeleted(targetId: String?): ChatMessage? {
+        if (targetId.isNullOrBlank()) {
+            return null
+        }
+        val update = synchronized(chatMessages) {
+            val index = chatMessages.indexOfLast { it.id == targetId }
+            if (index == -1) {
+                null
+            } else {
+                val updatedMessage = createDeletedMessage(chatMessages[index])
+                chatMessages[index] = updatedMessage
+                index to updatedMessage
+            }
+        }
+        update?.let { updateMessage.emit(it) }
+        return update?.second
+    }
+
     suspend fun onMessage(message: ChatMessage) {
         val delayMs = effectiveDelayMs()
         if (delayMs > 0L) {
@@ -1664,8 +1792,8 @@ class ChatViewModel @Inject constructor(
         val helixHeaders = KickApiHelper.getHelixHeaders(applicationContext)
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
         val enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false)
-        val accountId = applicationContext.tokenPrefs().getString(C.USER_ID, null)
-        val accountLogin = applicationContext.tokenPrefs().getString(C.KICK_USER_LOGIN, null)
+        val accountId = if (kickMode) getKickAccountId() else applicationContext.tokenPrefs().getString(C.USER_ID, null)
+        val accountLogin = if (kickMode) getKickAccountLogin() else applicationContext.tokenPrefs().getString(C.USERNAME, null)
         val isLoggedIn = com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(applicationContext)
         val usePubSub = applicationContext.prefs().getBoolean(C.CHAT_PUBSUB_ENABLED, true)
         val showUserNotice = applicationContext.prefs().getBoolean(C.CHAT_SHOW_USERNOTICE, true)
@@ -1683,7 +1811,23 @@ class ChatViewModel @Inject constructor(
             synchronized(kickMessageIds) {
                 kickMessageIds.clear()
             }
+            viewModelScope.launch {
+                kickRepository.getInitialPinnedGift(channelLogin, channelId)?.let { update ->
+                    if (update.cleared) {
+                        clearPinnedGift()
+                    } else {
+                        updatePinnedGift(update.pinnedGift)
+                    }
+                }
+            }
             chatReadJob = viewModelScope.launch {
+                runCatching {
+                    kickRepository.getChannel(channelLogin)
+                }.onFailure {
+                    channelId?.takeIf { it.isNotBlank() }?.let { fallbackChannelId ->
+                        runCatching { kickRepository.getChannel(fallbackChannelId) }
+                    }
+                }
                 val fallbackId = channelId?.takeIf { it.isNotBlank() } ?: channelLogin
                 val kickChatroomId = if (!channelId.isNullOrBlank()) {
                     resolveKickRealtimeChatroomId(channelId, channelLogin)
@@ -1747,33 +1891,61 @@ class ChatViewModel @Inject constructor(
         val collectPoints = applicationContext.prefs().getBoolean(C.CHAT_POINTS_COLLECT, true)
         val throttleBackgroundActivity = applicationContext.prefs().getBoolean(C.CHAT_THROTTLE_BACKGROUND, true)
         val gqlWebToken = applicationContext.tokenPrefs().getString(C.GQL_TOKEN_WEB, null)
-        if (usePubSub && !channelId.isNullOrBlank() && (accountId.isNullOrBlank() || !collectPoints || !gqlWebToken.isNullOrBlank() || enableIntegrity)) {
-            val notifyPoints = applicationContext.prefs().getBoolean(C.CHAT_POINTS_NOTIFY, false)
-            val showRaids = applicationContext.prefs().getBoolean(C.CHAT_RAIDS_SHOW, true)
-            val showPolls = applicationContext.prefs().getBoolean(C.CHAT_POLLS_SHOW, true)
-            val showPredictions = applicationContext.prefs().getBoolean(C.CHAT_PREDICTIONS_SHOW, true)
+        val kickAccessToken = applicationContext.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)
+        val notifyPoints = applicationContext.prefs().getBoolean(C.CHAT_POINTS_NOTIFY, false)
+        val showRaids = applicationContext.prefs().getBoolean(C.CHAT_RAIDS_SHOW, true)
+        val showPolls = applicationContext.prefs().getBoolean(C.CHAT_POLLS_SHOW, true)
+        val showPredictions = applicationContext.prefs().getBoolean(C.CHAT_PREDICTIONS_SHOW, true)
+
+        fun connectHermes(userId: String?) {
+            val subscriptionToken = when {
+                enableIntegrity -> gqlHeaders[C.HEADER_TOKEN]?.removePrefix("OAuth ")
+                kickMode -> kickAccessToken
+                else -> gqlWebToken
+            }
             hermesWebSocket = HermesWebSocket(
-                channelId = channelId,
-                userId = accountId,
+                channelId = channelId ?: return,
+                userId = userId,
                 gqlClientId = if (enableIntegrity) {
                     gqlHeaders[C.HEADER_CLIENT_ID]
                 } else {
                     gqlWebClientId
                 },
-                gqlToken = if (enableIntegrity) {
-                    gqlHeaders[C.HEADER_TOKEN]?.removePrefix("OAuth ")
-                } else {
-                    gqlWebToken
-                },
+                gqlToken = subscriptionToken,
                 collectPoints = collectPoints,
                 throttleBackgroundActivity = throttleBackgroundActivity,
-                showRaids = applicationContext.prefs().getBoolean(C.CHAT_RAIDS_SHOW, true),
-                showPolls = applicationContext.prefs().getBoolean(C.CHAT_POLLS_SHOW, true),
-                showPredictions = applicationContext.prefs().getBoolean(C.CHAT_PREDICTIONS_SHOW, true),
+                showRaids = showRaids,
+                showPolls = showPolls,
+                showPredictions = showPredictions,
                 trustManager = trustManager,
-                listener = PubSubListener(channelLogin, collectPoints, notifyPoints, showRaids, showPolls, showPredictions, networkLibrary, gqlHeaders, isLoggedIn, accountId, channelId, enableIntegrity, showWebSocketDebugInfo)
+                listener = PubSubListener(channelLogin, collectPoints, notifyPoints, showRaids, showPolls, showPredictions, networkLibrary, gqlHeaders, isLoggedIn, userId, channelId, enableIntegrity, showWebSocketDebugInfo)
             )
             pubSubJob = hermesWebSocket?.connect(viewModelScope)
+        }
+        if (!kickMode && usePubSub && !channelId.isNullOrBlank() && (accountId.isNullOrBlank() || !collectPoints || !gqlWebToken.isNullOrBlank() || enableIntegrity)) {
+            connectHermes(accountId)
+        }
+        if (kickMode && isLoggedIn && !channelLogin.isNullOrBlank()) {
+            val liveChannelLogin = channelLogin
+                ?: return
+            loadKickChannelPointState(networkLibrary, gqlHeaders, channelId, channelLogin)
+            if (usePubSub && !channelId.isNullOrBlank()) {
+                connectHermes(accountId)
+            }
+            if (accountId.isNullOrBlank()) {
+                viewModelScope.launch {
+                    val identity = runCatching { kickRepository.ensureKickCurrentUserIdentity() }.getOrNull()
+                    val liveChannelId = channelId
+                    if (!identity?.id.isNullOrBlank() && !liveChannelId.isNullOrBlank()) {
+                        hermesWebSocket?.disconnect(pubSubJob)
+                        connectHermes(identity?.id)
+                    }
+                    loadKickChannelPointState(networkLibrary, gqlHeaders, channelId, liveChannelLogin)
+                }
+            }
+        } else {
+            updateChannelPointsBalance(null)
+            updateChannelPointRewards(emptyList(), false)
         }
         val showNamePaints = applicationContext.prefs().getBoolean(C.CHAT_SHOW_PAINTS, true)
         val showStvBadges = applicationContext.prefs().getBoolean(C.CHAT_SHOW_STV_BADGES, true)
@@ -1797,6 +1969,16 @@ class ChatViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun loadKickChannelPointState(
+        networkLibrary: String?,
+        gqlHeaders: Map<String, String>,
+        channelId: String?,
+        channelLogin: String?,
+    ) {
+        updateChannelPointsBalance(null)
+        updateChannelPointRewards(emptyList(), false)
     }
 
     fun stopLiveChat() {
@@ -1892,6 +2074,9 @@ class ChatViewModel @Inject constructor(
         if (!hidePrediction.value) {
             hidePrediction.value = true
         }
+        clearPinnedGift()
+        updateChannelPointsBalance(null)
+        updateChannelPointRewards(emptyList(), false)
         roomState.value = RoomState("0", "-1", "0", "0", "0")
         autoReconnect = false
     }
@@ -1931,13 +2116,11 @@ class ChatViewModel @Inject constructor(
                 val result = ChatUtils.parseClearMessage(message)
                 val chatMessage = result.first
                 val targetId = result.second
-                val deletedMessage = targetId?.let { targetId ->
-                    synchronized(chatMessages) {
-                        chatMessages.find { it.id == targetId }
-                    }
+                val deletedMessage = markMessageDeleted(targetId)
+                if (deletedMessage == null) {
+                    val clearMessage = getClearMessage(chatMessage, null, nameDisplay)
+                    onMessage(clearMessage)
                 }
-                val clearMessage = getClearMessage(chatMessage, deletedMessage, nameDisplay)
-                onMessage(clearMessage)
             }
         }
 
@@ -1985,6 +2168,13 @@ class ChatViewModel @Inject constructor(
         }
 
         override suspend fun onChatEvent(eventName: String, messageJson: String) {
+            kickRepository.parsePinnedGiftUpdate(eventName, messageJson)?.let { update ->
+                if (update.cleared) {
+                    clearPinnedGift()
+                } else {
+                    updatePinnedGift(update.pinnedGift)
+                }
+            }
             val realtimeMessage = parseKickRealtimeMessage(eventName, messageJson) ?: return
             val kickMessage = realtimeMessage.message
             val chatMessage = kickRepository.toChatMessage(kickMessage, realtimeMessage.eventName)
@@ -1996,12 +2186,10 @@ class ChatViewModel @Inject constructor(
                     return
                 }
                 val targetId = kickRepository.getKickModerationTargetMessageId(kickMessage)
-                val deletedMessage = targetId?.let { id ->
-                    synchronized(chatMessages) {
-                        chatMessages.find { it.id == id }
-                    }
+                val deletedMessage = markMessageDeleted(targetId)
+                if (deletedMessage == null) {
+                    onMessage(getClearMessage(chatMessage, null, nameDisplay))
                 }
-                onMessage(getClearMessage(chatMessage, deletedMessage, nameDisplay))
                 return
             }
             if (chatMessage.msgId == "kick_moderation" && !showClearChat) {
@@ -2234,6 +2422,13 @@ class ChatViewModel @Inject constructor(
 
         override suspend fun onRewardMessage(message: JSONObject) {
             val chatMessage = PubSubUtils.parseRewardMessage(message)
+            if (!accountId.isNullOrBlank() && chatMessage.userId == accountId) {
+                updateChannelPointsBalance(
+                    channelPointsBalance.value?.let { balance ->
+                        chatMessage.reward?.cost?.let { cost -> (balance - cost).coerceAtLeast(0) } ?: balance
+                    }
+                )
+            }
             if (!chatMessage.message.isNullOrBlank()) {
                 onRewardMessage(chatMessage, networkLibrary, isLoggedIn, accountId, channelId)
             } else {
@@ -2242,11 +2437,16 @@ class ChatViewModel @Inject constructor(
         }
 
         override suspend fun onPointsEarned(message: JSONObject) {
-            if (notifyPoints) {
-                val result = PubSubUtils.parsePointsEarned(message)
-                val points = result.first
-                val messageChannelId = result.second
-                if (channelId == messageChannelId) {
+            val result = PubSubUtils.parsePointsEarned(message)
+            val points = result.first
+            val messageChannelId = result.second
+            if (channelId == messageChannelId) {
+                updateChannelPointsBalance(
+                    channelPointsBalance.value?.let { current ->
+                        (current + (points.pointsGained ?: 0)).coerceAtLeast(0)
+                    } ?: points.pointsGained
+                )
+                if (notifyPoints) {
                     onMessage(ChatMessage(
                         systemMsg = ContextCompat.getString(applicationContext, R.string.points_earned).format(points.pointsGained),
                         timestamp = points.timestamp,
@@ -2269,13 +2469,16 @@ class ChatViewModel @Inject constructor(
                                 }
                             }
                             response.data?.community?.channel?.self?.communityPoints?.availableClaim?.id?.let { claimId ->
-                                val response = graphQLRepository.loadClaimPoints(networkLibrary, gqlHeaders, channelId, claimId)
+                                val claimResponse = graphQLRepository.loadClaimPoints(networkLibrary, gqlHeaders, channelId, claimId)
                                 if (enableIntegrity && integrity.value == null) {
-                                    response.errors?.find { it.message == "failed integrity check" }?.let {
+                                    claimResponse.errors?.find { it.message == "failed integrity check" }?.let {
                                         integrity.value = "refresh"
                                         return@launch
                                     }
                                 }
+                            }
+                            response.data?.community?.channel?.self?.communityPoints?.balance?.let {
+                                updateChannelPointsBalance(it)
                             }
                         } catch (e: Exception) {
 
@@ -2617,47 +2820,87 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun onRewardMessage(message: ChatMessage, networkLibrary: String?, isLoggedIn: Boolean, accountId: String?, channelId: String?) {
-        if (message.reward?.id != null) {
+        val enrichedMessage = message.reward?.id?.let { rewardId ->
+            channelPointRewards.value.find { it.id == rewardId }?.let { knownReward ->
+                ChatMessage(
+                    id = message.id,
+                    userId = message.userId,
+                    userLogin = message.userLogin,
+                    userName = message.userName,
+                    message = message.message,
+                    color = message.color,
+                    emotes = message.emotes,
+                    badges = message.badges,
+                    isAction = message.isAction,
+                    isFirst = message.isFirst,
+                    bits = message.bits,
+                    systemMsg = message.systemMsg,
+                    msgId = message.msgId,
+                    reward = ChannelPointReward(
+                        id = rewardId,
+                        title = message.reward?.title ?: knownReward.title,
+                        cost = message.reward?.cost ?: knownReward.cost,
+                        url1x = message.reward?.url1x ?: knownReward.url1x,
+                        url2x = message.reward?.url2x ?: knownReward.url2x,
+                        url4x = message.reward?.url4x ?: knownReward.url4x,
+                        backgroundColor = message.reward?.backgroundColor ?: knownReward.backgroundColor,
+                        isEnabled = message.reward?.isEnabled ?: knownReward.isEnabled,
+                        isUserInputRequired = message.reward?.isUserInputRequired ?: knownReward.isUserInputRequired,
+                        prompt = message.reward?.prompt ?: knownReward.prompt,
+                    ),
+                    reply = message.reply,
+                    isReply = message.isReply,
+                    replyParent = message.replyParent,
+                    timestamp = message.timestamp,
+                    fullMsg = message.fullMsg,
+                )
+            }
+        } ?: message
+        if (enrichedMessage.reward?.id != null) {
             synchronized(rewardList) {
-                val item = rewardList.find { it.reward?.id == message.reward.id && it.userId == message.userId }
+                val item = rewardList.find { it.reward?.id == enrichedMessage.reward.id && it.userId == enrichedMessage.userId }
                 if (item != null) {
                     rewardList.remove(item)
                     item
                 } else {
-                    rewardList.add(message)
+                    rewardList.add(enrichedMessage)
                     null
                 }
             }.let { item ->
                 if (item != null) {
                     onChatMessage(ChatMessage(
-                        id = message.id ?: item.id,
-                        userId = message.userId ?: item.userId,
-                        userLogin = message.userLogin ?: item.userLogin,
-                        userName = message.userName ?: item.userName,
-                        message = message.message ?: item.message,
-                        color = message.color ?: item.color,
-                        emotes = message.emotes ?: item.emotes,
-                        badges = message.badges ?: item.badges,
-                        isAction = message.isAction || item.isAction,
-                        isFirst = message.isFirst || item.isFirst,
-                        bits = message.bits ?: item.bits,
-                        systemMsg = message.systemMsg ?: item.systemMsg,
-                        msgId = message.msgId ?: item.msgId,
+                        id = enrichedMessage.id ?: item.id,
+                        userId = enrichedMessage.userId ?: item.userId,
+                        userLogin = enrichedMessage.userLogin ?: item.userLogin,
+                        userName = enrichedMessage.userName ?: item.userName,
+                        message = enrichedMessage.message ?: item.message,
+                        color = enrichedMessage.color ?: item.color,
+                        emotes = enrichedMessage.emotes ?: item.emotes,
+                        badges = enrichedMessage.badges ?: item.badges,
+                        isAction = enrichedMessage.isAction || item.isAction,
+                        isFirst = enrichedMessage.isFirst || item.isFirst,
+                        bits = enrichedMessage.bits ?: item.bits,
+                        systemMsg = enrichedMessage.systemMsg ?: item.systemMsg,
+                        msgId = enrichedMessage.msgId ?: item.msgId,
                         reward = ChannelPointReward(
-                            id = message.reward.id,
-                            title = message.reward.title ?: item.reward?.title,
-                            cost = message.reward.cost ?: item.reward?.cost,
-                            url1x = message.reward.url1x ?: item.reward?.url1x,
-                            url2x = message.reward.url2x ?: item.reward?.url2x,
-                            url4x = message.reward.url4x ?: item.reward?.url4x,
+                            id = enrichedMessage.reward.id,
+                            title = enrichedMessage.reward.title ?: item.reward?.title,
+                            cost = enrichedMessage.reward.cost ?: item.reward?.cost,
+                            url1x = enrichedMessage.reward.url1x ?: item.reward?.url1x,
+                            url2x = enrichedMessage.reward.url2x ?: item.reward?.url2x,
+                            url4x = enrichedMessage.reward.url4x ?: item.reward?.url4x,
+                            backgroundColor = enrichedMessage.reward.backgroundColor ?: item.reward?.backgroundColor,
+                            isEnabled = enrichedMessage.reward.isEnabled ?: item.reward?.isEnabled,
+                            isUserInputRequired = enrichedMessage.reward.isUserInputRequired ?: item.reward?.isUserInputRequired,
+                            prompt = enrichedMessage.reward.prompt ?: item.reward?.prompt,
                         ),
-                        timestamp = message.timestamp ?: item.timestamp,
-                        fullMsg = message.fullMsg ?: item.fullMsg,
+                        timestamp = enrichedMessage.timestamp ?: item.timestamp,
+                        fullMsg = enrichedMessage.fullMsg ?: item.fullMsg,
                     ), networkLibrary, isLoggedIn, accountId, channelId)
                 }
             }
         } else {
-            onChatMessage(message, networkLibrary, isLoggedIn, accountId, channelId)
+            onChatMessage(enrichedMessage, networkLibrary, isLoggedIn, accountId, channelId)
         }
     }
 
@@ -3672,8 +3915,12 @@ class ChatViewModel @Inject constructor(
                                                                 }
                                                                 message.contains("CLEARMSG") -> {
                                                                     val pair = ChatUtils.parseClearMessage(message)
-                                                                    val deletedMessage = pair.second?.let { targetId -> messages.find { it.id == targetId } }
-                                                                    messages.add(getClearMessage(pair.first, deletedMessage, nameDisplay))
+                                                                    val deletedMessageIndex = pair.second?.let { targetId -> messages.indexOfLast { it.id == targetId } } ?: -1
+                                                                    if (deletedMessageIndex != -1) {
+                                                                        messages[deletedMessageIndex] = createDeletedMessage(messages[deletedMessageIndex])
+                                                                    } else {
+                                                                        messages.add(getClearMessage(pair.first, null, nameDisplay))
+                                                                    }
                                                                 }
                                                                 message.contains("CLEARCHAT") -> messages.add(ChatUtils.parseClearChat(applicationContext, message))
                                                             }

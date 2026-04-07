@@ -30,7 +30,8 @@ data class KickUsersResponse(
 
 @Serializable
 data class KickUserData(
-    val id: String? = null,
+    @SerialName("user_id")
+    val id: Long? = null,
     val name: String? = null,
     @SerialName("channel_slug")
     val channelSlug: String? = null,

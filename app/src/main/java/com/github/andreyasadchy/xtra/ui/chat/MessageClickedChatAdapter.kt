@@ -2,7 +2,6 @@ package com.github.andreyasadchy.xtra.ui.chat
 
 import android.content.Context
 import android.graphics.drawable.Animatable
-import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.LayerDrawable
 import android.text.Spannable
 import android.text.SpannableStringBuilder
@@ -18,6 +17,7 @@ import android.widget.TextView
 import androidx.appcompat.widget.TooltipCompat
 import androidx.core.content.ContextCompat
 import androidx.core.text.getSpans
+import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.RecyclerView
 import com.github.andreyasadchy.xtra.R
@@ -32,6 +32,7 @@ import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
 import com.github.andreyasadchy.xtra.ui.view.NamePaintImageSpan
 import com.github.andreyasadchy.xtra.util.chat.ChatAdapterUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
+import com.github.andreyasadchy.xtra.util.chat.ChatListParityUtils
 import java.util.Random
 
 class MessageClickedChatAdapter(
@@ -187,10 +188,19 @@ class MessageClickedChatAdapter(
     fun updateBackground(chatMessage: ChatMessage, item: TextView) {
         val backgroundRes = getBackgroundRes(chatMessage, item)
         val position = synchronized(messages) { messages.indexOf(chatMessage) }.coerceAtLeast(0)
-        item.setBackgroundColor(resolveMessageBackgroundColor(item.context, position, backgroundRes))
+        val resolvedBackgroundColor = resolveMessageBackgroundColor(item.context, position, backgroundRes)
+        item.setBackgroundColor(resolvedBackgroundColor)
+        (item.parent as? ViewGroup)?.findViewById<View>(R.id.chatLineDivider)?.apply {
+            val dividerColors = resolveDividerColor(position, resolvedBackgroundColor)
+            isVisible = dividerColors != null
+            dividerColors?.let {
+                findViewById<View>(R.id.chatLineDividerHighlight).setBackgroundColor(it.highlightColor)
+                findViewById<View>(R.id.chatLineDividerShadow).setBackgroundColor(it.shadowColor)
+            }
+        }
         (item.text as? Spannable)?.let { view ->
             view.getSpans<NamePaintImageSpan>().forEach {
-                it.backgroundColor = (item.background as? ColorDrawable)?.color
+                it.backgroundColor = resolvedBackgroundColor
                 view.setSpan(it, view.getSpanStart(it), view.getSpanEnd(it), SPAN_EXCLUSIVE_EXCLUSIVE)
             }
         }
@@ -223,12 +233,15 @@ class MessageClickedChatAdapter(
 
     private fun resolveMessageBackgroundColor(context: Context, position: Int, backgroundRes: Int): Int {
         val overlayColor = backgroundRes.takeIf { it != 0 }?.let { ContextCompat.getColor(context, it) }
+        val visualParityPosition = synchronized(messages) {
+            ChatListParityUtils.resolveVisualParityPosition(messages, position)
+        }
         return ChatBackgroundUtils.resolveMessageBackgroundColor(
             surfaceColor = backgroundColor,
             overlayColor = overlayColor,
             alternatingLineShadowEnabled = enableAlternatingLineShadows,
             alternatingLineShadowStrength = alternatingLineShadowStrength,
-            position = position,
+            position = visualParityPosition,
         )
     }
 
@@ -239,6 +252,16 @@ class MessageClickedChatAdapter(
             alternatingLineShadowEnabled = false,
             alternatingLineShadowStrength = 0,
             position = 0,
+        )
+    }
+
+    private fun resolveDividerColor(position: Int, backgroundColor: Int): ChatBackgroundUtils.DividerColors? {
+        if (!enableAlternatingLineShadows || position <= 0) {
+            return null
+        }
+        return ChatBackgroundUtils.resolveDividerColors(
+            surfaceColor = backgroundColor,
+            dividerStrength = alternatingLineShadowStrength,
         )
     }
 
@@ -313,13 +336,18 @@ class MessageClickedChatAdapter(
 
     inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
 
-        val textView = itemView as TextView
+        private val dividerView: View = itemView.findViewById(R.id.chatLineDivider)
+        private val dividerHighlightView: View = itemView.findViewById(R.id.chatLineDividerHighlight)
+        private val dividerShadowView: View = itemView.findViewById(R.id.chatLineDividerShadow)
+        val textView: TextView = itemView.findViewById(R.id.chatMessageText)
 
         fun bind(chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder, position: Int, backgroundRes: Int) {
+            val resolvedBackgroundColor = resolveMessageBackgroundColor(textView.context, position, backgroundRes)
+            val dividerColors = resolveDividerColor(position, resolvedBackgroundColor)
             textView.apply {
                 text = formattedMessage
                 textSize = messageTextSize
-                setBackgroundColor(resolveMessageBackgroundColor(context, position, backgroundRes))
+                setBackgroundColor(resolvedBackgroundColor)
                 if (chatMessage.isReply) {
                     movementMethod = null
                     maxLines = 2
@@ -340,13 +368,18 @@ class MessageClickedChatAdapter(
                             setBackgroundColor(resolveSelectedBackgroundColor(context))
                             (text as? Spannable)?.let { view ->
                                 view.getSpans<NamePaintImageSpan>().forEach {
-                                    it.backgroundColor = (background as? ColorDrawable)?.color
+                                    it.backgroundColor = resolveSelectedBackgroundColor(context)
                                     view.setSpan(it, view.getSpanStart(it), view.getSpanEnd(it), SPAN_EXCLUSIVE_EXCLUSIVE)
                                 }
                             }
                         }
                     }
                 }
+            }
+            dividerView.isVisible = dividerColors != null
+            dividerColors?.let {
+                dividerHighlightView.setBackgroundColor(it.highlightColor)
+                dividerShadowView.setBackgroundColor(it.shadowColor)
             }
         }
     }

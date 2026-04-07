@@ -106,9 +106,7 @@ class KickPusherChatWebSocket(
                         if (event.startsWith("App\\Events\\")) {
                             val dataObj = parseJsonOrNull(root.opt("data"))
                             if (dataObj != null) {
-                                if (debugLogging) {
-                                    Log.d(tag, "chat_event event=$event channel=${root.optString("channel")}")
-                                }
+                                Log.d(tag, "chat_event event=$event channel=${root.optString("channel")}")
                                 listener.onChatEvent(event, dataObj.toString())
                             }
                         } else if (debugLogging && event.isNotBlank()) {
