@@ -78,7 +78,7 @@ class ChatAdapter(
     private val enableOverlayEmotes: Boolean,
     private val channelId: String?,
     private val loggedInUser: String?,
-    private val messageClickListener: ((String?) -> Unit)?,
+    private val messageClickListener: ((String?, ChatMessage?) -> Unit)?,
     private val replyClickListener: (() -> Unit)?,
     private val imageClickListener: ((String?, String?, String?, Boolean?, Int?, Boolean?, String?) -> Unit)?,
 ) : RecyclerView.Adapter<ChatAdapter.ViewHolder>() {
@@ -299,6 +299,7 @@ class ChatAdapter(
             textView.apply {
                 text = formattedMessage
                 textSize = messageTextSize
+                alpha = if (chatMessage.isDeleted) 0.62f else 1f
                 setBackgroundColor(resolvedBackgroundColor)
                 if (chatMessage.isReply) {
                     movementMethod = null
@@ -308,7 +309,8 @@ class ChatAdapter(
                     setOnClickListener {
                         if (selectionStart == -1 && selectionEnd == -1) {
                             selectedMessage = chatMessage.replyParent
-                            messageClickListener?.invoke(channelId)
+                            val tappedMessage = selectedMessage
+                            messageClickListener?.invoke(channelId, tappedMessage)
                         }
                     }
                 } else {
@@ -319,7 +321,8 @@ class ChatAdapter(
                     setOnClickListener {
                         if (selectionStart == -1 && selectionEnd == -1) {
                             selectedMessage = chatMessage
-                            messageClickListener?.invoke(channelId)
+                            val tappedMessage = selectedMessage
+                            messageClickListener?.invoke(channelId, tappedMessage)
                         }
                     }
                 }

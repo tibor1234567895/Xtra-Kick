@@ -666,11 +666,13 @@ class ChatViewModel @Inject constructor(
 
     fun loadRecentMessages(networkLibrary: String?, channelLogin: String, channelId: String?) {
         viewModelScope.launch {
-            val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false)
+            val debugKickRealtimeChat = isKickRecentChatDebugEnabled()
             try {
                 val list = if (isKickPreferred() && !channelId.isNullOrBlank()) {
                     val kickMessageSources = resolveKickMessageSources(channelId, channelLogin)
-                    Log.w("KickRecentChat", "preload start channelId=$channelId channelLogin=$channelLogin sources=$kickMessageSources")
+                    if (debugKickRealtimeChat) {
+                        Log.w("KickRecentChat", "preload start channelId=$channelId channelLogin=$channelLogin sources=$kickMessageSources")
+                    }
                     val fetchedMessages = fetchKickMessages(
                         messageSources = kickMessageSources,
                         channelId = channelId,
@@ -680,10 +682,12 @@ class ChatViewModel @Inject constructor(
                             add(channelId)
                             addAll(kickMessageSources)
                         }.distinct()
-                        Log.w(
-                            "KickRecentChat",
-                            "preload live history fallback channelId=$channelId channelLogin=$channelLogin sources=$liveHistorySources"
-                        )
+                        if (debugKickRealtimeChat) {
+                            Log.w(
+                                "KickRecentChat",
+                                "preload live history fallback channelId=$channelId channelLogin=$channelLogin sources=$liveHistorySources"
+                            )
+                        }
                         fetchKickLiveHistoryMessages(
                             messageSources = liveHistorySources,
                             channelId = channelId,
@@ -692,7 +696,9 @@ class ChatViewModel @Inject constructor(
                             val historyStartTime = formatIso8601Utc(
                                 System.currentTimeMillis() - 5L * 60L * 1000L
                             )
-                            Log.w("KickRecentChat", "preload history fallback channelId=$channelId channelLogin=$channelLogin start=$historyStartTime")
+                            if (debugKickRealtimeChat) {
+                                Log.w("KickRecentChat", "preload history fallback channelId=$channelId channelLogin=$channelLogin start=$historyStartTime")
+                            }
                             fetchKickHistoryMessages(
                                 messageSources = kickMessageSources,
                                 startTime = historyStartTime,
@@ -704,10 +710,12 @@ class ChatViewModel @Inject constructor(
                         }
                     }
                     val displayMessages = buildKickDisplayMessages(fetchedMessages)
-                    Log.w(
-                        "KickRecentChat",
-                        "preload result channelId=$channelId channelLogin=$channelLogin fetched=${fetchedMessages.size} display=${displayMessages.size}"
-                    )
+                    if (debugKickRealtimeChat) {
+                        Log.w(
+                            "KickRecentChat",
+                            "preload result channelId=$channelId channelLogin=$channelLogin fetched=${fetchedMessages.size} display=${displayMessages.size}"
+                        )
+                    }
                     if (debugKickRealtimeChat) {
                         Log.d(
                             "KickRecentChat",
@@ -771,10 +779,12 @@ class ChatViewModel @Inject constructor(
                         } else null
                     }.let {
                         if (it != null) {
-                            Log.w(
-                                "KickRecentChat",
-                                "preload emit channelId=$channelId channelLogin=$channelLogin added=${it.first.size} total=${synchronized(chatMessages) { chatMessages.size }}"
-                            )
+                            if (debugKickRealtimeChat) {
+                                Log.w(
+                                    "KickRecentChat",
+                                    "preload emit channelId=$channelId channelLogin=$channelLogin added=${it.first.size} total=${synchronized(chatMessages) { chatMessages.size }}"
+                                )
+                            }
                             if (debugKickRealtimeChat) {
                                 Log.d(
                                     "KickRecentChat",
@@ -788,7 +798,6 @@ class ChatViewModel @Inject constructor(
                     Log.d("KickRecentChat", "no recent messages emitted for channelId=$channelId channelLogin=$channelLogin")
                 }
             } catch (e: Exception) {
-                Log.w("KickRecentChat", "loadRecentMessages failed channelId=$channelId channelLogin=$channelLogin", e)
                 if (debugKickRealtimeChat) {
                     Log.w("KickRecentChat", "loadRecentMessages failed channelId=$channelId channelLogin=$channelLogin", e)
                 }
@@ -1001,7 +1010,15 @@ class ChatViewModel @Inject constructor(
     )
 
     private fun isKickReplayChatDebugEnabled(): Boolean {
-        return BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_CLIP_CHAT, true)
+        return BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_CLIP_CHAT, false)
+    }
+
+    private fun isKickRecentChatDebugEnabled(): Boolean {
+        if (!BuildConfig.DEBUG) {
+            return false
+        }
+        val prefs = applicationContext.prefs()
+        return prefs.getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false) || prefs.getBoolean(C.DEBUG_KICK_CLIP_CHAT, false)
     }
 
     private inline fun logKickReplayChat(stage: String, sessionKey: String?, message: () -> String) {
@@ -1328,7 +1345,7 @@ class ChatViewModel @Inject constructor(
         channelId: String? = null,
         channelLogin: String? = null
     ): List<ChatMessage> {
-        val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false)
+        val debugKickRealtimeChat = isKickRecentChatDebugEnabled()
         for (source in messageSources) {
             try {
                 val response = kickRepository.getLiveChatHistory(source)
@@ -1336,10 +1353,12 @@ class ChatViewModel @Inject constructor(
                 val rawCount = rawMessages.size
                 val messages = mapKickMessages(rawMessages)
                     .sortedBy { it.timestamp }
-                Log.w(
-                    "KickRecentChat",
-                    "live history source=$source rawCount=$rawCount mappedCount=${messages.size}"
-                )
+                if (debugKickRealtimeChat) {
+                    Log.w(
+                        "KickRecentChat",
+                        "live history source=$source rawCount=$rawCount mappedCount=${messages.size}"
+                    )
+                }
                 if (rawCount == 0) {
                     continue
                 }
@@ -1737,12 +1756,33 @@ class ChatViewModel @Inject constructor(
         )
     }
 
-    private suspend fun markMessageDeleted(targetId: String?): ChatMessage? {
-        if (targetId.isNullOrBlank()) {
-            return null
-        }
+    private suspend fun markMessageDeleted(targetId: String?, fallbackMessage: ChatMessage? = null): ChatMessage? {
         val update = synchronized(chatMessages) {
-            val index = chatMessages.indexOfLast { it.id == targetId }
+            fun sameUser(candidate: ChatMessage): Boolean {
+                return fallbackMessage != null && (
+                    (!fallbackMessage.userId.isNullOrBlank() && candidate.userId == fallbackMessage.userId) ||
+                        (!fallbackMessage.userLogin.isNullOrBlank() && candidate.userLogin.equals(fallbackMessage.userLogin, true)) ||
+                        (!fallbackMessage.userName.isNullOrBlank() && candidate.userName.equals(fallbackMessage.userName, true))
+                    )
+            }
+
+            val index = when {
+                !targetId.isNullOrBlank() -> chatMessages.indexOfLast { it.id == targetId }
+                fallbackMessage != null -> chatMessages.indexOfLast { candidate ->
+                    !candidate.isDeleted &&
+                        candidate.message == fallbackMessage.message &&
+                        sameUser(candidate)
+                }
+                else -> -1
+            }.takeIf { it != -1 } ?: when {
+                fallbackMessage != null && !fallbackMessage.message.isNullOrBlank() -> chatMessages.indexOfLast { candidate ->
+                    !candidate.isDeleted && candidate.message == fallbackMessage.message
+                }
+                fallbackMessage != null -> chatMessages.indexOfLast { candidate ->
+                    !candidate.isDeleted && sameUser(candidate)
+                }
+                else -> -1
+            }
             if (index == -1) {
                 null
             } else {
@@ -1753,6 +1793,24 @@ class ChatViewModel @Inject constructor(
         }
         update?.let { updateMessage.emit(it) }
         return update?.second
+    }
+
+    private suspend fun markUserMessagesDeleted(userId: String?, userLogin: String?, userName: String?) {
+        val updates = synchronized(chatMessages) {
+            chatMessages.mapIndexedNotNull { index, message ->
+                val matchesUser = (!userId.isNullOrBlank() && message.userId == userId) ||
+                    (!userLogin.isNullOrBlank() && message.userLogin.equals(userLogin, true)) ||
+                    (!userName.isNullOrBlank() && message.userName.equals(userName, true))
+                if (!message.isReply && !message.isDeleted && matchesUser) {
+                    val updatedMessage = createDeletedMessage(message)
+                    chatMessages[index] = updatedMessage
+                    index to updatedMessage
+                } else {
+                    null
+                }
+            }
+        }
+        updates.forEach { updateMessage.emit(it) }
     }
 
     suspend fun onMessage(message: ChatMessage) {
@@ -2116,7 +2174,7 @@ class ChatViewModel @Inject constructor(
                 val result = ChatUtils.parseClearMessage(message)
                 val chatMessage = result.first
                 val targetId = result.second
-                val deletedMessage = markMessageDeleted(targetId)
+                val deletedMessage = markMessageDeleted(targetId, chatMessage)
                 if (deletedMessage == null) {
                     val clearMessage = getClearMessage(chatMessage, null, nameDisplay)
                     onMessage(clearMessage)
@@ -2178,18 +2236,26 @@ class ChatViewModel @Inject constructor(
             val realtimeMessage = parseKickRealtimeMessage(eventName, messageJson) ?: return
             val kickMessage = realtimeMessage.message
             val chatMessage = kickRepository.toChatMessage(kickMessage, realtimeMessage.eventName)
-            if (chatMessage.message.isNullOrBlank() && chatMessage.systemMsg.isNullOrBlank()) {
-                return
-            }
             if (kickRepository.isKickSingleMessageDelete(kickMessage, realtimeMessage.eventName)) {
                 if (!showClearMsg) {
                     return
                 }
                 val targetId = kickRepository.getKickModerationTargetMessageId(kickMessage)
-                val deletedMessage = markMessageDeleted(targetId)
+                val deletedMessage = markMessageDeleted(targetId, chatMessage)
                 if (deletedMessage == null) {
                     onMessage(getClearMessage(chatMessage, null, nameDisplay))
                 }
+                return
+            }
+            when (realtimeMessage.eventName) {
+                "App\\Events\\UserBannedEvent" -> {
+                    val (targetUserId, targetUserLogin, targetUserName) = kickRepository.getKickModerationTargetUserInfo(kickMessage)
+                    if (!targetUserId.isNullOrBlank() || !targetUserLogin.isNullOrBlank() || !targetUserName.isNullOrBlank()) {
+                        markUserMessagesDeleted(targetUserId, targetUserLogin, targetUserName)
+                    }
+                }
+            }
+            if (chatMessage.message.isNullOrBlank() && chatMessage.systemMsg.isNullOrBlank() && chatMessage.msgId == null) {
                 return
             }
             if (chatMessage.msgId == "kick_moderation" && !showClearChat) {

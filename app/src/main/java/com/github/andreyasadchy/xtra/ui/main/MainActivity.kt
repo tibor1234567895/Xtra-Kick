@@ -64,6 +64,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.github.andreyasadchy.xtra.R
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.XtraApp
 import com.github.andreyasadchy.xtra.databinding.ActivityMainBinding
 import com.github.andreyasadchy.xtra.model.ui.Clip
@@ -160,6 +161,12 @@ class MainActivity : AppCompatActivity() {
     var settingsResultLauncher: ActivityResultLauncher<Intent>? = null
     var loginResultLauncher: ActivityResultLauncher<Intent>? = null
     var logoutResultLauncher: ActivityResultLauncher<Intent>? = null
+
+    private fun logPlayerShell(message: String) {
+        if (BuildConfig.DEBUG && prefs.getBoolean(C.DEBUG_PLAYER_SHELL_LOGS, false)) {
+            Log.d(TAG, message)
+        }
+    }
 
     //Lifecycle methods
 
@@ -484,8 +491,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         launchingSettings = false
         pendingBackgroundStreamHandoff?.let { handoff ->
-            Log.d(
-                TAG,
+            logPlayerShell(
                 "onResume attaching pending background handoff channel=${handoff.stream.channelName} " +
                     "urlPresent=${handoff.resolvedUrl.isNotBlank()}"
             )
@@ -493,7 +499,7 @@ class MainActivity : AppCompatActivity() {
             pendingBackgroundStreamHandoff = null
             return
         }
-        Log.d(TAG, "onResume restoring existing playerFragment=${playerFragment?.javaClass?.simpleName}")
+        logPlayerShell("onResume restoring existing playerFragment=${playerFragment?.javaClass?.simpleName}")
         restorePlayerFragment()
     }
 
@@ -749,16 +755,14 @@ class MainActivity : AppCompatActivity() {
     fun startStreamForBackgroundHandoff(stream: Stream, resolvedUrl: String? = null) {
         val streamUrl = resolvedUrl?.takeIf { it.isNotBlank() } ?: return
         if (isFinishing || isDestroyed) {
-            Log.d(
-                TAG,
+            logPlayerShell(
                 "startStreamForBackgroundHandoff ignored finishing=$isFinishing destroyed=$isDestroyed " +
                     "channel=${stream.channelName}"
             )
             return
         }
         val disableVideo = prefs.getBoolean(C.PLAYER_DISABLE_BACKGROUND_VIDEO, true)
-        Log.d(
-            TAG,
+        logPlayerShell(
             "startStreamForBackgroundHandoff channel=${stream.channelName} " +
                 "disableVideo=$disableVideo title=${stream.title}"
         )
@@ -778,7 +782,7 @@ class MainActivity : AppCompatActivity() {
                 MediaController.releaseFuture(controllerFuture)
                 return@addListener
             }
-            Log.d(TAG, "background handoff controller connected")
+            logPlayerShell("background handoff controller connected")
             val command = SessionCommand(
                 PlaybackService.START_STREAM,
                 bundleOf(
@@ -798,7 +802,7 @@ class MainActivity : AppCompatActivity() {
                     MediaController.releaseFuture(controllerFuture)
                     return@addListener
                 }
-                Log.d(TAG, "background handoff START_STREAM completed channel=${stream.channelName}")
+                logPlayerShell("background handoff START_STREAM completed channel=${stream.channelName}")
                 MediaController.releaseFuture(controllerFuture)
             }, MoreExecutors.directExecutor())
         }, MoreExecutors.directExecutor())
@@ -873,15 +877,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun startPlayer(fragment: PlayerFragment) {
         if (isFinishing || isDestroyed) {
-            Log.d(
-                TAG,
+            logPlayerShell(
                 "startPlayer ignored finishing=$isFinishing destroyed=$isDestroyed " +
                     "fragment=${fragment.javaClass.simpleName}"
             )
             return
         }
-        Log.d(
-            TAG,
+        logPlayerShell(
             "startPlayer fragment=${fragment.javaClass.simpleName} replacing=${playerFragment?.javaClass?.simpleName}"
         )
         playerFragment?.close()
@@ -915,11 +917,10 @@ class MainActivity : AppCompatActivity() {
     private fun restorePlayerFragment() {
         if (playerFragment == null) {
             playerFragment = supportFragmentManager.findFragmentById(R.id.playerContainer) as? PlayerFragment
-            Log.d(TAG, "restorePlayerFragment found=${playerFragment?.javaClass?.simpleName}")
+            logPlayerShell("restorePlayerFragment found=${playerFragment?.javaClass?.simpleName}")
         } else {
             val fragment = playerFragment
-            Log.d(
-                TAG,
+            logPlayerShell(
                 "restorePlayerFragment existing=${fragment?.javaClass?.simpleName} " +
                     "viewReady=${fragment?.view != null} isPlayerOpened=${viewModel.isPlayerOpened}"
             )
@@ -929,7 +930,7 @@ class MainActivity : AppCompatActivity() {
                 fragment.secondViewIsHidden() &&
                 prefs.getBoolean(C.PLAYER_PICTURE_IN_PICTURE, true)
             ) {
-                Log.d(TAG, "restorePlayerFragment maximizing existing player")
+                logPlayerShell("restorePlayerFragment maximizing existing player")
                 fragment.maximize()
             }
         }
@@ -1269,6 +1270,12 @@ class MainActivity : AppCompatActivity() {
                 }
                 remove(C.KICK_CLIENT_SECRET)
                 putInt(C.SETTINGS_VERSION, 14)
+            }
+        }
+        if (version < 15) {
+            prefs.edit {
+                putBoolean(C.CHAT_SHOW_CLEARMSG, true)
+                putInt(C.SETTINGS_VERSION, 15)
             }
         }
     }

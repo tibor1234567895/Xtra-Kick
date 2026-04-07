@@ -90,14 +90,33 @@ class MessageClickedChatAdapter(
     var selectedMessage: ChatMessage?,
 ) : RecyclerView.Adapter<MessageClickedChatAdapter.ViewHolder>() {
 
-    val userId = selectedMessage?.userId
-    val userLogin = selectedMessage?.userLogin
-    val messages = if (!userId.isNullOrBlank() || !userLogin.isNullOrBlank()) {
+    val userId = selectedMessage?.userId?.takeIf { it.isNotBlank() }
+    val userLogin = selectedMessage?.userLogin?.takeIf { it.isNotBlank() }
+    val userName = selectedMessage?.userName?.takeIf { it.isNotBlank() }
+
+    private fun equalsIgnoreCase(left: String?, right: String?): Boolean {
+        return !left.isNullOrBlank() && !right.isNullOrBlank() && left.equals(right, true)
+    }
+
+    fun matchesSelectedUser(message: ChatMessage): Boolean {
+        return (!userId.isNullOrBlank() && (message.userId == userId || message.replyParent?.userId == userId)) ||
+            (!userLogin.isNullOrBlank() && (
+                equalsIgnoreCase(message.userLogin, userLogin) ||
+                    equalsIgnoreCase(message.replyParent?.userLogin, userLogin) ||
+                    equalsIgnoreCase(message.userName, userLogin) ||
+                    equalsIgnoreCase(message.replyParent?.userName, userLogin)
+                )) ||
+            (!userName.isNullOrBlank() && (
+                equalsIgnoreCase(message.userName, userName) ||
+                    equalsIgnoreCase(message.replyParent?.userName, userName) ||
+                    equalsIgnoreCase(message.userLogin, userName) ||
+                    equalsIgnoreCase(message.replyParent?.userLogin, userName)
+                ))
+    }
+
+    val messages = if (!userId.isNullOrBlank() || !userLogin.isNullOrBlank() || !userName.isNullOrBlank()) {
         synchronized(messages) {
-            messages.filter {
-                (!userId.isNullOrBlank() && (it.userId == userId || it.replyParent?.userId == userId)) ||
-                        (!userLogin.isNullOrBlank() && (it.userLogin == userLogin || it.replyParent?.userLogin == userLogin))
-            }.toMutableList().ifEmpty { null }
+            messages.filter(::matchesSelectedUser).toMutableList().ifEmpty { null }
         }
     } else {
         null
@@ -217,7 +236,7 @@ class MessageClickedChatAdapter(
         return when {
             chatMessage.isFirst && firstMsgVisibility < 2 -> R.color.chatMessageFirst
             chatMessage.reward?.id != null && firstMsgVisibility < 2 -> R.color.chatMessageReward
-            chatMessage.systemMsg != null || chatMessage.msgId != null -> R.color.chatMessageNotice
+            chatMessage.systemMsg != null || (chatMessage.msgId != null && chatMessage.msgId != "kick_moderation") -> R.color.chatMessageNotice
             loggedInUser?.let { user ->
                 if (chatMessage.userId != null && chatMessage.userLogin != user) {
                     item.text.split(" ").find {
@@ -347,6 +366,7 @@ class MessageClickedChatAdapter(
             textView.apply {
                 text = formattedMessage
                 textSize = messageTextSize
+                alpha = if (chatMessage.isDeleted) 0.62f else 1f
                 setBackgroundColor(resolvedBackgroundColor)
                 if (chatMessage.isReply) {
                     movementMethod = null

@@ -1,6 +1,7 @@
-package com.github.andreyasadchy.xtra.repository
+﻿package com.github.andreyasadchy.xtra.repository
 
 import android.content.Context
+import android.util.Base64
 import android.util.Log
 import android.webkit.CookieManager
 import androidx.core.content.ContextCompat
@@ -113,6 +114,11 @@ class KickRepository @Inject constructor(
         UNTIMEOUT,
     }
 
+    private enum class KickBadgeSource(val priority: Int) {
+        MESSAGE_DIRECT(4),
+        CATALOG_CACHE(3),
+    }
+
     private data class KickResolvedUser(
         val id: String? = null,
         val login: String? = null,
@@ -124,7 +130,7 @@ class KickRepository @Inject constructor(
     private val pointsDebugTag = "KickPointsDebug"
     private val pinnedDebugTag = "KickPinnedDebug"
     private val emoteRegex = Regex("\\[emote:\\d+:([^\\]]+)]")
-    private val kickBadgeFallbackBaseUrl = "https://www.kickdatabase.com/kickBadges/"
+    private val kickLegacyBadgeFallbackBaseUrl = "https://www.kickdatabase.com/kickBadges/"
     private val kickBadgeCacheKey = "kick_badge_url_cache_v1"
     private val kickBadgeCacheTtlMs = 24L * 60L * 60L * 1000L
     private val kickBadgeCachePersistDebounceMs = 500L
@@ -135,9 +141,27 @@ class KickRepository @Inject constructor(
     private val channelCache = ConcurrentHashMap<String, Pair<Long, KickChannelResponse>>()
     private val channelLivestreamCache = ConcurrentHashMap<String, Pair<Long, KickChannelLivestream?>>()
     private val websiteSearchCache = ConcurrentHashMap<String, Pair<Long, KickWebsiteSearchResponse>>()
+    private val kickInlineBadgeSanitizedCache = ConcurrentHashMap<String, String>()
     private val kickBadgeCatalogRefreshAt = ConcurrentHashMap<String, Long>()
     private val kickBadgeCatalogRefreshInProgress = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
     private val channelPointRewardsCache = ConcurrentHashMap<String, Pair<Long, ChannelPointRewardsResult>>()
+    private val kickInlineBadgeDataUriByType = KickInlineBadgeData.byType
+    private val kickBadgeSourceStats = ConcurrentHashMap<KickBadgeSource, Int>()
+    private val kickChunkBodyCache = ConcurrentHashMap<String, String>()
+    private val kickCanonicalBadgeTypes = listOf(
+        "moderator",
+        "vip",
+        "verified",
+        "founder",
+        "subscriber",
+        "sub_gifter",
+        "staff",
+        "broadcaster",
+        "og",
+    )
+    private val kickChannelSpecificBadgeTypes = setOf("subscriber", "founder", "sub_gifter")
+    @Volatile
+    private var activeKickChatScopeId: String? = null
     private val channelRequestLock = Any()
     private val inFlightChannelRequests = mutableMapOf<String, CompletableDeferred<KickChannelResponse>>()
     private val channelLivestreamRequestLock = Any()
@@ -145,6 +169,7 @@ class KickRepository @Inject constructor(
     private val badgeCacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val livestreamPrefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val channelPointRewardsCacheTtlMs = 60_000L
+    private val kickWebBadgeScrapeTtlMs = 6L * 60L * 60L * 1000L
     @Volatile
     private var badgePersistScheduled = false
 
@@ -153,13 +178,22 @@ class KickRepository @Inject constructor(
     }
 
     private fun isKickFeatureDebugEnabled(): Boolean {
-        return BuildConfig.DEBUG
+        return BuildConfig.DEBUG && context.prefs().getBoolean(C.DEBUG_KICK_FEATURE_LOGS, false)
+    }
+
+    private fun isKickRecentChatDebugEnabled(): Boolean {
+        if (!BuildConfig.DEBUG) {
+            return false
+        }
+        val prefs = context.prefs()
+        return prefs.getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false) || prefs.getBoolean(C.DEBUG_KICK_CLIP_CHAT, false)
     }
 
     init {
         badgeCacheScope.launch {
             restoreKickBadgeCacheFromDisk()
         }
+        maybeRefreshKickBadgeCatalogOnAppOpenInBackground()
     }
 
     private data class KickCurrentUser(
@@ -342,6 +376,7 @@ class KickRepository @Inject constructor(
         val now = System.currentTimeMillis()
         channelCache[normalizedKey]?.let { (cachedAt, cachedChannel) ->
             if (now - cachedAt <= channelCacheTtlMs) {
+                activeKickChatScopeId = cachedChannel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() }
                 return cachedChannel
             }
         }
@@ -358,6 +393,7 @@ class KickRepository @Inject constructor(
                 getRaw("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}")
             )
             return decoded.also { channel ->
+                activeKickChatScopeId = channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() }
                 val cachedAt = System.currentTimeMillis()
                 channelCache[normalizedKey] = cachedAt to channel
                 channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
@@ -1332,7 +1368,7 @@ class KickRepository @Inject constructor(
             throw error
         }
         return parseKickMessagesData(root, raw).also { parsed ->
-            if (parsed.messages.isEmpty()) {
+            if (parsed.messages.isEmpty() && isKickRecentChatDebugEnabled()) {
                 Log.w(
                     "KickRecentChat",
                     "empty recent source=$channelOrChatroomId body=${raw.take(600).replace('\n', ' ')}"
@@ -1357,7 +1393,7 @@ class KickRepository @Inject constructor(
             throw error
         }
         return parseKickMessagesData(root, raw).also { parsed ->
-            if (parsed.messages.isEmpty()) {
+            if (parsed.messages.isEmpty() && isKickRecentChatDebugEnabled()) {
                 Log.w(
                     "KickRecentChat",
                     "empty history source=$channelOrChatroomId start=$startTime cursor=${cursor ?: "-"} body=${raw.take(600).replace('\n', ' ')}"
@@ -1375,7 +1411,7 @@ class KickRepository @Inject constructor(
             throw error
         }
         return parseKickMessagesData(root, raw).also { parsed ->
-            if (parsed.messages.isEmpty()) {
+            if (parsed.messages.isEmpty() && isKickRecentChatDebugEnabled()) {
                 Log.w(
                     "KickRecentChat",
                     "empty live history source=$channelOrChatroomId body=${raw.take(600).replace('\n', ' ')}"
@@ -1631,21 +1667,20 @@ class KickRepository @Inject constructor(
         val moderationType = resolveKickModerationType(message, eventName)
         val deletedMessageObject = message.deletedMessage.asJsonObjectOrNull()
         val targetUser = extractKickTargetUser(message)
+        val actorUser = extractKickModeratorUser(message)
         val rawContent = message.content ?: message.message ?: message.text ?: message.body ?: extractKickMessageContent(deletedMessageObject)
         val content = rawContent?.replace(emoteRegex) { result -> result.groupValues.getOrElse(1) { "" } }
+        val identityBadges = message.sender?.identity?.badges.orEmpty()
         val allBadges = buildList {
-            addAll(message.sender?.identity?.badges.orEmpty())
-            addAll(syntheticKickBadgesFromSender(message.sender))
+            addAll(identityBadges)
+            addAll(syntheticKickBadgesFromSender(message.sender, identityBadges))
         }
-        val badges = allBadges.mapNotNull { badge ->
-            val type = badge.type?.trim()?.takeIf { it.isNotBlank() }
-                ?: badge.badgeType?.trim()?.takeIf { it.isNotBlank() }
-                ?: badge.name?.trim()?.takeIf { it.isNotBlank() }
-                ?: badge.slug?.trim()?.takeIf { it.isNotBlank() }
-                ?: badge.text?.trim()?.takeIf { it.isNotBlank() }
-                ?: return@mapNotNull null
+        val effectiveChatScopeId = message.chatId?.toString()?.takeIf { it.isNotBlank() } ?: activeKickChatScopeId
+        val dedupedBadges = LinkedHashMap<String, Pair<KickBadgeSource, Badge>>()
+        allBadges.forEach { badge ->
+            val type = resolveKickBadgeType(badge) ?: return@forEach
             val normalizedType = normalizeKickBadgeType(type)
-            val version = (badge.count ?: badge.months ?: badge.level ?: badge.tier ?: badge.version ?: 1).toString()
+            val version = resolveKickBadgeVersion(badge)
             val directImageUrl = badge.badgeImageUrl
                 ?: extractImageUrl(badge.badgeImage)
                 ?: badge.imageUrl
@@ -1657,13 +1692,35 @@ class KickRepository @Inject constructor(
                 ?: badge.url
             if (!directImageUrl.isNullOrBlank()) {
                 kickBadgeTypeCandidates(type).forEach { candidate ->
-                    kickBadgeUrls["kick:$candidate:$version"] = directImageUrl
-                    cacheKickBadgeUrlIfAbsent("kick:$candidate:default", directImageUrl)
+                    if (isKickChannelSpecificBadgeType(candidate)) {
+                        if (effectiveChatScopeId != null) {
+                            kickBadgeUrls["kick:chat:$effectiveChatScopeId:$candidate:$version"] = directImageUrl
+                            cacheKickBadgeUrlIfAbsent("kick:chat:$effectiveChatScopeId:$candidate:default", directImageUrl)
+                        } else {
+                            kickBadgeUrls["kick:$candidate:$version"] = directImageUrl
+                            cacheKickBadgeUrlIfAbsent("kick:$candidate:default", directImageUrl)
+                        }
+                    } else {
+                        kickBadgeUrls["kick:$candidate:$version"] = directImageUrl
+                        cacheKickBadgeUrlIfAbsent("kick:$candidate:default", directImageUrl)
+                    }
                 }
             }
-            val resolvedImageUrl = directImageUrl
-                ?: resolveKickBadgeUrl(type, version)
-                ?: fallbackKickBadgeUrl(normalizedType, version)
+            val catalogImageUrl = if (directImageUrl.isNullOrBlank()) resolveKickBadgeUrl(type, version, effectiveChatScopeId) else null
+            val inlineImageUrl = if (directImageUrl.isNullOrBlank() && catalogImageUrl.isNullOrBlank()) {
+                resolveKickInlineBadgeUrl(normalizedType)
+            } else {
+                null
+            }
+            val usedInlineFallback = directImageUrl.isNullOrBlank() && catalogImageUrl.isNullOrBlank() && !inlineImageUrl.isNullOrBlank()
+            val source = when {
+                !directImageUrl.isNullOrBlank() -> KickBadgeSource.MESSAGE_DIRECT
+                !catalogImageUrl.isNullOrBlank() -> KickBadgeSource.CATALOG_CACHE
+                !inlineImageUrl.isNullOrBlank() -> KickBadgeSource.CATALOG_CACHE
+                else -> null
+            } ?: return@forEach
+            recordKickBadgeSource(source)
+            val resolvedImageUrl = directImageUrl ?: catalogImageUrl ?: inlineImageUrl
             if (resolvedImageUrl.isNullOrBlank() && isKickBadgeDebugEnabled()) {
                 Log.w(
                     tag,
@@ -1671,16 +1728,16 @@ class KickRepository @Inject constructor(
                 )
             }
             if (resolvedImageUrl.isNullOrBlank()) {
-                return@mapNotNull null
+                return@forEach
             }
-            if (isKickBadgeDebugEnabled() && normalizedType in setOf("moderator", "vip", "verified", "og", "founder", "sub_gifter", "broadcaster", "staff")) {
+            if (isKickBadgeDebugEnabled() && normalizedType in setOf("moderator", "vip", "verified", "og", "founder", "sub_gifter", "subscriber", "broadcaster", "staff")) {
                 Log.d(
                     badgeDebugTag,
-                    "messageBadge type=$type normalized=$normalizedType version=$version direct=${!directImageUrl.isNullOrBlank()} resolved=true"
+                    "messageBadge type=$type normalized=$normalizedType version=$version source=${source.name} inlineFallback=$usedInlineFallback resolved=true"
                 )
             }
             val displayText = badge.text?.takeIf { it.isNotBlank() } ?: type.replace('_', ' ').uppercase(Locale.ROOT)
-            Badge(
+            val resolvedBadge = Badge(
                 setId = "kick:$normalizedType",
                 version = version,
                 title = displayText,
@@ -1689,51 +1746,88 @@ class KickRepository @Inject constructor(
                 url3x = resolvedImageUrl,
                 url4x = resolvedImageUrl,
             )
-        }.distinctBy { badge ->
-            listOf(
-                badge.setId,
-                badge.version,
-                badge.url4x ?: badge.url3x ?: badge.url2x ?: badge.url1x
-            ).joinToString("|")
-        }.takeIf { it.isNotEmpty() }
+            val dedupeKey = "${resolvedBadge.setId}|${resolvedBadge.version}"
+            val existing = dedupedBadges[dedupeKey]
+            if (existing == null || source.priority > existing.first.priority) {
+                dedupedBadges[dedupeKey] = source to resolvedBadge
+            }
+        }
+        val badges = dedupedBadges.values.map { it.second }.takeIf { it.isNotEmpty() }
         val reply = extractKickReply(message)
         val targetLogin = targetUser?.login
         val targetName = targetUser?.name
         val targetUserId = targetUser?.id
-        val moderationSystemMsg = when (moderationType) {
-            KickModerationType.CLEAR_CHAT -> ContextCompat.getString(context, R.string.chat_clear)
+        val actorLogin = actorUser?.login ?: message.sender?.slug ?: message.sender?.username?.lowercase(Locale.ROOT)
+        val actorName = actorUser?.name ?: message.sender?.username
+        val actorUserId = actorUser?.id ?: message.sender?.id?.toString() ?: message.userId?.toString()
+        val targetDisplayName = targetName ?: targetLogin
+        val actorDisplayName = actorName ?: actorLogin
+        val moderationInlineMsg = when (moderationType) {
             KickModerationType.TIMEOUT -> {
-                val login = targetName ?: targetLogin
-                val durationSeconds = extractKickModerationDurationSeconds(message)
-                if (login != null && durationSeconds != null) {
-                    ContextCompat.getString(context, R.string.chat_timeout).format(
-                        login,
-                        KickApiHelper.getDurationFromSeconds(context, durationSeconds.toString())
-                    )
-                } else if (login != null) {
-                    ContextCompat.getString(context, R.string.chat_ban).format(login)
+                val durationSeconds = extractKickModerationDurationSeconds(message, eventName)
+                if (targetDisplayName != null && durationSeconds != null) {
+                    if (actorDisplayName != null) {
+                        "$targetDisplayName was timed out by $actorDisplayName for ${KickApiHelper.getDurationFromSeconds(context, durationSeconds.toString())}"
+                    } else {
+                        "$targetDisplayName was timed out for ${KickApiHelper.getDurationFromSeconds(context, durationSeconds.toString())}"
+                    }
+                } else if (targetDisplayName != null) {
+                    if (actorDisplayName != null) {
+                        "$targetDisplayName was timed out by $actorDisplayName"
+                    } else {
+                        "$targetDisplayName was timed out"
+                    }
                 } else {
                     null
                 }
             }
-            KickModerationType.BAN -> (targetName ?: targetLogin)?.let {
-                ContextCompat.getString(context, R.string.chat_ban).format(it)
+            KickModerationType.BAN -> targetDisplayName?.let {
+                if (actorDisplayName != null) {
+                    "$it was banned by $actorDisplayName"
+                } else {
+                    "$it was banned"
+                }
             }
-            KickModerationType.UNBAN -> (targetName ?: targetLogin)?.let {
-                ContextCompat.getString(context, R.string.irc_notice_unban_success).format(it)
+            KickModerationType.UNBAN -> targetDisplayName?.let {
+                if (actorDisplayName != null) {
+                    "$it was unbanned by $actorDisplayName"
+                } else {
+                    "$it was unbanned"
+                }
             }
-            KickModerationType.UNTIMEOUT -> (targetName ?: targetLogin)?.let {
-                ContextCompat.getString(context, R.string.irc_notice_untimeout_success).format(it)
+            KickModerationType.UNTIMEOUT -> targetDisplayName?.let {
+                if (actorDisplayName != null) {
+                    "$it was untimed out by $actorDisplayName"
+                } else {
+                    "$it was untimed out"
+                }
             }
             else -> null
         }
+        val moderationSystemMsg = when (moderationType) {
+            KickModerationType.CLEAR_CHAT -> ContextCompat.getString(context, R.string.chat_clear)
+            KickModerationType.TIMEOUT,
+            KickModerationType.BAN,
+            KickModerationType.UNBAN,
+            KickModerationType.UNTIMEOUT -> moderationInlineMsg
+            else -> null
+        }
         val systemMsg = moderationSystemMsg ?: extractKickSubscriptionNotice(message, eventName, targetUser)
+        val effectiveUserId = if (moderationSystemMsg != null) null else if (moderationInlineMsg != null) actorUserId else targetUserId ?: message.sender?.id?.toString() ?: message.userId?.toString()
+        val effectiveUserLogin = if (moderationSystemMsg != null) null else if (moderationInlineMsg != null) actorLogin else targetLogin ?: message.sender?.slug ?: message.sender?.username?.lowercase(Locale.ROOT)
+        val effectiveUserName = if (moderationSystemMsg != null) null else if (moderationInlineMsg != null) actorName else targetName ?: message.sender?.username
+        val effectiveMessage = when {
+            moderationType == KickModerationType.DELETE_MESSAGE -> content
+            moderationSystemMsg != null -> null
+            moderationInlineMsg != null -> moderationInlineMsg
+            else -> content?.takeIf { systemMsg == null }
+        }
         return ChatMessage(
             id = message.id,
-            userId = targetUserId ?: message.sender?.id?.toString() ?: message.userId?.toString(),
-            userLogin = targetLogin ?: message.sender?.slug ?: message.sender?.username?.lowercase(Locale.ROOT),
-            userName = targetName ?: message.sender?.username,
-            message = if (moderationType == KickModerationType.DELETE_MESSAGE) content else content?.takeIf { systemMsg == null },
+            userId = effectiveUserId,
+            userLogin = effectiveUserLogin,
+            userName = effectiveUserName,
+            message = effectiveMessage,
             color = message.sender?.identity?.color,
             badges = badges,
             systemMsg = systemMsg,
@@ -1743,7 +1837,7 @@ class KickRepository @Inject constructor(
                 KickModerationType.TIMEOUT,
                 KickModerationType.BAN,
                 KickModerationType.UNBAN,
-                KickModerationType.UNTIMEOUT -> "kick_moderation"
+                KickModerationType.UNTIMEOUT -> if (moderationInlineMsg != null) null else "kick_moderation"
                 KickModerationType.NONE -> null
             },
             reply = reply,
@@ -1752,39 +1846,77 @@ class KickRepository @Inject constructor(
         )
     }
 
-    private fun syntheticKickBadgesFromSender(sender: KickMessageSender?): List<KickMessageBadge> {
+    fun getKickModerationTargetUserInfo(message: KickMessage): Triple<String?, String?, String?> {
+        val user = extractKickTargetUser(message)
+        return Triple(user?.id, user?.login, user?.name)
+    }
+
+    private fun resolveKickBadgeType(badge: KickMessageBadge): String? {
+        return badge.type?.trim()?.takeIf { it.isNotBlank() }
+            ?: badge.badgeType?.trim()?.takeIf { it.isNotBlank() }
+            ?: badge.name?.trim()?.takeIf { it.isNotBlank() }
+            ?: badge.slug?.trim()?.takeIf { it.isNotBlank() }
+            ?: badge.text?.trim()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun resolveKickBadgeVersion(badge: KickMessageBadge): String {
+        val parsedFromText = badge.text
+            ?.let { Regex("""(\d{1,3})""").find(it) }
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+        return (badge.count ?: badge.months ?: badge.level ?: badge.tier ?: badge.version ?: parsedFromText ?: 1).toString()
+    }
+
+    private fun syntheticKickBadgesFromSender(
+        sender: KickMessageSender?,
+        existingBadges: List<KickMessageBadge> = emptyList(),
+    ): List<KickMessageBadge> {
         if (sender == null) return emptyList()
+        val existingTypes = existingBadges
+            .mapNotNull(::resolveKickBadgeType)
+            .map(::normalizeKickBadgeType)
+            .toMutableSet()
         val synthetic = mutableListOf<KickMessageBadge>()
+
+        fun addSynthetic(badge: KickMessageBadge) {
+            val type = resolveKickBadgeType(badge) ?: return
+            val normalized = normalizeKickBadgeType(type)
+            if (normalized in existingTypes) return
+            existingTypes += normalized
+            synthetic += badge
+        }
+
         sender.role?.takeIf { it.isNotBlank() }?.let { role ->
-            synthetic += KickMessageBadge(
+            addSynthetic(KickMessageBadge(
                 type = role,
                 text = role.replace('_', ' ').replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
-            )
+            ))
         }
         if (sender.isVerified == true || sender.verified == true) {
-            synthetic += KickMessageBadge(type = "verified", text = "Verified")
+            addSynthetic(KickMessageBadge(type = "verified", text = "Verified"))
         }
         if (sender.isSuperAdmin == true) {
-            synthetic += KickMessageBadge(type = "staff", text = "Staff")
+            addSynthetic(KickMessageBadge(type = "staff", text = "Staff"))
         }
         sender.followerBadges.orEmpty().forEach { followerBadge ->
             followerBadge.takeIf { it.isNotBlank() }?.let { label ->
-                synthetic += KickMessageBadge(type = label, text = label)
+                addSynthetic(KickMessageBadge(type = label, text = label))
             }
         }
         if (sender.isFounder == true) {
-            synthetic += KickMessageBadge(
+            addSynthetic(KickMessageBadge(
                 type = "founder",
                 text = "Founder",
                 count = sender.monthsSubscribed
-            )
+            ))
         }
         sender.quantityGifted?.takeIf { it > 0 }?.let { giftedCount ->
-            synthetic += KickMessageBadge(
+            addSynthetic(KickMessageBadge(
                 type = "sub_gifter",
                 text = "Sub Gifter",
                 count = giftedCount
-            )
+            ))
         }
         return synthetic
     }
@@ -1801,7 +1933,9 @@ class KickRepository @Inject constructor(
             deletedMessage?.firstPrimitiveOrNull("id", "message_id", "target_message_id", "uuid"),
             metadata?.firstPrimitiveOrNull("target_message_id", "message_id", "deleted_message_id"),
             metadata?.firstObjectOrNull("target_message")?.firstPrimitiveOrNull("id", "message_id", "uuid"),
-            metadata?.firstObjectOrNull("deleted_message")?.firstPrimitiveOrNull("id", "message_id", "uuid")
+            metadata?.firstObjectOrNull("deleted_message")?.firstPrimitiveOrNull("id", "message_id", "uuid"),
+            // Kick MessageDeletedEvent can place the deleted chat message id directly on the event object itself.
+            message.id
         )
     }
 
@@ -1835,11 +1969,56 @@ class KickRepository @Inject constructor(
     private fun extractKickTargetUser(message: KickMessage): KickResolvedUser? {
         val metadata = message.metadata.asJsonObjectOrNull()
         val candidates = listOfNotNull(
+            message.user.asJsonObjectOrNull(),
             message.targetUser.asJsonObjectOrNull(),
             message.target.asJsonObjectOrNull(),
             message.deletedMessage.asJsonObjectOrNull()?.firstObjectOrNull("sender", "user", "target_user"),
-            metadata?.firstObjectOrNull("target_user", "target", "user", "subject"),
-            metadata?.firstObjectOrNull("deleted_message")?.firstObjectOrNull("sender", "user", "target_user")
+            metadata?.firstObjectOrNull("target_user", "target", "user", "subject", "banned_user", "timed_out_user", "affected_user", "recipient", "member"),
+            metadata?.firstObjectOrNull("deleted_message")?.firstObjectOrNull("sender", "user", "target_user"),
+            metadata?.firstObjectOrNull("ban")?.firstObjectOrNull("user", "target_user", "banned_user"),
+            metadata?.firstObjectOrNull("timeout")?.firstObjectOrNull("user", "target_user", "timed_out_user")
+        )
+        candidates.firstNotNullOfOrNull(::extractUserFromObject)?.let { return it }
+
+        val id = firstNonBlank(
+            findPrimitiveRecursive(message.metadata, setOf("target_user_id", "banned_user_id", "timed_out_user_id", "affected_user_id", "user_id")),
+            findPrimitiveRecursive(message.targetUser, setOf("target_user_id", "banned_user_id", "timed_out_user_id", "affected_user_id", "user_id")),
+            findPrimitiveRecursive(message.target, setOf("target_user_id", "banned_user_id", "timed_out_user_id", "affected_user_id", "user_id"))
+        )
+        val login = firstNonBlank(
+            findPrimitiveRecursive(message.metadata, setOf("target_user_login", "target_login", "banned_user_login", "timed_out_user_login", "affected_user_login", "user_login", "login", "slug")),
+            findPrimitiveRecursive(message.metadata, setOf("target_user_username", "target_username", "banned_user_username", "timed_out_user_username", "affected_user_username", "username"))?.lowercase(Locale.ROOT),
+            findPrimitiveRecursive(message.targetUser, setOf("target_user_login", "target_login", "banned_user_login", "timed_out_user_login", "affected_user_login", "user_login", "login", "slug")),
+            findPrimitiveRecursive(message.target, setOf("target_user_login", "target_login", "banned_user_login", "timed_out_user_login", "affected_user_login", "user_login", "login", "slug"))
+        )
+        val name = firstNonBlank(
+            findPrimitiveRecursive(message.metadata, setOf("target_user_name", "target_name", "banned_user_name", "banned_user_username", "timed_out_user_name", "timed_out_user_username", "affected_user_name", "affected_user_username", "display_name", "username", "name")),
+            findPrimitiveRecursive(message.targetUser, setOf("target_user_name", "target_name", "banned_user_name", "timed_out_user_name", "affected_user_name", "display_name", "username", "name")),
+            findPrimitiveRecursive(message.target, setOf("target_user_name", "target_name", "banned_user_name", "timed_out_user_name", "affected_user_name", "display_name", "username", "name"))
+        )
+        return if (id.isNullOrBlank() && login.isNullOrBlank() && name.isNullOrBlank()) {
+            null
+        } else {
+            KickResolvedUser(id = id, login = login, name = name)
+        }
+    }
+
+    private fun extractKickModeratorUser(message: KickMessage): KickResolvedUser? {
+        val metadata = message.metadata.asJsonObjectOrNull()
+        val candidates = listOfNotNull(
+            message.bannedBy.asJsonObjectOrNull(),
+            message.unbannedBy.asJsonObjectOrNull(),
+            message.timedOutBy.asJsonObjectOrNull(),
+            message.sender?.let {
+                buildJsonObject {
+                    it.id?.let { id -> put("id", JsonPrimitive(id)) }
+                    it.slug?.let { slug -> put("slug", JsonPrimitive(slug)) }
+                    it.username?.let { username -> put("username", JsonPrimitive(username)) }
+                }
+            }.takeIf { it?.isNotEmpty() == true },
+            metadata?.firstObjectOrNull("banned_by", "unbanned_by", "timed_out_by", "moderated_by", "actor", "moderator"),
+            message.target.asJsonObjectOrNull()?.firstObjectOrNull("banned_by", "unbanned_by", "timed_out_by", "moderated_by", "actor", "moderator"),
+            message.targetUser.asJsonObjectOrNull()?.firstObjectOrNull("banned_by", "unbanned_by", "timed_out_by", "moderated_by", "actor", "moderator")
         )
         return candidates.firstNotNullOfOrNull(::extractUserFromObject)
     }
@@ -1867,16 +2046,31 @@ class KickRepository @Inject constructor(
         )?.replace(emoteRegex) { result -> result.groupValues.getOrElse(1) { "" } }
     }
 
-    private fun extractKickModerationDurationSeconds(message: KickMessage): Long? {
+    private fun extractKickModerationDurationSeconds(message: KickMessage, eventName: String? = null): Long? {
         val metadata = message.metadata.asJsonObjectOrNull()
         val durationObject = message.duration.asJsonObjectOrNull()
-        return listOfNotNull(
+        val explicitSeconds = listOfNotNull(
             message.durationSeconds,
-            message.duration.asLongOrNull(),
             durationObject?.firstLongOrNull("seconds", "duration", "duration_seconds"),
             metadata?.firstLongOrNull("duration_seconds", "duration", "seconds"),
-            metadata?.firstObjectOrNull("duration")?.firstLongOrNull("seconds", "duration")
+            metadata?.firstLongOrNull("timeout", "timeout_seconds", "expires_in", "ban_duration", "length"),
+            metadata?.firstObjectOrNull("duration")?.firstLongOrNull("seconds", "duration"),
+            metadata?.firstObjectOrNull("timeout")?.firstLongOrNull("seconds", "duration", "duration_seconds", "expires_in"),
+            metadata?.firstObjectOrNull("ban")?.firstLongOrNull("seconds", "duration", "duration_seconds", "expires_in"),
+            findLongRecursive(message.metadata, setOf("duration_seconds", "timeout_seconds", "expires_in", "ban_duration", "length", "seconds")),
+            findLongRecursive(message.target, setOf("duration_seconds", "timeout_seconds", "expires_in", "ban_duration", "length", "seconds")),
+            findLongRecursive(message.targetUser, setOf("duration_seconds", "timeout_seconds", "expires_in", "ban_duration", "length", "seconds"))
         ).firstOrNull { it >= 0L }
+        if (explicitSeconds != null) {
+            return explicitSeconds
+        }
+        val rawDuration = message.duration.asLongOrNull()
+        val normalizedEvent = eventName?.lowercase(Locale.ROOT).orEmpty()
+        return when {
+            rawDuration == null || rawDuration < 0L -> null
+            normalizedEvent.contains("userbannedevent") -> rawDuration * 60L
+            else -> rawDuration
+        }
     }
 
     private fun extractKickSubscriptionNotice(message: KickMessage, eventName: String?, targetUser: KickResolvedUser?): String? {
@@ -1926,6 +2120,20 @@ class KickRepository @Inject constructor(
 
     private fun resolveKickModerationType(message: KickMessage, eventName: String?): KickModerationType {
         val metadata = message.metadata.asJsonObjectOrNull()
+        val permanent = listOfNotNull(
+            (message.target as? JsonObject)?.get("permanent") as? JsonPrimitive,
+            (message.targetUser as? JsonObject)?.get("permanent") as? JsonPrimitive,
+            metadata?.get("permanent") as? JsonPrimitive
+        ).firstNotNullOfOrNull {
+            it.contentOrNull?.trim()?.lowercase(Locale.ROOT)?.let { value ->
+                when (value) {
+                    "true" -> true
+                    "false" -> false
+                    else -> null
+                }
+            }
+        }
+        val hasFiniteDuration = extractKickModerationDurationSeconds(message)?.let { it > 0L } == true
         val normalized = buildList {
             eventName?.let(::add)
             message.type?.let(::add)
@@ -1942,6 +2150,8 @@ class KickRepository @Inject constructor(
             listOf("clear_chat", "chat_cleared", "messages_cleared", "clearchat").any { normalized.contains(it) } -> KickModerationType.CLEAR_CHAT
             listOf("untimeout", "timed_in", "timeout_removed").any { normalized.contains(it) } -> KickModerationType.UNTIMEOUT
             listOf("unban", "ban_removed").any { normalized.contains(it) } -> KickModerationType.UNBAN
+            (normalized.contains("userbannedevent") || normalized.contains("banned")) && (permanent == false || hasFiniteDuration) -> KickModerationType.TIMEOUT
+            (normalized.contains("userunbannedevent") || normalized.contains("unbanned")) && permanent == false -> KickModerationType.UNTIMEOUT
             listOf("timeout", "timed_out").any { normalized.contains(it) } -> KickModerationType.TIMEOUT
             listOf("banned", "ban").any { normalized.contains(it) } -> KickModerationType.BAN
             else -> KickModerationType.NONE
@@ -1979,6 +2189,10 @@ class KickRepository @Inject constructor(
 
     private fun cacheKickBadgeUrls(channel: KickChannelResponse): Boolean {
         var changed = false
+        val scopeIds = listOfNotNull(
+            channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() },
+            channel.id?.toString()?.takeIf { it.isNotBlank() }
+        ).distinct()
         val channelBadges = buildList {
             addAll(channel.subscriberBadges.orEmpty())
             addAll(channel.founderBadges.orEmpty())
@@ -2003,55 +2217,140 @@ class KickRepository @Inject constructor(
                 ?: extractImageUrl(badge.icon)
                 ?: badge.src
                 ?: badge.url
-                ?: fallbackKickBadgeUrl(normalizeKickBadgeType(type), version)
                 ?: return@forEach
             kickBadgeTypeCandidates(type).forEach { candidate ->
-                val key = "kick:$candidate:$version"
-                if (kickBadgeUrls.put(key, imageUrl) != imageUrl) {
-                    changed = true
-                }
-                if (cacheKickBadgeUrlIfAbsent("kick:$candidate:default", imageUrl)) {
-                    changed = true
+                if (isKickChannelSpecificBadgeType(candidate) && scopeIds.isNotEmpty()) {
+                    scopeIds.forEach { scopeId ->
+                        val scopedKey = "kick:chat:$scopeId:$candidate:$version"
+                        if (kickBadgeUrls.put(scopedKey, imageUrl) != imageUrl) {
+                            changed = true
+                        }
+                        if (cacheKickBadgeUrlIfAbsent("kick:chat:$scopeId:$candidate:default", imageUrl)) {
+                            changed = true
+                        }
+                    }
+                } else {
+                    val key = "kick:$candidate:$version"
+                    if (kickBadgeUrls.put(key, imageUrl) != imageUrl) {
+                        changed = true
+                    }
+                    if (cacheKickBadgeUrlIfAbsent("kick:$candidate:default", imageUrl)) {
+                        changed = true
+                    }
                 }
                 if (isKickBadgeDebugEnabled() && candidate in setOf("moderator", "vip", "verified", "og", "founder", "sub_gifter", "broadcaster", "staff")) {
-                    Log.d(badgeDebugTag, "cacheBadge key=$key hasUrl=${imageUrl.isNotBlank()}")
+                    Log.d(badgeDebugTag, "cacheBadge candidate=$candidate version=$version hasUrl=${imageUrl.isNotBlank()} chatScope=${scopeIds.joinToString(",")}")
                 }
             }
         }
         return changed
     }
 
-    private fun resolveKickBadgeUrl(type: String, version: String): String? {
+    private fun resolveKickBadgeUrl(type: String, version: String, chatScopeId: String? = null): String? {
+        val channelSpecific = isKickChannelSpecificBadgeType(type)
         kickBadgeTypeCandidates(type).forEach { candidate ->
-            kickBadgeUrls["kick:$candidate:$version"]?.let { return it }
-            kickBadgeUrls["kick:$candidate:1"]?.let { return it }
-            kickBadgeUrls["kick:$candidate:default"]?.let { return it }
+            if (chatScopeId != null) {
+                kickBadgeUrls["kick:chat:$chatScopeId:$candidate:$version"]?.takeIf { !isFallbackBadgeUrl(it) }?.let { return it }
+                if (channelSpecific) {
+                    resolveClosestChannelScopedBadgeUrl(chatScopeId, candidate, version)?.let { return it }
+                }
+                kickBadgeUrls["kick:chat:$chatScopeId:$candidate:default"]?.takeIf { !isFallbackBadgeUrl(it) }?.let { return it }
+            }
+            if (channelSpecific && chatScopeId != null) {
+                return@forEach
+            }
+            kickBadgeUrls["kick:$candidate:$version"]?.takeIf { !isFallbackBadgeUrl(it) }?.let { return it }
+            kickBadgeUrls["kick:$candidate:1"]?.takeIf { !isFallbackBadgeUrl(it) }?.let { return it }
+            kickBadgeUrls["kick:$candidate:default"]?.takeIf { !isFallbackBadgeUrl(it) }?.let { return it }
         }
-        fallbackKickBadgeUrl(normalizeKickBadgeType(type), version)?.let { return it }
         return null
     }
 
-    private fun fallbackKickBadgeUrl(normalizedType: String, version: String): String? {
-        val slug = when (normalizedType) {
-            "moderator" -> "moderator"
-            "vip" -> "vip"
-            "verified" -> "verified"
-            "og" -> "og"
-            "founder" -> "founder"
-            "subscriber" -> "subscriber"
-            "broadcaster" -> "broadcaster"
-            "staff" -> "staff"
-            "sidekick" -> "sidekick"
-            "sub_gifter" -> when {
-                version.toIntOrNull()?.let { it >= 200 } == true -> "subGifter200"
-                version.toIntOrNull()?.let { it >= 100 } == true -> "subGifter100"
-                version.toIntOrNull()?.let { it >= 50 } == true -> "subGifter50"
-                version.toIntOrNull()?.let { it >= 25 } == true -> "subGifter25"
-                else -> "subGifter"
+    private fun isFallbackBadgeUrl(url: String): Boolean {
+        return url.startsWith(kickLegacyBadgeFallbackBaseUrl, ignoreCase = true)
+    }
+
+    private fun hasAuthoritativeKickBadge(type: String): Boolean {
+        return kickBadgeTypeCandidates(type).any { candidate ->
+            kickBadgeUrls.entries.any { (key, url) ->
+                (key.startsWith("kick:$candidate:") || key.contains(":$candidate:")) && !url.isNullOrBlank() && !isFallbackBadgeUrl(url)
             }
-            else -> null
-        } ?: return null
-        return "${kickBadgeFallbackBaseUrl}${slug}.svg"
+        }
+    }
+
+    private fun isKickChannelSpecificBadgeType(type: String): Boolean {
+        return normalizeKickBadgeType(type) in kickChannelSpecificBadgeTypes
+    }
+
+    private fun resolveClosestChannelScopedBadgeUrl(chatScopeId: String, candidate: String, requestedVersion: String): String? {
+        val requested = requestedVersion.toIntOrNull() ?: return null
+        val prefix = "kick:chat:$chatScopeId:$candidate:"
+        val scoped = kickBadgeUrls.entries
+            .asSequence()
+            .filter { (key, url) -> key.startsWith(prefix) && !url.isNullOrBlank() && !isFallbackBadgeUrl(url) }
+            .mapNotNull { (key, url) ->
+                val tier = key.removePrefix(prefix).toIntOrNull() ?: return@mapNotNull null
+                tier to url
+            }
+            .toList()
+        if (scoped.isEmpty()) return null
+        val lowerOrEqual = scoped.filter { (tier, _) -> tier <= requested }.maxByOrNull { (tier, _) -> tier }
+        if (lowerOrEqual != null) return lowerOrEqual.second
+        return scoped.minByOrNull { (tier, _) -> tier }?.second
+    }
+
+    private fun unresolvedKickCanonicalBadgeTypes(): List<String> {
+        return kickCanonicalBadgeTypes.filterNot(::hasAuthoritativeKickBadge)
+    }
+
+    private fun resolveKickInlineBadgeUrl(normalizedType: String): String? {
+        if (normalizedType == "subscriber") {
+            return null
+        }
+        val dataUri = kickInlineBadgeDataUriByType[normalizedType] ?: return null
+        return kickInlineBadgeSanitizedCache.computeIfAbsent(normalizedType) {
+            sanitizeKickInlineBadgeDataUri(dataUri)
+        }
+    }
+
+    private fun sanitizeKickInlineBadgeDataUri(dataUri: String): String {
+        val prefix = "data:image/svg+xml;base64,"
+        if (!dataUri.startsWith(prefix)) {
+            return dataUri
+        }
+        val encoded = dataUri.removePrefix(prefix)
+        val decodedSvg = runCatching {
+            String(Base64.decode(encoded, Base64.DEFAULT), Charsets.UTF_8)
+        }.getOrNull() ?: return dataUri
+        val sanitizedSvg = decodedSvg
+            .replace("clipPath=", "clip-path=")
+            .replace("stopColor=", "stop-color=")
+            .replace("stopOpacity=", "stop-opacity=")
+            .replace("fillOpacity=", "fill-opacity=")
+            .replace("strokeOpacity=", "stroke-opacity=")
+            .replace("strokeWidth=", "stroke-width=")
+            .replace("fillRule=", "fill-rule=")
+            .replace("clipRule=", "clip-rule=")
+            .replace("colorInterpolationFilters=", "color-interpolation-filters=")
+        if (sanitizedSvg == decodedSvg) {
+            return dataUri
+        }
+        val reEncoded = Base64.encodeToString(sanitizedSvg.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        return prefix + reEncoded
+    }
+
+    private fun recordKickBadgeSource(source: KickBadgeSource) {
+        val updated = synchronized(kickBadgeSourceStats) {
+            val next = (kickBadgeSourceStats[source] ?: 0) + 1
+            kickBadgeSourceStats[source] = next
+            next
+        }
+        if (isKickBadgeDebugEnabled() && updated % 50 == 0) {
+            val snapshot = synchronized(kickBadgeSourceStats) {
+                kickBadgeSourceStats.entries.joinToString(",") { "${it.key.name}=${it.value}" }
+            }
+            Log.d(badgeDebugTag, "badge source counters $snapshot")
+        }
     }
 
     private fun kickBadgeTypeCandidates(type: String): List<String> {
@@ -2188,6 +2487,68 @@ class KickRepository @Inject constructor(
         }
     }
 
+    private suspend fun prefetchKickBadgeCatalogFromWeb(
+        channel: KickChannelResponse,
+        unresolvedTargetTypes: Set<String>,
+    ): Int {
+        if (unresolvedTargetTypes.isEmpty()) return 0
+        var added = 0
+        val pageSlugs = linkedSetOf<String>().apply {
+            channel.slug?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
+            add("kick")
+        }
+        pageSlugs.forEach { slug ->
+            val pageUrl = "https://kick.com/${urlEncode(slug)}"
+            val html = getRawWithBackoff(pageUrl, isKickWeb = true) ?: return@forEach
+            val snapshot = runCatching {
+                KickFeatureParsingUtils.extractKickWebBadgeSnapshot(html, pageUrl)
+            }.getOrElse { error ->
+                if (isKickBadgeDebugEnabled()) {
+                    Log.w(badgeDebugTag, "web badge snapshot parse failed for $pageUrl: ${error.message}")
+                }
+                return@forEach
+            }
+            snapshot.jsonPayloads.forEach { payload ->
+                added += cacheKickBadgeUrlsFromJson(payload)
+            }
+            if (unresolvedKickCanonicalBadgeTypes().none { it in unresolvedTargetTypes }) {
+                return@forEach
+            }
+            snapshot.chunkUrls
+                .asSequence()
+                .distinct()
+                .take(18)
+                .forEach { chunkUrl ->
+                    val body = kickChunkBodyCache[chunkUrl]
+                        ?: getRawWithBackoff(chunkUrl, isKickWeb = true)?.also { fetched ->
+                            if (kickChunkBodyCache.size < 64) {
+                                kickChunkBodyCache[chunkUrl] = fetched
+                            }
+                        }
+                        ?: return@forEach
+                    val extracted = runCatching {
+                        KickFeatureParsingUtils.extractKickGlobalBadgeUrlsFromChunk(body)
+                    }.getOrElse { error ->
+                        if (isKickBadgeDebugEnabled()) {
+                            Log.w(badgeDebugTag, "web badge chunk parse failed for $chunkUrl: ${error.message}")
+                        }
+                        emptyMap()
+                    }
+                    extracted.forEach { (type, imageUrl) ->
+                        if (type !in unresolvedTargetTypes) return@forEach
+                        added += cacheKickExtractedBadgeUrl(type, "1", imageUrl)
+                    }
+                }
+            if (unresolvedKickCanonicalBadgeTypes().none { it in unresolvedTargetTypes }) {
+                return@forEach
+            }
+        }
+        if (added > 0) {
+            schedulePersistBadgeCache()
+        }
+        return added
+    }
+
     private fun cacheKickBadgeUrlsFromJson(root: JsonElement): Int {
         var added = 0
 
@@ -2292,6 +2653,30 @@ class KickRepository @Inject constructor(
         }
     }
 
+    private fun cacheKickExtractedBadgeUrl(type: String, version: String, imageUrl: String): Int {
+        if (imageUrl.isBlank() || isFallbackBadgeUrl(imageUrl)) {
+            return 0
+        }
+        var changed = 0
+        kickBadgeTypeCandidates(type).forEach { candidate ->
+            val versionKey = "kick:$candidate:$version"
+            val existingVersion = kickBadgeUrls[versionKey]
+            if (existingVersion.isNullOrBlank() || isFallbackBadgeUrl(existingVersion)) {
+                if (kickBadgeUrls.put(versionKey, imageUrl) != imageUrl) {
+                    changed += 1
+                }
+            }
+            val defaultKey = "kick:$candidate:default"
+            val existingDefault = kickBadgeUrls[defaultKey]
+            if (existingDefault.isNullOrBlank() || isFallbackBadgeUrl(existingDefault)) {
+                if (kickBadgeUrls.put(defaultKey, imageUrl) != imageUrl) {
+                    changed += 1
+                }
+            }
+        }
+        return changed
+    }
+
     private fun parseChannelLivestream(root: JsonElement): KickChannelLivestream? {
         val payload = when (root) {
             is JsonObject -> root.objOrNull("data")
@@ -2351,6 +2736,22 @@ class KickRepository @Inject constructor(
         badgeCacheScope.launch {
             try {
                 prefetchKickBadgeCatalog(channel)
+                val unresolvedBeforeWeb = unresolvedKickCanonicalBadgeTypes().toSet()
+                if (unresolvedBeforeWeb.isNotEmpty()) {
+                    val webRefreshKey = "web:$channelCacheKey"
+                    val lastWebRefresh = kickBadgeCatalogRefreshAt[webRefreshKey] ?: 0L
+                    if (now - lastWebRefresh >= kickWebBadgeScrapeTtlMs) {
+                        val webAdded = prefetchKickBadgeCatalogFromWeb(channel, unresolvedBeforeWeb)
+                        kickBadgeCatalogRefreshAt[webRefreshKey] = System.currentTimeMillis()
+                        if (isKickBadgeDebugEnabled()) {
+                            val unresolvedAfterWeb = unresolvedKickCanonicalBadgeTypes().toSet()
+                            Log.d(
+                                badgeDebugTag,
+                                "web badge prefetch channel=$channelCacheKey unresolvedBefore=${unresolvedBeforeWeb.joinToString(",")} unresolvedAfter=${unresolvedAfterWeb.joinToString(",")} added=$webAdded"
+                            )
+                        }
+                    }
+                }
                 kickBadgeCatalogRefreshAt[channelCacheKey] = System.currentTimeMillis()
                 schedulePersistBadgeCache()
             } catch (e: Exception) {
@@ -2359,6 +2760,31 @@ class KickRepository @Inject constructor(
                 }
             } finally {
                 kickBadgeCatalogRefreshInProgress.remove(channelCacheKey)
+            }
+        }
+    }
+
+    private fun maybeRefreshKickBadgeCatalogOnAppOpenInBackground() {
+        val refreshKey = "app_open_web"
+        if (!kickBadgeCatalogRefreshInProgress.add(refreshKey)) return
+        badgeCacheScope.launch {
+            try {
+                val channel = KickChannelResponse(slug = "kick")
+                val targetTypes = kickCanonicalBadgeTypes.toSet()
+                val webAdded = prefetchKickBadgeCatalogFromWeb(channel, targetTypes)
+                kickBadgeCatalogRefreshAt[refreshKey] = System.currentTimeMillis()
+                if (webAdded > 0) {
+                    schedulePersistBadgeCache()
+                }
+                if (isKickBadgeDebugEnabled()) {
+                    Log.d(badgeDebugTag, "app-open web badge refresh added=$webAdded")
+                }
+            } catch (e: Exception) {
+                if (isKickBadgeDebugEnabled()) {
+                    Log.w(badgeDebugTag, "app-open web badge refresh failed: ${e.message}")
+                }
+            } finally {
+                kickBadgeCatalogRefreshInProgress.remove(refreshKey)
             }
         }
     }
@@ -2402,6 +2828,7 @@ class KickRepository @Inject constructor(
             val entries = root["entries"] as? JsonObject
             entries?.forEach { (key, value) ->
                 val url = (value as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@forEach
+                if (isFallbackBadgeUrl(url)) return@forEach
                 kickBadgeUrls[key] = url
             }
             val refreshed = root["refreshed"] as? JsonObject
@@ -2439,6 +2866,20 @@ class KickRepository @Inject constructor(
             }
             response.body.string()
         }
+    }
+
+    private suspend fun getRawWithBackoff(url: String, isKickWeb: Boolean = false, maxAttempts: Int = 3): String? {
+        var backoffMs = 400L
+        repeat(maxAttempts) { attempt ->
+            val result = runCatching { getRaw(url, isKickWeb = isKickWeb) }
+            result.getOrNull()?.let { return it }
+            if (attempt == maxAttempts - 1) {
+                return null
+            }
+            delay(backoffMs)
+            backoffMs = (backoffMs * 2L).coerceAtMost(2_000L)
+        }
+        return null
     }
 
     private suspend fun getRawAuthenticated(
@@ -2664,6 +3105,46 @@ class KickRepository @Inject constructor(
     private fun JsonElement?.asLongOrNull(): Long? {
         val primitive = this as? JsonPrimitive ?: return null
         return primitive.longOrNull ?: primitive.contentOrNull?.toLongOrNull()
+    }
+
+    private fun findPrimitiveRecursive(root: JsonElement?, targetKeys: Set<String>): String? {
+        val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
+        fun search(element: JsonElement?): String? {
+            return when (element) {
+                is JsonObject -> {
+                    element.entries.firstNotNullOfOrNull { (key, value) ->
+                        val normalizedKey = key.lowercase(Locale.ROOT)
+                        when {
+                            normalizedKey in normalizedKeys -> (value as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+                            else -> search(value)
+                        }
+                    }
+                }
+                is JsonArray -> element.firstNotNullOfOrNull(::search)
+                else -> null
+            }
+        }
+        return search(root)
+    }
+
+    private fun findLongRecursive(root: JsonElement?, targetKeys: Set<String>): Long? {
+        val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
+        fun search(element: JsonElement?): Long? {
+            return when (element) {
+                is JsonObject -> {
+                    element.entries.firstNotNullOfOrNull { (key, value) ->
+                        val normalizedKey = key.lowercase(Locale.ROOT)
+                        when {
+                            normalizedKey in normalizedKeys -> value.asLongOrNull()
+                            else -> search(value)
+                        }
+                    }
+                }
+                is JsonArray -> element.firstNotNullOfOrNull(::search)
+                else -> null
+            }
+        }
+        return search(root)
     }
 
     private fun extractVideoArrays(root: JsonElement): List<JsonArray> {

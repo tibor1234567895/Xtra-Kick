@@ -211,7 +211,7 @@ class ReplyClickedChatAdapter(
         return when {
             chatMessage.isFirst && firstMsgVisibility < 2 -> R.color.chatMessageFirst
             chatMessage.reward?.id != null && firstMsgVisibility < 2 -> R.color.chatMessageReward
-            chatMessage.systemMsg != null || chatMessage.msgId != null -> R.color.chatMessageNotice
+            chatMessage.systemMsg != null || (chatMessage.msgId != null && chatMessage.msgId != "kick_moderation") -> R.color.chatMessageNotice
             loggedInUser?.let { user ->
                 if (chatMessage.userId != null && chatMessage.userLogin != user) {
                     item.text.split(" ").find {
@@ -341,6 +341,7 @@ class ReplyClickedChatAdapter(
             textView.apply {
                 text = formattedMessage
                 textSize = messageTextSize
+                alpha = if (chatMessage.isDeleted) 0.62f else 1f
                 setBackgroundColor(resolvedBackgroundColor)
                 movementMethod = LinkMovementMethod.getInstance()
                 TooltipCompat.setTooltipText(this, chatMessage.message ?: chatMessage.systemMsg)
