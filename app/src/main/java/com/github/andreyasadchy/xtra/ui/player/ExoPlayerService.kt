@@ -37,6 +37,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.session.CacheBitmapLoader
 import androidx.media3.session.DefaultMediaNotificationProvider
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.VideoPosition
 import com.github.andreyasadchy.xtra.repository.OfflineRepository
@@ -92,7 +93,9 @@ class ExoPlayerService : Service() {
             setSeekBackIncrementMs(prefs().getString(C.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000)
             setSeekForwardIncrementMs(prefs().getString(C.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000)
         }.build()
-        Log.d(TAG, "ExoPlayerService created with latency=${LiveLatencySettings.describe(activeLatencyConfig)}")
+        if (BuildConfig.DEBUG && prefs().getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
+            Log.d(TAG, "ExoPlayerService created with latency=${LiveLatencySettings.describe(activeLatencyConfig)}")
+        }
         this.player = player
         player.addListener(
             object : Player.Listener {

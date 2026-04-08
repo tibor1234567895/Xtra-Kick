@@ -6,6 +6,7 @@ import androidx.core.content.edit
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.util.C
 
 data class LiveLatencyConfig(
@@ -105,7 +106,7 @@ object LiveLatencySettings {
         }
         val profile = prefs.getString(C.PLAYER_LATENCY_PROFILE, DEFAULT_PROFILE) ?: DEFAULT_PROFILE
         val config = preset(profile)
-        debugLog("Materializing latency profile '$profile' into raw settings for keys=${missingKeys.joinToString()}")
+        debugLog(prefs, "Materializing latency profile '$profile' into raw settings for keys=${missingKeys.joinToString()}")
         prefs.edit {
             putString(C.PLAYER_LATENCY_PROFILE, profile)
             if (C.PLAYER_BUFFER_MIN in missingKeys) putString(C.PLAYER_BUFFER_MIN, config.minBufferMs.toString())
@@ -241,7 +242,10 @@ object LiveLatencySettings {
         }
     }
 
-    private fun debugLog(message: String) {
+    private fun debugLog(prefs: SharedPreferences, message: String) {
+        if (!BuildConfig.DEBUG || !prefs.getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
+            return
+        }
         try {
             Log.d(TAG, message)
         } catch (_: RuntimeException) {

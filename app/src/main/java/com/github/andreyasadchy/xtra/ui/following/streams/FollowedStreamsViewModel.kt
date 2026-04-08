@@ -120,6 +120,22 @@ class FollowedStreamsViewModel @Inject constructor(
     private var refreshJob: Job? = null
     private var refreshGeneration = 0L
 
+    private fun isNetworkDebugEnabled(): Boolean {
+        return applicationContext.prefs().getBoolean(C.DEBUG_NETWORK_LOGS, false)
+    }
+
+    private fun logFollowedStreamsInfo(message: String) {
+        if (isNetworkDebugEnabled()) {
+            Log.i(LOG_TAG, message)
+        }
+    }
+
+    private fun logFollowedStreamsWarn(message: String) {
+        if (isNetworkDebugEnabled()) {
+            Log.w(LOG_TAG, message)
+        }
+    }
+
     fun initialize() {
         if (sortText.value == null) {
             sortText.value = "${applicationContext.getString(com.github.andreyasadchy.xtra.R.string.source)}: ${applicationContext.getString(com.github.andreyasadchy.xtra.R.string.local)}"
@@ -168,14 +184,14 @@ class FollowedStreamsViewModel @Inject constructor(
                 }
 
                 val fastResult = runCatching { loadStreamsFromPublicApi(follows) }
-                    .onFailure { error -> Log.w(LOG_TAG, "Fast followed-live path failed, using fallback: ${error.message}") }
+                    .onFailure { error -> logFollowedStreamsWarn("Fast followed-live path failed, using fallback: ${error.message}") }
                     .getOrNull()
 
                 fastResult?.items?.forEach { stream ->
                     resolved[stream.cacheKey()] = stream
                 }
                 if (fastResult != null) {
-                    Log.i(LOG_TAG, "Fast followed-live path resolved ${fastResult.items.size} items and left ${fastResult.unresolvedFollows.size} for fallback")
+                    logFollowedStreamsInfo("Fast followed-live path resolved ${fastResult.items.size} items and left ${fastResult.unresolvedFollows.size} for fallback")
                     val sorted = resolved.values.toList().sortedForFollowedLive()
                     kickRepository.prefetchChannelLivestreams(
                         sorted.mapNotNull { it.channelLogin }.take(FOLLOWED_STREAMS_BATCH_SIZE)
@@ -193,7 +209,7 @@ class FollowedStreamsViewModel @Inject constructor(
                 val followsForFallback = fastResult?.unresolvedFollows ?: follows
 
                 val bulkFallbackResult = runCatching { loadStreamsFromBulkFallback(followsForFallback) }
-                    .onFailure { error -> Log.w(LOG_TAG, "Bulk followed-live fallback failed, using per-channel fallback: ${error.message}") }
+                    .onFailure { error -> logFollowedStreamsWarn("Bulk followed-live fallback failed, using per-channel fallback: ${error.message}") }
                     .getOrNull()
 
                 bulkFallbackResult?.items?.forEach { stream ->
@@ -281,7 +297,7 @@ class FollowedStreamsViewModel @Inject constructor(
     private suspend fun loadStreamsFromPublicApi(follows: List<LocalFollowChannel>): PublicApiLoadResult? {
         val headers = KickApiHelper.getHelixHeaders(applicationContext)
         if (headers[C.HEADER_TOKEN].isNullOrBlank()) {
-            Log.i(LOG_TAG, "Fast followed-live path skipped: missing auth token")
+            logFollowedStreamsInfo("Fast followed-live path skipped: missing auth token")
             return null
         }
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
@@ -295,7 +311,7 @@ class FollowedStreamsViewModel @Inject constructor(
             }
             .toMap()
         if (followsByBroadcasterId.isEmpty()) {
-            Log.i(LOG_TAG, "Fast followed-live path skipped: no cached broadcaster ids")
+            logFollowedStreamsInfo("Fast followed-live path skipped: no cached broadcaster ids")
             return null
         }
 
@@ -332,7 +348,7 @@ class FollowedStreamsViewModel @Inject constructor(
         val followsWithCachedBroadcasterIds = followsByBroadcasterId.values.toSet()
         val unresolvedFollows = follows.filter { it !in followsWithCachedBroadcasterIds }
         if (unresolvedFollows.isNotEmpty()) {
-            Log.i(LOG_TAG, "Fast followed-live path has ${unresolvedFollows.size} follows without cached broadcaster ids")
+            logFollowedStreamsInfo("Fast followed-live path has ${unresolvedFollows.size} follows without cached broadcaster ids")
         }
 
         return PublicApiLoadResult(
@@ -348,7 +364,7 @@ class FollowedStreamsViewModel @Inject constructor(
 
         val headers = KickApiHelper.getHelixHeaders(applicationContext)
         if (headers[C.HEADER_TOKEN].isNullOrBlank()) {
-            Log.i(LOG_TAG, "Bulk followed-live fallback skipped: missing auth token")
+            logFollowedStreamsInfo("Bulk followed-live fallback skipped: missing auth token")
             return null
         }
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
@@ -361,7 +377,7 @@ class FollowedStreamsViewModel @Inject constructor(
             }
             .toMap(LinkedHashMap())
         if (followByLogin.isEmpty()) {
-            Log.i(LOG_TAG, "Bulk followed-live fallback skipped: no unresolved logins")
+            logFollowedStreamsInfo("Bulk followed-live fallback skipped: no unresolved logins")
             return BulkFallbackLoadResult(emptyList(), follows)
         }
 
@@ -434,7 +450,7 @@ class FollowedStreamsViewModel @Inject constructor(
         val resolvedFollows = followsByBroadcasterId.values.toSet()
         val unresolvedFollows = follows.filter { it !in resolvedFollows }
         if (unresolvedFollows.isNotEmpty()) {
-            Log.i(LOG_TAG, "Bulk followed-live fallback left ${unresolvedFollows.size} follows for per-channel fallback")
+            logFollowedStreamsInfo("Bulk followed-live fallback left ${unresolvedFollows.size} follows for per-channel fallback")
         }
 
         return BulkFallbackLoadResult(
@@ -611,7 +627,7 @@ class FollowedStreamsViewModel @Inject constructor(
         if (cache[normalizedLogin] == normalizedId) return
         cache[normalizedLogin] = normalizedId
         persistBroadcasterIdCache(cache)
-        Log.i(LOG_TAG, "Cached broadcaster id for $normalizedLogin")
+        logFollowedStreamsInfo("Cached broadcaster id for $normalizedLogin")
     }
 
     private fun persistBroadcasterIdCache(cache: Map<String, String>) {

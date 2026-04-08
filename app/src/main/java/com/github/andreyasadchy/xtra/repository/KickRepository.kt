@@ -13,6 +13,7 @@ import com.github.andreyasadchy.xtra.model.chat.ChannelPointReward
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.PinnedGift
 import com.github.andreyasadchy.xtra.model.chat.Reply
+import com.github.andreyasadchy.xtra.model.chat.RoomState
 import com.github.andreyasadchy.xtra.model.kick.KickCategory
 import com.github.andreyasadchy.xtra.model.kick.KickChannelResponse
 import com.github.andreyasadchy.xtra.model.kick.KickChannelLivestream
@@ -104,6 +105,11 @@ class KickRepository @Inject constructor(
         val nextCursor: String? = null,
     )
 
+    data class KickUserCardDetails(
+        val createdAt: String? = null,
+        val followingSince: String? = null,
+    )
+
     private enum class KickModerationType {
         NONE,
         DELETE_MESSAGE,
@@ -127,6 +133,7 @@ class KickRepository @Inject constructor(
 
     private val tag = "KickRepository"
     private val badgeDebugTag = "KickBadgeDebug"
+    private val featureDebugTag = "KickFeatureDebug"
     private val pointsDebugTag = "KickPointsDebug"
     private val pinnedDebugTag = "KickPinnedDebug"
     private val emoteRegex = Regex("\\[emote:\\d+:([^\\]]+)]")
@@ -423,6 +430,44 @@ class KickRepository @Inject constructor(
         }
     }
 
+    suspend fun getUserCardDetails(
+        channelSlug: String?,
+        userSlug: String,
+    ): KickUserCardDetails = withContext(Dispatchers.IO) {
+        val normalizedUserSlug = userSlug.trim()
+        if (normalizedUserSlug.isBlank()) return@withContext KickUserCardDetails()
+
+        val createdAt = runCatching {
+            val root = json.parseToJsonElement(
+                getRaw("https://kick.com/api/v2/channels/${urlEncode(normalizedUserSlug)}", isKickWeb = true)
+            ).jsonObject
+            root.objOrNull("chatroom")?.firstPrimitiveOrNull("created_at", "createdAt")
+                ?: root.objOrNull("user")?.firstPrimitiveOrNull("created_at", "createdAt")
+                ?: root.firstPrimitiveOrNull("created_at", "createdAt")
+        }.getOrNull()?.let(::normalizeDate)
+
+        val followingSince = channelSlug
+            ?.trim()
+            ?.takeIf { it.isNotBlank() && !it.equals(normalizedUserSlug, true) }
+            ?.let { normalizedChannelSlug ->
+                runCatching {
+                    val root = json.parseToJsonElement(
+                        getRaw(
+                            "https://kick.com/api/v2/channels/${urlEncode(normalizedChannelSlug)}/users/${urlEncode(normalizedUserSlug)}",
+                            isKickWeb = true
+                        )
+                    ).jsonObject
+                    root.firstPrimitiveOrNull("following_since", "followed_at", "followedAt")
+                        ?: root.objOrNull("user")?.firstPrimitiveOrNull("following_since", "followed_at", "followedAt")
+                }.getOrNull()?.let(::normalizeDate)
+            }
+
+        KickUserCardDetails(
+            createdAt = createdAt,
+            followingSince = followingSince
+        )
+    }
+
     suspend fun getChannelPointRewards(
         channelSlug: String?,
         channelId: String? = null,
@@ -599,6 +644,49 @@ class KickRepository @Inject constructor(
                 .forEach(results::add)
         }
         return results.toList()
+    }
+
+    suspend fun getInitialRoomState(channelSlug: String?, channelId: String?): RoomState? {
+        val candidates = linkedSetOf<String>()
+        channelSlug?.trim()?.takeIf { it.isNotBlank() }?.let { slug ->
+            val encoded = urlEncode(slug)
+            candidates += "https://kick.com/api/v2/channels/$encoded"
+            candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
+            candidates += "https://kick.com/api/v1/$encoded/chatroom"
+            candidates += "https://kick.com/api/v2/channels/$encoded/info"
+        }
+        channelId?.trim()?.takeIf { it.isNotBlank() }?.let { id ->
+            val encoded = urlEncode(id)
+            candidates += "https://kick.com/api/v2/channels/$encoded"
+            candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
+            candidates += "https://kick.com/api/v1/channels/$encoded"
+        }
+        resolveDedicatedChatroomCandidates(channelId?.takeIf { !it.isNullOrBlank() } ?: channelSlug.orEmpty())
+            .forEach { chatroomId ->
+                val encoded = urlEncode(chatroomId)
+                candidates += "https://kick.com/api/v1/chatrooms/$encoded"
+                candidates += "https://kick.com/api/v2/chatrooms/$encoded"
+            }
+
+        candidates.forEach { url ->
+            val raw = runCatching { getRaw(url, isKickWeb = true) }.getOrNull() ?: return@forEach
+            val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
+            val roomState = parseKickRoomState(root)
+            if (isKickFeatureDebugEnabled()) {
+                val roomKeys = findInterestingKeyPaths(
+                    root,
+                    setOf("slow", "follower", "follow", "subscriber", "sub", "emote", "unique", "r9k")
+                ).take(16)
+                Log.d(
+                    featureDebugTag,
+                    "roomState url=$url topLevel=${summarizeTopLevelKeys(root)} roomKeys=$roomKeys parsed=${roomState?.toDebugString() ?: "null"} raw=${raw.compactDebugSnippet()}"
+                )
+            }
+            if (roomState != null) {
+                return roomState
+            }
+        }
+        return null
     }
 
     suspend fun getChannelLivestream(channelSlug: String, forceRefresh: Boolean = false): KickChannelLivestream? {
@@ -3004,6 +3092,117 @@ class KickRepository @Inject constructor(
 
     private fun JsonObject.arrayOrNull(key: String): JsonArray? {
         return this[key] as? JsonArray
+    }
+
+    private fun RoomState.toDebugString(): String {
+        return "emote=${emote ?: "null"},followers=${followers ?: "null"},unique=${unique ?: "null"},slow=${slow ?: "null"},subs=${subs ?: "null"}"
+    }
+
+    private fun parseKickRoomState(root: JsonElement?): RoomState? {
+        if (root == null) return null
+
+        val values = linkedMapOf<String, JsonPrimitive>()
+        val targetKeys = mapOf(
+            "emote_mode" to "emote_mode",
+            "emotemode" to "emote_mode",
+            "emoteonly" to "emote_mode",
+            "follower_mode" to "follower_mode",
+            "followermode" to "follower_mode",
+            "followers_mode" to "follower_mode",
+            "followersmode" to "follower_mode",
+            "follower_mode_duration_minutes" to "follower_mode_duration_minutes",
+            "followermodedurationminutes" to "follower_mode_duration_minutes",
+            "followers_only_min_duration" to "follower_mode_duration_minutes",
+            "slow_mode" to "slow_mode",
+            "slowmode" to "slow_mode",
+            "slow_mode_wait_time_seconds" to "slow_mode_wait_time_seconds",
+            "slowmodewaittimeseconds" to "slow_mode_wait_time_seconds",
+            "slow_mode_wait_time" to "slow_mode_wait_time_seconds",
+            "subscriber_mode" to "subscriber_mode",
+            "subscribermode" to "subscriber_mode",
+            "subs_only" to "subscriber_mode",
+            "submode" to "subscriber_mode",
+            "unique_chat_mode" to "unique_chat_mode",
+            "uniquechatmode" to "unique_chat_mode",
+            "r9k" to "unique_chat_mode",
+            "emote-only" to "emote_mode",
+            "followers-only" to "follower_mode",
+            "subs-only" to "subscriber_mode",
+        )
+
+        fun normalize(key: String): String {
+            return key.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "")
+        }
+
+        fun walk(element: JsonElement) {
+            when (element) {
+                is JsonObject -> {
+                    element.forEach { (key, value) ->
+                        val normalized = normalize(key)
+                        val canonical = targetKeys[normalized]
+                        if (canonical != null && value is JsonPrimitive && canonical !in values) {
+                            values[canonical] = value
+                        }
+                        if (value is JsonObject || value is JsonArray) {
+                            walk(value)
+                        }
+                    }
+                }
+                is JsonArray -> element.forEach(::walk)
+                else -> Unit
+            }
+        }
+
+        fun JsonPrimitive.asBooleanOrNull(): Boolean? {
+            return when (contentOrNull?.trim()?.lowercase(Locale.ROOT)) {
+                "1", "true", "on", "enabled" -> true
+                "0", "false", "off", "disabled" -> false
+                else -> null
+            }
+        }
+
+        fun JsonPrimitive.asIntOrNull(): Int? {
+            return intOrNull ?: contentOrNull?.trim()?.toIntOrNull()
+        }
+
+        walk(root)
+        if (values.isEmpty()) return null
+
+        val emoteEnabled = values["emote_mode"]?.asBooleanOrNull()
+        val followerEnabled = values["follower_mode"]?.asBooleanOrNull()
+        val followerDuration = values["follower_mode_duration_minutes"]?.asIntOrNull()
+        val slowEnabled = values["slow_mode"]?.asBooleanOrNull()
+        val slowDuration = values["slow_mode_wait_time_seconds"]?.asIntOrNull()
+        val subscriberEnabled = values["subscriber_mode"]?.asBooleanOrNull()
+        val uniqueEnabled = values["unique_chat_mode"]?.asBooleanOrNull()
+
+        return RoomState(
+            emote = when (emoteEnabled) {
+                true -> "1"
+                false -> "0"
+                null -> null
+            },
+            followers = when (followerEnabled) {
+                true -> (followerDuration ?: 0).toString()
+                false -> "-1"
+                null -> null
+            },
+            unique = when (uniqueEnabled) {
+                true -> "1"
+                false -> "0"
+                null -> null
+            },
+            slow = when {
+                slowEnabled == true -> (slowDuration ?: 0).toString()
+                slowEnabled == false -> "0"
+                else -> null
+            },
+            subs = when (subscriberEnabled) {
+                true -> "1"
+                false -> "0"
+                null -> null
+            }
+        )
     }
 
     private fun summarizeTopLevelKeys(root: JsonElement?): String {

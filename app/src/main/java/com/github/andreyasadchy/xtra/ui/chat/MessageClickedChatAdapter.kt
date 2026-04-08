@@ -36,7 +36,7 @@ import com.github.andreyasadchy.xtra.util.chat.ChatListParityUtils
 import java.util.Random
 
 class MessageClickedChatAdapter(
-    messages: List<ChatMessage>,
+    private val sourceMessages: List<ChatMessage>,
     private val localTwitchEmotes: List<TwitchEmote>,
     private val thirdPartyEmotes: List<Emote>,
     private val globalBadges: List<TwitchBadge>,
@@ -115,12 +115,13 @@ class MessageClickedChatAdapter(
     }
 
     val messages = if (!userId.isNullOrBlank() || !userLogin.isNullOrBlank() || !userName.isNullOrBlank()) {
-        synchronized(messages) {
-            messages.filter(::matchesSelectedUser).toMutableList().ifEmpty { null }
+        synchronized(sourceMessages) {
+            sourceMessages.filter(::matchesSelectedUser).toMutableList().ifEmpty { null }
         }
     } else {
         null
     } ?: selectedMessage?.let { mutableListOf(it) } ?: mutableListOf()
+    var muted = false
 
     var messageClickListener: ((ChatMessage, ChatMessage?) -> Unit)? = null
     private var renderGeneration = 0L
@@ -227,6 +228,25 @@ class MessageClickedChatAdapter(
 
     override fun getItemCount(): Int = synchronized(messages) {
         messages.size
+    }
+
+    fun applyMutedState(muted: Boolean) {
+        if (this.muted == muted) return
+        this.muted = muted
+        synchronized(messages) {
+            messages.clear()
+            if (!muted) {
+                val rebuilt = if (!userId.isNullOrBlank() || !userLogin.isNullOrBlank() || !userName.isNullOrBlank()) {
+                    synchronized(sourceMessages) {
+                        sourceMessages.filter(::matchesSelectedUser).toMutableList()
+                    }
+                } else {
+                    selectedMessage?.let { mutableListOf(it) } ?: mutableListOf()
+                }
+                messages.addAll(rebuilt)
+            }
+        }
+        notifyDataSetChanged()
     }
 
     private fun getBackgroundRes(chatMessage: ChatMessage, item: TextView): Int {

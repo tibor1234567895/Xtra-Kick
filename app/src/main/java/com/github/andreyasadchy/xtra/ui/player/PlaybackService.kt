@@ -41,6 +41,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.model.VideoPosition
 import com.github.andreyasadchy.xtra.player.lowlatency.CronetDataSource
 import com.github.andreyasadchy.xtra.player.lowlatency.HlsPlaylistParser
@@ -80,7 +81,7 @@ class PlaybackService : MediaSessionService() {
     private class StreamLoadErrorHandlingPolicy : DefaultLoadErrorHandlingPolicy(6) {
         override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
             val exception = loadErrorInfo.exception as? HttpDataSource.InvalidResponseCodeException
-            if (exception?.responseCode == 403) {
+            if (exception?.responseCode == 403 || exception?.responseCode == 404) {
                 return androidx.media3.common.C.TIME_UNSET
             }
             return super.getRetryDelayMsFor(loadErrorInfo)
@@ -120,6 +121,16 @@ class PlaybackService : MediaSessionService() {
     private var lastSavedPosition: Long? = null
     private var savePositionTimer: Timer? = null
 
+    private fun isBufferDebugEnabled(): Boolean {
+        return BuildConfig.DEBUG && prefs().getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)
+    }
+
+    private fun logBufferDebug(message: String) {
+        if (isBufferDebugEnabled()) {
+            Log.d(TAG, message)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         backgroundHandoffMode = prefs().getBoolean(KEY_BACKGROUND_HANDOFF_PENDING, false)
@@ -136,16 +147,14 @@ class PlaybackService : MediaSessionService() {
             setSeekBackIncrementMs(prefs().getString(C.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000)
             setSeekForwardIncrementMs(prefs().getString(C.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000)
         }.build()
-        Log.d(
-            TAG,
+        logBufferDebug(
             "PlaybackService created with latency=${LiveLatencySettings.describe(activeLatencyConfig)} " +
                 "backgroundHandoffMode=$backgroundHandoffMode"
         )
         player.addListener(
             object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
-                    Log.d(
-                        TAG,
+                    logBufferDebug(
                         "playbackState=${playbackStateName(playbackState)} " +
                             "playWhenReady=${player.playWhenReady} isPlaying=${player.isPlaying} " +
                             "background=$background backgroundHandoffMode=$backgroundHandoffMode " +
@@ -154,16 +163,14 @@ class PlaybackService : MediaSessionService() {
                 }
 
                 override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                    Log.d(
-                        TAG,
+                    logBufferDebug(
                         "playWhenReadyChanged playWhenReady=$playWhenReady reason=$reason " +
                             "background=$background backgroundHandoffMode=$backgroundHandoffMode"
                     )
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    Log.d(
-                        TAG,
+                    logBufferDebug(
                         "isPlayingChanged isPlaying=$isPlaying " +
                             "background=$background backgroundHandoffMode=$backgroundHandoffMode " +
                             "currentPosition=${player.currentPosition}"
@@ -195,10 +202,10 @@ class PlaybackService : MediaSessionService() {
                     )
                     if (background) {
                         if (isBehindLiveWindowError(error)) {
-                            Log.d(TAG, "playerError recovering via seekToDefaultPosition")
+                            logBufferDebug("playerError recovering via seekToDefaultPosition")
                             player.seekToDefaultPosition()
                         }
-                        Log.d(TAG, "playerError recovering via prepare")
+                        logBufferDebug("playerError recovering via prepare")
                         player.prepare()
                     }
                 }
@@ -286,8 +293,7 @@ class PlaybackService : MediaSessionService() {
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
                                 val disableVideo = customCommand.customExtras.getBoolean(DISABLE_VIDEO)
-                                Log.d(
-                                    TAG,
+                                logBufferDebug(
                                     "START_STREAM received channel=$channelName disableVideo=$disableVideo " +
                                         "backgroundHandoffMode=$backgroundHandoffMode uriPresent=${!uri.isNullOrBlank()}"
                                 )
@@ -301,6 +307,8 @@ class PlaybackService : MediaSessionService() {
                                 val proxyMultivariantPlaylist = prefs().getBoolean(C.PROXY_MULTIVARIANT_PLAYLIST, false)
                                 val proxyMediaPlaylistEnabled = prefs().getBoolean(C.PROXY_MEDIA_PLAYLIST, true)
                                 val validProxyConfiguration = PlaybackProxyUtils.isValidProxyConfiguration(proxyHost, proxyPort)
+                                val streamLatencyConfig = activeLatencyConfig
+                                logBufferDebug("Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(streamLatencyConfig)}")
                                 if ((proxyMultivariantPlaylist || proxyMediaPlaylistEnabled) && !validProxyConfiguration) {
                                     PlaybackProxyUtils.logInvalidProxyConfiguration("playback_service", proxyHost, proxyPort)
                                 }
@@ -346,8 +354,6 @@ class PlaybackService : MediaSessionService() {
                                         }
                                     }.build()
                                 } else null
-                                val streamLatencyConfig = activeLatencyConfig
-                                Log.d(TAG, "Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(streamLatencyConfig)}")
                                 val networkLibrary = prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
                                 player.setMediaSource(
                                     HlsMediaSource.Factory(

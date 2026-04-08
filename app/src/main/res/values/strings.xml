@@ -187,6 +187,12 @@
     <string name="room_unique">Unique</string>
     <string name="room_slow">Slow %s</string>
     <string name="room_subs">Subs</string>
+    <string name="chat_mode_slow">Slow %s</string>
+    <string name="chat_mode_followers_only">Followers only</string>
+    <string name="chat_mode_followers_for">Followers %s</string>
+    <string name="chat_mode_subs_only">Subs only</string>
+    <string name="chat_mode_emote_only">Emote only</string>
+    <string name="chat_mode_unique">Unique chat</string>
     <string name="chat_join">Connected to %s</string>
     <string name="copy_clip">Copy to clipboard</string>
     <string name="chat_clear">Chat has been cleared by a moderator.</string>
@@ -208,6 +214,9 @@
     <string name="timestamps">Show timestamps</string>
     <string name="timestamp_format">Timestamp format</string>
     <string name="created_at">Created at %s</string>
+    <string name="account_created_label">Created</string>
+    <string name="account_created_on">Account created on %s</string>
+    <string name="account_created_on_with_duration">Account created on %1$s • %2$s</string>
     <string name="user_partner">Partner</string>
     <string name="user_affiliate">Affiliate</string>
     <string name="user_staff">Staff</string>
@@ -217,6 +226,14 @@
     <string name="recentMsg_limit">Recent message limit</string>
     <string name="last_broadcast_date">Last broadcast %s</string>
     <string name="followed_at">Followed at %s</string>
+    <string name="following_label">Following</string>
+    <string name="following_since">Following since %s</string>
+    <string name="following_since_with_duration">Following since %1$s • %2$s</string>
+    <string name="subscription_label">Sub</string>
+    <string name="subscribed_for_duration">Subscribed for %1$s</string>
+    <string name="subscription_history_duration">Subscription history: %1$s</string>
+    <string name="founder_badge_duration">Founder badge: %1$s</string>
+    <string name="badges_label">Badges</string>
     <string name="show_usernotice">Show user notices (subs, raids...)</string>
     <string name="kick_gifted_sub">%1$s gifted a sub</string>
     <string name="kick_gifted_sub_to">%1$s gifted a sub to %2$s</string>
@@ -474,6 +491,8 @@
     <string name="user_redeemed">%1$s redeemed %2$s</string>
     <string name="close">Close</string>
     <string name="pinned_message_restore">Restore pinned message</string>
+    <string name="pinned_message_expand">Expand pinned message</string>
+    <string name="pinned_message_collapse">Collapse pinned message</string>
     <string name="pinned_gift_title">Sent by %1$s</string>
     <string name="pinned_gift_title_without_seconds">Sent by %1$s</string>
     <string name="pinned_gift_title_prefix">Sent by </string>
@@ -575,6 +594,8 @@
     <string name="stream_headers_desc">Uses JSON format</string>
     <string name="follow">Follow</string>
     <string name="unfollow">Unfollow</string>
+    <string name="mute">Mute</string>
+    <string name="muted">Muted</string>
     <string name="search_user">Get user by ID/login</string>
     <string name="dynamic_dark">Dynamic dark</string>
     <string name="dynamic_light">Dynamic light</string>
@@ -689,7 +710,7 @@
     <string name="chat_delay_mode_custom">Custom</string>
     <string name="chat_delay_custom_secs">Custom delay (seconds)</string>
     <string name="chat_show_delay_indicator">Show chat delay badge</string>
-    <string name="chat_delay_indicator">Ã¢ÂÂ± ~%ss</string>
+    <string name="chat_delay_indicator">Delay ~%ss</string>
     <string name="stv_live_updates">7TV live emote updates</string>
     <string name="personal_stv_emote">Personal 7TV emote</string>
     <string name="show_polls">Show polls</string>
@@ -796,6 +817,22 @@
     <string name="following_tabs">Following tabs</string>
     <string name="debug_delete_all_followed_channels_message">This will permanently delete your entire followed channels list in Xtra, including imported follows and locally added follows. Follow notifications for those channels will also be cleared.\n\nThis cannot be undone.</string>
     <string name="debug_delete_all_followed_channels_done">Deleted all followed channels and cleared related follow notifications</string>
+    <string name="debug_actions">Debug actions</string>
+    <string name="customize_debug_logs">Customize debug logs</string>
+    <string name="customize_debug_logs_summary">Open grouped debug log switches</string>
+    <string name="debug_force_kick_token_expiry">Force Kick token expiry</string>
+    <string name="debug_force_kick_token_expiry_summary">Sets the stored Kick access token expiry to the past so the next chat send refreshes immediately.</string>
+    <string name="debug_force_kick_token_expiry_done">Kick access token marked as expired. Send a Kick chat message to test refresh.</string>
+    <string name="debug_logs_chat">Chat debug logs</string>
+    <string name="debug_logs_player">Player and buffering debug logs</string>
+    <string name="debug_logs_kick_import">Kick import debug logs</string>
+    <string name="debug_kick_clip_chat" translatable="false">Kick replay and clip chat debug logs</string>
+    <string name="debug_kick_badge_logs" translatable="false">Kick badge parser debug logs</string>
+    <string name="debug_kick_feature_logs" translatable="false">Kick points and pinned feature debug logs</string>
+    <string name="debug_network_logs">Network and image loader debug logs</string>
+    <string name="debug_player_buffer_logs">Player buffering and latency debug logs</string>
+    <string name="debug_player_shell_logs">Player handoff and activity debug logs</string>
+    <string name="debug_kick_follow_import_logs" translatable="false">Kick follow import debug logs</string>
     <string name="saved_tabs">Saved tabs</string>
     <string name="channel_tabs">Channel tabs</string>
     <string name="game_tabs">Game tabs</string>

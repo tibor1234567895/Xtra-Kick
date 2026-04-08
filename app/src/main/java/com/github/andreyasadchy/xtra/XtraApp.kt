@@ -54,6 +54,14 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     override fun onCreate() {
         super.onCreate()
         INSTANCE = this
+        runCatching {
+            val media3LogLevel = if (BuildConfig.DEBUG && prefs().getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
+                androidx.media3.common.util.Log.LOG_LEVEL_INFO
+            } else {
+                androidx.media3.common.util.Log.LOG_LEVEL_ERROR
+            }
+            androidx.media3.common.util.Log.setLogLevel(media3LogLevel)
+        }
         showUnexpectedLogoutNoticeThisProcess = AuthStateHelper.hasPendingUnexpectedLogoutNotice(this)
         var startedActivities = 0
         registerActivityLifecycleCallbacks(
@@ -142,7 +150,7 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     @OptIn(ExperimentalCoilApi::class)
     override fun newImageLoader(context: PlatformContext): ImageLoader {
         return ImageLoader.Builder(context).apply {
-            if (BuildConfig.DEBUG) {
+            if (BuildConfig.DEBUG && prefs().getBoolean(C.DEBUG_NETWORK_LOGS, false)) {
                 logger(DebugLogger())
             }
             components {

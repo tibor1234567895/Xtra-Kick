@@ -124,6 +124,13 @@
         android:id="@+id/action_global_debugSettingsFragment"
         app:destination="@id/debugSettingsFragment" />
     <fragment
+        android:id="@+id/debugLogSettingsFragment"
+        android:name="com.github.andreyasadchy.xtra.ui.settings.SettingsActivity$DebugLogSettingsFragment"
+        android:label="@string/customize_debug_logs" />
+    <action
+        android:id="@+id/action_global_debugLogSettingsFragment"
+        app:destination="@id/debugLogSettingsFragment" />
+    <fragment
         android:id="@+id/settingsSearchFragment"
         android:name="com.github.andreyasadchy.xtra.ui.settings.SettingsActivity$SettingsSearchFragment"
         android:label="" />

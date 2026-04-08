@@ -26,6 +26,194 @@ object KickFeatureParsingUtils {
         "pinned_by"
     )
 
+    data class KickWebBadgeSnapshot(
+        val jsonPayloads: List<JsonElement> = emptyList(),
+        val chunkUrls: List<String> = emptyList(),
+        val buildId: String? = null,
+    )
+
+    fun extractKickWebBadgeSnapshot(html: String, pageUrl: String = "https://kick.com"): KickWebBadgeSnapshot {
+        if (html.isBlank()) {
+            return KickWebBadgeSnapshot()
+        }
+        val payloads = LinkedHashMap<String, JsonElement>()
+        val chunkUrls = linkedSetOf<String>()
+        var chunkAssetBase: String? = null
+
+        fun resolveChunkUrl(raw: String): String? {
+            val value = raw.trim().trim('"').trim('\'')
+            if (value.isBlank()) return null
+            return when {
+                value.startsWith("https://", ignoreCase = true) || value.startsWith("http://", ignoreCase = true) -> value
+                value.startsWith("//") -> "https:$value"
+                value.startsWith("/_next/") -> chunkAssetBase?.let { "$it$value" } ?: "https://kick.com$value"
+                value.startsWith("_next/") -> chunkAssetBase?.let { "$it/$value" } ?: "https://kick.com/$value"
+                value.startsWith("static/chunks/") -> chunkAssetBase?.let { "$it/_next/$value" } ?: "https://kick.com/_next/$value"
+                else -> normalizeScriptSrc(value, pageUrl)
+            }
+        }
+
+        fun collectChunkUrls(raw: String?) {
+            if (raw.isNullOrBlank()) return
+            Regex(
+                """(?:https?:\\/\\/[^\"'\\s>]+/_next/static/chunks/[^\"'\\s>]+|/_next/static/chunks/[^\"'\\s>]+|_next/static/chunks/[^\"'\\s>]+|static/chunks/[^\"'\\s>]+)"""
+            ).findAll(raw).forEach { match ->
+                resolveChunkUrl(cleanWebUrl(match.value) ?: match.value)?.let(chunkUrls::add)
+            }
+        }
+
+        fun addPayload(raw: String?) {
+            if (raw.isNullOrBlank()) return
+            val candidate = raw.trim()
+            if (candidate.isBlank()) return
+            runCatching { parserJson.parseToJsonElement(candidate) }
+                .getOrNull()
+                ?.let { payloads.putIfAbsent(it.toString(), it) }
+        }
+
+        val nextDataMatch = Regex(
+            """<script[^>]*id=[\"']__NEXT_DATA__[\"'][^>]*>([\s\S]*?)</script>""",
+            setOf(RegexOption.IGNORE_CASE)
+        ).find(html)
+        addPayload(nextDataMatch?.groupValues?.getOrNull(1))
+
+        val chunkRegex = Regex(
+            """<script[^>]+src=[\"']([^\"']*_next/static/chunks/[^\"']+)[\"'][^>]*>""",
+            setOf(RegexOption.IGNORE_CASE)
+        )
+        chunkRegex.findAll(html).forEach { match ->
+            val src = match.groupValues.getOrElse(1) { "" }
+            normalizeScriptSrc(src, pageUrl)?.let { normalized ->
+                chunkUrls += normalized
+                if (chunkAssetBase == null) {
+                    val marker = "/_next/static/chunks/"
+                    val markerIndex = normalized.indexOf(marker)
+                    if (markerIndex > 0) {
+                        chunkAssetBase = normalized.substring(0, markerIndex)
+                    }
+                }
+            }
+        }
+        collectChunkUrls(html)
+
+        val pushRegex = Regex("""self\.__next_f\.push\((.*?)\);""", setOf(RegexOption.DOT_MATCHES_ALL))
+        pushRegex.findAll(html).forEach { match ->
+            val pushArg = match.groupValues.getOrNull(1)
+            addPayload(pushArg)
+            collectChunkUrls(pushArg)
+            Regex("\"((?:\\\\.|[^\"\\\\])+)\"")
+                .findAll(pushArg.orEmpty()).forEach { stringMatch ->
+                val decoded = decodeJsString(stringMatch.groupValues.getOrElse(1) { "" })
+                if (decoded.startsWith("{") || decoded.startsWith("[")) {
+                    addPayload(decoded)
+                }
+                collectChunkUrls(decoded)
+            }
+        }
+
+        val buildId = Regex("""[\"']buildId[\"']\s*:\s*[\"']([^\"']+)[\"']"""
+        ).find(html)?.groupValues?.getOrNull(1)
+
+        return KickWebBadgeSnapshot(
+            jsonPayloads = payloads.values.toList(),
+            chunkUrls = chunkUrls.toList(),
+            buildId = buildId,
+        )
+    }
+
+    fun extractKickGlobalBadgeUrlsFromChunk(chunkBody: String): Map<String, String> {
+        if (chunkBody.isBlank()) {
+            return emptyMap()
+        }
+        val results = LinkedHashMap<String, String>()
+        val normalizedBody = decodeJsString(chunkBody)
+
+        fun store(typeRaw: String?, urlRaw: String?) {
+            val normalizedType = typeRaw?.let(::normalizeKnownKickBadgeType) ?: return
+            val cleanedUrl = cleanWebUrl(urlRaw) ?: return
+            results.putIfAbsent(normalizedType, cleanedUrl)
+        }
+
+        Regex(
+            """(?is)\"badge_type\"\s*:\s*\"([^\"]+)\"[\s\S]{0,260}?\"(?:badge_image_url|image_url|icon_url|url|src)\"\s*:\s*\"([^\"]+)\""""
+        ).findAll(normalizedBody).forEach { match ->
+            store(match.groupValues.getOrNull(1), match.groupValues.getOrNull(2))
+        }
+
+        Regex(
+            """(?is)\"(moderator|vip|verified|founder|subscriber|sub[_-]?gifter|staff|broadcaster|og)\"\s*:\s*\{[\s\S]{0,260}?\"(?:badge_image_url|image_url|icon_url|url|src)\"\s*:\s*\"([^\"]+)\""""
+        ).findAll(normalizedBody).forEach { match ->
+            store(match.groupValues.getOrNull(1), match.groupValues.getOrNull(2))
+        }
+
+        Regex(
+            """(?is)(moderator|vip|verified|founder|subscriber|sub[_-]?gifter|staff|broadcaster|og)[^\n\r]{0,240}?(https?:\\/\\/[^\"'\s)]+\.(?:svg|png|webp))"""
+        ).findAll(normalizedBody).forEach { match ->
+            store(match.groupValues.getOrNull(1), match.groupValues.getOrNull(2))
+        }
+
+        return results
+    }
+
+    private fun normalizeScriptSrc(src: String, pageUrl: String): String? {
+        val value = src.trim().takeIf { it.isNotBlank() } ?: return null
+        return when {
+            value.startsWith("https://", ignoreCase = true) || value.startsWith("http://", ignoreCase = true) -> value
+            value.startsWith("//") -> "https:$value"
+            value.startsWith("/") -> "https://kick.com$value"
+            value.startsWith("_next/") -> "https://kick.com/$value"
+            else -> {
+                val base = pageUrl.trim().ifBlank { "https://kick.com" }.removeSuffix("/")
+                "$base/$value"
+            }
+        }
+    }
+
+    private fun cleanWebUrl(url: String?): String? {
+        val raw = url?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val cleaned = decodeJsString(raw)
+            .replace("\\u002F", "/", ignoreCase = true)
+            .replace("\\u003A", ":", ignoreCase = true)
+            .replace("\\/", "/")
+            .trim()
+            .trim('"')
+            .trim('\'')
+        return when {
+            cleaned.startsWith("https://", ignoreCase = true) || cleaned.startsWith("http://", ignoreCase = true) -> cleaned
+            cleaned.startsWith("//") -> "https:$cleaned"
+            cleaned.startsWith("files.kick.com", ignoreCase = true) -> "https://$cleaned"
+            else -> null
+        }
+    }
+
+    private fun normalizeKnownKickBadgeType(typeRaw: String): String {
+        val normalized = typeRaw.trim().lowercase(Locale.ROOT).replace('-', '_').replace(' ', '_')
+        return when {
+            normalized.contains("moderator") || normalized == "mod" || normalized == "mods" -> "moderator"
+            normalized.contains("verified") -> "verified"
+            normalized.contains("founder") -> "founder"
+            normalized.contains("vip") -> "vip"
+            normalized.contains("staff") || normalized.contains("admin") -> "staff"
+            normalized.contains("broadcaster") || normalized.contains("streamer") || normalized.contains("host") -> "broadcaster"
+            normalized.contains("gift") && normalized.contains("sub") -> "sub_gifter"
+            normalized.contains("gifter") -> "sub_gifter"
+            normalized.contains("subscriber") || normalized == "sub" || normalized.contains("subscription") -> "subscriber"
+            normalized == "og" || normalized.contains("original") -> "og"
+            else -> normalized
+        }
+    }
+
+    private fun decodeJsString(value: String): String {
+        return value
+            .replace("\\u002F", "/", ignoreCase = true)
+            .replace("\\u003A", ":", ignoreCase = true)
+            .replace("\\u003D", "=", ignoreCase = true)
+            .replace("\\u0026", "&", ignoreCase = true)
+            .replace("\\u005C", "\\", ignoreCase = true)
+            .replace("\\/", "/")
+            .replace("\\\"", "\"")
+    }
+
     fun parsePinnedGiftUpdate(eventName: String?, messageJson: String): KickRepository.PinnedGiftUpdate? {
         val root = runCatching { parserJson.parseToJsonElement(messageJson) }.getOrNull() ?: return null
         parsePinnedMessageEvent(eventName, root, messageJson)?.let { return it }
@@ -51,10 +239,11 @@ object KickFeatureParsingUtils {
             return KickRepository.PinnedGiftUpdate(cleared = true)
         }
         val pinnedMessage = pinnedMessageElement as? JsonObject
-        val messageSenderSource = pinnedMessage?.let { findObjectRecursive(it, setOf("sender", "user", "author")) }
-            ?: if (allowRootFallback) findObjectRecursive(root, setOf("sender", "user", "author")) else null
-            ?: pinnedMessage
-            ?: if (allowRootFallback) root else null
+        val messageSenderSource: JsonElement? = when {
+            pinnedMessage != null -> findObjectRecursive(pinnedMessage, setOf("sender", "user", "author")) ?: pinnedMessage
+            allowRootFallback -> findObjectRecursive(root, setOf("sender", "user", "author")) ?: root
+            else -> null
+        }
         val pinnedBySource = pinnedBy
             ?: findObjectRecursive(root, setOf("pinned_by", "pinnedby"))
         val messageSource = pinnedMessageElement ?: if (allowRootFallback) root else null

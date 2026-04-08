@@ -8,6 +8,7 @@ import com.github.andreyasadchy.xtra.db.AppDatabase
 import com.github.andreyasadchy.xtra.db.BookmarksDao
 import com.github.andreyasadchy.xtra.db.LocalFollowsChannelDao
 import com.github.andreyasadchy.xtra.db.LocalFollowsGameDao
+import com.github.andreyasadchy.xtra.db.MutedChatUsersDao
 import com.github.andreyasadchy.xtra.db.NotificationUsersDao
 import com.github.andreyasadchy.xtra.db.RecentEmotesDao
 import com.github.andreyasadchy.xtra.db.RecentSearchDao
@@ -21,6 +22,7 @@ import com.github.andreyasadchy.xtra.db.VodBookmarkIgnoredUsersDao
 import com.github.andreyasadchy.xtra.repository.BookmarksRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowGameRepository
+import com.github.andreyasadchy.xtra.repository.MutedChatUsersRepository
 import com.github.andreyasadchy.xtra.repository.NotificationUsersRepository
 import com.github.andreyasadchy.xtra.repository.OfflineRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
@@ -59,6 +61,10 @@ class DatabaseModule {
     @Singleton
     @Provides
     fun providesVodBookmarkIgnoredUsersRepository(vodBookmarkIgnoredUsersDao: VodBookmarkIgnoredUsersDao): VodBookmarkIgnoredUsersRepository = VodBookmarkIgnoredUsersRepository(vodBookmarkIgnoredUsersDao)
+
+    @Singleton
+    @Provides
+    fun providesMutedChatUsersRepository(mutedChatUsersDao: MutedChatUsersDao): MutedChatUsersRepository = MutedChatUsersRepository(mutedChatUsersDao)
 
     @Singleton
     @Provides
@@ -114,6 +120,10 @@ class DatabaseModule {
     @Singleton
     @Provides
     fun providesVodBookmarkIgnoredUsersDao(database: AppDatabase): VodBookmarkIgnoredUsersDao = database.vodBookmarkIgnoredUsers()
+
+    @Singleton
+    @Provides
+    fun providesMutedChatUsersDao(database: AppDatabase): MutedChatUsersDao = database.mutedChatUsers()
 
     @Singleton
     @Provides
@@ -343,6 +353,11 @@ class DatabaseModule {
                 object : Migration(34, 35) {
                     override fun migrate(db: SupportSQLiteDatabase) {
                         db.execSQL("DROP TABLE IF EXISTS translate_all_messages")
+                    }
+                },
+                object : Migration(35, 36) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL("CREATE TABLE IF NOT EXISTS muted_chat_users (userId TEXT, userLogin TEXT, userName TEXT, id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL)")
                     }
                 },
             )

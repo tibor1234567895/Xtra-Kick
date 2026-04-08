@@ -31,6 +31,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSourceBitmapLoader
 import androidx.media3.session.CacheBitmapLoader
 import androidx.media3.session.DefaultMediaNotificationProvider
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.amazonaws.ivs.player.Player
 import com.amazonaws.ivs.player.PlayerException
 import com.github.andreyasadchy.xtra.R
@@ -42,6 +43,18 @@ import com.google.common.util.concurrent.Futures
 
 @OptIn(UnstableApi::class)
 class IvsPlayerService : Service() {
+
+    private fun playerDebugLog(message: String) {
+        if (BuildConfig.DEBUG && prefs().getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
+            Log.d(TAG, message)
+        }
+    }
+
+    private fun playerDebugWarn(message: String) {
+        if (BuildConfig.DEBUG && prefs().getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
+            Log.w(TAG, message)
+        }
+    }
 
     var player: Player? = null
         private set
@@ -109,8 +122,7 @@ class IvsPlayerService : Service() {
                     if (state == Player.State.READY || state == Player.State.PLAYING) {
                         syncDynamicsProcessingWithPreference()
                     }
-                    Log.d(
-                        TAG,
+                    playerDebugLog(
                         "state=$state backgroundPlaybackEnabled=$backgroundPlaybackEnabled " +
                             "surfaceAttached=$surfaceAttached urlPresent=${!currentUrl.isNullOrBlank()}"
                     )
@@ -127,8 +139,7 @@ class IvsPlayerService : Service() {
                 override fun onRebuffering() = Unit
 
                 override fun onError(exception: PlayerException) {
-                    Log.w(
-                        TAG,
+                    playerDebugWarn(
                         "error code=${exception.code} type=${exception.errorType} source=${exception.source} " +
                             "backgroundPlaybackEnabled=$backgroundPlaybackEnabled message=${exception.errorMessage}"
                     )
@@ -195,7 +206,7 @@ class IvsPlayerService : Service() {
             )
         }
         applicationHandler = Handler(Looper.getMainLooper())
-        Log.d(TAG, "service created")
+        playerDebugLog("service created")
     }
 
     fun playStream(url: String, title: String?, channelName: String?, channelLogo: String?) {
@@ -206,7 +217,7 @@ class IvsPlayerService : Service() {
         hasStablePlayback = false
         retryCount = 0
         releaseDynamicsProcessing()
-        Log.d(TAG, "playStream channel=$channelName title=$title")
+        playerDebugLog("playStream channel=$channelName title=$title")
         playbackRequested = true
         player?.apply {
             setLiveLowLatencyEnabled(true)
@@ -222,12 +233,12 @@ class IvsPlayerService : Service() {
     fun attachSurface(surface: android.view.Surface?) {
         surfaceAttached = surface != null
         player?.setSurface(surface)
-        Log.d(TAG, "attachSurface attached=$surfaceAttached")
+        playerDebugLog("attachSurface attached=$surfaceAttached")
     }
 
     fun setBackgroundPlaybackEnabled(enabled: Boolean) {
         backgroundPlaybackEnabled = enabled
-        Log.d(TAG, "setBackgroundPlaybackEnabled enabled=$enabled")
+        playerDebugLog("setBackgroundPlaybackEnabled enabled=$enabled")
         updateNotification()
     }
 

@@ -7,11 +7,13 @@ import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextPaint
+import android.text.TextUtils
 import android.text.style.ClickableSpan
 import android.text.style.ForegroundColorSpan
 import android.text.method.LinkMovementMethod
 import android.text.format.DateUtils
 import android.text.util.Linkify
+import android.util.Log
 import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.LayoutInflater
@@ -46,6 +48,7 @@ import coil3.request.target
 import coil3.request.transformations
 import coil3.transform.CircleCropTransformation
 import com.github.andreyasadchy.xtra.R
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.databinding.FragmentChatBinding
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.Emote
@@ -77,7 +80,6 @@ import kotlin.math.roundToInt
 
 @AndroidEntryPoint
 class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickListener, ReplyClickedDialog.OnButtonClickListener {
-
     private var _binding: FragmentChatBinding? = null
     private val binding get() = _binding!!
     private val viewModel: ChatViewModel by viewModels()
@@ -87,10 +89,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private var showChatStatus = false
     private var hasRecentEmotes = false
     private var delayBadgeActive = false
+    private var roomModeBadgeText: String? = null
     private var delayBadgeFirstShown = false
-    private val hideDelayBadgeRunnable = Runnable { _binding?.chatDelayText?.visibility = View.GONE }
+    private val hideDelayBadgeRunnable = Runnable {
+        _binding?.chatDelayText?.visibility = View.GONE
+    }
     private var messagingEnabled = false
     private var pinnedMessageDialogSeed: ChatMessage? = null
+    private var tappedMessageDialogSeed: ChatMessage? = null
 
     private var autoCompleteAdapter: AutoCompleteAdapter<Any>? = null
 
@@ -148,7 +154,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             userName = name,
             color = color,
         )
-        MessageClickedDialog.newInstance(messagingEnabled, requireArguments().getString(KEY_CHANNEL_ID))
+        MessageClickedDialog.newInstance(messagingEnabled, requireArguments().getString(KEY_CHANNEL_ID), requireArguments().getString(KEY_CHANNEL_LOGIN))
             .show(childFragmentManager, "messageDialog")
     }
 
@@ -181,10 +187,42 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     private fun buildPinnedMessageText(pinnedGift: PinnedGift): SpannableStringBuilder {
         val builder = SpannableStringBuilder()
+        pinnedGift.message?.takeIf { it.isNotBlank() }?.let { builder.append(it) }
+        pinnedGift.giftValue?.let { giftValue ->
+            if (builder.isNotEmpty()) builder.append(" • ")
+            builder.append(getString(R.string.pinned_gift_value))
+            builder.append(": ")
+            builder.append(NumberFormat.getInstance().format(giftValue))
+        }
+        if (builder.isEmpty()) {
+            builder.append(getString(R.string.pinned_gift_message_fallback))
+        }
+        LinkifyCompat.addLinks(builder, Linkify.WEB_URLS)
+        return builder
+    }
+
+    private fun buildPinnedMetadataText(pinnedGift: PinnedGift): SpannableStringBuilder {
+        val builder = SpannableStringBuilder()
         val baseTextColor = binding.pinnedGiftText.currentTextColor
+        val senderColor = resolvePinnedNameColor(pinnedGift.userColor, baseTextColor)
+        val senderName = formatDisplayName(pinnedGift.userLogin, pinnedGift.userName)
         val pinnedByColor = resolvePinnedNameColor(pinnedGift.pinnedByUserColor, baseTextColor)
         val pinnedBy = formatDisplayName(pinnedGift.pinnedByUserLogin, pinnedGift.pinnedByUserName)
+        if (senderName.isNotBlank()) {
+            builder.append(
+                buildPinnedNameSpan(
+                    label = getString(R.string.pinned_gift_title_prefix),
+                    displayName = senderName,
+                    color = senderColor,
+                    userId = pinnedGift.userId,
+                    userLogin = pinnedGift.userLogin,
+                    userName = pinnedGift.userName,
+                    userColor = pinnedGift.userColor,
+                )
+            )
+        }
         if (pinnedBy.isNotBlank()) {
+            if (builder.isNotEmpty()) builder.append(" • ")
             builder.append(
                 buildPinnedNameSpan(
                     label = getString(R.string.pinned_gift_pinned_by_prefix),
@@ -199,21 +237,10 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             pinnedGift.pinnedSeconds?.takeIf { it > 0 }?.let {
                 builder.append(getString(R.string.pinned_gift_pinned_by_suffix_with_seconds, it))
             }
-            if (!pinnedGift.message.isNullOrBlank() || pinnedGift.giftValue != null) {
-                builder.append('\n')
-            }
-        }
-        pinnedGift.message?.takeIf { it.isNotBlank() }?.let { builder.append(it) }
-        pinnedGift.giftValue?.let { giftValue ->
-            if (builder.isNotEmpty()) builder.append('\n')
-            builder.append(getString(R.string.pinned_gift_value))
-            builder.append(": ")
-            builder.append(NumberFormat.getInstance().format(giftValue))
         }
         if (builder.isEmpty()) {
-            builder.append(getString(R.string.pinned_gift_message_fallback))
+            builder.append(getString(R.string.pinned_gift_unknown_user))
         }
-        LinkifyCompat.addLinks(builder, Linkify.WEB_URLS)
         return builder
     }
 
@@ -226,19 +253,16 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             binding.pinnedGiftLayout.isGone = true
             return
         }
+        val expanded = viewModel.pinnedGiftExpanded.value
         binding.pinnedGiftLayout.isVisible = true
-        val senderName = formatDisplayName(pinnedGift.userLogin, pinnedGift.userName)
-        val senderColor = resolvePinnedNameColor(pinnedGift.userColor, binding.pinnedGiftTitle.currentTextColor)
-        binding.pinnedGiftTitle.text = buildPinnedNameSpan(
-            label = getString(R.string.pinned_gift_title_prefix),
-            displayName = senderName.ifBlank { getString(R.string.pinned_gift_unknown_user) },
-            color = senderColor,
-            userId = pinnedGift.userId,
-            userLogin = pinnedGift.userLogin,
-            userName = pinnedGift.userName,
-            userColor = pinnedGift.userColor,
+        binding.pinnedGiftTitle.text = buildPinnedMessageText(pinnedGift)
+        binding.pinnedGiftText.text = buildPinnedMetadataText(pinnedGift)
+        binding.pinnedGiftTitle.maxLines = if (expanded) Int.MAX_VALUE else 1
+        binding.pinnedGiftTitle.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
+        binding.pinnedGiftExpand.rotation = if (expanded) 180f else 0f
+        binding.pinnedGiftExpand.contentDescription = getString(
+            if (expanded) R.string.pinned_message_collapse else R.string.pinned_message_expand
         )
-        binding.pinnedGiftText.text = buildPinnedMessageText(pinnedGift)
         binding.pinnedGiftLayout.isClickable = true
         binding.pinnedGiftLayout.isFocusable = true
         binding.pinnedGiftLayout.setOnClickListener { }
@@ -266,6 +290,55 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private fun renderChannelPointsButton() {
         val binding = _binding ?: return
         binding.channelPointsButton.isGone = true
+    }
+
+    private fun renderRoomModeBadge() {
+        val binding = _binding ?: return
+        binding.chatModeText.text = roomModeBadgeText
+        binding.chatModeText.visibility = if (roomModeBadgeText != null) View.VISIBLE else View.GONE
+        featureDebugLog("roomModeBadge visible=${roomModeBadgeText != null} text=${roomModeBadgeText ?: "-"}")
+    }
+
+    private fun isFeatureDebugLoggingEnabled(): Boolean {
+        val ctx = context ?: return false
+        return BuildConfig.DEBUG && ctx.prefs().getBoolean(C.DEBUG_KICK_FEATURE_LOGS, false)
+    }
+
+    private fun featureDebugLog(message: String) {
+        if (isFeatureDebugLoggingEnabled()) {
+            Log.d(FEATURE_LOG_TAG, message)
+        }
+    }
+
+    private fun buildRoomModeBadgeText(
+        followers: String?,
+        slow: String?,
+        subs: String?,
+        emote: String?,
+        unique: String?,
+    ): String? {
+        val statuses = mutableListOf<String>()
+        if (slow != null && slow != "0") {
+            statuses += getString(
+                R.string.chat_mode_slow,
+                KickApiHelper.getDurationFromSeconds(requireContext(), slow)
+            )
+        }
+        if (followers != null) {
+            when (followers) {
+                "-1" -> Unit
+                "0" -> statuses += getString(R.string.chat_mode_followers_only)
+                else -> statuses += getString(
+                    R.string.chat_mode_followers_for,
+                    KickApiHelper.getDurationFromSeconds(requireContext(), (followers.toInt() * 60).toString())
+                )
+            }
+        }
+        if (subs == "1") statuses += getString(R.string.chat_mode_subs_only)
+        if (emote == "1") statuses += getString(R.string.chat_mode_emote_only)
+        if (unique == "1") statuses += getString(R.string.chat_mode_unique)
+        featureDebugLog("roomModes raw followers=$followers slow=$slow subs=$subs emote=$emote unique=$unique parsed=${statuses.joinToString(" | ").ifBlank { "-" }}")
+        return statuses.takeIf { it.isNotEmpty() }?.joinToString(" • ")
     }
 
     private fun showChannelPointRewardsDialog() {
@@ -384,10 +457,11 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         enableOverlayEmotes = requireContext().prefs().getBoolean(C.CHAT_ZEROWIDTH, true),
                         channelId = channelId,
                         loggedInUser = if (enableMessaging) accountLogin else null,
-                        messageClickListener = { channelId ->
+                        messageClickListener = { channelId, tappedMessage ->
                             (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
                             editText.clearFocus()
-                            MessageClickedDialog.newInstance(enableMessaging, channelId).show(this@ChatFragment.childFragmentManager, "messageDialog")
+                            tappedMessageDialogSeed = tappedMessage
+                            MessageClickedDialog.newInstance(enableMessaging, channelId, requireArguments().getString(KEY_CHANNEL_LOGIN)).show(this@ChatFragment.childFragmentManager, "messageDialog")
                         },
                         replyClickListener = {
                             (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
@@ -432,6 +506,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     renderChannelPointsButton()
                     pinnedGiftClose.setOnClickListener {
                         viewModel.dismissPinnedGift()
+                    }
+                    pinnedGiftExpand.setOnClickListener {
+                        viewModel.togglePinnedGiftExpanded()
                     }
                     pinnedGiftRestore.setOnClickListener {
                         viewModel.restorePinnedGift()
@@ -580,6 +657,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                         "0" -> textSubs.visibility = View.GONE
                                         "1" -> textSubs.visibility = View.VISIBLE
                                     }
+                                    roomModeBadgeText = buildRoomModeBadgeText(
+                                        followers = roomState.followers,
+                                        slow = roomState.slow,
+                                        subs = roomState.subs,
+                                        emote = roomState.emote,
+                                        unique = roomState.unique,
+                                    )
+                                    renderRoomModeBadge()
                                     if (textEmote.isGone && textFollowers.isGone && textUnique.isGone && textSlow.isGone && textSubs.isGone) {
                                         showChatStatus = false
                                         chatStatus.visibility = View.GONE
@@ -633,6 +718,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.pinnedGiftDismissed.collectLatest {
+                                renderPinnedGift()
+                            }
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.pinnedGiftExpanded.collectLatest {
                                 renderPinnedGift()
                             }
                         }
@@ -955,11 +1047,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 adapter?.let { adapter ->
                                     adapter.notifyItemInserted(lastIndex)
                                     if (removeCount > 0) {
-                                        synchronized(viewModel.chatMessages) {
-                                            repeat(removeCount) {
-                                                viewModel.chatMessages.removeAt(0)
-                                            }
-                                        }
                                         adapter.notifyItemRangeRemoved(0, removeCount)
                                         val remainingCount = synchronized(viewModel.chatMessages) {
                                             viewModel.chatMessages.size
@@ -1026,6 +1113,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.removeMessages.collect { size ->
                                 adapter?.notifyItemRangeRemoved(0, size)
+                            }
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.refreshMessages.collect {
+                                adapter?.notifyDataSetChanged()
+                                renderBufferedMessages()
                             }
                         }
                     }
@@ -1197,6 +1292,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     }
 
     fun updateLiveLatency(ms: Long) {
+        if (!isAdded) return
         viewModel.setLiveLatency(ms)
         val ctx = context ?: return
         val b = _binding ?: return
@@ -1208,6 +1304,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         if (delayMs > 0L) {
             b.chatDelayText.text = ctx.getString(R.string.chat_delay_indicator, "%.0f".format(delayMs / 1000.0))
             delayBadgeActive = true
+            featureDebugLog("delayBadge active mode=${ctx.prefs().getString(C.CHAT_DELAY_MODE, "0")} delayMs=$delayMs text=${b.chatDelayText.text}")
             if (!delayBadgeFirstShown) {
                 delayBadgeFirstShown = true
                 flashDelayBadge()
@@ -1217,16 +1314,23 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             delayBadgeFirstShown = false
             b.chatDelayText.removeCallbacks(hideDelayBadgeRunnable)
             b.chatDelayText.visibility = View.GONE
+            featureDebugLog("delayBadge inactive mode=${ctx.prefs().getString(C.CHAT_DELAY_MODE, "0")}")
         }
     }
 
     private fun flashDelayBadge() {
         val ctx = context ?: return
         val b = _binding ?: return
-        if (!ctx.prefs().getBoolean(C.CHAT_SHOW_DELAY_INDICATOR, true)) return
+        if (!ctx.prefs().getBoolean(C.CHAT_SHOW_DELAY_INDICATOR, true)) {
+            b.chatDelayText.visibility = View.GONE
+            return
+        }
         b.chatDelayText.removeCallbacks(hideDelayBadgeRunnable)
-        b.chatDelayText.visibility = View.VISIBLE
-        b.chatDelayText.postDelayed(hideDelayBadgeRunnable, 4000L)
+        b.chatDelayText.visibility = if (delayBadgeActive) View.VISIBLE else View.GONE
+        featureDebugLog("badgeFlash delayVisible=${delayBadgeActive} modeVisible=${roomModeBadgeText != null} modeText=${roomModeBadgeText ?: "-"}")
+        if (delayBadgeActive) {
+            b.chatDelayText.postDelayed(hideDelayBadgeRunnable, 4000L)
+        }
     }
 
     fun emoteMenuIsVisible() = binding.emoteMenu.isVisible
@@ -1294,8 +1398,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     }
 
     override fun onCreateMessageClickedChatAdapter(): MessageClickedChatAdapter? {
-        val seed = pinnedMessageDialogSeed
+        val seed = pinnedMessageDialogSeed ?: tappedMessageDialogSeed
         pinnedMessageDialogSeed = null
+        tappedMessageDialogSeed = null
         return adapter?.createMessageClickedChatAdapter(seed)
     }
 
@@ -1464,6 +1569,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     }
 
     companion object {
+        private const val FEATURE_LOG_TAG = "KickChatUi"
         private const val KEY_IS_LIVE = "isLive"
         private const val KEY_CHANNEL_ID = "channel_id"
         private const val KEY_CHANNEL_LOGIN = "channel_login"
