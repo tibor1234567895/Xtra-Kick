@@ -133,6 +133,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private var controllerAnimation: ViewPropertyAnimator? = null
     private var backgroundColor: Int? = null
     private var backgroundVisible = false
+    private var wasInPictureInPictureMode = false
 
     protected lateinit var prefs: SharedPreferences
 
@@ -2016,6 +2017,26 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
+    protected fun shouldClosePlaybackAfterPipDismiss(): Boolean {
+        if (shouldContinuePlaybackInBackground()) {
+            return false
+        }
+        val activity = activity ?: return false
+        val isInPipMode = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> activity.isInPictureInPictureMode
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> !useController && isMaximized
+            else -> false
+        }
+        return wasInPictureInPictureMode &&
+            !isInPipMode &&
+            !activity.isChangingConfigurations &&
+            !activity.isFinishing
+    }
+
+    protected fun clearPipDismissState() {
+        wasInPictureInPictureMode = false
+    }
+
     protected fun setPipActions(playing: Boolean) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
@@ -2294,6 +2315,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
+        wasInPictureInPictureMode = wasInPictureInPictureMode || isInPictureInPictureMode
         with(binding) {
             if (isInPictureInPictureMode) {
                 if (!isMaximized) {

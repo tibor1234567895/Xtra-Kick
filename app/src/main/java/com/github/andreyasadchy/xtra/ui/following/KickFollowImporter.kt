@@ -2,6 +2,7 @@ package com.github.andreyasadchy.xtra.ui.following
 
 import android.content.Context
 import android.util.Log
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.util.C
@@ -95,6 +96,22 @@ class KickFollowImporter @Inject constructor(
         private const val LOG_TAG = "KickFollowImport"
     }
 
+    private fun isDebugLoggingEnabled(): Boolean {
+        return BuildConfig.DEBUG && context.prefs().getBoolean(C.DEBUG_KICK_FOLLOW_IMPORT_LOGS, false)
+    }
+
+    private fun debugLogI(message: String) {
+        if (isDebugLoggingEnabled()) {
+            Log.i(LOG_TAG, message)
+        }
+    }
+
+    private fun debugLogW(message: String) {
+        if (isDebugLoggingEnabled()) {
+            Log.w(LOG_TAG, message)
+        }
+    }
+
     suspend fun importPayload(payload: String): Int {
         val follows = KickFollowImportPayloadParser.parse(payload)
         return importFollows(follows)
@@ -127,7 +144,7 @@ class KickFollowImporter @Inject constructor(
             runCatching {
                 enrichImportedFollows(snapshot)
             }.onFailure { error ->
-                Log.w(LOG_TAG, "imported follow enrichment failed: ${error.message}")
+                debugLogW("imported follow enrichment failed: ${error.message}")
             }
         }
     }
@@ -142,7 +159,7 @@ class KickFollowImporter @Inject constructor(
         }
         val headers = KickApiHelper.getHelixHeaders(context)
         if (headers[C.HEADER_TOKEN].isNullOrBlank()) {
-            Log.i(LOG_TAG, "skip imported follow id enrichment: missing auth token")
+            debugLogI("skip imported follow id enrichment: missing auth token")
             return
         }
         val networkLibrary = context.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
@@ -160,6 +177,6 @@ class KickFollowImporter @Inject constructor(
                 localFollowsChannel.upsertLocalFollow(channelId, login, name, profileImageUrl)
             }
         }
-        Log.i(LOG_TAG, "enriched imported follows with broadcaster ids count=${normalizedLogins.size}")
+        debugLogI("enriched imported follows with broadcaster ids count=${normalizedLogins.size}")
     }
 }

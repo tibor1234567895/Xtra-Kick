@@ -223,6 +223,8 @@ class KickUser(
     val id: Long? = null,
     val username: String? = null,
     val bio: String? = null,
+    @SerialName("created_at")
+    val createdAt: String? = null,
     val instagram: String? = null,
     val twitter: String? = null,
     val youtube: String? = null,

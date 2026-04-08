@@ -74,6 +74,10 @@ class ReplyClickedDialog : BottomSheetDialogFragment() {
         behavior.skipCollapsed = true
         behavior.state = BottomSheetBehavior.STATE_EXPANDED
         with(binding) {
+            closeButton.setOnClickListener { dismiss() }
+            primaryActionLayout.visibility = View.GONE
+            historyHeaderLayout.visibility = View.GONE
+            historyDate.visibility = View.GONE
             adapter = listener.onCreateReplyClickedChatAdapter()
             recyclerView.let {
                 it.adapter = adapter

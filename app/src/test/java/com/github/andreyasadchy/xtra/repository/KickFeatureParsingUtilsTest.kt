@@ -184,4 +184,40 @@ class KickFeatureParsingUtilsTest {
         assertFalse(result.available)
         assertTrue(result.rewards.isEmpty())
     }
+
+    @Test
+    fun `extract kick web badge snapshot parses next data and chunk urls`() {
+      val html = """
+        <html>
+          <head>
+          <script src="https://assets.kick.com/main/_next/static/chunks/main-app-ca4de3103b140f36.js"></script>
+          <script src="/_next/static/chunks/main-123.js"></script>
+          <script>self.__next_f.push([1,"2:I[6106,[\"4711\",\"static/chunks/3787-page.js\"]]"])</script>
+          <script id="__NEXT_DATA__" type="application/json">
+            {"buildId":"build-abc","props":{"pageProps":{"subscriber_badges":[{"badge_type":"subscriber","months":1,"badge_image_url":"https://files.kick.com/sub1.svg"}]}}}
+          </script>
+          </head>
+        </html>
+      """.trimIndent()
+
+      val snapshot = KickFeatureParsingUtils.extractKickWebBadgeSnapshot(html, "https://kick.com/kick")
+
+      assertEquals("build-abc", snapshot.buildId)
+      assertTrue(snapshot.chunkUrls.contains("https://kick.com/_next/static/chunks/main-123.js"))
+      assertTrue(snapshot.chunkUrls.contains("https://assets.kick.com/main/_next/static/chunks/3787-page.js"))
+      assertTrue(snapshot.jsonPayloads.any { it.toString().contains("subscriber_badges") })
+    }
+
+    @Test
+    fun `extract kick global badge urls from chunk detects canonical badges`() {
+      val chunkBody = """
+        "badge_type":"moderator","badge_image_url":"https:\/\/files.kick.com\/mod.svg";
+        "vip":{"image_url":"https://files.kick.com/vip.svg"}
+      """.trimIndent()
+
+      val extracted = KickFeatureParsingUtils.extractKickGlobalBadgeUrlsFromChunk(chunkBody)
+
+      assertEquals("https://files.kick.com/mod.svg", extracted["moderator"])
+      assertEquals("https://files.kick.com/vip.svg", extracted["vip"])
+    }
 }

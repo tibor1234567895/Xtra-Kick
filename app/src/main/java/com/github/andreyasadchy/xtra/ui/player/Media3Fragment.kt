@@ -36,6 +36,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.ui.Clip
 import com.github.andreyasadchy.xtra.model.ui.OfflineVideo
@@ -64,14 +65,19 @@ class Media3Fragment : PlayerFragment() {
     private var liveTargetOffsetMs: Long? = null
     private val updateProgressAction = Runnable { if (view != null) updateProgress() }
 
+    private fun playerDebugLog(message: String) {
+        if (BuildConfig.DEBUG && prefs.getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
+            Log.d(TAG, message)
+        }
+    }
+
     private fun attachToExistingPlaybackIfNeeded(controller: MediaController?): Boolean {
         val requested = requireArguments().getBoolean(KEY_ATTACH_TO_EXISTING_PLAYBACK)
         if (!requested) {
             return false
         }
         if (controller?.currentMediaItem != null) {
-            Log.d(
-                TAG,
+            playerDebugLog(
                 "attachToExistingPlaybackIfNeeded attached mediaId=${controller.currentMediaItem?.mediaId} " +
                     "isPlaying=${controller.isPlaying}"
             )
@@ -84,7 +90,7 @@ class Media3Fragment : PlayerFragment() {
             requireArguments().putBoolean(KEY_ATTACH_TO_EXISTING_PLAYBACK, false)
             return true
         }
-        Log.d(TAG, "attachToExistingPlaybackIfNeeded pending but controller has no currentMediaItem")
+        playerDebugLog("attachToExistingPlaybackIfNeeded pending but controller has no currentMediaItem")
         return false
     }
 
@@ -553,8 +559,7 @@ class Media3Fragment : PlayerFragment() {
                 }
             }
             if ((isInitialized || !enableNetworkCheck) && !viewModel.started) {
-                Log.d(
-                    TAG,
+                playerDebugLog(
                     "onStart starting player initialized=$isInitialized enableNetworkCheck=$enableNetworkCheck " +
                         "currentMediaItemPresent=${player?.currentMediaItem != null}"
                 )
@@ -568,11 +573,11 @@ class Media3Fragment : PlayerFragment() {
 
     override fun initialize() {
         if (attachToExistingPlaybackIfNeeded(player)) {
-            Log.d(TAG, "initialize attached to existing playback")
+            playerDebugLog("initialize attached to existing playback")
             return
         }
         if (player != null && !viewModel.started) {
-            Log.d(TAG, "initialize starting fresh playback")
+            playerDebugLog("initialize starting fresh playback")
             startPlayer()
         }
         super.initialize()
@@ -582,7 +587,7 @@ class Media3Fragment : PlayerFragment() {
         val latencyConfig = LiveLatencySettings.resolve(prefs)
         liveTargetOffsetMs = latencyConfig.targetOffsetMs
         pendingInitialLiveSync = true
-        Log.d(TAG, "Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(latencyConfig)}")
+        playerDebugLog("Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(latencyConfig)}")
         player?.sendCustomCommand(
             SessionCommand(
                 PlaybackService.START_STREAM, bundleOf(
@@ -714,26 +719,26 @@ class Media3Fragment : PlayerFragment() {
 
     override fun updateProgress() {
         with(binding.playerControls) {
+            if (videoType == STREAM) {
+                val offset = player?.currentLiveOffset?.takeIf { it != androidx.media3.common.C.TIME_UNSET }
+                updateLatency(offset, liveTargetOffsetMs ?: LiveLatencySettings.resolve(prefs).targetOffsetMs)
+            }
             if (root.isVisible && !progressBar.isPressed) {
                 val currentPosition = player?.currentPosition ?: 0
                 position.text = DateUtils.formatElapsedTime(currentPosition / 1000)
                 progressBar.setPosition(currentPosition)
                 progressBar.setBufferedPosition(player?.bufferedPosition ?: 0)
-                if (videoType == STREAM) {
-                    val offset = player?.currentLiveOffset?.takeIf { it != androidx.media3.common.C.TIME_UNSET }
-                    updateLatency(offset, liveTargetOffsetMs ?: LiveLatencySettings.resolve(prefs).targetOffsetMs)
-                }
-                root.removeCallbacks(updateProgressAction)
-                player?.let { player ->
-                    if (player.isPlaying) {
-                        val speed = player.playbackParameters.speed
-                        val delay = if (speed > 0f) {
-                            (progressBar.preferredUpdateDelay / speed).toLong().coerceIn(200L..1000L)
-                        } else {
-                            1000
-                        }
-                        root.postDelayed(updateProgressAction, delay)
+            }
+            root.removeCallbacks(updateProgressAction)
+            player?.let { player ->
+                if (player.isPlaying) {
+                    val speed = player.playbackParameters.speed
+                    val delay = if (speed > 0f) {
+                        (progressBar.preferredUpdateDelay / speed).toLong().coerceIn(200L..1000L)
+                    } else {
+                        1000
                     }
+                    root.postDelayed(updateProgressAction, delay)
                 }
             }
         }
@@ -750,8 +755,7 @@ class Media3Fragment : PlayerFragment() {
         }
         val liveOffset = player.currentLiveOffset.takeIf { it != androidx.media3.common.C.TIME_UNSET }
         if (LiveLatencySettings.shouldForceLiveEdgeSync(resolvedConfig, liveOffset)) {
-            Log.d(
-                TAG,
+            playerDebugLog(
                 "Correcting initial live offset from ${liveOffset}ms to target ${resolvedConfig.targetOffsetMs}ms via seekToDefaultPosition ($source)"
             )
             player.seekToDefaultPosition()
@@ -1091,6 +1095,11 @@ class Media3Fragment : PlayerFragment() {
 
     override fun onStop() {
         super.onStop()
+        if (shouldClosePlaybackAfterPipDismiss()) {
+            close()
+            clearPipDismissState()
+            return
+        }
         player?.let { player ->
             if (player.isConnected) {
                 savePosition()
@@ -1148,6 +1157,7 @@ class Media3Fragment : PlayerFragment() {
         playerListener?.let { player?.removeListener(it) }
         playerListener = null
         controllerFuture?.let { MediaController.releaseFuture(it) }
+        clearPipDismissState()
     }
 
     override fun onNetworkRestored() {

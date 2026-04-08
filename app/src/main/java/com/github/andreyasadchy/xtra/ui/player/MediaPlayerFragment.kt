@@ -852,6 +852,11 @@ class MediaPlayerFragment : PlayerFragment() {
 
     override fun onStop() {
         super.onStop()
+        if (shouldClosePlaybackAfterPipDismiss()) {
+            close()
+            clearPipDismissState()
+            return
+        }
         player?.let { player ->
             if (playbackService != null) {
                 savePosition()
@@ -901,6 +906,7 @@ class MediaPlayerFragment : PlayerFragment() {
         surfaceHolderCallback = null
         serviceConnection?.let { requireContext().unbindService(it) }
         serviceConnection = null
+        clearPipDismissState()
     }
 
     override fun onNetworkRestored() {

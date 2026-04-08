@@ -3,123 +3,382 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:fillViewport="true">
 
-    <androidx.constraintlayout.widget.ConstraintLayout
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:background="?attr/colorSurface"
+        android:orientation="vertical"
         android:paddingBottom="?attr/dialogPadding">
 
-        <com.google.android.material.imageview.ShapeableImageView
-            android:id="@+id/bannerImage"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:scaleType="centerCrop"
-            android:visibility="gone"
-            app:layout_constraintBottom_toBottomOf="@id/userLayout"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            app:shapeAppearance="?attr/shapeAppearanceCornerExtraLarge"
-            app:shapeAppearanceOverlay="@style/ChatMessageBannerOverlay"
-            app:tint="#8C000000"
-            app:tintMode="src_atop"
-            tools:src="@tools:sample/backgrounds/scenic"
-            tools:visibility="visible" />
-
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/userLayout"
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingStart="?attr/dialogPadding"
-            android:paddingLeft="?attr/dialogPadding"
-            android:paddingEnd="?attr/dialogPadding"
-            android:paddingRight="?attr/dialogPadding"
-            android:visibility="gone"
-            app:layout_constraintBottom_toTopOf="@id/messageLayout"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            tools:visibility="visible">
+            android:layout_height="wrap_content">
 
-            <ImageView
-                android:id="@+id/userImage"
-                style="@style/UserPicture"
-                android:layout_marginStart="10dp"
-                android:layout_marginTop="12dp"
-                android:layout_marginBottom="12dp"
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/bannerImage"
+                android:layout_width="match_parent"
+                android:layout_height="96dp"
+                android:scaleType="centerCrop"
                 android:visibility="gone"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintVertical_bias="0.0"
+                app:shapeAppearance="?attr/shapeAppearanceCornerLarge"
                 tools:src="@tools:sample/backgrounds/scenic"
                 tools:visibility="visible" />
 
+            <View
+                android:id="@+id/bannerScrim"
+                android:layout_width="match_parent"
+                android:layout_height="96dp"
+                android:background="#A6000000" />
+
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:layout_marginEnd="10dp"
-                android:layout_marginTop="7dp"
-                android:layout_marginBottom="7dp"
-                android:orientation="vertical"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintStart_toEndOf="@id/userImage"
-                app:layout_constraintTop_toTopOf="parent">
+                android:gravity="end"
+                android:orientation="horizontal"
+                android:paddingStart="?attr/dialogPadding"
+                android:paddingTop="?attr/dialogPadding"
+                android:paddingEnd="?attr/dialogPadding">
 
-                <TextView
-                    android:id="@+id/userName"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textAppearance="?attr/textAppearanceTitleMedium"
-                    android:visibility="gone"
-                    tools:text="@sample/games.json/top/game/name"
-                    tools:visibility="visible" />
-
-                <TextView
-                    android:id="@+id/userCreated"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textAppearance="?attr/textAppearanceBodyMedium"
-                    android:textColor="?android:attr/textColorSecondary"
-                    android:visibility="gone"
-                    tools:text="Created at 123456"
-                    tools:visibility="visible" />
-
-                <TextView
-                    android:id="@+id/userFollowed"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textAppearance="?attr/textAppearanceBodyMedium"
-                    android:textColor="?android:attr/textColorSecondary"
-                    android:visibility="gone"
-                    tools:text="Followed at 123456"
-                    tools:visibility="visible" />
+                <ImageButton
+                    android:id="@+id/closeButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@android:string/cancel"
+                    android:padding="8dp"
+                    android:src="@drawable/baseline_close_black_36"
+                    app:tint="@android:color/white" />
             </LinearLayout>
 
-        </androidx.constraintlayout.widget.ConstraintLayout>
+            <LinearLayout
+                android:id="@+id/userLayout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:layout_marginTop="0dp"
+                android:orientation="vertical"
+                android:paddingStart="?attr/dialogPadding"
+                android:paddingEnd="?attr/dialogPadding"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:visibility="gone"
+                tools:visibility="visible">
+
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:backgroundTint="?attr/colorSurfaceContainerHigh"
+                    app:cardCornerRadius="18dp"
+                    app:strokeWidth="0dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingStart="16dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="16dp"
+                        android:paddingBottom="10dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:id="@+id/userImage"
+                                android:layout_width="52dp"
+                                android:layout_height="52dp"
+                                android:layout_marginEnd="12dp"
+                                android:background="?attr/colorSurfaceContainerHighest"
+                                android:scaleType="centerCrop"
+                                android:visibility="gone"
+                                tools:src="@tools:sample/avatars"
+                                tools:visibility="visible" />
+
+                            <TextView
+                                android:id="@+id/userName"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:ellipsize="end"
+                                android:maxLines="1"
+                                android:textAppearance="?attr/textAppearanceHeadlineSmall"
+                                android:textColor="@android:color/white"
+                                android:textStyle="bold"
+                                tools:text="Silas_2"
+                                tools:visibility="visible" />
+
+                            <ImageButton
+                                android:id="@+id/closeButtonInline"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
+                                android:layout_marginStart="10dp"
+                                android:background="?attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="@android:string/cancel"
+                                android:padding="5dp"
+                                android:src="@drawable/baseline_close_black_36"
+                                app:tint="@android:color/white" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/messagePreview"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textAppearance="?attr/textAppearanceBodyMedium"
+                            android:textColor="#E6FFFFFF"
+                            android:visibility="gone"
+                            tools:text="Latest message preview from the selected user." />
+
+                        <LinearLayout
+                            android:id="@+id/metaLayout"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <LinearLayout
+                                android:id="@+id/userCreatedRow"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:gravity="top"
+                                android:orientation="horizontal"
+                                android:visibility="gone"
+                                tools:visibility="visible">
+
+                                <TextView
+                                    android:layout_width="72dp"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/account_created_label"
+                                    android:textAppearance="?attr/textAppearanceBodySmall"
+                                    android:textColor="?android:attr/textColorSecondary"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/userCreated"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textAppearance="?attr/textAppearanceBodySmall"
+                                    android:textColor="?android:attr/textColorPrimary"
+                                    tools:text="March 6, 2023 • 1128 days ago" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:id="@+id/userFollowedRow"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:gravity="top"
+                                android:orientation="horizontal"
+                                android:visibility="gone"
+                                tools:visibility="visible">
+
+                                <TextView
+                                    android:layout_width="72dp"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/following_label"
+                                    android:textAppearance="?attr/textAppearanceBodySmall"
+                                    android:textColor="?android:attr/textColorSecondary"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/userFollowed"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textAppearance="?attr/textAppearanceBodySmall"
+                                    android:textColor="?android:attr/textColorPrimary"
+                                    tools:text="July 3, 2025 • 278 days ago" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:id="@+id/userSubscribedRow"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:gravity="top"
+                                android:orientation="horizontal"
+                                android:visibility="gone"
+                                tools:visibility="visible">
+
+                                <TextView
+                                    android:layout_width="72dp"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/subscription_label"
+                                    android:textAppearance="?attr/textAppearanceBodySmall"
+                                    android:textColor="?android:attr/textColorSecondary"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/userSubscribed"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textAppearance="?attr/textAppearanceBodySmall"
+                                    android:textColor="?android:attr/textColorPrimary"
+                                    tools:text="13 months" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/badgesLayout"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:id="@+id/badgesLabel"
+                                    android:layout_width="72dp"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/badges_label"
+                                    android:textAppearance="?attr/textAppearanceBodySmall"
+                                    android:textColor="?android:attr/textColorSecondary"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/badgeSelectedName"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:ellipsize="end"
+                                    android:maxLines="1"
+                                    android:textAppearance="?attr/textAppearanceBodySmall"
+                                    android:textColor="?android:attr/textColorPrimary"
+                                    android:visibility="gone"
+                                    tools:text="Moderator"
+                                    tools:visibility="visible" />
+                            </LinearLayout>
+
+                            <HorizontalScrollView
+                                android:id="@+id/badgesScroll"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:overScrollMode="never"
+                                android:scrollbars="none">
+
+                                <LinearLayout
+                                    android:id="@+id/badgesContainer"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:gravity="center_vertical"
+                                    android:orientation="horizontal"
+                                    tools:ignore="UselessParent" />
+                            </HorizontalScrollView>
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+            </LinearLayout>
+        </FrameLayout>
+
+        <LinearLayout
+            android:id="@+id/primaryActionLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal"
+            android:paddingStart="?attr/dialogPadding"
+            android:paddingEnd="?attr/dialogPadding">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/followButton"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:text="@string/follow"
+                android:textAllCaps="false" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/muteButton"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:text="@string/mute"
+                android:textAllCaps="false" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/historyHeaderLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="?attr/dialogPadding"
+            android:paddingEnd="?attr/dialogPadding"
+            android:visibility="gone">
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1"
+                android:background="?attr/colorOutline" />
+
+            <TextView
+                android:id="@+id/liveLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:text="@string/live"
+                android:textAppearance="?attr/textAppearanceLabelLarge"
+                android:textColor="@android:color/holo_red_light"
+                android:textStyle="bold" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1"
+                android:background="?attr/colorOutline" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/historyDate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:paddingStart="?attr/dialogPadding"
+            android:paddingEnd="?attr/dialogPadding"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?android:attr/textColorSecondary"
+            android:visibility="gone"
+            tools:text="Tuesday, April 7, 2026"
+            tools:visibility="visible" />
 
         <LinearLayout
             android:id="@+id/messageLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="5dp"
+            android:layout_marginTop="4dp"
             android:orientation="vertical"
             android:paddingStart="?attr/dialogPadding"
-            android:paddingLeft="?attr/dialogPadding"
-            android:paddingEnd="?attr/dialogPadding"
-            android:paddingRight="?attr/dialogPadding"
-            app:layout_constraintBottom_toTopOf="@id/buttonLayout"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@id/userLayout">
+            android:paddingEnd="?attr/dialogPadding">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/recyclerView"
                 android:layout_width="match_parent"
-                android:layout_height="200dp"
+                android:layout_height="244dp"
                 tools:listitem="@layout/chat_list_item" />
         </LinearLayout>
 
@@ -127,16 +386,10 @@
             android:id="@+id/buttonLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="5dp"
+            android:layout_marginTop="8dp"
             android:orientation="vertical"
             android:paddingStart="?attr/dialogPadding"
-            android:paddingLeft="?attr/dialogPadding"
-            android:paddingEnd="?attr/dialogPadding"
-            android:paddingRight="?attr/dialogPadding"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@id/messageLayout">
+            android:paddingEnd="?attr/dialogPadding">
 
             <Button
                 android:id="@+id/reply"
@@ -200,6 +453,6 @@
                 tools:visibility="visible" />
         </LinearLayout>
 
-    </androidx.constraintlayout.widget.ConstraintLayout>
+    </LinearLayout>
 
 </androidx.core.widget.NestedScrollView>

@@ -756,7 +756,7 @@
     <string name="chat_delay_mode_custom">Custom</string>
     <string name="chat_delay_custom_secs">Custom delay (seconds)</string>
     <string name="chat_show_delay_indicator">Show chat delay badge</string>
-    <string name="chat_delay_indicator">Ã¢ÂÂ± ~%ss</string>
+    <string name="chat_delay_indicator">Delay ~%ss</string>
     <string name="player_latency_profile">Live latency profile</string>
     <string name="player_latency_profile_summary">Select a latency/stability profile to fill the values below. You can edit those values afterward.</string>
     <string name="player_latency_profile_lowest">Lowest latency (may rebuffer more)</string>
