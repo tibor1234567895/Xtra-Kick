@@ -15,13 +15,11 @@ import androidx.core.content.ContextCompat.getSystemService
 import androidx.core.os.bundleOf
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.DialogChatMessageClickBinding
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
-import com.github.andreyasadchy.xtra.util.chat.ChatDividerDecoration
 import com.github.andreyasadchy.xtra.util.prefs
-import com.google.android.material.color.MaterialColors
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import dagger.hilt.android.AndroidEntryPoint
@@ -81,20 +79,6 @@ class ReplyClickedDialog : BottomSheetDialogFragment() {
                 it.adapter = adapter
                 it.itemAnimator = null
                 it.layoutManager = LinearLayoutManager(context).apply { stackFromEnd = true }
-                if (requireContext().prefs().getBoolean(C.CHAT_ALTERNATING_LINE_SHADOW, true)) {
-                    it.addItemDecoration(
-                        ChatDividerDecoration(
-                            dividerColor = ChatBackgroundUtils.resolveDividerColor(
-                                surfaceColor = MaterialColors.getColor(requireView(), com.google.android.material.R.attr.colorSurface),
-                                dividerStrength = requireContext().prefs().getInt(
-                                    C.CHAT_ALTERNATING_LINE_SHADOW_STRENGTH,
-                                    ChatBackgroundUtils.DEFAULT_ALTERNATING_LINE_SHADOW_STRENGTH
-                                )
-                            ),
-                            density = resources.displayMetrics.density
-                        )
-                    )
-                }
                 it.setOnTouchListener(object : View.OnTouchListener {
                     override fun onTouch(v: View, event: MotionEvent): Boolean {
                         when (event.action) {
@@ -126,9 +110,11 @@ class ReplyClickedDialog : BottomSheetDialogFragment() {
                         synchronized(adapter.messages) {
                             adapter.messages.indexOf(it).takeIf { it != -1 }
                         }?.let {
-                            (recyclerView.layoutManager?.findViewByPosition(it) as? TextView)?.let {
-                                adapter.updateBackground(previousSelectedMessage, it)
-                            } ?: adapter.notifyItemChanged(it)
+                            recyclerView.layoutManager?.findViewByPosition(it)
+                                ?.findViewById<TextView>(R.id.chatMessageText)
+                                ?.let { textView ->
+                                    adapter.updateBackground(previousSelectedMessage, textView)
+                                } ?: adapter.notifyItemChanged(it)
                         }
                     }
                 }
@@ -220,6 +206,20 @@ class ReplyClickedDialog : BottomSheetDialogFragment() {
             }.forEach {
                 adapter.notifyItemChanged(it)
             }
+        }
+    }
+
+    fun updateMessage(message: ChatMessage) {
+        adapter?.let { adapter ->
+            val updatedIndex = synchronized(adapter.messages) {
+                adapter.messages.indexOfLast { it.id != null && it.id == message.id }.takeIf { it != -1 }?.also { index ->
+                    adapter.messages[index] = message
+                    if (adapter.selectedMessage?.id == message.id) {
+                        adapter.selectedMessage = message
+                    }
+                }
+            }
+            updatedIndex?.let { adapter.notifyItemChanged(it) }
         }
     }
 

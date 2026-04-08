@@ -11,6 +11,7 @@ import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
 import android.text.TextPaint
 import android.text.style.ClickableSpan
 import android.text.style.ForegroundColorSpan
+import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
 import android.text.style.URLSpan
 import android.util.Patterns
@@ -70,6 +71,25 @@ object ChatAdapterUtils {
         } else {
             replyName ?: replyLogin
         }
+    }
+
+    private fun appendDeletedLabel(
+        builder: SpannableStringBuilder,
+        start: Int,
+        savedColors: HashMap<String, Int>,
+        useReadableColors: Boolean,
+        isLightTheme: Boolean,
+    ): Int {
+        val deletedLabel = "(Deleted)"
+        builder.append(deletedLabel)
+        builder.setSpan(
+            ForegroundColorSpan(getSavedColor("#B95C5C", savedColors, useReadableColors, isLightTheme)),
+            start,
+            start + deletedLabel.length,
+            SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        builder.setSpan(StyleSpan(Typeface.ITALIC), start, start + deletedLabel.length, SPAN_EXCLUSIVE_EXCLUSIVE)
+        return deletedLabel.length
     }
 
     fun prepareChatMessage(chatMessage: ChatMessage, cacheSignature: Long, enableTimestamps: Boolean, timestampFormat: String?, firstMsgVisibility: Int, firstChatMsg: String, redeemedChatMsg: String, redeemedNoMsg: String, rewardChatMsg: String, replyMessage: String, imageClick: ((String?, String?, String?, Boolean?, Int?, Boolean?, String?) -> Unit)?, useRandomColors: Boolean, random: Random, useReadableColors: Boolean, isLightTheme: Boolean, nameDisplay: String?, useBoldNames: Boolean, showNamePaints: Boolean, namePaints: List<NamePaint>, showStvBadges: Boolean, showKickBadges: Boolean, stvBadges: List<StvBadge>, showPersonalEmotes: Boolean, personalEmoteSets: Map<String, List<Emote>>, stvUsers: List<StvUser>, enableOverlayEmotes: Boolean, showSystemMessageEmotes: Boolean, loggedInUser: String?, chatUrl: String?, getEmoteBytes: ((String, Pair<Long, Int>) -> ByteArray?)?, userColors: HashMap<String, Int>, savedColors: HashMap<String, Int>, localTwitchEmotes: List<TwitchEmote>, thirdPartyEmotes: List<Emote>, globalBadges: List<TwitchBadge>, channelBadges: List<TwitchBadge>, cheerEmotes: List<CheerEmote>, savedLocalTwitchEmotes: MutableMap<String, ByteArray>, savedLocalBadges: MutableMap<String, ByteArray>, savedLocalCheerEmotes: MutableMap<String, ByteArray>, savedLocalEmotes: MutableMap<String, ByteArray>): MessageResult {
@@ -157,7 +177,7 @@ object ChatAdapterUtils {
                     builder.append("${chatMessage.systemMsg}\n")
                     builderIndex += chatMessage.systemMsg.length + 1
                 } else {
-                    if (chatMessage.msgId != null) {
+                    if (chatMessage.msgId != null && chatMessage.msgId != "kick_moderation") {
                         val msgId = KickApiHelper.getMessageIdString(chatMessage.msgId) ?: chatMessage.msgId
                         builder.append("$msgId\n")
                         builderIndex += msgId.length + 1
@@ -372,6 +392,7 @@ object ChatAdapterUtils {
                     }
                 }
                 if (chatMessage.message != null) {
+                    val messageStart = builderIndex
                     builder.append(chatMessage.message)
                     if (chatMessage.isAction) {
                         builder.setSpan(ForegroundColorSpan(color), builderIndex, builderIndex + chatMessage.message.length, SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -379,11 +400,17 @@ object ChatAdapterUtils {
                     val result = prepareEmotes(chatMessage, chatMessage.message, builder, builderIndex, images, imageClick, useReadableColors, isLightTheme, enableOverlayEmotes, useBoldNames, loggedInUser, chatUrl, getEmoteBytes, savedColors, localTwitchEmotes, showPersonalEmotes, personalEmoteSets, stvUser, thirdPartyEmotes, cheerEmotes, savedLocalTwitchEmotes, savedLocalCheerEmotes, savedLocalEmotes)
                     wasMentioned = result
                     builderIndex = builder.length
+                    if (chatMessage.isDeleted) {
+                        builder.setSpan(StrikethroughSpan(), messageStart, builderIndex, SPAN_EXCLUSIVE_EXCLUSIVE)
+                        builder.append(" ")
+                        builderIndex += 1
+                        builderIndex += appendDeletedLabel(builder, builderIndex, savedColors, useReadableColors, isLightTheme)
+                    }
                 }
                 when {
                     chatMessage.isFirst && firstMsgVisibility < 2 -> backgroundRes = R.color.chatMessageFirst
                     chatMessage.reward?.id != null && firstMsgVisibility < 2 -> backgroundRes = R.color.chatMessageReward
-                    chatMessage.systemMsg != null || chatMessage.msgId != null -> backgroundRes = R.color.chatMessageNotice
+                    chatMessage.systemMsg != null || (chatMessage.msgId != null && chatMessage.msgId != "kick_moderation") -> backgroundRes = R.color.chatMessageNotice
                     wasMentioned -> backgroundRes = R.color.chatMessageMention
                 }
             }
@@ -892,12 +919,7 @@ object ChatAdapterUtils {
     private fun loadCoil(fragment: Fragment, image: Image, emoteQuality: String, onLoaded: (Drawable) -> Unit) {
         fragment.requireContext().imageLoader.enqueue(
             ImageRequest.Builder(fragment.requireContext()).apply {
-                data(image.localData ?: when (emoteQuality) {
-                    "4" -> image.url4x ?: image.url3x ?: image.url2x ?: image.url1x
-                    "3" -> image.url3x ?: image.url2x ?: image.url1x
-                    "2" -> image.url2x ?: image.url1x
-                    else -> image.url1x
-                })
+                data(resolveImageSource(image, emoteQuality))
                 if (image.thirdParty) {
                     httpHeaders(NetworkHeaders.Builder().apply {
                         add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
@@ -913,14 +935,10 @@ object ChatAdapterUtils {
     }
 
     private fun loadGlide(fragment: Fragment, image: Image, emoteQuality: String, onLoaded: (Drawable) -> Unit) {
+        val source = resolveImageSource(image, emoteQuality)
         Glide.with(fragment)
-            .load(image.localData ?: when (emoteQuality) {
-                "4" -> image.url4x ?: image.url3x ?: image.url2x ?: image.url1x
-                "3" -> image.url3x ?: image.url2x ?: image.url1x
-                "2" -> image.url2x ?: image.url1x
-                else -> image.url1x
-            }.let {
-                if (image.thirdParty) {
+            .load(source.let {
+                if (image.thirdParty && it is String) {
                     GlideUrl(it) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) }
                 } else it
             })
@@ -934,4 +952,18 @@ object ChatAdapterUtils {
                 }
             })
     }
+
+    private fun resolveImageSource(image: Image, emoteQuality: String): Any? {
+        return image.localData ?: if (image.isEmote) {
+            when (emoteQuality) {
+                "4" -> image.url4x ?: image.url3x ?: image.url2x ?: image.url1x
+                "3" -> image.url3x ?: image.url2x ?: image.url1x
+                "2" -> image.url2x ?: image.url1x
+                else -> image.url1x
+            }
+        } else {
+            image.url4x ?: image.url3x ?: image.url2x ?: image.url1x
+        }
+    }
+
 }

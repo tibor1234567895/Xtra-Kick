@@ -1,9 +1,17 @@
 package com.github.andreyasadchy.xtra.ui.chat
 
 import android.content.Context
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.TextPaint
+import android.text.style.ClickableSpan
+import android.text.style.ForegroundColorSpan
+import android.text.method.LinkMovementMethod
 import android.text.format.DateUtils
+import android.text.util.Linkify
 import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.LayoutInflater
@@ -20,6 +28,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
+import androidx.core.text.util.LinkifyCompat
 import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
@@ -40,6 +49,7 @@ import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.FragmentChatBinding
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.Emote
+import com.github.andreyasadchy.xtra.model.chat.PinnedGift
 import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.ui.channel.ChannelPagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.common.BaseNetworkFragment
@@ -51,7 +61,6 @@ import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.chat.ChatAdapterUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
-import com.github.andreyasadchy.xtra.util.chat.ChatDividerDecoration
 import com.github.andreyasadchy.xtra.util.chat.ChatListParityUtils
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
@@ -81,6 +90,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private var delayBadgeFirstShown = false
     private val hideDelayBadgeRunnable = Runnable { _binding?.chatDelayText?.visibility = View.GONE }
     private var messagingEnabled = false
+    private var pinnedMessageDialogSeed: ChatMessage? = null
 
     private var autoCompleteAdapter: AutoCompleteAdapter<Any>? = null
 
@@ -108,6 +118,178 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 binding.recyclerView.scrollToPosition(size - 1)
             }
         }
+    }
+
+    private fun formatDisplayName(userLogin: String?, userName: String?): String {
+        return if (userLogin != null && userName != null && !userLogin.equals(userName, true)) {
+            when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
+                "0" -> "$userName($userLogin)"
+                "1" -> userName
+                else -> userLogin
+            }
+        } else {
+            userName ?: userLogin ?: ""
+        }
+    }
+
+    private fun resolvePinnedNameColor(color: String?, fallback: Int): Int {
+        if (color.isNullOrBlank()) return fallback
+        return runCatching {
+            val normalized = if (color.startsWith("#")) color else "#$color"
+            Color.parseColor(normalized)
+        }.getOrDefault(fallback)
+    }
+
+    private fun openPinnedHistory(id: String?, login: String?, name: String?, color: String?) {
+        if (id.isNullOrBlank() && login.isNullOrBlank() && name.isNullOrBlank()) return
+        pinnedMessageDialogSeed = ChatMessage(
+            userId = id,
+            userLogin = login,
+            userName = name,
+            color = color,
+        )
+        MessageClickedDialog.newInstance(messagingEnabled, requireArguments().getString(KEY_CHANNEL_ID))
+            .show(childFragmentManager, "messageDialog")
+    }
+
+    private fun buildPinnedNameSpan(
+        label: String,
+        displayName: String,
+        color: Int,
+        userId: String?,
+        userLogin: String?,
+        userName: String?,
+        userColor: String?,
+    ): SpannableStringBuilder {
+        return SpannableStringBuilder().apply {
+            append(label)
+            val start = length
+            append(displayName)
+            setSpan(ForegroundColorSpan(color), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            setSpan(object : ClickableSpan() {
+                override fun onClick(widget: View) {
+                    openPinnedHistory(userId, userLogin, userName, userColor)
+                }
+
+                override fun updateDrawState(ds: TextPaint) {
+                    ds.color = color
+                    ds.isUnderlineText = false
+                }
+            }, start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+    }
+
+    private fun buildPinnedMessageText(pinnedGift: PinnedGift): SpannableStringBuilder {
+        val builder = SpannableStringBuilder()
+        val baseTextColor = binding.pinnedGiftText.currentTextColor
+        val pinnedByColor = resolvePinnedNameColor(pinnedGift.pinnedByUserColor, baseTextColor)
+        val pinnedBy = formatDisplayName(pinnedGift.pinnedByUserLogin, pinnedGift.pinnedByUserName)
+        if (pinnedBy.isNotBlank()) {
+            builder.append(
+                buildPinnedNameSpan(
+                    label = getString(R.string.pinned_gift_pinned_by_prefix),
+                    displayName = pinnedBy,
+                    color = pinnedByColor,
+                    userId = pinnedGift.pinnedByUserId,
+                    userLogin = pinnedGift.pinnedByUserLogin,
+                    userName = pinnedGift.pinnedByUserName,
+                    userColor = pinnedGift.pinnedByUserColor,
+                )
+            )
+            pinnedGift.pinnedSeconds?.takeIf { it > 0 }?.let {
+                builder.append(getString(R.string.pinned_gift_pinned_by_suffix_with_seconds, it))
+            }
+            if (!pinnedGift.message.isNullOrBlank() || pinnedGift.giftValue != null) {
+                builder.append('\n')
+            }
+        }
+        pinnedGift.message?.takeIf { it.isNotBlank() }?.let { builder.append(it) }
+        pinnedGift.giftValue?.let { giftValue ->
+            if (builder.isNotEmpty()) builder.append('\n')
+            builder.append(getString(R.string.pinned_gift_value))
+            builder.append(": ")
+            builder.append(NumberFormat.getInstance().format(giftValue))
+        }
+        if (builder.isEmpty()) {
+            builder.append(getString(R.string.pinned_gift_message_fallback))
+        }
+        LinkifyCompat.addLinks(builder, Linkify.WEB_URLS)
+        return builder
+    }
+
+    private fun renderPinnedGift() {
+        val binding = _binding ?: return
+        val pinnedGift = viewModel.pinnedGift.value
+        val dismissed = viewModel.pinnedGiftDismissed.value
+        binding.pinnedGiftRestore.isVisible = pinnedGift != null && dismissed
+        if (pinnedGift == null || dismissed) {
+            binding.pinnedGiftLayout.isGone = true
+            return
+        }
+        binding.pinnedGiftLayout.isVisible = true
+        val senderName = formatDisplayName(pinnedGift.userLogin, pinnedGift.userName)
+        val senderColor = resolvePinnedNameColor(pinnedGift.userColor, binding.pinnedGiftTitle.currentTextColor)
+        binding.pinnedGiftTitle.text = buildPinnedNameSpan(
+            label = getString(R.string.pinned_gift_title_prefix),
+            displayName = senderName.ifBlank { getString(R.string.pinned_gift_unknown_user) },
+            color = senderColor,
+            userId = pinnedGift.userId,
+            userLogin = pinnedGift.userLogin,
+            userName = pinnedGift.userName,
+            userColor = pinnedGift.userColor,
+        )
+        binding.pinnedGiftText.text = buildPinnedMessageText(pinnedGift)
+        binding.pinnedGiftLayout.isClickable = true
+        binding.pinnedGiftLayout.isFocusable = true
+        binding.pinnedGiftLayout.setOnClickListener { }
+        binding.pinnedGiftTitle.setOnClickListener { }
+        binding.pinnedGiftText.setOnClickListener { }
+        binding.pinnedGiftTitle.movementMethod = LinkMovementMethod.getInstance()
+        binding.pinnedGiftText.movementMethod = LinkMovementMethod.getInstance()
+        binding.pinnedGiftText.linksClickable = true
+        val avatarUrl = pinnedGift.avatarUrl
+        if (!avatarUrl.isNullOrBlank()) {
+            binding.pinnedGiftAvatar.isVisible = true
+            requireContext().imageLoader.enqueue(
+                ImageRequest.Builder(requireContext())
+                    .data(avatarUrl)
+                    .crossfade(true)
+                    .transformations(CircleCropTransformation())
+                    .target(binding.pinnedGiftAvatar)
+                    .build()
+            )
+        } else {
+            binding.pinnedGiftAvatar.isGone = true
+        }
+    }
+
+    private fun renderChannelPointsButton() {
+        val binding = _binding ?: return
+        binding.channelPointsButton.isGone = true
+    }
+
+    private fun showChannelPointRewardsDialog() {
+        val balanceText = getString(
+            R.string.channel_points_rewards_balance,
+            viewModel.channelPointsBalance.value?.let { NumberFormat.getInstance().format(it) } ?: "?"
+        )
+        val rewards = viewModel.channelPointRewards.value
+        val summary = if (rewards.isNotEmpty()) {
+            rewards.joinToString("\n") { reward ->
+                val title = reward.title ?: reward.prompt ?: reward.id ?: getString(R.string.channel_points_rewards_title)
+                buildString {
+                    append(getString(R.string.channel_points_reward_line, NumberFormat.getInstance().format(reward.cost ?: 0), title))
+                    if (reward.isUserInputRequired == true) {
+                        append(" • ")
+                        append(getString(R.string.channel_points_reward_input_required))
+                    }
+                }
+            }
+        } else {
+            getString(R.string.channel_points_rewards_unavailable)
+        }
+        ChannelPointRewardsDialog.newInstance(balanceText, summary)
+            .show(childFragmentManager, "channelPointRewardsDialog")
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -222,20 +404,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         it.adapter = adapter
                         it.itemAnimator = null
                         it.layoutManager = LinearLayoutManager(context).apply { stackFromEnd = true }
-                        if (requireContext().prefs().getBoolean(C.CHAT_ALTERNATING_LINE_SHADOW, true)) {
-                            it.addItemDecoration(
-                                ChatDividerDecoration(
-                                    dividerColor = ChatBackgroundUtils.resolveDividerColor(
-                                        surfaceColor = MaterialColors.getColor(requireView(), com.google.android.material.R.attr.colorSurface),
-                                        dividerStrength = requireContext().prefs().getInt(
-                                            C.CHAT_ALTERNATING_LINE_SHADOW_STRENGTH,
-                                            ChatBackgroundUtils.DEFAULT_ALTERNATING_LINE_SHADOW_STRENGTH
-                                        )
-                                    ),
-                                    density = resources.displayMetrics.density
-                                )
-                            )
-                        }
                         it.addOnScrollListener(object : RecyclerView.OnScrollListener() {
                             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                                 super.onScrollStateChanged(recyclerView, newState)
@@ -260,6 +428,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         })
                     }
                     renderBufferedMessages()
+                    renderPinnedGift()
+                    renderChannelPointsButton()
+                    pinnedGiftClose.setOnClickListener {
+                        viewModel.dismissPinnedGift()
+                    }
+                    pinnedGiftRestore.setOnClickListener {
+                        viewModel.restorePinnedGift()
+                    }
                     btnDown.setOnClickListener {
                         view.post {
                             val lastIndex = synchronized(viewModel.chatMessages) {
@@ -444,6 +620,27 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                     }
                                     viewModel.reloadMessages.value = false
                                 }
+                            }
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.pinnedGift.collectLatest {
+                                renderPinnedGift()
+                            }
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.pinnedGiftDismissed.collectLatest {
+                                renderPinnedGift()
+                            }
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.channelPointsSummary.collectLatest {
+                                renderChannelPointsButton()
                             }
                         }
                     }
@@ -852,6 +1049,20 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             }
                         }
                     }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.updateMessage.collectLatest { update ->
+                                val index = update.first
+                                val message = update.second
+                                adapter?.let { adapter ->
+                                    ChatAdapterUtils.invalidatePreparedMessage(message)
+                                    adapter.notifyItemChanged(index, ChatAdapter.PAYLOAD_REFORMAT)
+                                }
+                                messageDialog?.updateMessage(message)
+                                replyDialog?.updateMessage(message)
+                            }
+                        }
+                    }
                     if (chatUrl != null) {
                         viewModel.startReplay(
                             channelId = channelId,
@@ -1083,7 +1294,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     }
 
     override fun onCreateMessageClickedChatAdapter(): MessageClickedChatAdapter? {
-        return adapter?.createMessageClickedChatAdapter()
+        val seed = pinnedMessageDialogSeed
+        pinnedMessageDialogSeed = null
+        return adapter?.createMessageClickedChatAdapter(seed)
     }
 
     override fun onCreateReplyClickedChatAdapter(): ReplyClickedChatAdapter? {

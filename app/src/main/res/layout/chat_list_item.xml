@@ -1,14 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
-<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:autoLink="web"
-    android:clickable="true"
-    android:focusable="true"
-    android:linksClickable="true"
-    android:paddingLeft="5dp"
-    android:paddingTop="1dp"
-    android:paddingRight="5dp"
-    android:paddingBottom="1dp"
-    android:textAppearance="?attr/textAppearanceBodyMedium"
-    android:textDirection="ltr" />
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:id="@+id/chatLineDivider"
+        android:layout_width="match_parent"
+        android:layout_height="2dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <View
+            android:id="@+id/chatLineDividerHighlight"
+            android:layout_width="match_parent"
+            android:layout_height="1dp" />
+
+        <View
+            android:id="@+id/chatLineDividerShadow"
+            android:layout_width="match_parent"
+            android:layout_height="1dp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/chatMessageText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:autoLink="web"
+        android:clickable="true"
+        android:focusable="true"
+        android:linksClickable="true"
+        android:paddingLeft="5dp"
+        android:paddingTop="1dp"
+        android:paddingRight="5dp"
+        android:paddingBottom="1dp"
+        android:textAppearance="?attr/textAppearanceBodyMedium"
+        android:textDirection="ltr" />
+</LinearLayout>

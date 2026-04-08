@@ -283,8 +283,15 @@ class KickMessage(
     val durationSeconds: Long? = null,
     val metadata: JsonElement? = null,
     val target: JsonElement? = null,
+    val user: JsonElement? = null,
     @SerialName("target_user")
     val targetUser: JsonElement? = null,
+    @SerialName("banned_by")
+    val bannedBy: JsonElement? = null,
+    @SerialName("unbanned_by")
+    val unbannedBy: JsonElement? = null,
+    @SerialName("timed_out_by")
+    val timedOutBy: JsonElement? = null,
     @SerialName("deleted_message")
     val deletedMessage: JsonElement? = null,
     val sender: KickMessageSender? = null,

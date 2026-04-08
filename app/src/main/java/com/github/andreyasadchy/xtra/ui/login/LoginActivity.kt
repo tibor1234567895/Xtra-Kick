@@ -321,7 +321,8 @@ class LoginActivity : AppCompatActivity() {
                 val expiresAt = (System.currentTimeMillis() / 1000L) + (tokenResponse.expiresIn ?: 0L)
                 val userResponse = authRepository.getKickCurrentUser(networkLibrary, accessToken)
                 val user = userResponse.data.firstOrNull()
-                val loginName = user?.name ?: user?.channelSlug ?: user?.id
+                val userId = user?.id?.toString()
+                val loginName = user?.name ?: user?.channelSlug ?: userId
 
                 AuthStateHelper.clearLegacyTwitchAuth(this@LoginActivity)
                 tokenPrefs().edit {
@@ -329,11 +330,11 @@ class LoginActivity : AppCompatActivity() {
                     putString(C.KICK_REFRESH_TOKEN, refreshToken)
                     putLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, expiresAt)
                     putString(C.KICK_TOKEN_TYPE, tokenResponse.tokenType)
-                    putString(C.KICK_USER_ID, user?.id)
+                    putString(C.KICK_USER_ID, userId)
                     putString(C.KICK_USER_LOGIN, loginName)
                     remove(C.KICK_AUTH_STATE)
                     remove(C.KICK_PKCE_VERIFIER)
-                    putString(C.USER_ID, user?.id)
+                    putString(C.USER_ID, userId)
                     putString(C.USERNAME, loginName)
                 }
                 pendingKickCallback = null
