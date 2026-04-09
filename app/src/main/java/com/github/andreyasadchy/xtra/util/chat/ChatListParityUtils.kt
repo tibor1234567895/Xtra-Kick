@@ -39,7 +39,7 @@ object ChatListParityUtils {
     }
 
     fun shouldDrawDividerAbove(messages: List<ChatMessage>, position: Int): Boolean {
-        return position > 0
+        return position > 0 && !sharesVisualBlockWithPrevious(messages, position)
     }
 
     private fun sharesVisualBlockWithPrevious(messages: List<ChatMessage>, position: Int): Boolean {
@@ -48,13 +48,21 @@ object ChatListParityUtils {
         }
         val previous = messages[position - 1]
         val current = messages[position]
-        if (!previous.isReply || current.isReply) {
+        return previous.isReply &&
+            !current.isReply &&
+            belongsToReplyPreview(previous, current)
+    }
+
+    private fun belongsToReplyPreview(replyPreview: ChatMessage, replyMessage: ChatMessage): Boolean {
+        val previewThreadParentId = replyPreview.reply?.threadParentId?.takeIf { it.isNotBlank() } ?: return false
+        val messageThreadParentId = replyMessage.reply?.threadParentId?.takeIf { it.isNotBlank() } ?: return false
+        if (previewThreadParentId != messageThreadParentId) {
             return false
         }
-        val currentThreadParentId = current.reply?.threadParentId?.takeIf { it.isNotBlank() } ?: return false
-        val previousThreadParentId = previous.reply?.threadParentId?.takeIf { it.isNotBlank() }
-            ?: previous.replyParent?.id?.takeIf { it.isNotBlank() }
-            ?: return false
-        return currentThreadParentId == previousThreadParentId
+        return when {
+            replyPreview.timestamp != null && replyMessage.timestamp != null -> replyPreview.timestamp == replyMessage.timestamp
+            !replyPreview.fullMsg.isNullOrBlank() && !replyMessage.fullMsg.isNullOrBlank() -> replyPreview.fullMsg == replyMessage.fullMsg
+            else -> true
+        }
     }
 }

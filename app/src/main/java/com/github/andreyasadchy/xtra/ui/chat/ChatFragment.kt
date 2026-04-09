@@ -32,6 +32,7 @@ import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import androidx.core.text.util.LinkifyCompat
 import androidx.core.widget.addTextChangedListener
+import androidx.core.view.doOnLayout
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
@@ -53,6 +54,7 @@ import com.github.andreyasadchy.xtra.databinding.FragmentChatBinding
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.PinnedGift
+import com.github.andreyasadchy.xtra.model.chat.RoomState
 import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.ui.channel.ChannelPagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.common.BaseNetworkFragment
@@ -90,9 +92,18 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private var hasRecentEmotes = false
     private var delayBadgeActive = false
     private var roomModeBadgeText: String? = null
+    private var lastRoomStateSignature: String? = null
     private var delayBadgeFirstShown = false
     private val hideDelayBadgeRunnable = Runnable {
         _binding?.chatDelayText?.visibility = View.GONE
+        updateHeaderBadgeLayout()
+    }
+    private val hideRoomModeBadgeRunnable = Runnable {
+        _binding?.chatModeText?.apply {
+            isSelected = false
+            visibility = View.GONE
+        }
+        updateHeaderBadgeLayout()
     }
     private var messagingEnabled = false
     private var pinnedMessageDialogSeed: ChatMessage? = null
@@ -249,6 +260,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val pinnedGift = viewModel.pinnedGift.value
         val dismissed = viewModel.pinnedGiftDismissed.value
         binding.pinnedGiftRestore.isVisible = pinnedGift != null && dismissed
+        updateHeaderBadgeLayout()
         if (pinnedGift == null || dismissed) {
             binding.pinnedGiftLayout.isGone = true
             return
@@ -292,11 +304,49 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         binding.channelPointsButton.isGone = true
     }
 
+    private fun updateHeaderBadgeLayout() {
+        val binding = _binding ?: return
+        val row = binding.chatHeaderBadges
+        val applyLayout = {
+            val density = resources.displayMetrics.density
+            val minWidthPx = (HEADER_BADGE_MIN_WIDTH_DP * density).roundToInt()
+            val horizontalMarginPx = (HEADER_BADGE_HORIZONTAL_MARGIN_DP * density).roundToInt()
+            val siblingsWidth = listOf(binding.chatDelayText, binding.pinnedGiftRestore)
+                .filter { it.visibility == View.VISIBLE }
+                .sumOf { view ->
+                    val layoutParams = view.layoutParams as? ViewGroup.MarginLayoutParams
+                    view.width + (layoutParams?.leftMargin ?: 0) + (layoutParams?.rightMargin ?: 0)
+                }
+            val availableWidth = (row.width - siblingsWidth - horizontalMarginPx).coerceAtLeast(minWidthPx)
+            binding.chatModeText.maxWidth = availableWidth
+        }
+        if (row.width > 0) {
+            applyLayout()
+        } else {
+            row.doOnLayout { applyLayout() }
+        }
+    }
+
     private fun renderRoomModeBadge() {
         val binding = _binding ?: return
         binding.chatModeText.text = roomModeBadgeText
-        binding.chatModeText.visibility = if (roomModeBadgeText != null) View.VISIBLE else View.GONE
-        featureDebugLog("roomModeBadge visible=${roomModeBadgeText != null} text=${roomModeBadgeText ?: "-"}")
+        if (roomModeBadgeText == null) {
+            binding.chatModeText.removeCallbacks(hideRoomModeBadgeRunnable)
+            binding.chatModeText.isSelected = false
+            binding.chatModeText.visibility = View.GONE
+        }
+        updateHeaderBadgeLayout()
+        featureDebugLog("roomModeBadge visible=${binding.chatModeText.visibility == View.VISIBLE} text=${roomModeBadgeText ?: "-"}")
+    }
+
+    private fun buildRoomStateSignature(roomState: RoomState): String {
+        return listOf(
+            roomState.followers,
+            roomState.slow,
+            roomState.subs,
+            roomState.emote,
+            roomState.unique,
+        ).joinToString(separator = "|") { it ?: "null" }
     }
 
     private fun isFeatureDebugLoggingEnabled(): Boolean {
@@ -308,6 +358,26 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         if (isFeatureDebugLoggingEnabled()) {
             Log.d(FEATURE_LOG_TAG, message)
         }
+    }
+
+    private fun flashRoomModeBadge() {
+        val b = _binding ?: return
+        b.chatModeText.removeCallbacks(hideRoomModeBadgeRunnable)
+        val visible = !roomModeBadgeText.isNullOrBlank()
+        b.chatModeText.isSelected = visible
+        b.chatModeText.visibility = if (visible) View.VISIBLE else View.GONE
+        updateHeaderBadgeLayout()
+        featureDebugLog("modeBadgeFlash visible=$visible text=${roomModeBadgeText ?: "-"}")
+        if (visible) {
+            b.chatModeText.postDelayed(hideRoomModeBadgeRunnable, HEADER_BADGE_FLASH_DURATION_MS)
+        }
+    }
+
+    private fun flashHeaderBadges() {
+        if (!roomModeBadgeText.isNullOrBlank()) {
+            flashRoomModeBadge()
+        }
+        flashDelayBadge()
     }
 
     private fun buildRoomModeBadgeText(
@@ -458,10 +528,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         channelId = channelId,
                         loggedInUser = if (enableMessaging) accountLogin else null,
                         messageClickListener = { channelId, tappedMessage ->
-                            (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
-                            editText.clearFocus()
-                            tappedMessageDialogSeed = tappedMessage
-                            MessageClickedDialog.newInstance(enableMessaging, channelId, requireArguments().getString(KEY_CHANNEL_LOGIN)).show(this@ChatFragment.childFragmentManager, "messageDialog")
+                            if (ChatAdapterUtils.hasUserIdentity(tappedMessage)) {
+                                (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
+                                editText.clearFocus()
+                                tappedMessageDialogSeed = tappedMessage
+                                MessageClickedDialog.newInstance(enableMessaging, channelId, requireArguments().getString(KEY_CHANNEL_LOGIN)).show(this@ChatFragment.childFragmentManager, "messageDialog")
+                            }
                         },
                         replyClickListener = {
                             (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
@@ -495,8 +567,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                     chatStatus.visibility = View.VISIBLE
                                     chatStatus.postDelayed({ chatStatus.visibility = View.GONE }, 5000)
                                 }
-                                if (delayBadgeActive && chatDelayText.isGone) {
-                                    flashDelayBadge()
+                                if ((!roomModeBadgeText.isNullOrBlank() && chatModeText.isGone) || (delayBadgeActive && chatDelayText.isGone)) {
+                                    flashHeaderBadges()
                                 }
                             }
                         })
@@ -617,6 +689,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.roomState.collectLatest { roomState ->
                                 if (roomState != null) {
+                                    val roomStateSignature = buildRoomStateSignature(roomState)
+                                    if (roomStateSignature == lastRoomStateSignature) {
+                                        viewModel.roomState.value = null
+                                        return@collectLatest
+                                    }
+                                    lastRoomStateSignature = roomStateSignature
                                     when (roomState.emote) {
                                         "0" -> textEmote.visibility = View.GONE
                                         "1" -> textEmote.visibility = View.VISIBLE
@@ -657,22 +735,23 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                         "0" -> textSubs.visibility = View.GONE
                                         "1" -> textSubs.visibility = View.VISIBLE
                                     }
-                                    roomModeBadgeText = buildRoomModeBadgeText(
+                                    val updatedRoomModeBadgeText = buildRoomModeBadgeText(
                                         followers = roomState.followers,
                                         slow = roomState.slow,
                                         subs = roomState.subs,
                                         emote = roomState.emote,
                                         unique = roomState.unique,
                                     )
-                                    renderRoomModeBadge()
-                                    if (textEmote.isGone && textFollowers.isGone && textUnique.isGone && textSlow.isGone && textSubs.isGone) {
-                                        showChatStatus = false
-                                        chatStatus.visibility = View.GONE
-                                    } else {
-                                        showChatStatus = true
-                                        chatStatus.visibility = View.VISIBLE
-                                        chatStatus.postDelayed({ chatStatus.visibility = View.GONE }, 5000)
+                                    val roomModeChanged = roomModeBadgeText != updatedRoomModeBadgeText
+                                    roomModeBadgeText = updatedRoomModeBadgeText
+                                    if (roomModeChanged) {
+                                        renderRoomModeBadge()
+                                        if (!roomModeBadgeText.isNullOrBlank()) {
+                                            flashRoomModeBadge()
+                                        }
                                     }
+                                    showChatStatus = false
+                                    chatStatus.visibility = View.GONE
                                     viewModel.roomState.value = null
                                 }
                             }
@@ -1192,6 +1271,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     override fun initialize() {
         if (!requireContext().prefs().getBoolean(C.CHAT_DISABLE, false)) {
+            lastRoomStateSignature = null
             val args = requireArguments()
             val channelId = args.getString(KEY_CHANNEL_ID)
             val channelLogin = args.getString(KEY_CHANNEL_LOGIN)
@@ -1314,6 +1394,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             delayBadgeFirstShown = false
             b.chatDelayText.removeCallbacks(hideDelayBadgeRunnable)
             b.chatDelayText.visibility = View.GONE
+            updateHeaderBadgeLayout()
             featureDebugLog("delayBadge inactive mode=${ctx.prefs().getString(C.CHAT_DELAY_MODE, "0")}")
         }
     }
@@ -1323,13 +1404,15 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val b = _binding ?: return
         if (!ctx.prefs().getBoolean(C.CHAT_SHOW_DELAY_INDICATOR, true)) {
             b.chatDelayText.visibility = View.GONE
+            updateHeaderBadgeLayout()
             return
         }
         b.chatDelayText.removeCallbacks(hideDelayBadgeRunnable)
         b.chatDelayText.visibility = if (delayBadgeActive) View.VISIBLE else View.GONE
+        updateHeaderBadgeLayout()
         featureDebugLog("badgeFlash delayVisible=${delayBadgeActive} modeVisible=${roomModeBadgeText != null} modeText=${roomModeBadgeText ?: "-"}")
         if (delayBadgeActive) {
-            b.chatDelayText.postDelayed(hideDelayBadgeRunnable, 4000L)
+            b.chatDelayText.postDelayed(hideDelayBadgeRunnable, HEADER_BADGE_FLASH_DURATION_MS)
         }
     }
 
@@ -1570,6 +1653,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     companion object {
         private const val FEATURE_LOG_TAG = "KickChatUi"
+        private const val HEADER_BADGE_FLASH_DURATION_MS = 6500L
+        private const val HEADER_BADGE_HORIZONTAL_MARGIN_DP = 8
+        private const val HEADER_BADGE_MIN_WIDTH_DP = 96
         private const val KEY_IS_LIVE = "isLive"
         private const val KEY_CHANNEL_ID = "channel_id"
         private const val KEY_CHANNEL_LOGIN = "channel_login"

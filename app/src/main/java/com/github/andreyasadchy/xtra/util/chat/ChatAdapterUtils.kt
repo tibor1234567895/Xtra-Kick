@@ -92,6 +92,54 @@ object ChatAdapterUtils {
         return deletedLabel.length
     }
 
+    private fun isReplyDirectedAtLoggedInUser(chatMessage: ChatMessage, loggedInUser: String?): Boolean {
+        if (loggedInUser.isNullOrBlank()) {
+            return false
+        }
+        if (chatMessage.userLogin.equals(loggedInUser, true)) {
+            return false
+        }
+        val replyTargets = listOfNotNull(
+            chatMessage.replyParent?.userLogin,
+            chatMessage.replyParent?.userName,
+            chatMessage.reply?.userLogin,
+            chatMessage.reply?.userName,
+        )
+        return replyTargets.any { it.equals(loggedInUser, true) }
+    }
+
+    fun hasUserIdentity(chatMessage: ChatMessage?): Boolean {
+        return chatMessage != null &&
+            (!chatMessage.userId.isNullOrBlank() ||
+                !chatMessage.userLogin.isNullOrBlank() ||
+                !chatMessage.userName.isNullOrBlank())
+    }
+
+    fun isMessageHighlightedForLoggedInUser(
+        chatMessage: ChatMessage,
+        loggedInUser: String?,
+        renderedText: CharSequence? = null,
+    ): Boolean {
+        if (loggedInUser.isNullOrBlank()) {
+            return false
+        }
+        if (chatMessage.isReply) {
+            return false
+        }
+        if (isReplyDirectedAtLoggedInUser(chatMessage, loggedInUser)) {
+            return true
+        }
+        if (chatMessage.userLogin.equals(loggedInUser, true)) {
+            return false
+        }
+        val textToInspect = renderedText?.toString() ?: chatMessage.message ?: return false
+        return textToInspect
+            .split(" ")
+            .any { token ->
+                !Patterns.WEB_URL.matcher(token).matches() && token.contains(loggedInUser, true)
+            }
+    }
+
     fun prepareChatMessage(chatMessage: ChatMessage, cacheSignature: Long, enableTimestamps: Boolean, timestampFormat: String?, firstMsgVisibility: Int, firstChatMsg: String, redeemedChatMsg: String, redeemedNoMsg: String, rewardChatMsg: String, replyMessage: String, imageClick: ((String?, String?, String?, Boolean?, Int?, Boolean?, String?) -> Unit)?, useRandomColors: Boolean, random: Random, useReadableColors: Boolean, isLightTheme: Boolean, nameDisplay: String?, useBoldNames: Boolean, showNamePaints: Boolean, namePaints: List<NamePaint>, showStvBadges: Boolean, showKickBadges: Boolean, stvBadges: List<StvBadge>, showPersonalEmotes: Boolean, personalEmoteSets: Map<String, List<Emote>>, stvUsers: List<StvUser>, enableOverlayEmotes: Boolean, showSystemMessageEmotes: Boolean, loggedInUser: String?, chatUrl: String?, getEmoteBytes: ((String, Pair<Long, Int>) -> ByteArray?)?, userColors: HashMap<String, Int>, savedColors: HashMap<String, Int>, localTwitchEmotes: List<TwitchEmote>, thirdPartyEmotes: List<Emote>, globalBadges: List<TwitchBadge>, channelBadges: List<TwitchBadge>, cheerEmotes: List<CheerEmote>, savedLocalTwitchEmotes: MutableMap<String, ByteArray>, savedLocalBadges: MutableMap<String, ByteArray>, savedLocalCheerEmotes: MutableMap<String, ByteArray>, savedLocalEmotes: MutableMap<String, ByteArray>): MessageResult {
         synchronized(preparedMessages) {
             preparedMessages[chatMessage]?.get(cacheSignature)?.let { return it.copyForBind() }
@@ -118,6 +166,9 @@ object ChatAdapterUtils {
                     val replySourceMessage = chatMessage.replyParent?.takeIf { it.message == message } ?: chatMessage
                     prepareEmotes(replySourceMessage, message, builder, builderIndex, images, null, useReadableColors, isLightTheme, enableOverlayEmotes, useBoldNames, loggedInUser, chatUrl, getEmoteBytes, savedColors, localTwitchEmotes, showPersonalEmotes, personalEmoteSets, null, thirdPartyEmotes, cheerEmotes, savedLocalTwitchEmotes, savedLocalCheerEmotes, savedLocalEmotes)
                     builderIndex = builder.length
+                }
+                if (isMessageHighlightedForLoggedInUser(chatMessage, loggedInUser, builder)) {
+                    backgroundRes = R.color.chatMessageMention
                 }
             }
             chatMessage.message.isNullOrBlank() && (chatMessage.systemMsg != null || chatMessage.reward?.title != null) -> {
@@ -398,7 +449,7 @@ object ChatAdapterUtils {
                         builder.setSpan(ForegroundColorSpan(color), builderIndex, builderIndex + chatMessage.message.length, SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
                     val result = prepareEmotes(chatMessage, chatMessage.message, builder, builderIndex, images, imageClick, useReadableColors, isLightTheme, enableOverlayEmotes, useBoldNames, loggedInUser, chatUrl, getEmoteBytes, savedColors, localTwitchEmotes, showPersonalEmotes, personalEmoteSets, stvUser, thirdPartyEmotes, cheerEmotes, savedLocalTwitchEmotes, savedLocalCheerEmotes, savedLocalEmotes)
-                    wasMentioned = result
+                    wasMentioned = result || isMessageHighlightedForLoggedInUser(chatMessage, loggedInUser, builder.subSequence(messageStart, builder.length))
                     builderIndex = builder.length
                     if (chatMessage.isDeleted) {
                         builder.setSpan(StrikethroughSpan(), messageStart, builderIndex, SPAN_EXCLUSIVE_EXCLUSIVE)

@@ -208,7 +208,10 @@ class ChatAdapter(
     }
 
     private fun resolveDividerColor(position: Int, backgroundColor: Int): ChatBackgroundUtils.DividerColors? {
-        if (!enableAlternatingLineShadows || position <= 0) {
+        val shouldDrawDivider = synchronized(messages) {
+            ChatListParityUtils.shouldDrawDividerAbove(messages, position)
+        }
+        if (!enableAlternatingLineShadows || !shouldDrawDivider) {
             return null
         }
         return ChatBackgroundUtils.resolveDividerColors(
@@ -310,7 +313,9 @@ class ChatAdapter(
                         if (selectionStart == -1 && selectionEnd == -1) {
                             selectedMessage = chatMessage.replyParent
                             val tappedMessage = selectedMessage
-                            messageClickListener?.invoke(channelId, tappedMessage)
+                            if (ChatAdapterUtils.hasUserIdentity(tappedMessage)) {
+                                messageClickListener?.invoke(channelId, tappedMessage)
+                            }
                         }
                     }
                 } else {
@@ -322,7 +327,9 @@ class ChatAdapter(
                         if (selectionStart == -1 && selectionEnd == -1) {
                             selectedMessage = chatMessage
                             val tappedMessage = selectedMessage
-                            messageClickListener?.invoke(channelId, tappedMessage)
+                            if (ChatAdapterUtils.hasUserIdentity(tappedMessage)) {
+                                messageClickListener?.invoke(channelId, tappedMessage)
+                            }
                         }
                     }
                 }

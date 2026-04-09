@@ -894,8 +894,14 @@ class MainViewModel @Inject constructor(
 
     fun validate(networkLibrary: String?, gqlHeaders: Map<String, String>, gqlWebClientId: String?, gqlWebToken: String?, helixHeaders: Map<String, String>, accountId: String?, accountLogin: String?, activity: Activity) {
         if (_kickValidationState.value == KickValidationState.COMPLETE) {
-            KickApiHelper.checkedValidation = true
-            return
+            val accessToken = activity.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)
+            val expiresAt = activity.tokenPrefs().getLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L)
+            val now = System.currentTimeMillis() / 1000L
+            if (!accessToken.isNullOrBlank() && AuthStateHelper.isKickAccessTokenUsable(expiresAt, now)) {
+                KickApiHelper.checkedValidation = true
+                return
+            }
+            _kickValidationState.value = KickValidationState.IDLE
         }
         if (kickValidationJob?.isActive == true) {
             return

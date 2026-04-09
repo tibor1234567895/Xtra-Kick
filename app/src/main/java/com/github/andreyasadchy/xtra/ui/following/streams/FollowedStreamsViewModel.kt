@@ -295,12 +295,12 @@ class FollowedStreamsViewModel @Inject constructor(
     }
 
     private suspend fun loadStreamsFromPublicApi(follows: List<LocalFollowChannel>): PublicApiLoadResult? {
-        val headers = KickApiHelper.getHelixHeaders(applicationContext)
+        val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
+        val headers = kickRepository.getHelixHeadersWithRefresh(networkLibrary)
         if (headers[C.HEADER_TOKEN].isNullOrBlank()) {
             logFollowedStreamsInfo("Fast followed-live path skipped: missing auth token")
             return null
         }
-        val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
         val broadcasterIdsByLogin = loadBroadcasterIdCache()
         val followsByBroadcasterId = follows
             .mapNotNull { follow ->
@@ -362,12 +362,12 @@ class FollowedStreamsViewModel @Inject constructor(
             return BulkFallbackLoadResult(emptyList(), emptyList())
         }
 
-        val headers = KickApiHelper.getHelixHeaders(applicationContext)
+        val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
+        val headers = kickRepository.getHelixHeadersWithRefresh(networkLibrary)
         if (headers[C.HEADER_TOKEN].isNullOrBlank()) {
             logFollowedStreamsInfo("Bulk followed-live fallback skipped: missing auth token")
             return null
         }
-        val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
         val followByLogin = follows
             .mapNotNull { follow ->
                 follow.userLogin

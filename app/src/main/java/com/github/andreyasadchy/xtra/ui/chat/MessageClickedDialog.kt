@@ -195,9 +195,6 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
     }
 
     private fun bindSelectedMessage(selectedMessage: ChatMessage) {
-        updateButtons(selectedMessage)
-        renderFallbackHeader(selectedMessage)
-
         val selectedUserId = selectedMessage.userId?.takeIf { it.isNotBlank() }
         val selectedUserLogin = selectedMessage.userLogin?.takeIf { it.isNotBlank() }
             ?: selectedMessage.userName?.takeIf { it.isNotBlank() }
@@ -206,9 +203,12 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
             binding.viewProfile.visibility = android.view.View.GONE
             binding.followButton.isEnabled = false
             binding.muteButton.isEnabled = false
+            binding.userLayout.visibility = android.view.View.GONE
             return
         }
 
+        updateButtons(selectedMessage)
+        renderFallbackHeader(selectedMessage)
         binding.viewProfile.visibility = android.view.View.VISIBLE
         binding.viewProfile.setOnClickListener {
             listener.onViewProfileClicked(selectedUserId, selectedUserLogin, selectedUserName, null)

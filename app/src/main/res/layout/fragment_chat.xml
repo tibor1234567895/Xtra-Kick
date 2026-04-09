@@ -38,11 +38,12 @@
                 tools:visibility="visible" />
 
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:id="@+id/chatHeaderBadges"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_gravity="top|end"
                 android:layout_margin="4dp"
-                android:gravity="center_vertical"
+                android:gravity="end|center_vertical"
                 android:orientation="horizontal">
 
                 <TextView
@@ -51,13 +52,17 @@
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="4dp"
                     android:background="?attr/chatStatus"
-                    android:ellipsize="end"
+                    android:ellipsize="marquee"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:marqueeRepeatLimit="marquee_forever"
                     android:maxLines="1"
-                    android:maxWidth="180dp"
                     android:paddingStart="6dp"
                     android:paddingEnd="6dp"
                     android:paddingTop="2dp"
                     android:paddingBottom="2dp"
+                    android:scrollHorizontally="true"
+                    android:singleLine="true"
                     android:textAppearance="?attr/textAppearanceBodySmall"
                     android:visibility="gone"
                     tools:text="Slow 30s • Followers 10m"

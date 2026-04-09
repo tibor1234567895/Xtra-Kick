@@ -34,8 +34,6 @@ import com.github.andreyasadchy.xtra.model.chat.StvUser
 import com.github.andreyasadchy.xtra.model.chat.TwitchBadge
 import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
 import com.github.andreyasadchy.xtra.model.kick.KickMessage
-import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendRefreshRequest
-import com.github.andreyasadchy.xtra.repository.AuthRepository
 import com.github.andreyasadchy.xtra.repository.GraphQLRepository
 import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickAuthRequestException
@@ -45,7 +43,6 @@ import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
-import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.WebSocketRuntime
 import com.github.andreyasadchy.xtra.util.chat.ChatReadIRC
 import com.github.andreyasadchy.xtra.util.chat.ChatReadWebSocket
@@ -99,7 +96,6 @@ import kotlin.concurrent.scheduleAtFixedRate
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
-    private val authRepository: AuthRepository,
     private val graphQLRepository: GraphQLRepository,
     private val helixRepository: HelixRepository,
     private val kickRepository: KickRepository,
@@ -142,6 +138,7 @@ class ChatViewModel @Inject constructor(
     private var kickReplayFallbackGetCurrentPosition: (() -> Long?)? = null
     private var kickReplaySessionKey: String? = null
     private var kickReplaySessionStartPositionMs: Long? = null
+    private var kickInitialRoomStateLoaded = false
     private var kickRealtimeLastDisconnectMessage: String? = null
     private var kickRealtimeLastDisconnectAtMs: Long = 0L
     private val kickReplayPreloadWindowMs = 60_000L
@@ -150,7 +147,6 @@ class ChatViewModel @Inject constructor(
     private val kickReplayEmitIntervalMs = 750L
     private val kickReplayEmitLeadMs = 500L
     private val kickReplyThreadHistoryWindowMs = 6L * 60L * 60L * 1000L
-    private val kickAccessTokenRefreshBufferSeconds = 30L
     private val kickRealtimeChatroomIdPrefix = "kick_realtime_chatroom_id"
     private val kickPreferredMessageSourcePrefix = "kick_preferred_message_source"
     private val kickReplayPendingMessages = PriorityQueue(
@@ -320,6 +316,21 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    private fun loadKickInitialRoomStateIfNeeded(channelId: String?, channelLogin: String?, forceRefresh: Boolean = false) {
+        if (!isKickPreferred() || channelLogin.isNullOrBlank()) {
+            return
+        }
+        if (!forceRefresh && kickInitialRoomStateLoaded && roomState.value != null) {
+            return
+        }
+        kickInitialRoomStateLoaded = true
+        viewModelScope.launch {
+            kickRepository.getInitialRoomState(channelLogin, channelId)?.let {
+                roomState.value = it
+            }
+        }
+    }
+
     private fun buildMutedUserKeys(users: List<com.github.andreyasadchy.xtra.model.ui.MutedChatUser>): Set<String> {
         return buildSet {
             users.forEach { user ->
@@ -357,6 +368,7 @@ class ChatViewModel @Inject constructor(
             messageLimit = applicationContext.prefs().getInt(C.CHAT_LIMIT, 600)
             this.streamId = streamId
             kickLivePollingFallbackActive = false
+            kickInitialRoomStateLoaded = false
             startLiveChat(channelId, channelLogin)
             addChatter(channelName)
             loadEmotes(channelId, channelLogin)
@@ -384,6 +396,8 @@ class ChatViewModel @Inject constructor(
     ) {
         if (chatReplayManager == null && chatReplayManagerLocal == null) {
             messageLimit = applicationContext.prefs().getInt(C.CHAT_LIMIT, 600)
+            kickInitialRoomStateLoaded = false
+            loadKickInitialRoomStateIfNeeded(channelId, channelLogin)
             startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, kickReplayFallback, kickReplayStartTime, kickReplayUrl)
             if (videoId != null || kickReplayFallback) {
                 loadEmotes(channelId, channelLogin)
@@ -736,22 +750,28 @@ class ChatViewModel @Inject constructor(
                     if (debugKickRealtimeChat) {
                         Log.w("KickRecentChat", "preload start channelId=$channelId channelLogin=$channelLogin sources=$kickMessageSources")
                     }
-                    val fetchedMessages = fetchKickMessages(
-                        messageSources = kickMessageSources,
+                    val liveHistorySources = buildList {
+                        add(channelId)
+                        addAll(kickMessageSources)
+                    }.distinct()
+                    if (debugKickRealtimeChat) {
+                        Log.w(
+                            "KickRecentChat",
+                            "preload live history primary channelId=$channelId channelLogin=$channelLogin sources=$liveHistorySources"
+                        )
+                    }
+                    val fetchedMessages = fetchKickLiveHistoryMessages(
+                        messageSources = liveHistorySources,
                         channelId = channelId,
                         channelLogin = channelLogin
                     ).ifEmpty {
-                        val liveHistorySources = buildList {
-                            add(channelId)
-                            addAll(kickMessageSources)
-                        }.distinct()
                         if (debugKickRealtimeChat) {
                             Log.w(
                                 "KickRecentChat",
-                                "preload live history fallback channelId=$channelId channelLogin=$channelLogin sources=$liveHistorySources"
+                                "preload recent fallback channelId=$channelId channelLogin=$channelLogin sources=$kickMessageSources"
                             )
                         }
-                        fetchKickLiveHistoryMessages(
+                        fetchKickMessages(
                             messageSources = liveHistorySources,
                             channelId = channelId,
                             channelLogin = channelLogin
@@ -997,39 +1017,15 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun getKickAccessTokenForChatSend(forceRefresh: Boolean = false): String? {
-        val tokenPrefs = applicationContext.tokenPrefs()
-        val accessToken = tokenPrefs.getString(C.KICK_ACCESS_TOKEN, null)?.takeIf { it.isNotBlank() } ?: return null
-        val refreshToken = tokenPrefs.getString(C.KICK_REFRESH_TOKEN, null)?.takeIf { it.isNotBlank() }
-        val expiresAt = tokenPrefs.getLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L)
-        val now = System.currentTimeMillis() / 1000L
-        val shouldRefresh = forceRefresh ||
-            (expiresAt > 0L && expiresAt <= now + kickAccessTokenRefreshBufferSeconds)
-
-        if (!shouldRefresh) {
-            return accessToken
-        }
-
-        if (refreshToken.isNullOrBlank()) {
-            return if (AuthStateHelper.isKickAccessTokenUsable(expiresAt, now)) accessToken else null
-        }
-
-        val backendBaseUrl = KickOAuthConfig.getBackendBaseUrl(applicationContext) ?: return accessToken
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-        val refresh = authRepository.refreshKickToken(
+        val headers = kickRepository.getHelixHeadersWithRefresh(
             networkLibrary = networkLibrary,
-            backendBaseUrl = backendBaseUrl,
-            request = KickBackendRefreshRequest(
-                refreshToken = refreshToken,
-            ),
+            forceRefresh = forceRefresh,
         )
-        val newAccessToken = refresh.accessToken?.takeIf { it.isNotBlank() } ?: return null
-        tokenPrefs.edit {
-            putString(C.KICK_ACCESS_TOKEN, newAccessToken)
-            putString(C.KICK_REFRESH_TOKEN, refresh.refreshToken ?: refreshToken)
-            putLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, now + (refresh.expiresIn ?: 0L))
-            putString(C.KICK_TOKEN_TYPE, refresh.tokenType)
-        }
-        return newAccessToken
+        return headers[C.HEADER_TOKEN]
+            ?.removePrefix("Bearer ")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
     }
 
     private suspend fun loadStvChannelEmotes(networkLibrary: String?, channelId: String, channelLogin: String?, useWebp: Boolean): Pair<String?, List<Emote>> {
@@ -1155,19 +1151,15 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun buildReplyPreviewMessage(message: ChatMessage, additionalMessages: List<ChatMessage> = emptyList()): ChatMessage? {
-        val reply = message.reply?.takeIf { !it.threadParentId.isNullOrBlank() && it.message != null } ?: return null
+        val reply = message.reply?.takeIf { !it.threadParentId.isNullOrBlank() } ?: return null
         val replyParent = findReplyParentMessage(reply, additionalMessages)
-        val previewReply = replyParent
-            ?.takeIf { it.message == reply.message }
-            ?.let {
-                Reply(
-                    threadParentId = reply.threadParentId,
-                    userLogin = it.userLogin ?: reply.userLogin,
-                    userName = it.userName ?: reply.userName,
-                    message = it.message ?: reply.message
-                )
-            }
-            ?: reply
+        val previewMessage = replyParent?.message ?: reply.message ?: replyParent?.systemMsg ?: return null
+        val previewReply = Reply(
+            threadParentId = reply.threadParentId,
+            userLogin = replyParent?.userLogin ?: reply.userLogin,
+            userName = replyParent?.userName ?: reply.userName,
+            message = previewMessage
+        )
         return ChatMessage(
             reply = previewReply,
             isReply = true,
@@ -2033,11 +2025,7 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             }
-            viewModelScope.launch {
-                kickRepository.getInitialRoomState(channelLogin, channelId)?.let {
-                    roomState.value = it
-                }
-            }
+            loadKickInitialRoomStateIfNeeded(channelId, channelLogin)
             chatReadJob = viewModelScope.launch {
                 runCatching {
                     kickRepository.getChannel(channelLogin)
@@ -2299,6 +2287,7 @@ class ChatViewModel @Inject constructor(
         updateChannelPointsBalance(null)
         updateChannelPointRewards(emptyList(), false)
         roomState.value = RoomState("0", "-1", "0", "0", "0")
+        kickInitialRoomStateLoaded = false
         autoReconnect = false
     }
 
@@ -2395,6 +2384,13 @@ class ChatViewModel @Inject constructor(
                 } else {
                     updatePinnedGift(update.pinnedGift)
                 }
+            }
+            val shouldRefreshRoomState = kickRepository.shouldRefreshRoomStateFromRealtimeEvent(eventName, messageJson)
+            kickRepository.parseRealtimeRoomStateUpdate(eventName, messageJson)?.let { updatedRoomState ->
+                roomState.value = updatedRoomState
+            }
+            if (shouldRefreshRoomState) {
+                loadKickInitialRoomStateIfNeeded(channelId, channelLogin, forceRefresh = true)
             }
             val realtimeMessage = parseKickRealtimeMessage(eventName, messageJson) ?: return
             val kickMessage = realtimeMessage.message
