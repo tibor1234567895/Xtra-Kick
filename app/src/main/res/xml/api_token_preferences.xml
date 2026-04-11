@@ -12,10 +12,21 @@
         app:singleLineTitle="false" />
 
     <EditTextPreference
-        android:defaultValue="user:read chat:write"
+        android:defaultValue="user:read chat:write events:subscribe"
         android:key="kick_scopes"
         android:title="@string/api_kick_scopes"
         app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <PreferenceCategory
+        android:title="@string/kick_developer_tools"
+        app:iconSpaceReserved="false" />
+
+    <Preference
+        android:key="action_kick_manage_event_subscriptions"
+        android:summary="@string/kick_manage_event_subscriptions_summary"
+        android:title="@string/kick_manage_event_subscriptions"
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextPaint
@@ -20,8 +21,11 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.MultiAutoCompleteTextView
+import android.widget.ScrollView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.core.content.res.use
 import androidx.core.view.ViewCompat
@@ -32,6 +36,8 @@ import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import androidx.core.text.util.LinkifyCompat
 import androidx.core.widget.addTextChangedListener
+import androidx.core.view.doOnLayout
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
@@ -53,7 +59,14 @@ import com.github.andreyasadchy.xtra.databinding.FragmentChatBinding
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.PinnedGift
+import com.github.andreyasadchy.xtra.model.chat.RoomState
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialReward
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialRewardCreateRequest
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialRewardUpdateRequest
+import com.github.andreyasadchy.xtra.model.kick.KickRewardRedemption
+import com.github.andreyasadchy.xtra.model.kick.KickRewardRedemptionsPage
 import com.github.andreyasadchy.xtra.model.ui.Stream
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.ui.channel.ChannelPagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.common.BaseNetworkFragment
 import com.github.andreyasadchy.xtra.ui.common.IntegrityDialog
@@ -62,6 +75,7 @@ import com.github.andreyasadchy.xtra.ui.player.PlayerFragment
 import com.github.andreyasadchy.xtra.ui.view.AutoCompleteAdapter
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
+import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.chat.ChatAdapterUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatListParityUtils
@@ -77,6 +91,7 @@ import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import kotlin.math.max
 import kotlin.math.roundToInt
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickListener, ReplyClickedDialog.OnButtonClickListener {
@@ -85,18 +100,32 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private val viewModel: ChatViewModel by viewModels()
     private var adapter: ChatAdapter? = null
 
+    @Inject
+    lateinit var kickRepository: KickRepository
+
     private var isChatTouched = false
     private var showChatStatus = false
     private var hasRecentEmotes = false
     private var delayBadgeActive = false
     private var roomModeBadgeText: String? = null
+    private var lastRoomStateSignature: String? = null
     private var delayBadgeFirstShown = false
     private val hideDelayBadgeRunnable = Runnable {
         _binding?.chatDelayText?.visibility = View.GONE
+        updateHeaderBadgeLayout()
+    }
+    private val hideRoomModeBadgeRunnable = Runnable {
+        _binding?.chatModeText?.apply {
+            isSelected = false
+            visibility = View.GONE
+        }
+        updateHeaderBadgeLayout()
     }
     private var messagingEnabled = false
     private var pinnedMessageDialogSeed: ChatMessage? = null
     private var tappedMessageDialogSeed: ChatMessage? = null
+    private var pinnedGiftContentKey: String? = null
+    private var pinnedGiftTitleExpandable = false
 
     private var autoCompleteAdapter: AutoCompleteAdapter<Any>? = null
 
@@ -121,7 +150,23 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         if (size > 0) {
             adapter.notifyDataSetChanged()
             if (!isChatTouched && binding.btnDown.isGone) {
-                binding.recyclerView.scrollToPosition(size - 1)
+                scrollChatToBottom(size - 1)
+            }
+        }
+    }
+
+    private fun scrollChatToBottom(position: Int) {
+        val binding = _binding ?: return
+        if (position < 0) return
+        val recyclerView = binding.recyclerView
+        recyclerView.post {
+            val activeBinding = _binding ?: return@post
+            activeBinding.recyclerView.scrollToPosition(position)
+            activeBinding.recyclerView.doOnLayout { view ->
+                val laidOutRecyclerView = view as? RecyclerView ?: return@doOnLayout
+                if (laidOutRecyclerView.canScrollVertically(1)) {
+                    laidOutRecyclerView.scrollBy(0, laidOutRecyclerView.computeVerticalScrollRange())
+                }
             }
         }
     }
@@ -249,9 +294,23 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val pinnedGift = viewModel.pinnedGift.value
         val dismissed = viewModel.pinnedGiftDismissed.value
         binding.pinnedGiftRestore.isVisible = pinnedGift != null && dismissed
+        updateHeaderBadgeLayout()
         if (pinnedGift == null || dismissed) {
+            pinnedGiftContentKey = null
+            pinnedGiftTitleExpandable = false
             binding.pinnedGiftLayout.isGone = true
             return
+        }
+        val contentKey = listOf(
+            pinnedGift.id,
+            pinnedGift.message,
+            pinnedGift.giftValue?.toString(),
+            pinnedGift.userId,
+            pinnedGift.userLogin
+        ).joinToString("|")
+        if (pinnedGiftContentKey != contentKey) {
+            pinnedGiftContentKey = contentKey
+            pinnedGiftTitleExpandable = false
         }
         val expanded = viewModel.pinnedGiftExpanded.value
         binding.pinnedGiftLayout.isVisible = true
@@ -259,10 +318,19 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         binding.pinnedGiftText.text = buildPinnedMetadataText(pinnedGift)
         binding.pinnedGiftTitle.maxLines = if (expanded) Int.MAX_VALUE else 1
         binding.pinnedGiftTitle.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
-        binding.pinnedGiftExpand.rotation = if (expanded) 180f else 0f
-        binding.pinnedGiftExpand.contentDescription = getString(
-            if (expanded) R.string.pinned_message_collapse else R.string.pinned_message_expand
-        )
+        updatePinnedGiftExpandUi(showExpand = expanded && pinnedGiftTitleExpandable, expanded = expanded)
+        if (!expanded) {
+            binding.pinnedGiftTitle.doOnLayout {
+                val layout = binding.pinnedGiftTitle.layout ?: return@doOnLayout
+                val titleIsTruncated = (0 until layout.lineCount).any { lineIndex ->
+                    layout.getEllipsisCount(lineIndex) > 0
+                }
+                if (pinnedGiftTitleExpandable != titleIsTruncated) {
+                    pinnedGiftTitleExpandable = titleIsTruncated
+                    updatePinnedGiftExpandUi(showExpand = titleIsTruncated, expanded = false)
+                }
+            }
+        }
         binding.pinnedGiftLayout.isClickable = true
         binding.pinnedGiftLayout.isFocusable = true
         binding.pinnedGiftLayout.setOnClickListener { }
@@ -287,16 +355,120 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
     }
 
-    private fun renderChannelPointsButton() {
+    private fun updatePinnedGiftExpandUi(showExpand: Boolean, expanded: Boolean) {
         val binding = _binding ?: return
-        binding.channelPointsButton.isGone = true
+        binding.pinnedGiftExpand.isVisible = showExpand
+        binding.pinnedGiftExpand.isEnabled = showExpand
+        binding.pinnedGiftExpand.rotation = if (expanded) 180f else 0f
+        binding.pinnedGiftExpand.contentDescription = getString(
+            if (expanded) R.string.pinned_message_collapse else R.string.pinned_message_expand
+        )
+        val endTarget = if (showExpand) R.id.pinnedGiftExpand else R.id.pinnedGiftClose
+        binding.pinnedGiftTitle.updateLayoutParams<ConstraintLayout.LayoutParams> {
+            endToStart = endTarget
+        }
+        binding.pinnedGiftText.updateLayoutParams<ConstraintLayout.LayoutParams> {
+            endToStart = endTarget
+        }
+    }
+
+    private fun currentKickScopes(): String? {
+        return requireContext().prefs().getString(C.KICK_SCOPES, null)
+    }
+
+    private fun currentChannelLogin(): String? {
+        return requireArguments().getString(KEY_CHANNEL_LOGIN)
+    }
+
+    private fun isKickRewardsOwnerChannel(): Boolean {
+        val accountLogin = requireContext().tokenPrefs().getString(C.KICK_USER_LOGIN, null)
+        return !accountLogin.isNullOrBlank() &&
+            !currentChannelLogin().isNullOrBlank() &&
+            accountLogin.equals(currentChannelLogin(), ignoreCase = true)
+    }
+
+    private fun hasKickScopes(vararg scopes: String): Boolean {
+        return KickOAuthConfig.hasScopes(currentKickScopes(), scopes.toSet())
+    }
+
+    private fun hasAnyKickScope(vararg scopes: String): Boolean {
+        val configured = currentKickScopes()
+        return scopes.any { scope -> KickOAuthConfig.hasScopes(configured, setOf(scope)) }
+    }
+
+    private fun requireKickRewardScopes(vararg scopes: String): Boolean {
+        if (!com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(requireContext())) {
+            requireContext().getAlertDialogBuilder()
+                .setMessage(getString(R.string.log_in))
+                .setPositiveButton(getString(R.string.close), null)
+                .show()
+            return false
+        }
+        if (!hasKickScopes(*scopes)) {
+            Toast.makeText(
+                requireContext(),
+                getString(
+                    if (scopes.size > 1) R.string.kick_scope_required_multiple else R.string.kick_scope_required,
+                    scopes.joinToString(" ")
+                ),
+                Toast.LENGTH_LONG
+            ).show()
+            return false
+        }
+        return true
+    }
+
+    private fun refreshKickRewardState() {
+        viewModel.refreshKickChannelPointState(
+            networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
+            channelId = requireArguments().getString(KEY_CHANNEL_ID),
+            channelLogin = currentChannelLogin(),
+        )
+    }
+
+    private fun updateHeaderBadgeLayout() {
+        val binding = _binding ?: return
+        val row = binding.chatHeaderBadges
+        val applyLayout = {
+            val density = resources.displayMetrics.density
+            val minWidthPx = (HEADER_BADGE_MIN_WIDTH_DP * density).roundToInt()
+            val horizontalMarginPx = (HEADER_BADGE_HORIZONTAL_MARGIN_DP * density).roundToInt()
+            val siblingsWidth = listOf(binding.chatDelayText, binding.pinnedGiftRestore)
+                .filter { it.visibility == View.VISIBLE }
+                .sumOf { view ->
+                    val layoutParams = view.layoutParams as? ViewGroup.MarginLayoutParams
+                    view.width + (layoutParams?.leftMargin ?: 0) + (layoutParams?.rightMargin ?: 0)
+                }
+            val availableWidth = (row.width - siblingsWidth - horizontalMarginPx).coerceAtLeast(minWidthPx)
+            binding.chatModeText.maxWidth = availableWidth
+        }
+        if (row.width > 0) {
+            applyLayout()
+        } else {
+            row.doOnLayout { applyLayout() }
+        }
     }
 
     private fun renderRoomModeBadge() {
         val binding = _binding ?: return
         binding.chatModeText.text = roomModeBadgeText
-        binding.chatModeText.visibility = if (roomModeBadgeText != null) View.VISIBLE else View.GONE
-        featureDebugLog("roomModeBadge visible=${roomModeBadgeText != null} text=${roomModeBadgeText ?: "-"}")
+        if (roomModeBadgeText == null) {
+            binding.chatModeText.removeCallbacks(hideRoomModeBadgeRunnable)
+            binding.chatModeText.isSelected = false
+            binding.chatModeText.visibility = View.GONE
+        }
+        updateHeaderBadgeLayout()
+        featureDebugLog("roomModeBadge visible=${binding.chatModeText.visibility == View.VISIBLE} text=${roomModeBadgeText ?: "-"}")
+    }
+
+    private fun buildRoomStateSignature(roomState: RoomState): String {
+        return listOf(
+            roomState.followers,
+            roomState.slow,
+            roomState.subs,
+            roomState.emote,
+            roomState.unique,
+        ).joinToString(separator = "|") { it ?: "null" }
     }
 
     private fun isFeatureDebugLoggingEnabled(): Boolean {
@@ -308,6 +480,26 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         if (isFeatureDebugLoggingEnabled()) {
             Log.d(FEATURE_LOG_TAG, message)
         }
+    }
+
+    private fun flashRoomModeBadge() {
+        val b = _binding ?: return
+        b.chatModeText.removeCallbacks(hideRoomModeBadgeRunnable)
+        val visible = !roomModeBadgeText.isNullOrBlank()
+        b.chatModeText.isSelected = visible
+        b.chatModeText.visibility = if (visible) View.VISIBLE else View.GONE
+        updateHeaderBadgeLayout()
+        featureDebugLog("modeBadgeFlash visible=$visible text=${roomModeBadgeText ?: "-"}")
+        if (visible) {
+            b.chatModeText.postDelayed(hideRoomModeBadgeRunnable, HEADER_BADGE_FLASH_DURATION_MS)
+        }
+    }
+
+    private fun flashHeaderBadges() {
+        if (!roomModeBadgeText.isNullOrBlank()) {
+            flashRoomModeBadge()
+        }
+        flashDelayBadge()
     }
 
     private fun buildRoomModeBadgeText(
@@ -341,28 +533,381 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         return statuses.takeIf { it.isNotEmpty() }?.joinToString(" • ")
     }
 
-    private fun showChannelPointRewardsDialog() {
-        val balanceText = getString(
-            R.string.channel_points_rewards_balance,
-            viewModel.channelPointsBalance.value?.let { NumberFormat.getInstance().format(it) } ?: "?"
-        )
-        val rewards = viewModel.channelPointRewards.value
-        val summary = if (rewards.isNotEmpty()) {
-            rewards.joinToString("\n") { reward ->
-                val title = reward.title ?: reward.prompt ?: reward.id ?: getString(R.string.channel_points_rewards_title)
-                buildString {
-                    append(getString(R.string.channel_points_reward_line, NumberFormat.getInstance().format(reward.cost ?: 0), title))
-                    if (reward.isUserInputRequired == true) {
-                        append(" • ")
-                        append(getString(R.string.channel_points_reward_input_required))
-                    }
-                }
+    private fun currentNetworkLibrary(): String? {
+        return requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
+    }
+
+    private fun showKickApiError(error: Throwable) {
+        Toast.makeText(requireContext(), error.message ?: getString(R.string.connection_error), Toast.LENGTH_LONG).show()
+    }
+
+    private fun openKickRewardsManager() {
+        if (!isKickRewardsOwnerChannel() || !hasAnyKickScope("channel:rewards:read", "channel:rewards:write")) {
+            requireKickRewardScopes("channel:rewards:read")
+            return
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            runCatching {
+                kickRepository.getOfficialChannelRewards(currentNetworkLibrary())
+            }.onSuccess(::showKickRewardsManagerDialog)
+                .onFailure(::showKickApiError)
+        }
+    }
+
+    private fun showKickRewardsManagerDialog(rewards: List<KickOfficialReward>) {
+        val labels = rewards.map(::formatKickRewardLabel).toTypedArray()
+        val builder = requireContext().getAlertDialogBuilder()
+            .setTitle(getString(R.string.kick_manage_rewards))
+            .setNegativeButton(getString(R.string.close), null)
+            .setPositiveButton(getString(R.string.kick_reward_create)) { _, _ ->
+                showKickRewardEditor()
+            }
+            .setNeutralButton(getString(R.string.refresh)) { _, _ ->
+                refreshKickRewardState()
+                openKickRewardsManager()
+            }
+        if (labels.isNotEmpty()) {
+            builder.setItems(labels) { _, which ->
+                rewards.getOrNull(which)?.let(::showKickRewardActionsDialog)
             }
         } else {
-            getString(R.string.channel_points_rewards_unavailable)
+            builder.setMessage(getString(R.string.kick_reward_empty))
         }
-        ChannelPointRewardsDialog.newInstance(balanceText, summary)
-            .show(childFragmentManager, "channelPointRewardsDialog")
+        builder.show()
+    }
+
+    private fun formatKickRewardLabel(reward: KickOfficialReward): String {
+        val title = reward.title ?: reward.id ?: getString(R.string.kick_manage_rewards)
+        val cost = reward.cost?.toString() ?: "?"
+        val extras = buildList {
+            if (reward.isEnabled == false) add("disabled")
+            if (reward.isPaused == true) add("paused")
+        }
+        return if (extras.isEmpty()) {
+            "$title ($cost)"
+        } else {
+            "$title ($cost, ${extras.joinToString(", ")})"
+        }
+    }
+
+    private fun showKickRewardActionsDialog(reward: KickOfficialReward) {
+        requireContext().getAlertDialogBuilder()
+            .setTitle(reward.title ?: reward.id ?: getString(R.string.kick_manage_rewards))
+            .setMessage(
+                buildString {
+                    appendLine(getString(R.string.kick_reward_cost) + ": " + (reward.cost ?: "?"))
+                    reward.description?.takeIf { it.isNotBlank() }?.let {
+                        appendLine(getString(R.string.kick_reward_description) + ": $it")
+                    }
+                    reward.backgroundColor?.takeIf { it.isNotBlank() }?.let {
+                        appendLine(getString(R.string.kick_reward_background_color) + ": $it")
+                    }
+                    appendLine(getString(R.string.kick_reward_enabled) + ": " + (reward.isEnabled ?: false))
+                    appendLine(getString(R.string.kick_reward_paused) + ": " + (reward.isPaused ?: false))
+                    append(getString(R.string.kick_reward_requires_input) + ": " + (reward.isUserInputRequired ?: false))
+                }
+            )
+            .setPositiveButton(getString(R.string.kick_reward_edit)) { _, _ ->
+                showKickRewardEditor(reward)
+            }
+            .setNeutralButton(getString(R.string.kick_reward_delete)) { _, _ ->
+                confirmKickRewardDelete(reward)
+            }
+            .setNegativeButton(getString(R.string.close), null)
+            .show()
+    }
+
+    private data class RewardEditorView(
+        val view: View,
+        val title: EditText,
+        val description: EditText,
+        val cost: EditText,
+        val backgroundColor: EditText,
+        val enabled: androidx.appcompat.widget.SwitchCompat,
+        val paused: androidx.appcompat.widget.SwitchCompat?,
+        val requiresInput: androidx.appcompat.widget.SwitchCompat,
+        val skipQueue: androidx.appcompat.widget.SwitchCompat,
+    )
+
+    private fun showKickRewardEditor(existing: KickOfficialReward? = null) {
+        if (!requireKickRewardScopes("channel:rewards:write")) return
+        val editor = createRewardEditorView(existing)
+        requireContext().getAlertDialogBuilder()
+            .setTitle(if (existing == null) getString(R.string.kick_reward_create) else getString(R.string.kick_reward_edit))
+            .setView(editor.view)
+            .setPositiveButton(getString(R.string.save)) { _, _ ->
+                val title = editor.title.text.toString().trim()
+                val description = editor.description.text.toString().trim().takeIf { it.isNotBlank() }
+                val cost = editor.cost.text.toString().trim().toIntOrNull()
+                val backgroundColor = editor.backgroundColor.text.toString().trim().takeIf { it.isNotBlank() }
+                viewLifecycleOwner.lifecycleScope.launch {
+                    runCatching {
+                        if (existing == null) {
+                            kickRepository.createOfficialChannelReward(
+                                currentNetworkLibrary(),
+                                KickOfficialRewardCreateRequest(
+                                    title = title,
+                                    cost = cost ?: 0,
+                                    description = description,
+                                    backgroundColor = backgroundColor,
+                                    isEnabled = editor.enabled.isChecked,
+                                    isUserInputRequired = editor.requiresInput.isChecked,
+                                    shouldRedemptionsSkipRequestQueue = editor.skipQueue.isChecked,
+                                )
+                            )
+                        } else {
+                            kickRepository.updateOfficialChannelReward(
+                                currentNetworkLibrary(),
+                                rewardId = existing.id ?: error("Missing reward id"),
+                                input = KickOfficialRewardUpdateRequest(
+                                    title = title,
+                                    cost = cost,
+                                    description = description,
+                                    backgroundColor = backgroundColor,
+                                    isEnabled = editor.enabled.isChecked,
+                                    isPaused = editor.paused?.isChecked,
+                                    isUserInputRequired = editor.requiresInput.isChecked,
+                                    shouldRedemptionsSkipRequestQueue = editor.skipQueue.isChecked,
+                                )
+                            )
+                        }
+                    }.onSuccess {
+                        Toast.makeText(requireContext(), R.string.kick_rewards_saved, Toast.LENGTH_SHORT).show()
+                        refreshKickRewardState()
+                        openKickRewardsManager()
+                    }.onFailure(::showKickApiError)
+                }
+            }
+            .setNegativeButton(getString(R.string.close), null)
+            .show()
+    }
+
+    private fun createRewardEditorView(existing: KickOfficialReward?): RewardEditorView {
+        val context = requireContext()
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 16, 32, 16)
+        }
+        fun addField(hintRes: Int, value: String? = null, inputType: Int = InputType.TYPE_CLASS_TEXT): EditText {
+            return EditText(context).apply {
+                hint = getString(hintRes)
+                setText(value.orEmpty())
+                this.inputType = inputType
+                container.addView(this)
+            }
+        }
+        fun addSwitch(labelRes: Int, checked: Boolean): androidx.appcompat.widget.SwitchCompat {
+            return androidx.appcompat.widget.SwitchCompat(context).apply {
+                text = getString(labelRes)
+                isChecked = checked
+                container.addView(this)
+            }
+        }
+        val title = addField(R.string.kick_reward_title, existing?.title)
+        val description = addField(R.string.kick_reward_description, existing?.description)
+        val cost = addField(R.string.kick_reward_cost, existing?.cost?.toString(), InputType.TYPE_CLASS_NUMBER)
+        val backgroundColor = addField(R.string.kick_reward_background_color, existing?.backgroundColor)
+        val enabled = addSwitch(R.string.kick_reward_enabled, existing?.isEnabled != false)
+        val paused = existing?.let { addSwitch(R.string.kick_reward_paused, it.isPaused == true) }
+        val requiresInput = addSwitch(R.string.kick_reward_requires_input, existing?.isUserInputRequired == true)
+        val skipQueue = addSwitch(R.string.kick_reward_skip_queue, existing?.shouldRedemptionsSkipRequestQueue == true)
+        return RewardEditorView(
+            view = ScrollView(context).apply { addView(container) },
+            title = title,
+            description = description,
+            cost = cost,
+            backgroundColor = backgroundColor,
+            enabled = enabled,
+            paused = paused,
+            requiresInput = requiresInput,
+            skipQueue = skipQueue,
+        )
+    }
+
+    private fun confirmKickRewardDelete(reward: KickOfficialReward) {
+        if (!requireKickRewardScopes("channel:rewards:write")) return
+        val rewardId = reward.id ?: return
+        requireContext().getAlertDialogBuilder()
+            .setTitle(getString(R.string.kick_reward_delete))
+            .setMessage(reward.title ?: rewardId)
+            .setPositiveButton(getString(R.string.yes)) { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch {
+                    runCatching {
+                        kickRepository.deleteOfficialChannelReward(currentNetworkLibrary(), rewardId)
+                    }.onSuccess {
+                        Toast.makeText(requireContext(), R.string.kick_reward_deleted, Toast.LENGTH_SHORT).show()
+                        refreshKickRewardState()
+                        openKickRewardsManager()
+                    }.onFailure(::showKickApiError)
+                }
+            }
+            .setNegativeButton(getString(R.string.no), null)
+            .show()
+    }
+
+    private fun openKickRedemptionsManager(status: String? = "pending", rewardId: String? = null, cursor: String? = null) {
+        if (!isKickRewardsOwnerChannel() || !hasAnyKickScope("channel:rewards:read", "channel:rewards:write")) {
+            requireKickRewardScopes("channel:rewards:read")
+            return
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            runCatching {
+                kickRepository.getOfficialRewardRedemptions(
+                    networkLibrary = currentNetworkLibrary(),
+                    rewardId = rewardId,
+                    status = status,
+                    cursor = cursor,
+                )
+            }.onSuccess { page ->
+                showKickRedemptionsDialog(page, status, rewardId)
+            }.onFailure(::showKickApiError)
+        }
+    }
+
+    private fun showKickRedemptionsDialog(page: KickRewardRedemptionsPage, status: String?, rewardId: String?) {
+        val visible = page.groups.flatMap { group ->
+            group.redemptions.map { redemption -> (group.reward?.title ?: getString(R.string.kick_manage_redemptions)) to redemption }
+        }
+        val message = if (visible.isEmpty()) {
+            getString(R.string.kick_redemptions_empty)
+        } else {
+            visible.joinToString("\n\n") { (title, redemption) -> formatKickRedemptionLabel(title, redemption) }
+        }
+        requireContext().getAlertDialogBuilder()
+            .setTitle(getString(R.string.kick_manage_redemptions))
+            .setMessage(message)
+            .setPositiveButton(if (visible.isNotEmpty()) getString(R.string.kick_redemption_accept) else getString(R.string.close)) { _, _ ->
+                if (visible.isNotEmpty()) {
+                    showKickRedemptionSelectionDialog(visible, status, rewardId)
+                }
+            }
+            .setNeutralButton(getString(R.string.kick_redemption_filters)) { _, _ ->
+                showKickRedemptionFilterDialog(status, rewardId, page.nextCursor)
+            }
+            .setNegativeButton(getString(R.string.close), null)
+            .show()
+    }
+
+    private fun formatKickRedemptionLabel(rewardTitle: String, redemption: KickRewardRedemption): String {
+        return buildString {
+            append(rewardTitle)
+            append(" • ")
+            append(redemption.redeemer?.username ?: redemption.redeemer?.userId ?: redemption.id ?: "?")
+            append(" • ")
+            append(redemption.status ?: "?")
+            redemption.userInput?.takeIf { it.isNotBlank() }?.let {
+                append("\n")
+                append(it)
+            }
+        }
+    }
+
+    private fun showKickRedemptionSelectionDialog(
+        visible: List<Pair<String, KickRewardRedemption>>,
+        status: String?,
+        rewardId: String?,
+    ) {
+        if (!requireKickRewardScopes("channel:rewards:write")) return
+        val labels = visible.map { (title, redemption) -> formatKickRedemptionLabel(title, redemption) }.toTypedArray()
+        val checked = BooleanArray(labels.size)
+        requireContext().getAlertDialogBuilder()
+            .setTitle(getString(R.string.kick_manage_redemptions))
+            .setMultiChoiceItems(labels, checked) { _, which, isChecked ->
+                checked[which] = isChecked
+            }
+            .setPositiveButton(getString(R.string.kick_redemption_accept)) { _, _ ->
+                updateKickSelectedRedemptions(visible, checked, true, status, rewardId)
+            }
+            .setNeutralButton(getString(R.string.kick_redemption_reject)) { _, _ ->
+                updateKickSelectedRedemptions(visible, checked, false, status, rewardId)
+            }
+            .setNegativeButton(getString(R.string.close), null)
+            .show()
+    }
+
+    private fun updateKickSelectedRedemptions(
+        visible: List<Pair<String, KickRewardRedemption>>,
+        checked: BooleanArray,
+        accept: Boolean,
+        status: String?,
+        rewardId: String?,
+    ) {
+        val ids = checked.indices.mapNotNull { index ->
+            visible.getOrNull(index)?.second?.id?.takeIf { checked[index] }
+        }
+        if (ids.isEmpty()) {
+            Toast.makeText(requireContext(), R.string.kick_no_selection, Toast.LENGTH_SHORT).show()
+            return
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            runCatching {
+                if (accept) {
+                    kickRepository.acceptOfficialRewardRedemptions(currentNetworkLibrary(), ids)
+                } else {
+                    kickRepository.rejectOfficialRewardRedemptions(currentNetworkLibrary(), ids)
+                }
+            }.onSuccess { failures ->
+                if (failures.isNotEmpty()) {
+                    Toast.makeText(
+                        requireContext(),
+                        failures.joinToString("\n") { "${it.id ?: "?"}: ${it.reason ?: "UNKNOWN"}" },
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(requireContext(), R.string.kick_redemptions_updated, Toast.LENGTH_SHORT).show()
+                }
+                refreshKickRewardState()
+                openKickRedemptionsManager(status = status, rewardId = rewardId)
+            }.onFailure(::showKickApiError)
+        }
+    }
+
+    private fun showKickRedemptionFilterDialog(currentStatus: String?, rewardId: String?, nextCursor: String?) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val rewards = runCatching {
+                kickRepository.getOfficialChannelRewards(currentNetworkLibrary())
+            }.getOrDefault(emptyList())
+            val options = buildList {
+                nextCursor?.let { add(getString(R.string.kick_load_more)) }
+                add(getString(R.string.kick_all_rewards))
+                addAll(rewards.map { it.title ?: it.id ?: getString(R.string.kick_manage_rewards) })
+            }
+            requireContext().getAlertDialogBuilder()
+                .setTitle(getString(R.string.kick_select_reward))
+                .setItems(options.toTypedArray()) { _, which ->
+                    if (nextCursor != null && which == 0) {
+                        openKickRedemptionsManager(status = currentStatus, rewardId = rewardId, cursor = nextCursor)
+                        return@setItems
+                    }
+                    val baseIndex = if (nextCursor != null) 1 else 0
+                    val selectedRewardId = if (which == baseIndex) null else rewards.getOrNull(which - baseIndex - 1)?.id
+                    showKickRedemptionStatusDialog(selectedRewardId)
+                }
+                .setNegativeButton(getString(R.string.close), null)
+                .show()
+        }
+    }
+
+    private fun showKickRedemptionStatusDialog(selectedRewardId: String?) {
+        val options = arrayOf(
+            getString(R.string.kick_redemption_status_all),
+            getString(R.string.kick_redemption_status_pending),
+            getString(R.string.kick_redemption_status_accepted),
+            getString(R.string.kick_redemption_status_rejected),
+        )
+        requireContext().getAlertDialogBuilder()
+            .setTitle(getString(R.string.kick_redemption_filters))
+            .setItems(options) { _, which ->
+                val selectedStatus = when (which) {
+                    1 -> "pending"
+                    2 -> "accepted"
+                    3 -> "rejected"
+                    else -> null
+                }
+                openKickRedemptionsManager(status = selectedStatus, rewardId = selectedRewardId)
+            }
+            .setNegativeButton(getString(R.string.close), null)
+            .show()
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -458,10 +1003,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         channelId = channelId,
                         loggedInUser = if (enableMessaging) accountLogin else null,
                         messageClickListener = { channelId, tappedMessage ->
-                            (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
-                            editText.clearFocus()
-                            tappedMessageDialogSeed = tappedMessage
-                            MessageClickedDialog.newInstance(enableMessaging, channelId, requireArguments().getString(KEY_CHANNEL_LOGIN)).show(this@ChatFragment.childFragmentManager, "messageDialog")
+                            if (ChatAdapterUtils.hasUserIdentity(tappedMessage)) {
+                                (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
+                                editText.clearFocus()
+                                tappedMessageDialogSeed = tappedMessage
+                                MessageClickedDialog.newInstance(enableMessaging, channelId, requireArguments().getString(KEY_CHANNEL_LOGIN)).show(this@ChatFragment.childFragmentManager, "messageDialog")
+                            }
                         },
                         replyClickListener = {
                             (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
@@ -495,15 +1042,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                     chatStatus.visibility = View.VISIBLE
                                     chatStatus.postDelayed({ chatStatus.visibility = View.GONE }, 5000)
                                 }
-                                if (delayBadgeActive && chatDelayText.isGone) {
-                                    flashDelayBadge()
+                                if ((!roomModeBadgeText.isNullOrBlank() && chatModeText.isGone) || (delayBadgeActive && chatDelayText.isGone)) {
+                                    flashHeaderBadges()
                                 }
                             }
                         })
                     }
                     renderBufferedMessages()
                     renderPinnedGift()
-                    renderChannelPointsButton()
                     pinnedGiftClose.setOnClickListener {
                         viewModel.dismissPinnedGift()
                     }
@@ -518,7 +1064,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             val lastIndex = synchronized(viewModel.chatMessages) {
                                 viewModel.chatMessages.lastIndex
                             }
-                            recyclerView.scrollToPosition(lastIndex)
+                            scrollChatToBottom(lastIndex)
                             it.visibility = View.GONE
                         }
                     }
@@ -617,6 +1163,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.roomState.collectLatest { roomState ->
                                 if (roomState != null) {
+                                    val roomStateSignature = buildRoomStateSignature(roomState)
+                                    if (roomStateSignature == lastRoomStateSignature) {
+                                        viewModel.roomState.value = null
+                                        return@collectLatest
+                                    }
+                                    lastRoomStateSignature = roomStateSignature
                                     when (roomState.emote) {
                                         "0" -> textEmote.visibility = View.GONE
                                         "1" -> textEmote.visibility = View.VISIBLE
@@ -657,22 +1209,23 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                         "0" -> textSubs.visibility = View.GONE
                                         "1" -> textSubs.visibility = View.VISIBLE
                                     }
-                                    roomModeBadgeText = buildRoomModeBadgeText(
+                                    val updatedRoomModeBadgeText = buildRoomModeBadgeText(
                                         followers = roomState.followers,
                                         slow = roomState.slow,
                                         subs = roomState.subs,
                                         emote = roomState.emote,
                                         unique = roomState.unique,
                                     )
-                                    renderRoomModeBadge()
-                                    if (textEmote.isGone && textFollowers.isGone && textUnique.isGone && textSlow.isGone && textSubs.isGone) {
-                                        showChatStatus = false
-                                        chatStatus.visibility = View.GONE
-                                    } else {
-                                        showChatStatus = true
-                                        chatStatus.visibility = View.VISIBLE
-                                        chatStatus.postDelayed({ chatStatus.visibility = View.GONE }, 5000)
+                                    val roomModeChanged = roomModeBadgeText != updatedRoomModeBadgeText
+                                    roomModeBadgeText = updatedRoomModeBadgeText
+                                    if (roomModeChanged) {
+                                        renderRoomModeBadge()
+                                        if (!roomModeBadgeText.isNullOrBlank()) {
+                                            flashRoomModeBadge()
+                                        }
                                     }
+                                    showChatStatus = false
+                                    chatStatus.visibility = View.GONE
                                     viewModel.roomState.value = null
                                 }
                             }
@@ -726,13 +1279,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.pinnedGiftExpanded.collectLatest {
                                 renderPinnedGift()
-                            }
-                        }
-                    }
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        repeatOnLifecycle(Lifecycle.State.STARTED) {
-                            viewModel.channelPointsSummary.collectLatest {
-                                renderChannelPointsButton()
                             }
                         }
                     }
@@ -1059,7 +1605,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                         }
                                     }
                                     if (!isChatTouched && binding.btnDown.isGone) {
-                                        binding.recyclerView.scrollToPosition(lastIndex - removeCount)
+                                        scrollChatToBottom(lastIndex - removeCount)
                                     }
                                 }
                                 messageDialog?.newMessage(message)
@@ -1084,7 +1630,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                         adapter.notifyItemRangeChanged(it.start, it.count, ChatAdapter.PAYLOAD_REFORMAT)
                                     }
                                     if (!isChatTouched && binding.btnDown.isGone) {
-                                        binding.recyclerView.scrollToPosition(lastIndex)
+                                        scrollChatToBottom(lastIndex)
                                     }
                                 }
                                 messageDialog?.addMessages(messages)
@@ -1101,7 +1647,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 adapter?.let { adapter ->
                                     adapter.notifyItemRangeInserted(insertStart, messages.size)
                                     if (!isChatTouched && binding.btnDown.isGone) {
-                                        binding.recyclerView.scrollToPosition(insertStart + messages.size - 1)
+                                        scrollChatToBottom(insertStart + messages.size - 1)
                                     }
                                 }
                                 messageDialog?.addMessages(messages)
@@ -1192,6 +1738,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     override fun initialize() {
         if (!requireContext().prefs().getBoolean(C.CHAT_DISABLE, false)) {
+            lastRoomStateSignature = null
             val args = requireArguments()
             val channelId = args.getString(KEY_CHANNEL_ID)
             val channelLogin = args.getString(KEY_CHANNEL_LOGIN)
@@ -1314,6 +1861,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             delayBadgeFirstShown = false
             b.chatDelayText.removeCallbacks(hideDelayBadgeRunnable)
             b.chatDelayText.visibility = View.GONE
+            updateHeaderBadgeLayout()
             featureDebugLog("delayBadge inactive mode=${ctx.prefs().getString(C.CHAT_DELAY_MODE, "0")}")
         }
     }
@@ -1323,13 +1871,15 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val b = _binding ?: return
         if (!ctx.prefs().getBoolean(C.CHAT_SHOW_DELAY_INDICATOR, true)) {
             b.chatDelayText.visibility = View.GONE
+            updateHeaderBadgeLayout()
             return
         }
         b.chatDelayText.removeCallbacks(hideDelayBadgeRunnable)
         b.chatDelayText.visibility = if (delayBadgeActive) View.VISIBLE else View.GONE
+        updateHeaderBadgeLayout()
         featureDebugLog("badgeFlash delayVisible=${delayBadgeActive} modeVisible=${roomModeBadgeText != null} modeText=${roomModeBadgeText ?: "-"}")
         if (delayBadgeActive) {
-            b.chatDelayText.postDelayed(hideDelayBadgeRunnable, 4000L)
+            b.chatDelayText.postDelayed(hideDelayBadgeRunnable, HEADER_BADGE_FLASH_DURATION_MS)
         }
     }
 
@@ -1389,7 +1939,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 val lastIndex = synchronized(viewModel.chatMessages) {
                     viewModel.chatMessages.lastIndex
                 }
-                recyclerView.scrollToPosition(lastIndex)
+                scrollChatToBottom(lastIndex)
                 true
             } else {
                 false
@@ -1570,6 +2120,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     companion object {
         private const val FEATURE_LOG_TAG = "KickChatUi"
+        private const val HEADER_BADGE_FLASH_DURATION_MS = 6500L
+        private const val HEADER_BADGE_HORIZONTAL_MARGIN_DP = 8
+        private const val HEADER_BADGE_MIN_WIDTH_DP = 96
         private const val KEY_IS_LIVE = "isLive"
         private const val KEY_CHANNEL_ID = "channel_id"
         private const val KEY_CHANNEL_LOGIN = "channel_login"

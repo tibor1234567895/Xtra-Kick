@@ -195,9 +195,6 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
     }
 
     private fun bindSelectedMessage(selectedMessage: ChatMessage) {
-        updateButtons(selectedMessage)
-        renderFallbackHeader(selectedMessage)
-
         val selectedUserId = selectedMessage.userId?.takeIf { it.isNotBlank() }
         val selectedUserLogin = selectedMessage.userLogin?.takeIf { it.isNotBlank() }
             ?: selectedMessage.userName?.takeIf { it.isNotBlank() }
@@ -206,9 +203,12 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
             binding.viewProfile.visibility = android.view.View.GONE
             binding.followButton.isEnabled = false
             binding.muteButton.isEnabled = false
+            binding.userLayout.visibility = android.view.View.GONE
             return
         }
 
+        updateButtons(selectedMessage)
+        renderFallbackHeader(selectedMessage)
         binding.viewProfile.visibility = android.view.View.VISIBLE
         binding.viewProfile.setOnClickListener {
             listener.onViewProfileClicked(selectedUserId, selectedUserLogin, selectedUserName, null)
@@ -446,6 +446,7 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
     }
 
     private fun renderDetails(user: User?, chatMessage: ChatMessage?) {
+        val displayedBadges = buildDisplayedBadges(chatMessage)
         val createdText = user?.createdAt?.let(::formatAccountDetail).orEmpty()
         val followedText = user?.followedAt?.let(::formatAccountDetail).orEmpty()
         val subscriptionText = buildSubscriptionDetail(chatMessage?.badges.orEmpty())?.text.orEmpty()
@@ -458,7 +459,20 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
         binding.userSubscribedRow.isVisible = subscriptionText.isNotBlank()
         binding.metaLayout.isVisible = binding.userCreatedRow.isVisible || binding.userFollowedRow.isVisible || binding.userSubscribedRow.isVisible
 
-        renderBadges(chatMessage?.badges.orEmpty())
+        renderBadges(displayedBadges)
+    }
+
+    private fun buildDisplayedBadges(chatMessage: ChatMessage?): List<Badge> {
+        val messageBadges = chatMessage?.badges.orEmpty()
+        val stvBadge = adapter?.resolveSelectedStvBadge()?.let(::stvBadgeToDisplayBadge)
+        return if (stvBadge == null) {
+            messageBadges
+        } else {
+            buildList(messageBadges.size + 1) {
+                addAll(messageBadges)
+                add(stvBadge)
+            }
+        }
     }
 
     private fun formatAccountDetail(isoDate: String): String? {
@@ -519,52 +533,15 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
     }
 
     private fun buildBadgeLabel(badge: Badge): String {
-        val base = badge.title
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::prettifyBadgeName)
-            ?: prettifyBadgeName(badge.setId)
-        val version = badge.version.takeIf { shouldAppendBadgeVersion(badge, base, it) }
-        return if (version != null) "$base $version" else base
-    }
-
-    private fun shouldAppendBadgeVersion(badge: Badge, base: String, version: String): Boolean {
-        val normalized = normalizedBadgeId(badge)
-        return version.isNotBlank() &&
-            version != "1" &&
-            version.none { !it.isDigit() } &&
-            !base.contains(version) &&
-            normalized in setOf("subscriber", "founder", "sub_gifter")
+        return buildBadgeDisplayLabel(badge)
     }
 
     private fun looksSubscriptionRelated(badge: Badge): Boolean {
-        val normalized = normalizedBadgeId(badge)
-        val title = badge.title.orEmpty().lowercase(Locale.ROOT)
-        return normalized in setOf("subscriber", "founder") ||
-            title.contains("sub") ||
-            title.contains("founder")
+        return looksSubscriptionRelatedBadge(badge)
     }
 
     private fun normalizedBadgeId(badge: Badge): String {
-        return badge.setId
-            .trim()
-            .lowercase(Locale.ROOT)
-            .replace(Regex("[^a-z0-9_]+"), "_")
-            .removePrefix("badge_")
-            .replace(Regex("_badges?$"), "")
-            .replace(Regex("_badge_?\\d*$"), "")
-    }
-
-    private fun prettifyBadgeName(value: String): String {
-        return value
-            .replace('_', ' ')
-            .replace('-', ' ')
-            .trim()
-            .lowercase(Locale.getDefault())
-            .split(Regex("\\s+"))
-            .filter { it.isNotBlank() }
-            .joinToString(" ") { token ->
-                token.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
-            }
+        return normalizeDisplayBadgeId(badge.setId)
     }
 
     private fun dp(value: Int): Int {

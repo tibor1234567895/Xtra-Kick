@@ -11,11 +11,15 @@ import android.text.style.ImageSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.view.isVisible
+import androidx.core.view.doOnLayout
+import androidx.core.view.updateLayoutParams
 import androidx.appcompat.widget.TooltipCompat
 import androidx.core.content.ContextCompat
 import androidx.core.text.getSpans
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.RecyclerView
 import com.github.andreyasadchy.xtra.R
@@ -95,6 +99,7 @@ class ChatAdapter(
     private val savedLocalBadges = mutableMapOf<String, ByteArray>()
     private val savedLocalCheerEmotes = mutableMapOf<String, ByteArray>()
     private val savedLocalEmotes = mutableMapOf<String, ByteArray>()
+    private val expandedReplyPreviewKeys = mutableSetOf<String>()
     private var renderGeneration = 0L
     private val renderConfigSignature = listOf(
         enableTimestamps,
@@ -146,10 +151,25 @@ class ChatAdapter(
 
     private fun renderSignature(): Long = renderConfigSignature * 31L + renderGeneration
 
+    private fun messageBindKey(chatMessage: ChatMessage, position: Int): String {
+        return listOfNotNull(
+            position.toString(),
+            chatMessage.id,
+            chatMessage.timestamp?.toString(),
+            chatMessage.userId,
+            chatMessage.userLogin,
+            chatMessage.userName,
+            chatMessage.message,
+            chatMessage.systemMsg,
+            chatMessage.fullMsg
+        ).joinToString("|")
+    }
+
     private fun bindMessage(holder: ViewHolder, position: Int) {
         val chatMessage = synchronized(messages) {
             messages.getOrNull(position)
         } ?: return
+        val bindKey = messageBindKey(chatMessage, position)
         val result = ChatAdapterUtils.prepareChatMessage(
             chatMessage, renderSignature(), enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg,
             rewardChatMsg, replyMessage, null, useRandomColors, random, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints,
@@ -157,9 +177,13 @@ class ChatAdapter(
             loggedInUser, chatUrl, getEmoteBytes, userColors, savedColors, localTwitchEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalTwitchEmotes, savedLocalBadges,
             savedLocalCheerEmotes, savedLocalEmotes
         )
-        holder.bind(chatMessage, result.builder, position, result.backgroundRes)
+        holder.bind(bindKey, chatMessage, result.builder, position, result.backgroundRes)
         ChatAdapterUtils.loadImages(
-            fragment, holder.textView, { holder.bind(chatMessage, it, position, result.backgroundRes) }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
+            fragment, holder.textView, { updatedBuilder ->
+                if (holder.isBoundTo(bindKey)) {
+                    holder.bind(bindKey, chatMessage, updatedBuilder, position, result.backgroundRes)
+                }
+            }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
             backgroundColor, imageLibrary, result.builder, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes
         )
     }
@@ -193,6 +217,18 @@ class ChatAdapter(
         messages.size
     }
 
+    private fun replyPreviewKey(chatMessage: ChatMessage): String? {
+        if (!chatMessage.isReply) return null
+        return listOfNotNull(
+            chatMessage.reply?.threadParentId,
+            chatMessage.reply?.userLogin,
+            chatMessage.reply?.userName,
+            chatMessage.reply?.message,
+            chatMessage.timestamp?.toString(),
+            chatMessage.fullMsg
+        ).joinToString("|").takeIf { it.isNotBlank() }
+    }
+
     private fun resolveMessageBackgroundColor(context: Context, position: Int, backgroundRes: Int): Int {
         val overlayColor = backgroundRes.takeIf { it != 0 }?.let { ContextCompat.getColor(context, it) }
         val visualParityPosition = synchronized(messages) {
@@ -208,7 +244,10 @@ class ChatAdapter(
     }
 
     private fun resolveDividerColor(position: Int, backgroundColor: Int): ChatBackgroundUtils.DividerColors? {
-        if (!enableAlternatingLineShadows || position <= 0) {
+        val shouldDrawDivider = synchronized(messages) {
+            ChatListParityUtils.shouldDrawDividerAbove(messages, position)
+        }
+        if (!enableAlternatingLineShadows || !shouldDrawDivider) {
             return null
         }
         return ChatBackgroundUtils.resolveDividerColors(
@@ -265,7 +304,7 @@ class ChatAdapter(
         val childCount = recyclerView.childCount
         if (animateGifs) {
             for (i in 0 until childCount) {
-                ((recyclerView.getChildAt(i) as TextView).text as? Spannable)?.let { view ->
+                (recyclerView.getChildAt(i).findViewById<TextView>(R.id.chatMessageText)?.text as? Spannable)?.let { view ->
                     view.getSpans<ImageSpan>().forEach {
                         (it.drawable as? Animatable)?.stop() ?:
                         (it.drawable as? LayerDrawable)?.let {
@@ -288,41 +327,67 @@ class ChatAdapter(
 
     inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
 
+        private val containerView: View = itemView.findViewById(R.id.chatMessageContainer)
         private val dividerView: View = itemView.findViewById(R.id.chatLineDivider)
         private val dividerHighlightView: View = itemView.findViewById(R.id.chatLineDividerHighlight)
         private val dividerShadowView: View = itemView.findViewById(R.id.chatLineDividerShadow)
         val textView: TextView = itemView.findViewById(R.id.chatMessageText)
+        private val expandView: ImageView = itemView.findViewById(R.id.chatMessageExpand)
+        private var currentBindKey: String? = null
 
-        fun bind(chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder, position: Int, backgroundRes: Int) {
+        fun isBoundTo(bindKey: String): Boolean = currentBindKey == bindKey
+
+        fun bind(bindKey: String, chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder, position: Int, backgroundRes: Int) {
+            currentBindKey = bindKey
             val resolvedBackgroundColor = resolveMessageBackgroundColor(textView.context, position, backgroundRes)
             val dividerColors = resolveDividerColor(position, resolvedBackgroundColor)
+            val previewKey = replyPreviewKey(chatMessage)
+            val expanded = previewKey != null && previewKey in expandedReplyPreviewKeys
             textView.apply {
                 text = formattedMessage
                 textSize = messageTextSize
                 alpha = if (chatMessage.isDeleted) 0.62f else 1f
-                setBackgroundColor(resolvedBackgroundColor)
+                containerView.setBackgroundColor(resolvedBackgroundColor)
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 if (chatMessage.isReply) {
                     movementMethod = null
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
+                    maxLines = if (expanded) Int.MAX_VALUE else 3
+                    ellipsize = if (expanded) null else TextUtils.TruncateAt.END
                     TooltipCompat.setTooltipText(this, chatMessage.replyParent?.message ?: chatMessage.replyParent?.systemMsg)
                     setOnClickListener {
                         if (selectionStart == -1 && selectionEnd == -1) {
                             selectedMessage = chatMessage.replyParent
                             val tappedMessage = selectedMessage
-                            messageClickListener?.invoke(channelId, tappedMessage)
+                            if (ChatAdapterUtils.hasUserIdentity(tappedMessage)) {
+                                messageClickListener?.invoke(channelId, tappedMessage)
+                            }
                         }
+                    }
+                    updateReplyExpandUi(showExpand = expanded, expanded = expanded)
+                    doOnLayout {
+                        val layout = layout ?: return@doOnLayout
+                        if (expanded) {
+                            updateReplyExpandUi(showExpand = true, expanded = true)
+                            return@doOnLayout
+                        }
+                        val isTruncated = layout.lineCount > 3 || (0 until layout.lineCount).any { lineIndex ->
+                            layout.getEllipsisCount(lineIndex) > 0
+                        }
+                        updateReplyExpandUi(showExpand = isTruncated, expanded = false)
                     }
                 } else {
                     movementMethod = LinkMovementMethod.getInstance()
                     maxLines = Int.MAX_VALUE
                     ellipsize = null
+                    updateReplyExpandUi(showExpand = false, expanded = false)
                     TooltipCompat.setTooltipText(this, chatMessage.message ?: chatMessage.systemMsg)
                     setOnClickListener {
                         if (selectionStart == -1 && selectionEnd == -1) {
                             selectedMessage = chatMessage
                             val tappedMessage = selectedMessage
-                            messageClickListener?.invoke(channelId, tappedMessage)
+                            if (ChatAdapterUtils.hasUserIdentity(tappedMessage)) {
+                                messageClickListener?.invoke(channelId, tappedMessage)
+                            }
                         }
                     }
                 }
@@ -331,6 +396,29 @@ class ChatAdapter(
             dividerColors?.let {
                 dividerHighlightView.setBackgroundColor(it.highlightColor)
                 dividerShadowView.setBackgroundColor(it.shadowColor)
+            }
+            expandView.setOnClickListener {
+                val key = previewKey ?: return@setOnClickListener
+                if (key in expandedReplyPreviewKeys) {
+                    expandedReplyPreviewKeys.remove(key)
+                } else {
+                    expandedReplyPreviewKeys.add(key)
+                }
+                val adapterPosition = bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION } ?: return@setOnClickListener
+                notifyItemChanged(adapterPosition, PAYLOAD_REFORMAT)
+            }
+        }
+
+        private fun updateReplyExpandUi(showExpand: Boolean, expanded: Boolean) {
+            expandView.isVisible = showExpand
+            expandView.isEnabled = showExpand
+            expandView.rotation = if (expanded) 180f else 0f
+            expandView.contentDescription = textView.context.getString(
+                if (expanded) R.string.pinned_message_collapse else R.string.pinned_message_expand
+            )
+            textView.updateLayoutParams<ConstraintLayout.LayoutParams> {
+                endToStart = if (showExpand) R.id.chatMessageExpand else ConstraintLayout.LayoutParams.UNSET
+                endToEnd = if (showExpand) ConstraintLayout.LayoutParams.UNSET else ConstraintLayout.LayoutParams.PARENT_ID
             }
         }
     }

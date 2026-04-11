@@ -430,6 +430,50 @@
     <string name="api_gql_redirect">GQL redirect URL</string>
     <string name="api_kick_redirect" translatable="false">Kick redirect URL</string>
     <string name="api_kick_scopes" translatable="false">Kick scopes</string>
+    <string name="kick_developer_tools" translatable="false">Kick developer tools</string>
+    <string name="kick_manage_rewards" translatable="false">Manage Kick rewards</string>
+    <string name="kick_manage_rewards_summary" translatable="false">List, create, edit, and delete official channel rewards.</string>
+    <string name="kick_manage_redemptions" translatable="false">Manage Kick redemptions</string>
+    <string name="kick_manage_redemptions_summary" translatable="false">Review pending/accepted/rejected reward redemptions and accept or reject them.</string>
+    <string name="kick_manage_event_subscriptions" translatable="false">Manage Kick event subscriptions</string>
+    <string name="kick_manage_event_subscriptions_summary" translatable="false">List, create, and delete official webhook event subscriptions.</string>
+    <string name="save" translatable="false">Save</string>
+    <string name="kick_scope_required" translatable="false">Kick scope required: %1$s</string>
+    <string name="kick_scope_required_multiple" translatable="false">Kick scopes required: %1$s</string>
+    <string name="kick_reward_empty" translatable="false">No Kick rewards found.</string>
+    <string name="kick_redemptions_empty" translatable="false">No Kick redemptions matched the current filter.</string>
+    <string name="kick_subscriptions_empty" translatable="false">No Kick event subscriptions found.</string>
+    <string name="kick_reward_create" translatable="false">Create reward</string>
+    <string name="kick_reward_edit" translatable="false">Edit reward</string>
+    <string name="kick_reward_delete" translatable="false">Delete reward</string>
+    <string name="kick_redemption_accept" translatable="false">Accept selected</string>
+    <string name="kick_redemption_reject" translatable="false">Reject selected</string>
+    <string name="kick_redemption_filters" translatable="false">Filters</string>
+    <string name="kick_event_subscription_create" translatable="false">Create subscriptions</string>
+    <string name="kick_event_subscription_delete" translatable="false">Delete subscriptions</string>
+    <string name="kick_event_subscription_webhook_notice" translatable="false">Webhook delivery is configured outside the app in Kick developer settings.</string>
+    <string name="kick_reward_title" translatable="false">Title</string>
+    <string name="kick_reward_description" translatable="false">Description</string>
+    <string name="kick_reward_cost" translatable="false">Cost</string>
+    <string name="kick_reward_background_color" translatable="false">Background color</string>
+    <string name="kick_reward_enabled" translatable="false">Enabled</string>
+    <string name="kick_reward_paused" translatable="false">Paused</string>
+    <string name="kick_reward_requires_input" translatable="false">Require user input</string>
+    <string name="kick_reward_skip_queue" translatable="false">Skip request queue</string>
+    <string name="kick_redemption_status_all" translatable="false">All statuses</string>
+    <string name="kick_redemption_status_pending" translatable="false">Pending</string>
+    <string name="kick_redemption_status_accepted" translatable="false">Accepted</string>
+    <string name="kick_redemption_status_rejected" translatable="false">Rejected</string>
+    <string name="kick_select_reward" translatable="false">Select reward</string>
+    <string name="kick_select_events" translatable="false">Select events</string>
+    <string name="kick_select_subscriptions" translatable="false">Select subscriptions</string>
+    <string name="kick_no_selection" translatable="false">Nothing selected.</string>
+    <string name="kick_load_more" translatable="false">Load more</string>
+    <string name="kick_all_rewards" translatable="false">All rewards</string>
+    <string name="kick_rewards_saved" translatable="false">Kick reward saved.</string>
+    <string name="kick_reward_deleted" translatable="false">Kick reward deleted.</string>
+    <string name="kick_redemptions_updated" translatable="false">Kick redemptions updated.</string>
+    <string name="kick_subscriptions_updated" translatable="false">Kick event subscriptions updated.</string>
     <string name="api_settings">API settings</string>
     <string name="streams">Streams</string>
     <string name="game_streams">Game streams</string>
@@ -870,5 +914,3 @@
     <string name="copy_code">Copy code</string>
     <string name="external_tv_login_message">To get access to all features, you need to login as an Android TV device.\n\nFollow these steps:\nÃ¢â‚¬Â¢ Copy the code shown on the screen.\nÃ¢â‚¬Â¢ Press the \"Open URL\" button.\nÃ¢â‚¬Â¢ Enter the code and press \"Activate\".\nÃ¢â‚¬Â¢ Press \"Authorize\".\nÃ¢â‚¬Â¢ Return to Xtra and press \"Next\".</string>
 </resources>
-
-

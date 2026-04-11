@@ -99,19 +99,28 @@ class MessageClickedChatAdapter(
     }
 
     fun matchesSelectedUser(message: ChatMessage): Boolean {
-        return (!userId.isNullOrBlank() && (message.userId == userId || message.replyParent?.userId == userId)) ||
+        if (message.isReply) return false
+        return (!userId.isNullOrBlank() && message.userId == userId) ||
             (!userLogin.isNullOrBlank() && (
                 equalsIgnoreCase(message.userLogin, userLogin) ||
-                    equalsIgnoreCase(message.replyParent?.userLogin, userLogin) ||
-                    equalsIgnoreCase(message.userName, userLogin) ||
-                    equalsIgnoreCase(message.replyParent?.userName, userLogin)
+                    equalsIgnoreCase(message.userName, userLogin)
                 )) ||
             (!userName.isNullOrBlank() && (
                 equalsIgnoreCase(message.userName, userName) ||
-                    equalsIgnoreCase(message.replyParent?.userName, userName) ||
-                    equalsIgnoreCase(message.userLogin, userName) ||
-                    equalsIgnoreCase(message.replyParent?.userLogin, userName)
+                    equalsIgnoreCase(message.userLogin, userName)
                 ))
+    }
+
+    fun resolveSelectedStvBadge(): StvBadge? {
+        if (!showStvBadges || userId.isNullOrBlank()) {
+            return null
+        }
+        val badgeId = synchronized(stvUsers) {
+            stvUsers.find { it.userId == userId }?.badgeId
+        } ?: return null
+        return synchronized(stvBadges) {
+            stvBadges.find { it.id == badgeId }
+        }
     }
 
     val messages = if (!userId.isNullOrBlank() || !userLogin.isNullOrBlank() || !userName.isNullOrBlank()) {
@@ -257,15 +266,7 @@ class MessageClickedChatAdapter(
             chatMessage.isFirst && firstMsgVisibility < 2 -> R.color.chatMessageFirst
             chatMessage.reward?.id != null && firstMsgVisibility < 2 -> R.color.chatMessageReward
             chatMessage.systemMsg != null || (chatMessage.msgId != null && chatMessage.msgId != "kick_moderation") -> R.color.chatMessageNotice
-            loggedInUser?.let { user ->
-                if (chatMessage.userId != null && chatMessage.userLogin != user) {
-                    item.text.split(" ").find {
-                        !Patterns.WEB_URL.matcher(it).matches() && it.contains(user, true)
-                    } != null
-                } else {
-                    false
-                }
-            } == true -> R.color.chatMessageMention
+            ChatAdapterUtils.isMessageHighlightedForLoggedInUser(chatMessage, loggedInUser, item.text) -> R.color.chatMessageMention
             else -> 0
         }
     }
@@ -295,7 +296,10 @@ class MessageClickedChatAdapter(
     }
 
     private fun resolveDividerColor(position: Int, backgroundColor: Int): ChatBackgroundUtils.DividerColors? {
-        if (!enableAlternatingLineShadows || position <= 0) {
+        val shouldDrawDivider = synchronized(messages) {
+            ChatListParityUtils.shouldDrawDividerAbove(messages, position)
+        }
+        if (!enableAlternatingLineShadows || !shouldDrawDivider) {
             return null
         }
         return ChatBackgroundUtils.resolveDividerColors(
@@ -394,7 +398,7 @@ class MessageClickedChatAdapter(
                     ellipsize = TextUtils.TruncateAt.END
                     TooltipCompat.setTooltipText(this, chatMessage.replyParent?.message ?: chatMessage.replyParent?.systemMsg)
                     setOnClickListener {
-                        chatMessage.replyParent?.let { replyClick(it) }
+                        chatMessage.replyParent?.takeIf(ChatAdapterUtils::hasUserIdentity)?.let { replyClick(it) }
                     }
                 } else {
                     movementMethod = LinkMovementMethod.getInstance()
@@ -402,7 +406,7 @@ class MessageClickedChatAdapter(
                     ellipsize = null
                     TooltipCompat.setTooltipText(this, chatMessage.message ?: chatMessage.systemMsg)
                     setOnClickListener {
-                        if (selectionStart == -1 && selectionEnd == -1 && chatMessage != selectedMessage) {
+                        if (selectionStart == -1 && selectionEnd == -1 && chatMessage != selectedMessage && ChatAdapterUtils.hasUserIdentity(chatMessage)) {
                             messageClickListener?.invoke(chatMessage, selectedMessage)
                             selectedMessage = chatMessage
                             setBackgroundColor(resolveSelectedBackgroundColor(context))

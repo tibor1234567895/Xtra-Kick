@@ -6,7 +6,7 @@ import com.github.andreyasadchy.xtra.BuildConfig
 object KickOAuthConfig {
 
     const val DEFAULT_REDIRECT_URI = "https://localhost/callback"
-    private const val DEFAULT_SCOPES = "user:read chat:write"
+    private const val DEFAULT_SCOPES = "user:read chat:write events:subscribe"
     private val REQUIRED_SCOPES = setOf("user:read", "chat:write")
 
     fun getClientId(context: Context): String? {
@@ -47,6 +47,11 @@ object KickOAuthConfig {
     fun hasRequiredScopes(scopes: String?): Boolean {
         val parsed = parseScopes(scopes)
         return REQUIRED_SCOPES.all { parsed.contains(it) }
+    }
+
+    fun hasScopes(scopes: String?, requiredScopes: Set<String>): Boolean {
+        val parsed = parseScopes(scopes)
+        return requiredScopes.all(parsed::contains)
     }
 
     fun normalizeScopes(scopes: String?): String {

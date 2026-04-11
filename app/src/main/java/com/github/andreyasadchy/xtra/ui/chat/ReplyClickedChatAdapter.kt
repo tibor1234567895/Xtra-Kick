@@ -8,7 +8,6 @@ import android.text.SpannableStringBuilder
 import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
 import android.text.method.LinkMovementMethod
 import android.text.style.ImageSpan
-import android.util.Patterns
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -212,15 +211,7 @@ class ReplyClickedChatAdapter(
             chatMessage.isFirst && firstMsgVisibility < 2 -> R.color.chatMessageFirst
             chatMessage.reward?.id != null && firstMsgVisibility < 2 -> R.color.chatMessageReward
             chatMessage.systemMsg != null || (chatMessage.msgId != null && chatMessage.msgId != "kick_moderation") -> R.color.chatMessageNotice
-            loggedInUser?.let { user ->
-                if (chatMessage.userId != null && chatMessage.userLogin != user) {
-                    item.text.split(" ").find {
-                        !Patterns.WEB_URL.matcher(it).matches() && it.contains(user, true)
-                    } != null
-                } else {
-                    false
-                }
-            } == true -> R.color.chatMessageMention
+            ChatAdapterUtils.isMessageHighlightedForLoggedInUser(chatMessage, loggedInUser, item.text) -> R.color.chatMessageMention
             else -> 0
         }
     }
@@ -250,7 +241,10 @@ class ReplyClickedChatAdapter(
     }
 
     private fun resolveDividerColor(position: Int, backgroundColor: Int): ChatBackgroundUtils.DividerColors? {
-        if (!enableAlternatingLineShadows || position <= 0) {
+        val shouldDrawDivider = synchronized(messages) {
+            ChatListParityUtils.shouldDrawDividerAbove(messages, position)
+        }
+        if (!enableAlternatingLineShadows || !shouldDrawDivider) {
             return null
         }
         return ChatBackgroundUtils.resolveDividerColors(
@@ -346,7 +340,7 @@ class ReplyClickedChatAdapter(
                 movementMethod = LinkMovementMethod.getInstance()
                 TooltipCompat.setTooltipText(this, chatMessage.message ?: chatMessage.systemMsg)
                 setOnClickListener {
-                    if (selectionStart == -1 && selectionEnd == -1 && chatMessage != selectedMessage) {
+                    if (selectionStart == -1 && selectionEnd == -1 && chatMessage != selectedMessage && ChatAdapterUtils.hasUserIdentity(chatMessage)) {
                         messageClickListener?.invoke(chatMessage, selectedMessage)
                         selectedMessage = chatMessage
                         setBackgroundColor(resolveSelectedBackgroundColor(context))
