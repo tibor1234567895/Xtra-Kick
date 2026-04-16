@@ -318,6 +318,7 @@ object C {
     const val DEBUG_KICK_CLIP_CHAT = "debug_kick_clip_chat"
     const val DEBUG_KICK_BADGE_LOGS = "debug_kick_badge_logs"
     const val DEBUG_KICK_FEATURE_LOGS = "debug_kick_feature_logs"
+    const val DEBUG_KICK_CHAT_UI_LOGS = "debug_kick_chat_ui_logs"
     const val DEBUG_KICK_REALTIME_CHAT = "debug_kick_realtime_chat"
     const val DEBUG_KICK_LEGACY_SEARCH = "debug_kick_legacy_search"
     const val DEBUG_NETWORK_LOGS = "debug_network_logs"

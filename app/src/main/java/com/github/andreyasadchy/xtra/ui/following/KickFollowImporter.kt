@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
@@ -88,6 +89,7 @@ class KickFollowImporter @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val localFollowsChannel: LocalFollowChannelRepository,
     private val helixRepository: HelixRepository,
+    private val kickRepository: KickRepository,
 ) {
 
     private val enrichmentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -117,6 +119,34 @@ class KickFollowImporter @Inject constructor(
         return importFollows(follows)
     }
 
+    suspend fun importStoredKickFollows(networkLibrary: String?): Int {
+        val collected = LinkedHashMap<String, KickImportedFollow>()
+        var cursor: String? = null
+        Log.i(LOG_TAG, "Kick follow import pagination started")
+        do {
+            val response = kickRepository.getFollowedChannelsWebPage(cursor)
+            response.channels.forEach { follow ->
+                val login = follow.login.trim().takeIf { it.isNotBlank() } ?: return@forEach
+                collected[login.lowercase()] = KickImportedFollow(
+                    login = login,
+                    name = follow.name,
+                    profilePicture = follow.profilePicture,
+                )
+            }
+            val nextCursor = response.nextCursor?.takeIf { it.isNotBlank() }
+            cursor = nextCursor?.takeIf { it != cursor }
+        } while (!cursor.isNullOrBlank())
+        Log.i(LOG_TAG, "Kick follow import pagination finished total=${collected.size}")
+        val follows = collected.values.map { channel ->
+            KickImportedFollow(
+                login = channel.login,
+                name = channel.name,
+                profilePicture = channel.profilePicture,
+            )
+        }
+        return importFollows(follows)
+    }
+
     internal suspend fun importFollows(follows: List<KickImportedFollow>): Int {
         val dedupedFollows = follows
             .asSequence()
@@ -134,6 +164,7 @@ class KickFollowImporter @Inject constructor(
                 channelLogo = follow.profilePicture,
             )
         }
+        Log.i(LOG_TAG, "Kick follow import stored follows count=${dedupedFollows.size}")
         enqueueImportedFollowEnrichment(dedupedFollows.map { it.login })
         return dedupedFollows.size
     }

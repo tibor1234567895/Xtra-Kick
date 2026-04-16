@@ -238,6 +238,19 @@
     <string name="kick_gifted_sub">%1$s gifted a sub</string>
     <string name="kick_gifted_sub_to">%1$s gifted a sub to %2$s</string>
     <string name="kick_gifted_subs">%1$s gifted %2$d subs</string>
+    <string name="kick_followed_notice">%1$s followed %2$s</string>
+    <string name="kick_subscribed_notice">%1$s subscribed</string>
+    <string name="kick_subscribed_for_months_notice">%1$s subscribed for %2$d months</string>
+    <string name="kick_renewed_sub_notice">%1$s renewed their sub</string>
+    <string name="kick_renewed_sub_for_months_notice">%1$s renewed their sub for %2$d months</string>
+    <string name="kick_reward_redemption_notice">%1$s redeemed %2$s</string>
+    <string name="kick_reward_redemption_notice_with_status">%1$s redeemed %2$s (%3$s)</string>
+    <string name="kick_livestream_started_notice">Stream started: %1$s</string>
+    <string name="kick_livestream_ended_notice">Stream ended: %1$s</string>
+    <string name="kick_livestream_metadata_notice">Stream updated: %1$s</string>
+    <string name="kick_livestream_metadata_notice_with_category">Stream updated: %1$s • %2$s</string>
+    <string name="kick_kicks_gifted_notice">%1$s gifted %2$d kicks to %3$s</string>
+    <string name="kick_kicks_gifted_notice_without_recipient">%1$s gifted %2$d kicks</string>
     <string name="show_clearmsg">Show deletions of single messages</string>
     <string name="show_clearchat">Show timeouts and bans</string>
     <string name="copy_fullmsg">Copy full message</string>
@@ -459,6 +472,10 @@
     <string name="kick_reward_enabled" translatable="false">Enabled</string>
     <string name="kick_reward_paused" translatable="false">Paused</string>
     <string name="kick_reward_requires_input" translatable="false">Require user input</string>
+    <string name="kick_reward_redeem" translatable="false">Redeem</string>
+    <string name="kick_reward_redeem_confirm" translatable="false">Redeem %1$s?</string>
+    <string name="kick_reward_redeem_input_hint" translatable="false">Enter reward text</string>
+    <string name="kick_reward_redeemed" translatable="false">Redeemed %1$s.</string>
     <string name="kick_reward_skip_queue" translatable="false">Skip request queue</string>
     <string name="kick_redemption_status_all" translatable="false">All statuses</string>
     <string name="kick_redemption_status_pending" translatable="false">Pending</string>
@@ -549,10 +566,15 @@
     <string name="pinned_gift_value">Gift value</string>
     <string name="channel_points_balance">Channel points: %1$s</string>
     <string name="channel_points_rewards_title">Channel points</string>
+    <string name="channel_points_open">Open channel points rewards</string>
     <string name="channel_points_rewards_unavailable">Reward details are not available for this channel right now.</string>
     <string name="channel_points_rewards_balance">Balance: %1$s</string>
     <string name="channel_points_reward_line">%1$s points - %2$s</string>
     <string name="channel_points_reward_input_required">Requires text input</string>
+    <string name="channel_points_loading">Loading channel points…</string>
+    <string name="channel_points_rewards_section_title">Available rewards</string>
+    <string name="channel_points_rewards_empty_hint">Rewards will appear here when this channel has any available.</string>
+    <string name="channel_points_reward_disabled">Unavailable</string>
     <string name="enable_pubsub">Enable PubSub</string>
     <string name="bookmark">Bookmark</string>
     <string name="dark_theme_on">Dark theme on</string>
@@ -765,9 +787,11 @@
     <string name="prediction_locked">Locked</string>
     <string name="prediction_refunded">Refunded</string>
     <string name="poll_choice">%1$d%% (%2$s): %3$s</string>
-    <string name="poll_choice_winner">Ã°Å¸Ââ€ %1$d%% (%2$s): %3$s</string>
-    <string name="prediction_outcome">%1$d%% (%2$sÃ°Å¸â€™Å½, %3$sÃ°Å¸â€˜Â¥): %4$s</string>
-    <string name="prediction_outcome_winner">Ã°Å¸Ââ€ %1$d%% (%2$sÃ°Å¸â€™Å½, %3$sÃ°Å¸â€˜Â¥): %4$s</string>
+    <string name="poll_choice_winner">Winner: %1$d%% (%2$s): %3$s</string>
+    <string name="kick_poll_already_voted">You already voted in this poll</string>
+    <string name="kick_poll_vote_submitted">Poll vote submitted</string>
+    <string name="prediction_outcome">%1$d%% (%2$s points, %3$s votes): %4$s</string>
+    <string name="prediction_outcome_winner">Winner: %1$d%% (%2$s points, %3$s votes): %4$s</string>
     <string name="api_token_settings">API token settings</string>
     <string name="download_settings">Downloads</string>
     <string name="update_settings">Update settings</string>
@@ -873,6 +897,7 @@
     <string name="debug_kick_clip_chat" translatable="false">Kick replay and clip chat debug logs</string>
     <string name="debug_kick_badge_logs" translatable="false">Kick badge parser debug logs</string>
     <string name="debug_kick_feature_logs" translatable="false">Kick points and pinned feature debug logs</string>
+    <string name="debug_kick_chat_ui_logs" translatable="false">Kick chat UI debug logs</string>
     <string name="debug_network_logs">Network and image loader debug logs</string>
     <string name="debug_player_buffer_logs">Player buffering and latency debug logs</string>
     <string name="debug_player_shell_logs">Player handoff and activity debug logs</string>

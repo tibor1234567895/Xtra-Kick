@@ -11,6 +11,7 @@ import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
 import android.text.TextPaint
 import android.text.style.ClickableSpan
 import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
 import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
 import android.text.style.URLSpan
@@ -50,6 +51,47 @@ import kotlin.math.floor
 import kotlin.math.pow
 
 object ChatAdapterUtils {
+
+    private fun resolveKickRewardNoticeColor(
+        rewardColor: String?,
+        savedColors: HashMap<String, Int>,
+        useReadableColors: Boolean,
+        isLightTheme: Boolean,
+    ): Int {
+        val parsed = runCatching { Color.parseColor(rewardColor) }.getOrNull()
+        if (parsed != null) {
+            val background = if (isLightTheme) Color.WHITE else Color.BLACK
+            val contrast = ColorUtils.calculateContrast(parsed, background)
+            return if (contrast >= 3.0) {
+                parsed
+            } else if (isLightTheme) {
+                ColorUtils.blendARGB(parsed, Color.BLACK, 0.45f)
+            } else {
+                ColorUtils.blendARGB(parsed, Color.WHITE, 0.35f)
+            }
+        }
+        return getSavedColor("#999999", savedColors, useReadableColors, isLightTheme)
+    }
+
+    private fun applyKickRewardNoticeStyle(
+        builder: SpannableStringBuilder,
+        start: Int,
+        end: Int,
+        rewardColor: String?,
+        savedColors: HashMap<String, Int>,
+        useReadableColors: Boolean,
+        isLightTheme: Boolean,
+    ) {
+        if (end <= start) return
+        builder.setSpan(
+            ForegroundColorSpan(resolveKickRewardNoticeColor(rewardColor, savedColors, useReadableColors, isLightTheme)),
+            start,
+            end,
+            SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        builder.setSpan(RelativeSizeSpan(1.08f), start, end, SPAN_EXCLUSIVE_EXCLUSIVE)
+        builder.setSpan(StyleSpan(Typeface.BOLD), start, end, SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
 
     internal fun splitConcatenatedThirdPartyEmotes(token: String, emotes: List<Emote>): List<Emote>? {
         if (token.isBlank() || emotes.isEmpty()) return null
@@ -194,7 +236,7 @@ object ChatAdapterUtils {
                     prepareEmotes(replySourceMessage, message, builder, builderIndex, images, null, useReadableColors, isLightTheme, enableOverlayEmotes, useBoldNames, loggedInUser, chatUrl, getEmoteBytes, savedColors, localTwitchEmotes, showPersonalEmotes, personalEmoteSets, null, thirdPartyEmotes, cheerEmotes, savedLocalTwitchEmotes, savedLocalCheerEmotes, savedLocalEmotes)
                     builderIndex = builder.length
                 }
-                if (isMessageHighlightedForLoggedInUser(chatMessage, loggedInUser, builder)) {
+                if (isReplyDirectedAtLoggedInUser(chatMessage, loggedInUser)) {
                     backgroundRes = R.color.chatMessageMention
                 }
             }
@@ -227,7 +269,15 @@ object ChatAdapterUtils {
                         }
                         val string = redeemedNoMsg.format(userName, chatMessage.reward.title)
                         builder.append("$string ")
-                        builder.setSpan(ForegroundColorSpan(getSavedColor("#999999", savedColors, useReadableColors, isLightTheme)), builderIndex, builderIndex + string.length, SPAN_EXCLUSIVE_EXCLUSIVE)
+                        applyKickRewardNoticeStyle(
+                            builder = builder,
+                            start = builderIndex,
+                            end = builderIndex + string.length,
+                            rewardColor = chatMessage.reward.backgroundColor,
+                            savedColors = savedColors,
+                            useReadableColors = useReadableColors,
+                            isLightTheme = isLightTheme,
+                        )
                         if (showSystemMessageEmotes) {
                             prepareEmotes(chatMessage, string, builder, builderIndex, images, imageClick, useReadableColors, isLightTheme, enableOverlayEmotes, useBoldNames, loggedInUser, chatUrl, getEmoteBytes, savedColors, localTwitchEmotes, showPersonalEmotes, personalEmoteSets, null, thirdPartyEmotes, cheerEmotes, savedLocalTwitchEmotes, savedLocalCheerEmotes, savedLocalEmotes)
                         }
@@ -268,6 +318,15 @@ object ChatAdapterUtils {
                 if (chatMessage.reward?.title != null) {
                     val string = redeemedChatMsg.format(chatMessage.reward.title)
                     builder.append("$string ")
+                    applyKickRewardNoticeStyle(
+                        builder = builder,
+                        start = builderIndex,
+                        end = builderIndex + string.length,
+                        rewardColor = chatMessage.reward.backgroundColor,
+                        savedColors = savedColors,
+                        useReadableColors = useReadableColors,
+                        isLightTheme = isLightTheme,
+                    )
                     builderIndex += string.length + 1
                     builder.append(". ")
                     builder.setSpan(ForegroundColorSpan(Color.TRANSPARENT), builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)

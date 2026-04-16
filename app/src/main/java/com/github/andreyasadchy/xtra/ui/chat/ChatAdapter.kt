@@ -1,6 +1,9 @@
 package com.github.andreyasadchy.xtra.ui.chat
 
 import android.content.Context
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.LayerDrawable
 import android.text.Spannable
@@ -18,6 +21,7 @@ import androidx.core.view.doOnLayout
 import androidx.core.view.updateLayoutParams
 import androidx.appcompat.widget.TooltipCompat
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 import androidx.core.text.getSpans
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.fragment.app.Fragment
@@ -256,6 +260,33 @@ class ChatAdapter(
         )
     }
 
+    private fun parseRewardColor(color: String?): Int? {
+        return runCatching { Color.parseColor(color) }.getOrNull()
+    }
+
+    private fun createRewardBackgroundDrawable(baseBackgroundColor: Int, rewardColor: Int): LayerDrawable {
+        val stripeDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 0f
+            setColor(ColorUtils.setAlphaComponent(rewardColor, 235))
+        }
+        val cardDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 10f
+            setColor(
+                ColorUtils.compositeColors(
+                    ColorUtils.setAlphaComponent(rewardColor, 40),
+                    baseBackgroundColor
+                )
+            )
+        }
+        val insetCardDrawable = InsetDrawable(cardDrawable, 18, 4, 8, 4)
+        return LayerDrawable(arrayOf(stripeDrawable, insetCardDrawable)).apply {
+            setLayerInset(0, 8, 4, 0, 4)
+            setLayerSize(0, 6, -1)
+        }
+    }
+
     override fun onViewAttachedToWindow(holder: ViewHolder) {
         super.onViewAttachedToWindow(holder)
         if (animateGifs) {
@@ -343,11 +374,19 @@ class ChatAdapter(
             val dividerColors = resolveDividerColor(position, resolvedBackgroundColor)
             val previewKey = replyPreviewKey(chatMessage)
             val expanded = previewKey != null && previewKey in expandedReplyPreviewKeys
+            val rewardColor = parseRewardColor(chatMessage.reward?.backgroundColor)
+            val isRewardRedemption = chatMessage.reward?.title != null
             textView.apply {
                 text = formattedMessage
                 textSize = messageTextSize
                 alpha = if (chatMessage.isDeleted) 0.62f else 1f
-                containerView.setBackgroundColor(resolvedBackgroundColor)
+                if (isRewardRedemption && rewardColor != null) {
+                    containerView.background = createRewardBackgroundDrawable(resolvedBackgroundColor, rewardColor)
+                    setPaddingRelative(26, 8, 12, 8)
+                } else {
+                    containerView.setBackgroundColor(resolvedBackgroundColor)
+                    setPaddingRelative(5, 1, 5, 1)
+                }
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 if (chatMessage.isReply) {
                     movementMethod = null

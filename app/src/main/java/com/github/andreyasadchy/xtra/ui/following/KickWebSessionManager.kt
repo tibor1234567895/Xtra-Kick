@@ -49,9 +49,10 @@ class KickWebSessionManager @Inject constructor(
                 debugLogW("seedKickAuthCookie: no stored Kick token")
                 return false
             }
-        debugLogI("seedKickAuthCookie: seeding auth-token cookie")
+        debugLogI("seedKickAuthCookie: seeding auth-token/session_token cookies")
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setCookie("https://kick.com", "auth-token=$token; Path=/; Secure")
+        CookieManager.getInstance().setCookie("https://kick.com", "session_token=$token; Path=/; Secure")
         CookieManager.getInstance().flush()
         val seeded = CookieManager.getInstance().getCookie("https://kick.com")
         debugLogI("seedKickAuthCookie: cookieHeaderPresent=${!seeded.isNullOrBlank()}")

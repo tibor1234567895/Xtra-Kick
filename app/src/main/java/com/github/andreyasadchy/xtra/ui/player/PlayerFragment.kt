@@ -1155,7 +1155,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         requireArguments().getString(KEY_CHANNEL_ID),
                         requireArguments().getString(KEY_CHANNEL_LOGIN),
                         requireArguments().getString(KEY_CHANNEL_NAME),
-                        requireArguments().getString(KEY_STREAM_ID)
+                        requireArguments().getString(KEY_STREAM_ID),
+                        requireArguments().getString(KEY_STREAM_SOURCE)
                     )
                     VIDEO -> ChatFragment.newInstance(
                         channelId = requireArguments().getString(KEY_CHANNEL_ID),
@@ -1165,7 +1166,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         suppressReplayUnavailable = requireArguments().getString(KEY_VIDEO_SOURCE).equals(C.KICK, true),
                         kickReplayFallback = requireArguments().getString(KEY_VIDEO_SOURCE).equals(C.KICK, true),
                         kickReplayStartTime = requireArguments().getString(KEY_UPLOAD_DATE),
-                        kickReplayUrl = requireArguments().getString(KEY_URL)
+                        kickReplayUrl = requireArguments().getString(KEY_URL),
+                        source = requireArguments().getString(KEY_VIDEO_SOURCE)
                     )
                     CLIP -> run {
                         val clipUrl = requireArguments().getString(KEY_URL)
@@ -1179,13 +1181,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             isKickClip,
                             isKickClip,
                             requireArguments().getString(KEY_CLIP_REPLAY_START_TIME) ?: requireArguments().getString(KEY_UPLOAD_DATE),
-                            clipUrl
+                            clipUrl,
+                            source = requireArguments().getString(KEY_VIDEO_SOURCE)
                         )
                     }
                     OFFLINE_VIDEO -> ChatFragment.newLocalInstance(
                         requireArguments().getString(KEY_CHANNEL_ID),
                         requireArguments().getString(KEY_CHANNEL_LOGIN),
-                        requireArguments().getString(KEY_CHAT_URL)
+                        requireArguments().getString(KEY_CHAT_URL),
+                        requireArguments().getString(KEY_VIDEO_SOURCE)
                     )
                     else -> null
                 }

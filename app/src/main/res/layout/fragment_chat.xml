@@ -97,6 +97,23 @@
             </LinearLayout>
         </FrameLayout>
 
+        <TextView
+            android:id="@+id/channelPointsButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginEnd="4dp"
+            android:background="?attr/chatStatus"
+            android:paddingStart="8dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="6dp"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:visibility="gone"
+            tools:text="Channel points: 12,345 • 4 rewards"
+            tools:visibility="visible" />
+
         <LinearLayout
             android:id="@+id/replyView"
             android:layout_width="match_parent"
@@ -138,6 +155,17 @@
             android:visibility="gone"
             app:layout_constraintBottom_toTopOf="@id/emoteMenu"
             tools:visibility="visible">
+
+            <ImageButton
+                android:id="@+id/channelPointsInputButton"
+                android:layout_width="50dp"
+                android:layout_height="match_parent"
+                android:background="?android:selectableItemBackground"
+                android:contentDescription="@string/channel_points_open"
+                android:src="@drawable/ic_channel_points_black_24"
+                android:visibility="gone"
+                app:tint="?attr/colorControlNormal"
+                tools:visibility="visible" />
 
             <MultiAutoCompleteTextView
                 android:id="@+id/editText"
@@ -399,6 +427,8 @@
         android:layout_marginEnd="4dp"
         android:layout_marginBottom="4dp"
         android:background="?attr/chatStatus"
+        android:clickable="true"
+        android:focusable="true"
         android:visibility="gone"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -427,6 +457,8 @@
             android:layout_marginTop="5dp"
             android:layout_marginEnd="4dp"
             android:layout_marginBottom="5dp"
+            android:clickable="true"
+            android:focusable="false"
             android:textAppearance="?attr/textAppearanceTitleMedium"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toStartOf="@id/raidClose"
@@ -468,6 +500,8 @@
             android:layout_marginTop="5dp"
             android:layout_marginEnd="4dp"
             android:layout_marginBottom="5dp"
+            android:clickable="true"
+            android:focusable="false"
             android:textAppearance="?attr/textAppearanceTitleMedium"
             app:layout_constraintBottom_toTopOf="@id/pollChoices"
             app:layout_constraintEnd_toStartOf="@id/pollClose"
@@ -483,6 +517,8 @@
             android:layout_marginTop="5dp"
             android:layout_marginEnd="4dp"
             android:layout_marginBottom="5dp"
+            android:clickable="true"
+            android:focusable="false"
             android:textAppearance="?attr/textAppearanceTitleMedium"
             app:layout_constraintBottom_toTopOf="@id/pollStatus"
             app:layout_constraintEnd_toStartOf="@id/pollClose"
