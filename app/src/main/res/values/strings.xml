@@ -238,6 +238,19 @@
     <string name="kick_gifted_sub">%1$s gifted a sub</string>
     <string name="kick_gifted_sub_to">%1$s gifted a sub to %2$s</string>
     <string name="kick_gifted_subs">%1$s gifted %2$d subs</string>
+    <string name="kick_followed_notice">%1$s followed %2$s</string>
+    <string name="kick_subscribed_notice">%1$s subscribed</string>
+    <string name="kick_subscribed_for_months_notice">%1$s subscribed for %2$d months</string>
+    <string name="kick_renewed_sub_notice">%1$s renewed their sub</string>
+    <string name="kick_renewed_sub_for_months_notice">%1$s renewed their sub for %2$d months</string>
+    <string name="kick_reward_redemption_notice">%1$s redeemed %2$s</string>
+    <string name="kick_reward_redemption_notice_with_status">%1$s redeemed %2$s (%3$s)</string>
+    <string name="kick_livestream_started_notice">Stream started: %1$s</string>
+    <string name="kick_livestream_ended_notice">Stream ended: %1$s</string>
+    <string name="kick_livestream_metadata_notice">Stream updated: %1$s</string>
+    <string name="kick_livestream_metadata_notice_with_category">Stream updated: %1$s • %2$s</string>
+    <string name="kick_kicks_gifted_notice">%1$s gifted %2$d kicks to %3$s</string>
+    <string name="kick_kicks_gifted_notice_without_recipient">%1$s gifted %2$d kicks</string>
     <string name="show_clearmsg">Show deletions of single messages</string>
     <string name="show_clearchat">Show timeouts and bans</string>
     <string name="copy_fullmsg">Copy full message</string>
@@ -430,6 +443,54 @@
     <string name="api_gql_redirect">GQL redirect URL</string>
     <string name="api_kick_redirect" translatable="false">Kick redirect URL</string>
     <string name="api_kick_scopes" translatable="false">Kick scopes</string>
+    <string name="kick_developer_tools" translatable="false">Kick developer tools</string>
+    <string name="kick_manage_rewards" translatable="false">Manage Kick rewards</string>
+    <string name="kick_manage_rewards_summary" translatable="false">List, create, edit, and delete official channel rewards.</string>
+    <string name="kick_manage_redemptions" translatable="false">Manage Kick redemptions</string>
+    <string name="kick_manage_redemptions_summary" translatable="false">Review pending/accepted/rejected reward redemptions and accept or reject them.</string>
+    <string name="kick_manage_event_subscriptions" translatable="false">Manage Kick event subscriptions</string>
+    <string name="kick_manage_event_subscriptions_summary" translatable="false">List, create, and delete official webhook event subscriptions.</string>
+    <string name="save" translatable="false">Save</string>
+    <string name="kick_scope_required" translatable="false">Kick scope required: %1$s</string>
+    <string name="kick_scope_required_multiple" translatable="false">Kick scopes required: %1$s</string>
+    <string name="kick_reward_empty" translatable="false">No Kick rewards found.</string>
+    <string name="kick_redemptions_empty" translatable="false">No Kick redemptions matched the current filter.</string>
+    <string name="kick_subscriptions_empty" translatable="false">No Kick event subscriptions found.</string>
+    <string name="kick_reward_create" translatable="false">Create reward</string>
+    <string name="kick_reward_edit" translatable="false">Edit reward</string>
+    <string name="kick_reward_delete" translatable="false">Delete reward</string>
+    <string name="kick_redemption_accept" translatable="false">Accept selected</string>
+    <string name="kick_redemption_reject" translatable="false">Reject selected</string>
+    <string name="kick_redemption_filters" translatable="false">Filters</string>
+    <string name="kick_event_subscription_create" translatable="false">Create subscriptions</string>
+    <string name="kick_event_subscription_delete" translatable="false">Delete subscriptions</string>
+    <string name="kick_event_subscription_webhook_notice" translatable="false">Webhook delivery is configured outside the app in Kick developer settings.</string>
+    <string name="kick_reward_title" translatable="false">Title</string>
+    <string name="kick_reward_description" translatable="false">Description</string>
+    <string name="kick_reward_cost" translatable="false">Cost</string>
+    <string name="kick_reward_background_color" translatable="false">Background color</string>
+    <string name="kick_reward_enabled" translatable="false">Enabled</string>
+    <string name="kick_reward_paused" translatable="false">Paused</string>
+    <string name="kick_reward_requires_input" translatable="false">Require user input</string>
+    <string name="kick_reward_redeem" translatable="false">Redeem</string>
+    <string name="kick_reward_redeem_confirm" translatable="false">Redeem %1$s?</string>
+    <string name="kick_reward_redeem_input_hint" translatable="false">Enter reward text</string>
+    <string name="kick_reward_redeemed" translatable="false">Redeemed %1$s.</string>
+    <string name="kick_reward_skip_queue" translatable="false">Skip request queue</string>
+    <string name="kick_redemption_status_all" translatable="false">All statuses</string>
+    <string name="kick_redemption_status_pending" translatable="false">Pending</string>
+    <string name="kick_redemption_status_accepted" translatable="false">Accepted</string>
+    <string name="kick_redemption_status_rejected" translatable="false">Rejected</string>
+    <string name="kick_select_reward" translatable="false">Select reward</string>
+    <string name="kick_select_events" translatable="false">Select events</string>
+    <string name="kick_select_subscriptions" translatable="false">Select subscriptions</string>
+    <string name="kick_no_selection" translatable="false">Nothing selected.</string>
+    <string name="kick_load_more" translatable="false">Load more</string>
+    <string name="kick_all_rewards" translatable="false">All rewards</string>
+    <string name="kick_rewards_saved" translatable="false">Kick reward saved.</string>
+    <string name="kick_reward_deleted" translatable="false">Kick reward deleted.</string>
+    <string name="kick_redemptions_updated" translatable="false">Kick redemptions updated.</string>
+    <string name="kick_subscriptions_updated" translatable="false">Kick event subscriptions updated.</string>
     <string name="api_settings">API settings</string>
     <string name="streams">Streams</string>
     <string name="game_streams">Game streams</string>
@@ -505,10 +566,15 @@
     <string name="pinned_gift_value">Gift value</string>
     <string name="channel_points_balance">Channel points: %1$s</string>
     <string name="channel_points_rewards_title">Channel points</string>
+    <string name="channel_points_open">Open channel points rewards</string>
     <string name="channel_points_rewards_unavailable">Reward details are not available for this channel right now.</string>
     <string name="channel_points_rewards_balance">Balance: %1$s</string>
     <string name="channel_points_reward_line">%1$s points - %2$s</string>
     <string name="channel_points_reward_input_required">Requires text input</string>
+    <string name="channel_points_loading">Loading channel points…</string>
+    <string name="channel_points_rewards_section_title">Available rewards</string>
+    <string name="channel_points_rewards_empty_hint">Rewards will appear here when this channel has any available.</string>
+    <string name="channel_points_reward_disabled">Unavailable</string>
     <string name="enable_pubsub">Enable PubSub</string>
     <string name="bookmark">Bookmark</string>
     <string name="dark_theme_on">Dark theme on</string>
@@ -721,9 +787,11 @@
     <string name="prediction_locked">Locked</string>
     <string name="prediction_refunded">Refunded</string>
     <string name="poll_choice">%1$d%% (%2$s): %3$s</string>
-    <string name="poll_choice_winner">Ã°Å¸Ââ€ %1$d%% (%2$s): %3$s</string>
-    <string name="prediction_outcome">%1$d%% (%2$sÃ°Å¸â€™Å½, %3$sÃ°Å¸â€˜Â¥): %4$s</string>
-    <string name="prediction_outcome_winner">Ã°Å¸Ââ€ %1$d%% (%2$sÃ°Å¸â€™Å½, %3$sÃ°Å¸â€˜Â¥): %4$s</string>
+    <string name="poll_choice_winner">Winner: %1$d%% (%2$s): %3$s</string>
+    <string name="kick_poll_already_voted">You already voted in this poll</string>
+    <string name="kick_poll_vote_submitted">Poll vote submitted</string>
+    <string name="prediction_outcome">%1$d%% (%2$s points, %3$s votes): %4$s</string>
+    <string name="prediction_outcome_winner">Winner: %1$d%% (%2$s points, %3$s votes): %4$s</string>
     <string name="api_token_settings">API token settings</string>
     <string name="download_settings">Downloads</string>
     <string name="update_settings">Update settings</string>
@@ -829,6 +897,7 @@
     <string name="debug_kick_clip_chat" translatable="false">Kick replay and clip chat debug logs</string>
     <string name="debug_kick_badge_logs" translatable="false">Kick badge parser debug logs</string>
     <string name="debug_kick_feature_logs" translatable="false">Kick points and pinned feature debug logs</string>
+    <string name="debug_kick_chat_ui_logs" translatable="false">Kick chat UI debug logs</string>
     <string name="debug_network_logs">Network and image loader debug logs</string>
     <string name="debug_player_buffer_logs">Player buffering and latency debug logs</string>
     <string name="debug_player_shell_logs">Player handoff and activity debug logs</string>
@@ -870,5 +939,3 @@
     <string name="copy_code">Copy code</string>
     <string name="external_tv_login_message">To get access to all features, you need to login as an Android TV device.\n\nFollow these steps:\nÃ¢â‚¬Â¢ Copy the code shown on the screen.\nÃ¢â‚¬Â¢ Press the \"Open URL\" button.\nÃ¢â‚¬Â¢ Enter the code and press \"Activate\".\nÃ¢â‚¬Â¢ Press \"Authorize\".\nÃ¢â‚¬Â¢ Return to Xtra and press \"Next\".</string>
 </resources>
-
-

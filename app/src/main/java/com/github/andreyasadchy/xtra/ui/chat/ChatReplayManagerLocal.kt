@@ -132,6 +132,10 @@ class ChatReplayManagerLocal(
                             systemMsg = message.systemMsg,
                             msgId = message.msgId,
                             reward = message.reward,
+                            reply = message.reply,
+                            isReply = message.isReply,
+                            replyParent = message.replyParent,
+                            timestamp = message.timestamp,
                             fullMsg = message.fullMsg
                         )
                     )

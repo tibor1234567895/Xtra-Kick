@@ -9,6 +9,34 @@ import com.github.andreyasadchy.xtra.util.KickApiHelper
 import org.json.JSONObject
 
 object PubSubUtils {
+    private fun firstObject(root: JSONObject?, vararg keys: String): JSONObject? {
+        if (root == null) return null
+        keys.forEach { key ->
+            root.optJSONObject(key)?.let { return it }
+        }
+        return null
+    }
+
+    private fun firstString(root: JSONObject?, vararg keys: String): String? {
+        if (root == null) return null
+        keys.forEach { key ->
+            if (!root.isNull(key)) {
+                root.optString(key).takeIf { it.isNotBlank() }?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun firstInt(root: JSONObject?, vararg keys: String): Int? {
+        if (root == null) return null
+        keys.forEach { key ->
+            if (!root.isNull(key)) {
+                return root.optInt(key)
+            }
+        }
+        return null
+    }
+
     fun parsePlaybackMessage(message: JSONObject): PlaybackMessage? {
         val messageType = message.optString("type")
         return when {
@@ -29,29 +57,46 @@ object PubSubUtils {
 
     fun parseRewardMessage(message: JSONObject): ChatMessage {
         val messageData = message.optJSONObject("data")
-        val redemption = messageData?.optJSONObject("redemption")
-        val user = redemption?.optJSONObject("user")
-        val reward = redemption?.optJSONObject("reward")
-        val rewardImage = reward?.optJSONObject("image")
-        val defaultImage = reward?.optJSONObject("default_image")
-        val input = if (redemption?.isNull("user_input") == false) redemption.optString("user_input").takeIf { it.isNotBlank() } else null
+        val redemption = firstObject(messageData, "redemption", "reward_redemption")
+            ?: firstObject(message, "redemption", "reward_redemption")
+        val user = firstObject(redemption, "user", "redeemer")
+            ?: firstObject(messageData, "user", "redeemer")
+            ?: firstObject(message, "user", "redeemer")
+        val reward = firstObject(redemption, "reward")
+            ?: firstObject(messageData, "reward")
+            ?: firstObject(message, "reward")
+        val rewardImage = firstObject(reward, "image", "reward_image")
+        val defaultImage = firstObject(reward, "default_image", "defaultImage")
+        val input = firstString(redemption, "user_input", "input", "message")
+            ?: firstString(messageData, "user_input", "input", "message")
         return ChatMessage(
-            userId = if (user?.isNull("id") == false) user.optString("id").takeIf { it.isNotBlank() } else null,
-            userLogin = if (user?.isNull("login") == false) user.optString("login").takeIf { it.isNotBlank() } else null,
-            userName = if (user?.isNull("display_name") == false) user.optString("display_name").takeIf { it.isNotBlank() } else null,
+            userId = firstString(user, "id", "user_id"),
+            userLogin = firstString(user, "login", "slug", "channel_slug", "username"),
+            userName = firstString(user, "display_name", "username", "name"),
             message = input,
             reward = ChannelPointReward(
-                id = if (reward?.isNull("id") == false) reward.optString("id").takeIf { it.isNotBlank() } else null,
-                title = if (reward?.isNull("title") == false) reward.optString("title").takeIf { it.isNotBlank() } else null,
-                cost = if (reward?.isNull("cost") == false) reward.optInt("cost") else null,
-                url1x = if (rewardImage?.isNull("url_1x") == false) { rewardImage.optString("url_1x").takeIf { it.isNotBlank() } } else { null }
-                    ?: if (defaultImage?.isNull("url_1x") == false) defaultImage.optString("url_1x").takeIf { it.isNotBlank() } else null,
-                url2x = if (rewardImage?.isNull("url_2x") == false) { rewardImage.optString("url_2x").takeIf { it.isNotBlank() } } else { null }
-                    ?: if (defaultImage?.isNull("url_2x") == false) defaultImage.optString("url_2x").takeIf { it.isNotBlank() } else null,
-                url4x = if (rewardImage?.isNull("url_4x") == false) { rewardImage.optString("url_4x").takeIf { it.isNotBlank() } } else { null }
-                    ?: if (defaultImage?.isNull("url_4x") == false) defaultImage.optString("url_4x").takeIf { it.isNotBlank() } else null,
+                id = firstString(reward, "id", "reward_id"),
+                title = firstString(reward, "title", "name"),
+                cost = firstInt(reward, "cost", "points_cost"),
+                url1x = firstString(rewardImage, "url_1x", "url", "src")
+                    ?: firstString(defaultImage, "url_1x", "url", "src"),
+                url2x = firstString(rewardImage, "url_2x")
+                    ?: firstString(defaultImage, "url_2x")
+                    ?: firstString(rewardImage, "url_1x", "url", "src")
+                    ?: firstString(defaultImage, "url_1x", "url", "src"),
+                url4x = firstString(rewardImage, "url_4x")
+                    ?: firstString(defaultImage, "url_4x")
+                    ?: firstString(rewardImage, "url_2x", "url_1x", "url", "src")
+                    ?: firstString(defaultImage, "url_2x", "url_1x", "url", "src"),
+                backgroundColor = firstString(reward, "background_color", "color"),
+                isEnabled = reward?.takeIf { !it.isNull("is_enabled") }?.optBoolean("is_enabled")
+                    ?: reward?.takeIf { !it.isNull("enabled") }?.optBoolean("enabled"),
+                isUserInputRequired = reward?.takeIf { !it.isNull("is_user_input_required") }?.optBoolean("is_user_input_required")
+                    ?: reward?.takeIf { !it.isNull("requires_user_input") }?.optBoolean("requires_user_input"),
+                prompt = firstString(reward, "prompt", "description"),
             ),
-            timestamp = if (messageData?.isNull("timestamp") == false) messageData.optString("timestamp").takeIf { it.isNotBlank() }?.let { KickApiHelper.parseIso8601DateUTC(it) } else null,
+            timestamp = firstString(messageData, "timestamp", "created_at")?.let { KickApiHelper.parseIso8601DateUTC(it) }
+                ?: firstString(redemption, "redeemed_at", "created_at")?.let { KickApiHelper.parseIso8601DateUTC(it) },
             fullMsg = message.toString(),
         )
     }

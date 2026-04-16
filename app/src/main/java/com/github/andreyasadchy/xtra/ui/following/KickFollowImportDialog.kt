@@ -49,6 +49,7 @@ class KickFollowImportDialog : DialogFragment() {
     private var awaitingFollowingPage = false
     private var manualLoginFallbackTriggered = false
     private var lastManualHelperInjectAtMs = 0L
+    private var directImportAttempted = false
     private val logTag = "KickFollowImport"
 
     private fun isDebugLoggingEnabled(): Boolean {
@@ -126,9 +127,8 @@ class KickFollowImportDialog : DialogFragment() {
                 },
                 loading = true,
             )
-            awaitingFollowingPage = true
-            loadUrl(KICK_FOLLOWING_URL)
         }
+        startImportFlow()
         return Dialog(requireContext()).apply {
             setCancelable(true)
             setCanceledOnTouchOutside(true)
@@ -174,6 +174,45 @@ class KickFollowImportDialog : DialogFragment() {
         debugLogI("status: $message")
         binding.statusText.text = message
         binding.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
+    }
+
+    private fun startImportFlow() {
+        if (directImportAttempted) {
+            startWebsiteImportFlow()
+            return
+        }
+        directImportAttempted = true
+        val networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
+        Log.i(logTag, "starting direct Kick follow import")
+        lifecycleScope.launch {
+            runCatching {
+                importer.importStoredKickFollows(networkLibrary)
+            }.onSuccess { importedCount ->
+                Log.i(logTag, "direct Kick follow import succeeded count=$importedCount")
+                debugLogI("direct stored-auth import succeeded count=$importedCount")
+                completeImport(importedCount)
+            }.onFailure { error ->
+                Log.i(logTag, "direct Kick follow import fell back to website flow: ${error.message}")
+                debugLogW("direct stored-auth import unavailable: ${error.message}")
+                startWebsiteImportFlow()
+            }
+        }
+    }
+
+    private fun startWebsiteImportFlow() {
+        if (_binding == null || importCompleted) return
+        val hasExistingSession = webSessionManager.hasKickWebsiteSession()
+        debugLogI("startWebsiteImportFlow: hasKickWebsiteSession=$hasExistingSession")
+        updateStatus(
+            if (hasExistingSession) {
+                getString(R.string.import_kick_followed_status_reusing)
+            } else {
+                getString(R.string.import_kick_followed_status_checking)
+            },
+            loading = true,
+        )
+        awaitingFollowingPage = true
+        binding.webView.loadUrl(KICK_FOLLOWING_URL)
     }
 
     private fun loadKickPage(url: String) {
@@ -331,20 +370,23 @@ class KickFollowImportDialog : DialogFragment() {
 
         @JavascriptInterface
         fun onStatus(message: String?) {
-          val status = message ?: ""
-          debugLogI("bridge status: $status")
-          val normalized = status.lowercase()
-          if (
-            waitingForManualLogin &&
-            normalized.contains("manual login input not found")
-          ) {
-            val currentUrl = _binding?.webView?.url.orEmpty()
-            handleManualLoginProgress(
-              currentUrl,
-              reason = "status:$normalized",
-              allowFallbackToLoginPage = true,
-            )
-          }
+            val status = message ?: ""
+            _binding?.webView?.post {
+                if (_binding == null) return@post
+                debugLogI("bridge status: $status")
+                val normalized = status.lowercase()
+                if (
+                    waitingForManualLogin &&
+                    normalized.contains("manual login input not found")
+                ) {
+                    val currentUrl = _binding?.webView?.url.orEmpty()
+                    handleManualLoginProgress(
+                        currentUrl,
+                        reason = "status:$normalized",
+                        allowFallbackToLoginPage = true,
+                    )
+                }
+            }
         }
     }
 
@@ -819,5 +861,3 @@ class KickFollowImportDialog : DialogFragment() {
         """.trimIndent()
     }
 }
-
-

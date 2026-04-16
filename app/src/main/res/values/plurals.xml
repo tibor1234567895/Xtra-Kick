@@ -36,4 +36,8 @@
         <item quantity="one">%s member</item>
         <item quantity="other">%s members</item>
     </plurals>
+    <plurals name="kick_reward_count">
+        <item quantity="one">%d reward</item>
+        <item quantity="other">%d rewards</item>
+    </plurals>
 </resources>

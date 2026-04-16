@@ -99,19 +99,28 @@ class MessageClickedChatAdapter(
     }
 
     fun matchesSelectedUser(message: ChatMessage): Boolean {
-        return (!userId.isNullOrBlank() && (message.userId == userId || message.replyParent?.userId == userId)) ||
+        if (message.isReply) return false
+        return (!userId.isNullOrBlank() && message.userId == userId) ||
             (!userLogin.isNullOrBlank() && (
                 equalsIgnoreCase(message.userLogin, userLogin) ||
-                    equalsIgnoreCase(message.replyParent?.userLogin, userLogin) ||
-                    equalsIgnoreCase(message.userName, userLogin) ||
-                    equalsIgnoreCase(message.replyParent?.userName, userLogin)
+                    equalsIgnoreCase(message.userName, userLogin)
                 )) ||
             (!userName.isNullOrBlank() && (
                 equalsIgnoreCase(message.userName, userName) ||
-                    equalsIgnoreCase(message.replyParent?.userName, userName) ||
-                    equalsIgnoreCase(message.userLogin, userName) ||
-                    equalsIgnoreCase(message.replyParent?.userLogin, userName)
+                    equalsIgnoreCase(message.userLogin, userName)
                 ))
+    }
+
+    fun resolveSelectedStvBadge(): StvBadge? {
+        if (!showStvBadges || userId.isNullOrBlank()) {
+            return null
+        }
+        val badgeId = synchronized(stvUsers) {
+            stvUsers.find { it.userId == userId }?.badgeId
+        } ?: return null
+        return synchronized(stvBadges) {
+            stvBadges.find { it.id == badgeId }
+        }
     }
 
     val messages = if (!userId.isNullOrBlank() || !userLogin.isNullOrBlank() || !userName.isNullOrBlank()) {

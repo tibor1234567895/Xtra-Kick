@@ -1,7 +1,10 @@
 package com.github.andreyasadchy.xtra.util.chat
 
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
+import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.Reply
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -55,5 +58,30 @@ class ChatAdapterUtilsTest {
         )
 
         assertFalse(ChatAdapterUtils.isMessageHighlightedForLoggedInUser(previewRow, "tibor"))
+    }
+
+    @Test
+    fun splitsConcatenatedThirdPartyEmoteRuns() {
+        val emotes = listOf(
+            Emote(name = "dasmehdiDRIVE"),
+            Emote(name = "berryybooSip"),
+        )
+
+        val result = ChatAdapterUtils.splitConcatenatedThirdPartyEmotes(
+            "dasmehdiDRIVEberryybooSipberryybooSip",
+            emotes
+        )
+
+        assertEquals(listOf("dasmehdiDRIVE", "berryybooSip", "berryybooSip"), result?.map { it.name })
+    }
+
+    @Test
+    fun doesNotSplitPlainTextIntoThirdPartyEmotes() {
+        val result = ChatAdapterUtils.splitConcatenatedThirdPartyEmotes(
+            "UNDERSTOOD",
+            listOf(Emote(name = "cat"), Emote(name = "dog"))
+        )
+
+        assertNull(result)
     }
 }

@@ -12,6 +12,8 @@ import com.github.andreyasadchy.xtra.model.chat.Badge
 import com.github.andreyasadchy.xtra.model.chat.ChannelPointReward
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.PinnedGift
+import com.github.andreyasadchy.xtra.model.chat.Poll
+import com.github.andreyasadchy.xtra.model.chat.Prediction
 import com.github.andreyasadchy.xtra.model.chat.Reply
 import com.github.andreyasadchy.xtra.model.chat.RoomState
 import com.github.andreyasadchy.xtra.model.kick.KickCategory
@@ -21,9 +23,32 @@ import com.github.andreyasadchy.xtra.model.kick.KickLivestream
 import com.github.andreyasadchy.xtra.model.kick.KickLivestreamsResponse
 import com.github.andreyasadchy.xtra.model.kick.KickMessage
 import com.github.andreyasadchy.xtra.model.kick.KickMessageBadge
+import com.github.andreyasadchy.xtra.model.kick.KickMessageIdentity
 import com.github.andreyasadchy.xtra.model.kick.KickMessageSender
 import com.github.andreyasadchy.xtra.model.kick.KickMessagesData
 import com.github.andreyasadchy.xtra.model.kick.KickMessagesEnvelope
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialChannelFollowedEvent
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialChannelSubscriptionEvent
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialChannelSubscriptionGiftsEvent
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialChatMessageSentEvent
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialEventBadge
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialEventUser
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialKicksGiftedEvent
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialLivestreamMetadataUpdatedEvent
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialLivestreamStatusUpdatedEvent
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialModerationBannedEvent
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialPostChatMessageRequest
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialReward
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialRewardCreateRequest
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialRewardRedemptionUpdatedEvent
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialRewardUpdateRequest
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialModerationBanRequest
+import com.github.andreyasadchy.xtra.model.kick.KickOfficialModerationDeleteBanRequest
+import com.github.andreyasadchy.xtra.model.kick.KickRewardRedemptionActionFailure
+import com.github.andreyasadchy.xtra.model.kick.KickRewardRedemptionsPage
+import com.github.andreyasadchy.xtra.model.kick.KickEventSubscription
+import com.github.andreyasadchy.xtra.model.kick.KickEventSubscriptionCreateResult
+import com.github.andreyasadchy.xtra.model.kick.KickEventSubscriptionRequestItem
 import com.github.andreyasadchy.xtra.model.kick.KickSearchChannel
 import com.github.andreyasadchy.xtra.model.kick.KickSubcategoriesResponse
 import com.github.andreyasadchy.xtra.model.kick.KickSubcategory
@@ -55,19 +80,24 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import java.util.Collections
 import java.io.IOException
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.security.SecureRandom
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -79,6 +109,7 @@ class KickRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val json: Json,
     private val authRepository: AuthRepository,
+    private val kickOfficialApiClient: KickOfficialApiClient,
 ) {
     private data class KickClipPageResult(
         val clips: List<Clip>,
@@ -89,6 +120,14 @@ class KickRepository @Inject constructor(
     data class KickClipPage(
         val clips: List<Clip>,
         val nextCursor: String? = null,
+    )
+
+    data class KickRealtimeChannelPointsUpdate(
+        val reason: String? = null,
+        val points: Int? = null,
+        val balance: Int? = null,
+        val userId: String? = null,
+        val channelId: String? = null,
     )
 
     data class KickVideoPage(
@@ -154,7 +193,6 @@ class KickRepository @Inject constructor(
     private val kickBadgeCatalogRefreshAt = ConcurrentHashMap<String, Long>()
     private val kickBadgeCatalogRefreshInProgress = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
     private val channelPointRewardsCache = ConcurrentHashMap<String, Pair<Long, ChannelPointRewardsResult>>()
-    private val kickInlineBadgeDataUriByType = KickInlineBadgeData.byType
     private val kickBadgeSourceStats = ConcurrentHashMap<KickBadgeSource, Int>()
     private val kickChunkBodyCache = ConcurrentHashMap<String, String>()
     private val kickCanonicalBadgeTypes = listOf(
@@ -172,6 +210,7 @@ class KickRepository @Inject constructor(
     @Volatile
     private var activeKickChatScopeId: String? = null
     private val channelRequestLock = Any()
+    private val kickUlidRandom = SecureRandom()
     private val inFlightChannelRequests = mutableMapOf<String, CompletableDeferred<KickChannelResponse>>()
     private val channelLivestreamRequestLock = Any()
     private val inFlightChannelLivestreamRequests = mutableMapOf<String, CompletableDeferred<KickChannelLivestream?>>()
@@ -230,6 +269,13 @@ class KickRepository @Inject constructor(
         val cleared: Boolean = false,
     )
 
+    data class KickRealtimeParsedEvent(
+        val chatMessage: ChatMessage,
+        val clearTargetUserId: String? = null,
+        val clearTargetUserLogin: String? = null,
+        val clearTargetUserName: String? = null,
+    )
+
     private fun ChannelPointRewardsResult.merge(other: ChannelPointRewardsResult): ChannelPointRewardsResult {
         val mergedRewards = LinkedHashMap<String, ChannelPointReward>()
         rewards.forEach { reward ->
@@ -248,31 +294,13 @@ class KickRepository @Inject constructor(
     }
 
     private suspend fun resolveKickCurrentUser(accessToken: String): KickCurrentUser? {
-        val raw = runCatching {
-            getRawAuthenticated(
-                url = "https://api.kick.com/public/v1/users",
-                accessToken = accessToken,
-                isKickWeb = false,
-            )
+        val user = runCatching {
+            kickOfficialApiClient.getUsers(accessToken).firstOrNull()
         }.getOrNull() ?: return null
-        val root = runCatching { json.parseToJsonElement(raw) }.getOrNull() ?: return null
-        val users = when (root) {
-            is JsonArray -> root
-            is JsonObject -> root.arrayOrNull("data")
-                ?: root.arrayOrNull("users")
-                ?: root.objOrNull("data")?.arrayOrNull("users")
-                ?: root.objOrNull("data")?.arrayOrNull("items")
-            else -> null
-        } ?: return null
-        val user = users.firstOrNull() as? JsonObject ?: return null
-        val id = user.primitiveOrNull("id")
-            ?: user.primitiveOrNull("user_id")
-            ?: user.primitiveOrNull("channel_id")
-        val login = user.primitiveOrNull("name")
-            ?: user.primitiveOrNull("username")
-            ?: user.primitiveOrNull("channel_slug")
-            ?: user.objOrNull("channel")?.primitiveOrNull("slug")
-        return KickCurrentUser(id = id, login = login)
+        return KickCurrentUser(
+            id = user.userId?.toString(),
+            login = user.channelSlug ?: user.name,
+        )
     }
 
     suspend fun ensureKickCurrentUserIdentity(): KickIdentity? {
@@ -403,7 +431,7 @@ class KickRepository @Inject constructor(
         val cookieHeader = getKickCookieHeader()
             ?: throw IOException("missing kick web cookies")
         val url = buildString {
-            append("https://kick.com/api/v2/channels/followed")
+            append("https://kick.com/api/v2/channels/followed-page")
             if (!cursor.isNullOrBlank()) {
                 append("?cursor=")
                 append(urlEncode(cursor))
@@ -413,13 +441,18 @@ class KickRepository @Inject constructor(
             .url(url)
             .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36")
             .header("Origin", "https://kick.com")
-            .header("Referer", "https://kick.com/")
+            .header("Referer", "https://kick.com/following/channels")
             .header("Accept", "application/json, text/plain, */*")
+            .header("x-app-platform", "web")
             .header("x-kick-platform", "web")
             .header("Cookie", cookieHeader)
+        extractKickWebAuthToken(cookieHeader)?.let { authToken ->
+            requestBuilder.header(C.HEADER_TOKEN, "Bearer $authToken")
+        }
         extractKickXsrfToken(cookieHeader)?.let { xsrfToken ->
             requestBuilder.header("X-XSRF-TOKEN", xsrfToken)
         }
+        Log.i(tag, "Kick follow import request url=$url cursor=${cursor ?: "<initial>"}")
         okHttpClient.newCall(
             requestBuilder.build()
         ).execute().use { response ->
@@ -441,8 +474,33 @@ class KickRepository @Inject constructor(
             KickFollowedChannelsPage(
                 channels = channels,
                 nextCursor = root.primitiveOrNull("nextCursor"),
-            )
+            ).also { page ->
+                Log.i(
+                    tag,
+                    "Kick follow import response url=$url channels=${page.channels.size} nextCursor=${page.nextCursor ?: "<end>"}",
+                )
+            }
         }
+    }
+
+    suspend fun getFollowedChannelsWithStoredAuth(networkLibrary: String?): List<KickFollowedChannel> = withContext(Dispatchers.IO) {
+        val authHeader = getHelixHeadersWithRefresh(networkLibrary)[C.HEADER_TOKEN]
+            ?.takeIf { it.isNotBlank() }
+            ?: throw IOException("missing kick auth token")
+        val collected = LinkedHashMap<String, KickFollowedChannel>()
+        var cursor: String? = null
+        do {
+            val page = getFollowedChannelsAuthorizedPage(authHeader = authHeader, cursor = cursor)
+            page.channels.forEach { channel ->
+                val key = channel.login.trim().lowercase(Locale.ROOT)
+                if (key.isNotBlank()) {
+                    collected[key] = channel
+                }
+            }
+            val nextCursor = page.nextCursor?.takeIf { it.isNotBlank() }
+            cursor = nextCursor?.takeIf { it != cursor }
+        } while (!cursor.isNullOrBlank())
+        collected.values.toList()
     }
 
     suspend fun getChannel(
@@ -500,6 +558,45 @@ class KickRepository @Inject constructor(
         }
     }
 
+    private fun getFollowedChannelsAuthorizedPage(authHeader: String, cursor: String?): KickFollowedChannelsPage {
+        val url = buildString {
+            append("https://kick.com/api/v2/channels/followed")
+            if (!cursor.isNullOrBlank()) {
+                append("?cursor=")
+                append(urlEncode(cursor))
+            }
+        }
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36")
+            .header("Origin", "https://kick.com")
+            .header("Referer", "https://kick.com/")
+            .header("Accept", "application/json, text/plain, */*")
+            .header("x-kick-platform", "web")
+            .header(C.HEADER_TOKEN, authHeader)
+        return okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+            val body = response.body.string()
+            if (!response.isSuccessful) {
+                throw IOException("Kick followed auth request failed (${response.code}) for $url: ${body.take(200)}")
+            }
+            val root = json.parseToJsonElement(body) as? JsonObject
+                ?: throw IOException("Invalid Kick followed auth response")
+            val channels = root.arrayOrNull("channels").orEmpty().mapNotNull { element ->
+                val item = element as? JsonObject ?: return@mapNotNull null
+                val login = item.primitiveOrNull("channel_slug")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                KickFollowedChannel(
+                    login = login,
+                    name = item.primitiveOrNull("user_username")?.takeIf { it.isNotBlank() },
+                    profilePicture = item.primitiveOrNull("profile_picture")?.takeIf { it.isNotBlank() },
+                )
+            }
+            KickFollowedChannelsPage(
+                channels = channels,
+                nextCursor = root.primitiveOrNull("nextCursor"),
+            )
+        }
+    }
+
     suspend fun getUserCardDetails(
         channelSlug: String?,
         userSlug: String,
@@ -554,30 +651,49 @@ class KickRepository @Inject constructor(
                 }
             }
         }
+        val hasKickWebsiteSession = hasKickWebsiteSessionCookie()
+        val normalizedChannelSlug = channelSlug?.trim()?.takeIf { it.isNotBlank() }
+        val normalizedChannelId = channelId?.trim()?.takeIf { it.isNotBlank() }
         val candidates = buildList {
-            channelId?.trim()?.takeIf { it.isNotBlank() }?.let { value ->
-                add("https://kick.com/api/v2/channels/${urlEncode(value)}/points")
-                add("https://kick.com/api/v2/channels/${urlEncode(value)}/community-points/rewards")
-                add("https://kick.com/api/v1/channels/${urlEncode(value)}/community-points/rewards")
-                add("https://kick.com/api/v2/channels/${urlEncode(value)}/me")
-                add("https://kick.com/api/v2/channels/${urlEncode(value)}/rewards")
-            }
-            channelSlug?.trim()?.takeIf { it.isNotBlank() }?.let { value ->
-                add("https://kick.com/api/v2/channels/${urlEncode(value)}/points")
-                add("https://kick.com/api/v2/channels/${urlEncode(value)}/community-points/rewards")
-                add("https://kick.com/api/v1/channels/${urlEncode(value)}/community-points/rewards")
-                add("https://kick.com/api/v2/channels/${urlEncode(value)}/me")
+            normalizedChannelSlug?.let { value ->
+                if (hasKickWebsiteSession) {
+                    add("https://kick.com/api/v2/channels/${urlEncode(value)}/points")
+                }
                 add("https://kick.com/api/v2/channels/${urlEncode(value)}/rewards")
                 add("https://kick.com/api/v1/channels/${urlEncode(value)}/rewards")
+                add("https://kick.com/api/v2/channels/${urlEncode(value)}/community-points/rewards")
+                add("https://kick.com/api/v1/channels/${urlEncode(value)}/community-points/rewards")
+                if (hasKickWebsiteSession) {
+                    add("https://kick.com/api/v2/channels/${urlEncode(value)}/me")
+                }
+            }
+            normalizedChannelId?.let { value ->
+                if (hasKickWebsiteSession && normalizedChannelSlug == null) {
+                    add("https://kick.com/api/v2/channels/${urlEncode(value)}/points")
+                }
+                if (normalizedChannelSlug == null) {
+                    add("https://kick.com/api/v2/channels/${urlEncode(value)}/rewards")
+                }
+                add("https://kick.com/api/v2/channels/${urlEncode(value)}/community-points/rewards")
+                add("https://kick.com/api/v1/channels/${urlEncode(value)}/community-points/rewards")
+                if (hasKickWebsiteSession && normalizedChannelSlug == null) {
+                    add("https://kick.com/api/v2/channels/${urlEncode(value)}/me")
+                }
             }
         }
+        Log.i(
+            pointsDebugTag,
+            "channel points fetch started slug=${normalizedChannelSlug ?: "<none>"} id=${normalizedChannelId ?: "<none>"} websiteSession=$hasKickWebsiteSession candidates=${candidates.size}",
+        )
         var best = ChannelPointRewardsResult()
         for (url in candidates) {
+            Log.i(pointsDebugTag, "channel points trying url=$url")
             val rawResult = runCatching {
                 getRaw(url, isKickWeb = true)
             }
             val raw = rawResult.getOrNull()
             if (raw == null) {
+                Log.i(pointsDebugTag, "channel points request failed url=$url error=${rawResult.exceptionOrNull()?.message ?: "unknown"}")
                 if (isKickFeatureDebugEnabled()) {
                     Log.d(
                         pointsDebugTag,
@@ -586,10 +702,21 @@ class KickRepository @Inject constructor(
                 }
                 continue
             }
+            val trimmed = raw.trimStart()
+            if (trimmed.startsWith("<!DOCTYPE html", ignoreCase = true) || trimmed.startsWith("<html", ignoreCase = true)) {
+                if (isKickFeatureDebugEnabled()) {
+                    Log.d(pointsDebugTag, "rewards url=$url ignored=html-shell")
+                }
+                continue
+            }
             val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
             val result = root?.let(::parseChannelPointRewardsResponse)
                 ?: runCatching { parseChannelPointRewardsResponse(raw) }.getOrNull()
                 ?: continue
+            Log.i(
+                pointsDebugTag,
+                "channel points parsed url=$url balance=${result.balance ?: "null"} rewards=${result.rewards.size} available=${result.available}",
+            )
             if (isKickFeatureDebugEnabled()) {
                 Log.d(
                     pointsDebugTag,
@@ -597,17 +724,175 @@ class KickRepository @Inject constructor(
                 )
             }
             best = best.merge(result)
-            if ((best.balance != null && (best.available || best.rewards.isNotEmpty())) ||
-                (best.balance != null && url.contains("/me"))
-            ) {
+            if (best.balance != null && (best.available || best.rewards.isNotEmpty())) {
                 break
             }
         }
         return best.also { result ->
+            Log.i(
+                pointsDebugTag,
+                "channel points fetch finished slug=${normalizedChannelSlug ?: "<none>"} id=${normalizedChannelId ?: "<none>"} balance=${result.balance ?: "null"} rewards=${result.rewards.size} available=${result.available}",
+            )
             if (cacheKey.isNotBlank()) {
                 channelPointRewardsCache[cacheKey] = System.currentTimeMillis() to result
             }
         }
+    }
+
+    suspend fun getKickEventSubscriptions(
+        networkLibrary: String?,
+        broadcasterUserId: Long? = null,
+    ): List<KickEventSubscription> = withContext(Dispatchers.IO) {
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.getEventSubscriptions(accessToken, broadcasterUserId)
+    }
+
+    suspend fun createKickEventSubscriptions(
+        networkLibrary: String?,
+        events: List<KickEventSubscriptionRequestItem>,
+        broadcasterUserId: Long? = null,
+        method: String = "webhook",
+    ): List<KickEventSubscriptionCreateResult> = withContext(Dispatchers.IO) {
+        KickOfficialApiValidationUtils.validateEventSubscriptionCreate(events)
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.createEventSubscriptions(
+            accessToken = accessToken,
+            events = events,
+            broadcasterUserId = broadcasterUserId,
+            method = method,
+        )
+    }
+
+    suspend fun deleteKickEventSubscriptions(
+        networkLibrary: String?,
+        ids: List<String>,
+    ) = withContext(Dispatchers.IO) {
+        val normalizedIds = ids.map(String::trim).filter(String::isNotBlank)
+        require(normalizedIds.isNotEmpty()) { "Select at least one event subscription." }
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.deleteEventSubscriptions(accessToken, normalizedIds)
+    }
+
+    suspend fun deleteOfficialChatMessage(
+        networkLibrary: String?,
+        messageId: String,
+    ) = withContext(Dispatchers.IO) {
+        val normalizedMessageId = messageId.trim()
+        require(normalizedMessageId.isNotBlank()) { "Message id is required." }
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.deleteChatMessage(accessToken, normalizedMessageId)
+    }
+
+    suspend fun banOfficialUser(
+        networkLibrary: String?,
+        broadcasterUserId: Long,
+        targetUserId: Long,
+        durationSeconds: Int? = null,
+        reason: String? = null,
+    ) = withContext(Dispatchers.IO) {
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.postModerationBan(
+            accessToken = accessToken,
+            request = KickOfficialModerationBanRequest(
+                broadcasterUserId = broadcasterUserId,
+                userId = targetUserId,
+                duration = durationSeconds,
+                reason = reason?.trim()?.takeIf { it.isNotBlank() },
+            )
+        )
+    }
+
+    suspend fun unbanOfficialUser(
+        networkLibrary: String?,
+        broadcasterUserId: Long,
+        targetUserId: Long,
+    ) = withContext(Dispatchers.IO) {
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.deleteModerationBan(
+            accessToken = accessToken,
+            request = KickOfficialModerationDeleteBanRequest(
+                broadcasterUserId = broadcasterUserId,
+                userId = targetUserId,
+            )
+        )
+    }
+
+    suspend fun getOfficialChannelRewards(networkLibrary: String?): List<KickOfficialReward> = withContext(Dispatchers.IO) {
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.getChannelRewards(accessToken)
+    }
+
+    suspend fun createOfficialChannelReward(
+        networkLibrary: String?,
+        input: KickOfficialRewardCreateRequest,
+    ): KickOfficialReward = withContext(Dispatchers.IO) {
+        KickOfficialApiValidationUtils.validateCreateReward(input)
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.createChannelReward(accessToken, input)
+    }
+
+    suspend fun updateOfficialChannelReward(
+        networkLibrary: String?,
+        rewardId: String,
+        input: KickOfficialRewardUpdateRequest,
+    ): KickOfficialReward = withContext(Dispatchers.IO) {
+        KickOfficialApiValidationUtils.validateUpdateReward(input)
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.updateChannelReward(accessToken, rewardId, input)
+    }
+
+    suspend fun deleteOfficialChannelReward(
+        networkLibrary: String?,
+        rewardId: String,
+    ) = withContext(Dispatchers.IO) {
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.deleteChannelReward(accessToken, rewardId)
+    }
+
+    suspend fun getOfficialRewardRedemptions(
+        networkLibrary: String?,
+        rewardId: String? = null,
+        status: String? = null,
+        ids: List<String>? = null,
+        cursor: String? = null,
+    ): KickRewardRedemptionsPage = withContext(Dispatchers.IO) {
+        val normalizedIds = ids?.map(String::trim)?.filter(String::isNotBlank).orEmpty()
+        require(normalizedIds.isEmpty() || (rewardId.isNullOrBlank() && status.isNullOrBlank() && cursor.isNullOrBlank())) {
+            "Redemption id lookups cannot be combined with other filters."
+        }
+        status?.let {
+            require(it in KickOfficialApiValidationUtils.REDEMPTION_STATUSES) {
+                "Unsupported redemption status."
+            }
+        }
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.getRewardRedemptions(
+            accessToken = accessToken,
+            rewardId = rewardId,
+            status = status,
+            ids = normalizedIds,
+            cursor = cursor,
+        )
+    }
+
+    suspend fun acceptOfficialRewardRedemptions(
+        networkLibrary: String?,
+        ids: List<String>,
+    ): List<KickRewardRedemptionActionFailure> = withContext(Dispatchers.IO) {
+        val normalizedIds = ids.map(String::trim).filter(String::isNotBlank)
+        KickOfficialApiValidationUtils.validateRedemptionActionIds(normalizedIds)
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.acceptRewardRedemptions(accessToken, normalizedIds)
+    }
+
+    suspend fun rejectOfficialRewardRedemptions(
+        networkLibrary: String?,
+        ids: List<String>,
+    ): List<KickRewardRedemptionActionFailure> = withContext(Dispatchers.IO) {
+        val normalizedIds = ids.map(String::trim).filter(String::isNotBlank)
+        KickOfficialApiValidationUtils.validateRedemptionActionIds(normalizedIds)
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.rejectRewardRedemptions(accessToken, normalizedIds)
     }
 
     fun parsePinnedGiftUpdate(eventName: String?, messageJson: String): PinnedGiftUpdate? {
@@ -641,6 +926,413 @@ class KickRepository @Inject constructor(
             root,
             setOf("slow", "follower", "follow", "subscriber", "sub", "emote", "unique", "r9k", "interval")
         ).isNotEmpty()
+    }
+
+    fun parseKickRealtimeEvent(eventName: String?, messageJson: String): KickRealtimeParsedEvent? {
+        val normalizedEvent = eventName?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (normalizedEvent.isBlank()) {
+            return null
+        }
+        return when (normalizedEvent) {
+            "chat.message.sent" -> {
+                val event = decodeKickOfficialRealtimePayload<KickOfficialChatMessageSentEvent>(messageJson) ?: return null
+                val kickMessage = officialChatEventToKickMessage(event)
+                KickRealtimeParsedEvent(
+                    chatMessage = toChatMessage(kickMessage, eventName)
+                )
+            }
+            "channel.subscription.gifts" -> {
+                val event = decodeKickOfficialRealtimePayload<KickOfficialChannelSubscriptionGiftsEvent>(messageJson) ?: return null
+                val kickMessage = officialGiftEventToKickMessage(event)
+                KickRealtimeParsedEvent(
+                    chatMessage = toChatMessage(kickMessage, eventName)
+                )
+            }
+            "channel.subscription.new" -> {
+                val event = decodeKickOfficialRealtimePayload<KickOfficialChannelSubscriptionEvent>(messageJson) ?: return null
+                val subscriberName = event.subscriber?.username ?: event.subscriber?.channelSlug ?: return null
+                val message = if ((event.duration ?: 0) > 1) {
+                    context.getString(R.string.kick_subscribed_for_months_notice, subscriberName, event.duration ?: 1)
+                } else {
+                    context.getString(R.string.kick_subscribed_notice, subscriberName)
+                }
+                KickRealtimeParsedEvent(chatMessage = createKickNoticeMessage(message, event.createdAt))
+            }
+            "channel.subscription.renewal" -> {
+                val event = decodeKickOfficialRealtimePayload<KickOfficialChannelSubscriptionEvent>(messageJson) ?: return null
+                val subscriberName = event.subscriber?.username ?: event.subscriber?.channelSlug ?: return null
+                val message = if ((event.duration ?: 0) > 1) {
+                    context.getString(R.string.kick_renewed_sub_for_months_notice, subscriberName, event.duration ?: 1)
+                } else {
+                    context.getString(R.string.kick_renewed_sub_notice, subscriberName)
+                }
+                KickRealtimeParsedEvent(chatMessage = createKickNoticeMessage(message, event.createdAt))
+            }
+            "channel.followed" -> {
+                val event = decodeKickOfficialRealtimePayload<KickOfficialChannelFollowedEvent>(messageJson) ?: return null
+                val followerName = event.follower?.username ?: event.follower?.channelSlug ?: return null
+                val broadcasterName = event.broadcaster?.username ?: event.broadcaster?.channelSlug ?: return null
+                KickRealtimeParsedEvent(
+                    chatMessage = createKickNoticeMessage(
+                        context.getString(R.string.kick_followed_notice, followerName, broadcasterName),
+                        event.createdAt,
+                    )
+                )
+            }
+            "moderation.banned" -> {
+                val event = decodeKickOfficialRealtimePayload<KickOfficialModerationBannedEvent>(messageJson) ?: return null
+                val kickMessage = officialModerationEventToKickMessage(event)
+                val targetUser = event.bannedUser
+                KickRealtimeParsedEvent(
+                    chatMessage = toChatMessage(kickMessage, eventName),
+                    clearTargetUserId = targetUser?.userId?.toString(),
+                    clearTargetUserLogin = targetUser?.channelSlug,
+                    clearTargetUserName = targetUser?.username,
+                )
+            }
+            "channel.reward.redemption.updated" -> {
+                val event = decodeKickOfficialRealtimePayload<KickOfficialRewardRedemptionUpdatedEvent>(messageJson) ?: return null
+                val reward = event.reward ?: return null
+                val redeemer = event.redeemer ?: return null
+                KickRealtimeParsedEvent(
+                    chatMessage = ChatMessage(
+                        userId = redeemer.userId?.toString(),
+                        userLogin = redeemer.channelSlug,
+                        userName = redeemer.username,
+                        message = event.redemption?.userInput?.takeIf { it.isNotBlank() },
+                        reward = ChannelPointReward(
+                            id = reward.id,
+                            title = reward.title,
+                            cost = reward.cost,
+                            backgroundColor = reward.backgroundColor,
+                            isEnabled = reward.isEnabled,
+                            isUserInputRequired = reward.isUserInputRequired,
+                            prompt = reward.description,
+                        ),
+                        timestamp = event.redemption?.redeemedAt?.let(KickApiHelper::parseIso8601DateUTC),
+                        fullMsg = messageJson,
+                    )
+                )
+            }
+            "rewardredeemedevent" -> {
+                val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
+                val rewardTitle = root.primitiveOrNull("reward_title") ?: return null
+                val userId = root.primitiveOrNull("user_id")
+                val channelId = root.primitiveOrNull("channel_id")
+                val username = root.primitiveOrNull("username")
+                val userInput = root.primitiveOrNull("user_input")?.takeIf { it.isNotBlank() }
+                val backgroundColor = root.primitiveOrNull("reward_background_color")
+                val systemMessage = username?.let { context.getString(R.string.user_redeemed, it, rewardTitle) }
+                    ?: context.getString(R.string.redeemed, rewardTitle)
+                KickRealtimeParsedEvent(
+                    chatMessage = ChatMessage(
+                        id = buildString {
+                            append("kick_reward_redeemed:")
+                            append(userId ?: "unknown")
+                            append(':')
+                            append(rewardTitle)
+                            append(':')
+                            append(channelId ?: "unknown")
+                        },
+                        userId = userId,
+                        userName = username,
+                        message = userInput,
+                        systemMsg = systemMessage,
+                        msgId = "kick_usernotice",
+                        reward = ChannelPointReward(
+                            title = rewardTitle,
+                            backgroundColor = backgroundColor,
+                        ),
+                        fullMsg = messageJson,
+                    )
+                )
+            }
+            "livestream.status.updated" -> {
+                val event = decodeKickOfficialRealtimePayload<KickOfficialLivestreamStatusUpdatedEvent>(messageJson) ?: return null
+                val title = event.title ?: event.broadcaster?.username ?: return null
+                val message = if (event.isLive == true) {
+                    context.getString(R.string.kick_livestream_started_notice, title)
+                } else {
+                    context.getString(R.string.kick_livestream_ended_notice, title)
+                }
+                KickRealtimeParsedEvent(
+                    chatMessage = createKickNoticeMessage(message, event.startedAt ?: event.endedAt)
+                )
+            }
+            "livestream.metadata.updated" -> {
+                val event = decodeKickOfficialRealtimePayload<KickOfficialLivestreamMetadataUpdatedEvent>(messageJson) ?: return null
+                val title = event.metadata?.title ?: event.broadcaster?.username ?: return null
+                val category = event.metadata?.category?.name
+                val message = if (!category.isNullOrBlank()) {
+                    context.getString(R.string.kick_livestream_metadata_notice_with_category, title, category)
+                } else {
+                    context.getString(R.string.kick_livestream_metadata_notice, title)
+                }
+                KickRealtimeParsedEvent(chatMessage = createKickNoticeMessage(message))
+            }
+            "kicks.gifted" -> {
+                val event = decodeKickOfficialRealtimePayload<KickOfficialKicksGiftedEvent>(messageJson) ?: return null
+                val senderName = event.sender?.username ?: event.sender?.channelSlug ?: return null
+                val amount = event.giftedAmount ?: event.amount ?: return null
+                val recipientName = event.recipient?.username ?: event.recipient?.channelSlug
+                val message = if (!recipientName.isNullOrBlank()) {
+                    context.getString(R.string.kick_kicks_gifted_notice, senderName, amount, recipientName)
+                } else {
+                    context.getString(R.string.kick_kicks_gifted_notice_without_recipient, senderName, amount)
+                }
+                KickRealtimeParsedEvent(
+                    chatMessage = createKickNoticeMessage(message, event.createdAt)
+                )
+            }
+            "kicksgifted" -> {
+                val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
+                val sender = (root["sender"] as? JsonObject)
+                val gift = (root["gift"] as? JsonObject)
+                val senderName = sender?.primitiveOrNull("username")
+                    ?: sender?.primitiveOrNull("channel_slug")
+                    ?: sender?.primitiveOrNull("slug")
+                    ?: return null
+                val amount = gift?.firstLongOrNull("amount", "gift_amount", "kicks")?.toInt()
+                    ?: root.firstLongOrNull("amount", "gifted_amount", "kicks")?.toInt()
+                    ?: return null
+                val message = context.getString(R.string.kick_kicks_gifted_notice_without_recipient, senderName, amount)
+                KickRealtimeParsedEvent(chatMessage = createKickNoticeMessage(message, root.primitiveOrNull("created_at")))
+            }
+            "app\\events\\streamhostevent", "app\\events\\streamhostedevent" -> {
+                val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
+                val messageObject = root["message"] as? JsonObject
+                val userObject = root["user"] as? JsonObject
+                val hostUsername = root.primitiveOrNull("host_username")
+                    ?: userObject?.primitiveOrNull("username")
+                    ?: return null
+                val viewerCount = root.firstLongOrNull("number_viewers", "numberOfViewers")
+                    ?: messageObject?.firstLongOrNull("numberOfViewers", "number_viewers")
+                val message = if (viewerCount != null && viewerCount > 0) {
+                    "$hostUsername hosted with $viewerCount viewers"
+                } else {
+                    "$hostUsername hosted the stream"
+                }
+                KickRealtimeParsedEvent(
+                    chatMessage = createKickNoticeMessage(
+                        message,
+                        root.primitiveOrNull("created_at") ?: messageObject?.primitiveOrNull("createdAt")
+                    )
+                )
+            }
+            else -> null
+        }
+    }
+
+    fun parseKickRealtimeChannelPointsUpdate(eventName: String?, messageJson: String): KickRealtimeChannelPointsUpdate? {
+        val normalizedEvent = eventName?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (normalizedEvent != "pointsupdated") {
+            return null
+        }
+        val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
+        return KickRealtimeChannelPointsUpdate(
+            reason = root.primitiveOrNull("reason"),
+            points = (root["points"] as? JsonPrimitive)?.intOrNull,
+            balance = (root["balance"] as? JsonPrimitive)?.intOrNull,
+            userId = root.primitiveOrNull("user_id"),
+            channelId = root.primitiveOrNull("channel_id"),
+        )
+    }
+
+    fun parseKickRealtimePredictionUpdate(eventName: String?, messageJson: String): Prediction? {
+        val normalizedEvent = eventName?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (normalizedEvent !in setOf(
+                "predictioncreated",
+                "predictionupdated",
+                "predictionlocked",
+                "predictionended",
+                "predictionresolved",
+                "predictioncancelled",
+            )
+        ) {
+            return null
+        }
+        val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
+        val predictionObject = root.objOrNull("prediction") ?: root
+        val outcomes = predictionObject.arrayOrNull("outcomes").orEmpty().mapNotNull { element ->
+            val outcome = element as? JsonObject ?: return@mapNotNull null
+            val title = outcome.primitiveOrNull("title")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            Prediction.PredictionOutcome(
+                id = outcome.primitiveOrNull("id"),
+                title = title,
+                totalPoints = outcome.firstLongOrNull("total_points", "total_vote_amount")?.toInt(),
+                totalUsers = outcome.firstLongOrNull("total_users", "vote_count")?.toInt(),
+            )
+        }
+        val status = predictionObject.firstPrimitiveOrNull("status", "state") ?: when (normalizedEvent) {
+            "predictionlocked" -> "LOCKED"
+            "predictionresolved", "predictionended" -> "RESOLVED"
+            "predictioncancelled" -> "CANCELED"
+            else -> null
+        }
+        return Prediction(
+            id = predictionObject.primitiveOrNull("id"),
+            createdAt = predictionObject.primitiveOrNull("created_at")?.let(KickApiHelper::parseIso8601DateUTC),
+            outcomes = outcomes,
+            predictionWindowSeconds = predictionObject.firstLongOrNull("prediction_window_seconds", "duration")?.toInt(),
+            status = status,
+            title = predictionObject.primitiveOrNull("title"),
+            winningOutcomeId = predictionObject.firstPrimitiveOrNull("winning_outcome_id", "winningOutcomeId"),
+        )
+    }
+
+    fun parseKickRealtimePollUpdate(eventName: String?, messageJson: String): Poll? {
+        val normalizedEvent = eventName?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (normalizedEvent != "app\\events\\pollupdateevent") {
+            return null
+        }
+        val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
+        val pollObject = root.objOrNull("poll") ?: root
+        return parseKickPollObject(pollObject)
+    }
+
+    fun parseKickWebPollResponse(raw: String): Poll? {
+        val root = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return null
+        val data = root.objOrNull("data") ?: root
+        val pollObject = data.objOrNull("poll") ?: return null
+        return parseKickPollObject(pollObject)
+    }
+
+    suspend fun voteKickWebPoll(
+        channelSlug: String,
+        choiceId: Int,
+    ): Poll? = withContext(Dispatchers.IO) {
+        val normalizedChannelSlug = channelSlug.trim().takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("channel slug is required")
+        val url = "https://kick.com/api/v2/channels/${urlEncode(normalizedChannelSlug)}/polls/vote"
+        val body = buildJsonObject {
+            put("id", JsonPrimitive(choiceId))
+        }.toString()
+        okHttpClient.newCall(
+            createRequestBuilder(url, isKickWeb = true)
+                .header("Content-Type", "application/json")
+                .post(body.toRequestBody("application/json".toMediaTypeOrNull()))
+                .build()
+        ).execute().use { response ->
+            val raw = response.body.string()
+            if (!response.isSuccessful) {
+                throw IOException("Kick poll vote failed (${response.code}) for $url: ${raw.take(200)}")
+            }
+            parseKickWebPollResponse(raw)
+        }
+    }
+
+    private fun parseKickPollObject(pollObject: JsonObject): Poll {
+        val choices = pollObject.arrayOrNull("options").orEmpty().mapNotNull { element ->
+            val option = element as? JsonObject ?: return@mapNotNull null
+            val title = option.firstPrimitiveOrNull("label", "title")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            Poll.PollChoice(
+                id = option.firstLongOrNull("id", "option_id")?.toInt(),
+                title = title,
+                totalVotes = option.firstLongOrNull("votes", "total_votes", "vote_count")?.toInt(),
+            )
+        }
+        val totalVotes = choices.sumOf { it.totalVotes ?: 0 }
+        val remainingSeconds = pollObject.firstLongOrNull("remaining", "remaining_seconds")
+        val status = when {
+            !pollObject.primitiveOrNull("status").isNullOrBlank() -> pollObject.primitiveOrNull("status")
+            remainingSeconds == null -> "ACTIVE"
+            remainingSeconds <= 0L -> "COMPLETED"
+            else -> "ACTIVE"
+        }
+        return Poll(
+            id = pollObject.firstPrimitiveOrNull("poll_id", "id", "title"),
+            title = pollObject.primitiveOrNull("title"),
+            status = status,
+            choices = choices,
+            totalVotes = totalVotes,
+            remainingMilliseconds = remainingSeconds?.times(1000)?.toInt(),
+            resultDisplayMilliseconds = pollObject.firstLongOrNull("result_display_duration", "result_display_seconds")?.times(1000)?.toInt(),
+            hasVoted = pollObject["has_voted"]?.let { (it as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: (it as? JsonPrimitive)?.intOrNull?.let { intValue -> intValue != 0 } },
+            votedChoiceId = pollObject.firstLongOrNull("voted_option_id", "voted_choice_id")?.toInt(),
+        )
+    }
+
+    suspend fun authorizeKickPusherPrivateChannel(socketId: String, channelName: String): String? = withContext(Dispatchers.IO) {
+        if (socketId.isBlank() || channelName.isBlank()) {
+            return@withContext null
+        }
+        val url = "https://kick.com/broadcasting/auth"
+        val body = JSONObject().apply {
+            put("socket_id", socketId)
+            put("channel_name", channelName)
+        }.toString()
+        runCatching {
+            okHttpClient.newCall(
+                createRequestBuilder(url, isKickWeb = true)
+                    .header("Content-Type", "application/json")
+                    .post(body.toRequestBody("application/json".toMediaTypeOrNull()))
+                    .build()
+            ).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("Kick private channel auth failed (${response.code}) for $channelName")
+                }
+                val raw = response.body.string()
+                JSONObject(raw).optString("auth").takeIf { it.isNotBlank() }
+            }
+        }.onFailure {
+            Log.w(tag, "kick pusher auth failed channel=$channelName message=${it.message}")
+        }.getOrNull()
+    }
+
+    suspend fun redeemKickWebReward(
+        channelSlug: String,
+        rewardId: String,
+        userInput: String? = null,
+    ) = withContext(Dispatchers.IO) {
+        val normalizedChannelSlug = channelSlug.trim().takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("channel slug is required")
+        val normalizedRewardId = rewardId.trim().takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("reward id is required")
+        val transactionId = generateKickTransactionId()
+        val normalizedUserInput = userInput?.trim()?.takeIf { it.isNotBlank() }
+        val body = buildJsonObject {
+            put("transaction_id", JsonPrimitive(transactionId))
+            normalizedUserInput?.let { put("user_input", JsonPrimitive(it)) }
+        }.toString()
+        val url = "https://kick.com/api/v2/channels/${urlEncode(normalizedChannelSlug)}/rewards/${urlEncode(normalizedRewardId)}/redeem"
+        Log.i(pointsDebugTag, "channel points redeem started slug=$normalizedChannelSlug rewardId=$normalizedRewardId transactionId=$transactionId")
+        okHttpClient.newCall(
+            createRequestBuilder(url, isKickWeb = true)
+                .header("Content-Type", "application/json")
+                .post(body.toRequestBody("application/json".toMediaTypeOrNull()))
+                .build()
+        ).execute().use { response ->
+            val raw = response.body.string()
+            if (!response.isSuccessful) {
+                Log.i(
+                    pointsDebugTag,
+                    "channel points redeem failed slug=$normalizedChannelSlug rewardId=$normalizedRewardId code=${response.code} body=${raw.take(200)}",
+                )
+                throw IOException("Kick reward redeem failed (${response.code}) for $url: ${raw.take(200)}")
+            }
+            Log.i(pointsDebugTag, "channel points redeem succeeded slug=$normalizedChannelSlug rewardId=$normalizedRewardId")
+        }
+    }
+
+    private inline fun <reified T> decodeKickOfficialRealtimePayload(messageJson: String): T? {
+        runCatching { json.decodeFromString<T>(messageJson) }.getOrNull()?.let { return it }
+        val root = runCatching { json.parseToJsonElement(messageJson) }.getOrNull() ?: return null
+        val candidates = buildList<JsonElement> {
+            add(root)
+            (root as? JsonObject)?.let { obj ->
+                obj["data"]?.let(::add)
+                obj["message"]?.let(::add)
+                obj["payload"]?.let(::add)
+                (obj["payload"] as? JsonObject)?.get("data")?.let(::add)
+                listOf("data", "message", "payload").forEach { key ->
+                    val raw = (obj[key] as? JsonPrimitive)?.contentOrNull ?: return@forEach
+                    runCatching { json.parseToJsonElement(raw) }.getOrNull()?.let(::add)
+                }
+            }
+        }
+        return candidates.firstNotNullOfOrNull { candidate ->
+            runCatching { json.decodeFromJsonElement<T>(candidate) }.getOrNull()
+        }
     }
 
     fun parseChannelPointRewardsResponse(raw: String): ChannelPointRewardsResult {
@@ -1599,7 +2291,7 @@ class KickRepository @Inject constructor(
         }
         return parseKickMessagesData(root, raw).also { parsed ->
             if (parsed.messages.isEmpty() && isKickRecentChatDebugEnabled()) {
-                Log.w(
+                Log.d(
                     "KickRecentChat",
                     "empty live history source=$channelOrChatroomId body=${raw.take(600).replace('\n', ' ')}"
                 )
@@ -1676,117 +2368,23 @@ class KickRepository @Inject constructor(
     }
 
     suspend fun sendChatMessage(accessToken: String, broadcasterUserId: Long, content: String, replyToMessageId: String? = null): KickChatSendResponse = withContext(Dispatchers.IO) {
-        data class ChatAttempt(
-            val body: String,
-            val requestMeta: String,
+        val response = kickOfficialApiClient.postChatMessage(
+            accessToken = accessToken,
+            request = KickOfficialPostChatMessageRequest(
+                broadcasterUserId = broadcasterUserId,
+                content = content,
+                replyToMessageId = replyToMessageId,
+                type = "user",
+            )
         )
-
-        val attempts = buildList {
-            add(
-                ChatAttempt(
-                    body = buildChatPayload(
-                        broadcasterUserId = broadcasterUserId,
-                        content = content,
-                        replyToMessageId = replyToMessageId,
-                        type = "user",
-                        includeBroadcaster = true,
-                    ),
-                    requestMeta = "variant=v1-user,broadcaster_user_id=$broadcasterUserId,type=user,content_length=${content.length},has_reply=${!replyToMessageId.isNullOrBlank()}",
-                )
-            )
-            add(
-                ChatAttempt(
-                    body = buildChatPayload(
-                        broadcasterUserId = broadcasterUserId,
-                        content = content,
-                        replyToMessageId = replyToMessageId,
-                        type = null,
-                        includeBroadcaster = true,
-                    ),
-                    requestMeta = "variant=legacy-user-no-type,broadcaster_user_id=$broadcasterUserId,content_length=${content.length},has_reply=${!replyToMessageId.isNullOrBlank()}",
-                )
-            )
-            add(
-                ChatAttempt(
-                    body = buildChatPayload(
-                        broadcasterUserId = broadcasterUserId,
-                        content = content,
-                        replyToMessageId = replyToMessageId,
-                        type = "bot",
-                        includeBroadcaster = false,
-                    ),
-                    requestMeta = "variant=v1-bot,broadcaster_user_id=omitted,type=bot,content_length=${content.length},has_reply=${!replyToMessageId.isNullOrBlank()}",
-                )
-            )
-        }
-
-        var lastFailure: Pair<ChatAttempt, ChatResult>? = null
-        for ((index, attempt) in attempts.withIndex()) {
-            val result = executeChatSend(accessToken, attempt.body)
-            if (result.code in 200..299) {
-                return@withContext if (result.body.isBlank()) {
-                    KickChatSendResponse()
-                } else {
-                    json.decodeFromString<KickChatSendResponse>(result.body)
-                }
-            }
-            lastFailure = attempt to result
-            val shouldTryNext = index < attempts.lastIndex &&
-                    result.code == 400 &&
-                    result.body.contains("invalid request", ignoreCase = true)
-            if (!shouldTryNext) {
-                break
-            }
-        }
-
-        val (attempt, result) = lastFailure ?: throw IOException("Kick chat send failed (unknown)")
-        val details = result.body.ifBlank { null }?.replace('\n', ' ')
-        throw IOException("Kick chat send failed (${result.code})${details?.let { ": $it" } ?: ""}; request={${attempt.requestMeta}}")
-    }
-
-    private fun buildChatPayload(
-        broadcasterUserId: Long,
-        content: String,
-        replyToMessageId: String?,
-        type: String?,
-        includeBroadcaster: Boolean,
-    ): String {
-        return json.encodeToString(
-            buildJsonObject {
-                if (includeBroadcaster) {
-                    put("broadcaster_user_id", JsonPrimitive(broadcasterUserId))
-                }
-                put("content", JsonPrimitive(content))
-                type?.let { put("type", JsonPrimitive(it)) }
-                replyToMessageId?.takeIf { it.isNotBlank() }?.let {
-                    put("reply_to_message_id", JsonPrimitive(it))
-                }
-            }
-        )
-    }
-
-    private fun executeChatSend(accessToken: String, body: String): ChatResult {
-        return okHttpClient.newCall(
-            Request.Builder()
-                .url("https://api.kick.com/public/v1/chat")
-                .header("User-Agent", "okhttp/5.0.0")
-                .header("Accept", "application/json")
-                .header("Authorization", "Bearer $accessToken")
-                .header("Content-Type", "application/json")
-                .post(body.toRequestBody())
-                .build()
-        ).execute().use { response ->
-            ChatResult(
-                code = response.code,
-                body = response.body.string(),
+        return@withContext when {
+            response == null -> KickChatSendResponse()
+            response is JsonObject && response["data"] != null -> json.decodeFromJsonElement(response)
+            else -> KickChatSendResponse(
+                data = json.decodeFromJsonElement(response)
             )
         }
     }
-
-    private data class ChatResult(
-        val code: Int,
-        val body: String,
-    )
 
     fun toStream(item: KickLivestream, gameId: String? = null, gameSlug: String? = null, gameName: String? = null): Stream {
         val category = item.categories?.firstOrNull()
@@ -1850,6 +2448,108 @@ class KickRepository @Inject constructor(
         return KickWebsiteSearchMapper.toUser(item)
     }
 
+    private fun officialChatEventToKickMessage(event: KickOfficialChatMessageSentEvent): KickMessage {
+        return KickMessage(
+            id = event.messageId,
+            content = event.content,
+            createdAt = event.createdAt,
+            replyTo = event.repliesTo?.let(::encodeOfficialReplyInfo),
+            replyToMessage = event.repliesTo?.let(::encodeOfficialReplyInfo),
+            replyToMessageId = event.repliesTo?.messageId,
+            sender = event.sender?.let(::toKickMessageSender),
+        )
+    }
+
+    private fun officialGiftEventToKickMessage(event: KickOfficialChannelSubscriptionGiftsEvent): KickMessage {
+        val gifter = event.gifter ?: event.subscriber
+        val firstGiftee = event.giftees.firstOrNull()
+        return KickMessage(
+            id = "kick_subscription_gifts:${gifter?.userId ?: "unknown"}:${event.createdAt ?: "0"}",
+            createdAt = event.createdAt,
+            type = "subscription_gifts",
+            sender = gifter?.let(::toKickMessageSender),
+            targetUser = firstGiftee?.let(::encodeOfficialEventUser),
+            metadata = buildJsonObject {
+                put("event", JsonPrimitive("channel.subscription.gifts"))
+                put("gifted_count", JsonPrimitive(event.giftees.size.coerceAtLeast(1)))
+            },
+        )
+    }
+
+    private fun officialModerationEventToKickMessage(event: KickOfficialModerationBannedEvent): KickMessage {
+        val createdAt = event.metadata?.createdAt?.let(::normalizeDate)?.let(KickApiHelper::parseIso8601DateUTC)
+        val expiresAt = event.metadata?.expiresAt?.let(::normalizeDate)?.let(KickApiHelper::parseIso8601DateUTC)
+        val durationSeconds = if (createdAt != null && expiresAt != null && expiresAt > createdAt) {
+            ((expiresAt - createdAt) / 1000L).coerceAtLeast(0L)
+        } else {
+            null
+        }
+        return KickMessage(
+            id = "kick_moderation:${event.bannedUser?.userId ?: "unknown"}:${event.metadata?.createdAt ?: "0"}",
+            createdAt = event.metadata?.createdAt,
+            type = "moderation_banned",
+            sender = event.moderator?.let(::toKickMessageSender),
+            targetUser = event.bannedUser?.let(::encodeOfficialEventUser),
+            metadata = buildJsonObject {
+                put("event", JsonPrimitive("moderation.banned"))
+                event.metadata?.reason?.takeIf { it.isNotBlank() }?.let { put("reason", JsonPrimitive(it)) }
+                durationSeconds?.let { put("duration_seconds", JsonPrimitive(it)) }
+                put("permanent", JsonPrimitive(durationSeconds == null))
+            },
+        )
+    }
+
+    private fun toKickMessageSender(user: KickOfficialEventUser): KickMessageSender {
+        return KickMessageSender(
+            id = user.userId,
+            slug = user.channelSlug,
+            username = user.username,
+            isVerified = user.isVerified,
+            verified = user.isVerified,
+            identity = user.identity?.let { identity ->
+                KickMessageIdentity(
+                    color = identity.usernameColor,
+                    badges = identity.badges.map(::toKickMessageBadge)
+                )
+            }
+        )
+    }
+
+    private fun toKickMessageBadge(badge: KickOfficialEventBadge): KickMessageBadge {
+        return KickMessageBadge(
+            type = badge.type,
+            text = badge.text,
+            count = badge.count,
+        )
+    }
+
+    private fun encodeOfficialReplyInfo(replyInfo: com.github.andreyasadchy.xtra.model.kick.KickOfficialReplyInfo): JsonObject {
+        return buildJsonObject {
+            replyInfo.messageId?.let { put("id", JsonPrimitive(it)) }
+            replyInfo.messageId?.let { put("message_id", JsonPrimitive(it)) }
+            replyInfo.content?.let { put("content", JsonPrimitive(it)) }
+            replyInfo.sender?.let { put("sender", encodeOfficialEventUser(it)) }
+        }
+    }
+
+    private fun encodeOfficialEventUser(user: KickOfficialEventUser): JsonObject {
+        return buildJsonObject {
+            user.userId?.let { put("id", JsonPrimitive(it)) }
+            user.channelSlug?.takeIf { it.isNotBlank() }?.let { put("slug", JsonPrimitive(it)) }
+            user.username?.takeIf { it.isNotBlank() }?.let { put("username", JsonPrimitive(it)) }
+        }
+    }
+
+    private fun createKickNoticeMessage(message: String, createdAt: String? = null): ChatMessage {
+        return ChatMessage(
+            id = "kick_notice:${message.hashCode()}:${createdAt.orEmpty()}",
+            systemMsg = message,
+            msgId = "kick_usernotice",
+            timestamp = normalizeDate(createdAt)?.let(KickApiHelper::parseIso8601DateUTC),
+            fullMsg = message,
+        )
+    }
+
     fun toChatMessage(message: KickMessage, eventName: String? = null): ChatMessage {
         val moderationType = resolveKickModerationType(message, eventName)
         val deletedMessageObject = message.deletedMessage.asJsonObjectOrNull()
@@ -1858,15 +2558,19 @@ class KickRepository @Inject constructor(
         val rawContent = message.content ?: message.message ?: message.text ?: message.body ?: extractKickMessageContent(deletedMessageObject)
         val content = rawContent?.replace(emoteRegex) { result -> result.groupValues.getOrElse(1) { "" } }
         val identityBadges = message.sender?.identity?.badges.orEmpty()
-        val allBadges = buildList {
-            addAll(identityBadges)
-            addAll(syntheticKickBadgesFromSender(message.sender, identityBadges))
-        }
-        val effectiveChatScopeId = message.chatId?.toString()?.takeIf { it.isNotBlank() } ?: activeKickChatScopeId
+        val syntheticBadges = syntheticKickBadgesFromSender(message.sender)
+        val allBadges = mergeKickMessageBadges(
+            existingBadges = identityBadges,
+            syntheticBadges = syntheticBadges,
+            resolveType = ::resolveKickBadgeType,
+            normalizeType = ::normalizeKickBadgeType,
+        )
+        val effectiveChatScopeId = activeKickChatScopeId ?: message.chatId?.toString()?.takeIf { it.isNotBlank() }
         val dedupedBadges = LinkedHashMap<String, Pair<KickBadgeSource, Badge>>()
         allBadges.forEach { badge ->
             val type = resolveKickBadgeType(badge) ?: return@forEach
             val normalizedType = normalizeKickBadgeType(type)
+            val channelSpecificBadge = isKickChannelSpecificBadgeType(normalizedType)
             val version = resolveKickBadgeVersion(badge)
             val directImageUrl = badge.badgeImageUrl
                 ?: extractImageUrl(badge.badgeImage)
@@ -1881,10 +2585,8 @@ class KickRepository @Inject constructor(
                 kickBadgeTypeCandidates(type).forEach { candidate ->
                     if (isKickChannelSpecificBadgeType(candidate)) {
                         if (effectiveChatScopeId != null) {
-                            kickBadgeUrls["kick:chat:$effectiveChatScopeId:$candidate:$version"] = directImageUrl
                             cacheKickBadgeUrlIfAbsent("kick:chat:$effectiveChatScopeId:$candidate:default", directImageUrl)
                         } else {
-                            kickBadgeUrls["kick:$candidate:$version"] = directImageUrl
                             cacheKickBadgeUrlIfAbsent("kick:$candidate:default", directImageUrl)
                         }
                     } else {
@@ -1893,21 +2595,27 @@ class KickRepository @Inject constructor(
                     }
                 }
             }
-            val catalogImageUrl = if (directImageUrl.isNullOrBlank()) resolveKickBadgeUrl(type, version, effectiveChatScopeId) else null
+            val catalogImageUrl = resolveKickBadgeUrl(type, version, effectiveChatScopeId)
             val inlineImageUrl = if (directImageUrl.isNullOrBlank() && catalogImageUrl.isNullOrBlank()) {
-                resolveKickInlineBadgeUrl(normalizedType)
+                resolveKickInlineBadgeUrl(normalizedType, version)
             } else {
                 null
             }
-            val usedInlineFallback = directImageUrl.isNullOrBlank() && catalogImageUrl.isNullOrBlank() && !inlineImageUrl.isNullOrBlank()
-            val source = when {
-                !directImageUrl.isNullOrBlank() -> KickBadgeSource.MESSAGE_DIRECT
-                !catalogImageUrl.isNullOrBlank() -> KickBadgeSource.CATALOG_CACHE
-                !inlineImageUrl.isNullOrBlank() -> KickBadgeSource.CATALOG_CACHE
-                else -> null
+            val selection = selectKickBadgeUrl(
+                isChannelSpecific = channelSpecificBadge,
+                directImageUrl = directImageUrl,
+                catalogImageUrl = catalogImageUrl,
+                inlineImageUrl = inlineImageUrl
+            )
+            val usedInlineFallback = selection.source == KickBadgeUrlSourcePreference.INLINE_FALLBACK
+            val source = when (selection.source) {
+                KickBadgeUrlSourcePreference.MESSAGE_DIRECT -> KickBadgeSource.MESSAGE_DIRECT
+                KickBadgeUrlSourcePreference.CATALOG_CACHE -> KickBadgeSource.CATALOG_CACHE
+                KickBadgeUrlSourcePreference.INLINE_FALLBACK -> KickBadgeSource.CATALOG_CACHE
+                null -> null
             } ?: return@forEach
             recordKickBadgeSource(source)
-            val resolvedImageUrl = directImageUrl ?: catalogImageUrl ?: inlineImageUrl
+            val resolvedImageUrl = selection.imageUrl
             if (resolvedImageUrl.isNullOrBlank() && isKickBadgeDebugEnabled()) {
                 Log.w(
                     tag,
@@ -2000,9 +2708,27 @@ class KickRepository @Inject constructor(
             else -> null
         }
         val systemMsg = moderationSystemMsg ?: extractKickSubscriptionNotice(message, eventName, targetUser)
-        val effectiveUserId = if (moderationSystemMsg != null) null else if (moderationInlineMsg != null) actorUserId else targetUserId ?: message.sender?.id?.toString() ?: message.userId?.toString()
-        val effectiveUserLogin = if (moderationSystemMsg != null) null else if (moderationInlineMsg != null) actorLogin else targetLogin ?: message.sender?.slug ?: message.sender?.username?.lowercase(Locale.ROOT)
-        val effectiveUserName = if (moderationSystemMsg != null) null else if (moderationInlineMsg != null) actorName else targetName ?: message.sender?.username
+        val effectiveUserId = if (moderationSystemMsg != null) {
+            null
+        } else if (moderationInlineMsg != null) {
+            actorUserId
+        } else {
+            message.sender?.id?.toString() ?: message.userId?.toString() ?: targetUserId
+        }
+        val effectiveUserLogin = if (moderationSystemMsg != null) {
+            null
+        } else if (moderationInlineMsg != null) {
+            actorLogin
+        } else {
+            message.sender?.slug ?: message.sender?.username?.lowercase(Locale.ROOT) ?: targetLogin
+        }
+        val effectiveUserName = if (moderationSystemMsg != null) {
+            null
+        } else if (moderationInlineMsg != null) {
+            actorName
+        } else {
+            message.sender?.username ?: targetName
+        }
         val effectiveMessage = when {
             moderationType == KickModerationType.DELETE_MESSAGE -> content
             moderationSystemMsg != null -> null
@@ -2057,20 +2783,11 @@ class KickRepository @Inject constructor(
 
     private fun syntheticKickBadgesFromSender(
         sender: KickMessageSender?,
-        existingBadges: List<KickMessageBadge> = emptyList(),
     ): List<KickMessageBadge> {
         if (sender == null) return emptyList()
-        val existingTypes = existingBadges
-            .mapNotNull(::resolveKickBadgeType)
-            .map(::normalizeKickBadgeType)
-            .toMutableSet()
         val synthetic = mutableListOf<KickMessageBadge>()
 
         fun addSynthetic(badge: KickMessageBadge) {
-            val type = resolveKickBadgeType(badge) ?: return
-            val normalized = normalizeKickBadgeType(type)
-            if (normalized in existingTypes) return
-            existingTypes += normalized
             synthetic += badge
         }
 
@@ -2502,12 +3219,10 @@ class KickRepository @Inject constructor(
         return kickCanonicalBadgeTypes.filterNot(::hasAuthoritativeKickBadge)
     }
 
-    private fun resolveKickInlineBadgeUrl(normalizedType: String): String? {
-        if (normalizedType == "subscriber") {
-            return null
-        }
-        val dataUri = kickInlineBadgeDataUriByType[normalizedType] ?: return null
-        return kickInlineBadgeSanitizedCache.computeIfAbsent(normalizedType) {
+    private fun resolveKickInlineBadgeUrl(normalizedType: String, version: String? = null): String? {
+        val dataUri = KickInlineBadgeData.forBadge(normalizedType, version) ?: return null
+        val cacheKey = if (version != null) "$normalizedType:$version" else normalizedType
+        return kickInlineBadgeSanitizedCache.computeIfAbsent(cacheKey) {
             sanitizeKickInlineBadgeDataUri(dataUri)
         }
     }
@@ -2645,6 +3360,10 @@ class KickRepository @Inject constructor(
     }
 
     private suspend fun prefetchKickBadgeCatalog(channel: KickChannelResponse) {
+        val scopeIds = listOfNotNull(
+            channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() },
+            channel.id?.toString()?.takeIf { it.isNotBlank() }
+        ).distinct()
         val urls = linkedSetOf<String>().apply {
             channel.chatroom?.id?.let { chatroomId ->
                 add("https://kick.com/api/v1/chatrooms/$chatroomId")
@@ -2672,7 +3391,7 @@ class KickRepository @Inject constructor(
                 .onSuccess { body ->
                     runCatching { json.parseToJsonElement(body) }
                         .onSuccess { element ->
-                            val added = cacheKickBadgeUrlsFromJson(element)
+                            val added = cacheKickBadgeUrlsFromJson(element, scopeIds)
                             if (isKickBadgeDebugEnabled() && added > 0) {
                                 Log.d(badgeDebugTag, "prefetch catalog matched $added entries from $url")
                             }
@@ -2692,6 +3411,10 @@ class KickRepository @Inject constructor(
     ): Int {
         if (unresolvedTargetTypes.isEmpty()) return 0
         var added = 0
+        val scopeIds = listOfNotNull(
+            channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() },
+            channel.id?.toString()?.takeIf { it.isNotBlank() }
+        ).distinct()
         val pageSlugs = linkedSetOf<String>().apply {
             channel.slug?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
             add("kick")
@@ -2708,7 +3431,7 @@ class KickRepository @Inject constructor(
                 return@forEach
             }
             snapshot.jsonPayloads.forEach { payload ->
-                added += cacheKickBadgeUrlsFromJson(payload)
+                added += cacheKickBadgeUrlsFromJson(payload, scopeIds)
             }
             if (unresolvedKickCanonicalBadgeTypes().none { it in unresolvedTargetTypes }) {
                 return@forEach
@@ -2748,7 +3471,7 @@ class KickRepository @Inject constructor(
         return added
     }
 
-    private fun cacheKickBadgeUrlsFromJson(root: JsonElement): Int {
+    private fun cacheKickBadgeUrlsFromJson(root: JsonElement, scopeIds: List<String> = emptyList()): Int {
         var added = 0
 
         fun stringValue(obj: JsonObject, keys: List<String>): String? {
@@ -2774,6 +3497,7 @@ class KickRepository @Inject constructor(
                     val objectHasBadgeKeys = element.keys.any { it.contains("badge", true) }
                     if (pathHasBadge || objectHasBadgeKeys) {
                         val type = stringValue(element, listOf("type", "badge_type", "name", "slug", "text"))
+                            ?: inferKickBadgeTypeFromJsonPath(path)
                         val version = (intValue(element, listOf("count", "months", "level", "tier", "version")) ?: 1).toString()
                         val imageUrl = stringValue(element, listOf("badge_image_url", "badge_url", "image_url", "icon_url", "url", "src"))
                             ?: extractImageUrl(element["badge_image"])
@@ -2782,11 +3506,21 @@ class KickRepository @Inject constructor(
                             ?: extractImageUrl(element["badge"])
                         if (!type.isNullOrBlank() && !imageUrl.isNullOrBlank()) {
                             kickBadgeTypeCandidates(type).forEach { candidate ->
-                                val key = "kick:$candidate:$version"
-                                if (kickBadgeUrls.put(key, imageUrl) == null) {
-                                    added += 1
+                                if (isKickChannelSpecificBadgeType(candidate) && scopeIds.isNotEmpty()) {
+                                    scopeIds.forEach { scopeId ->
+                                        val key = "kick:chat:$scopeId:$candidate:$version"
+                                        if (kickBadgeUrls.put(key, imageUrl) == null) {
+                                            added += 1
+                                        }
+                                        cacheKickBadgeUrlIfAbsent("kick:chat:$scopeId:$candidate:default", imageUrl)
+                                    }
+                                } else {
+                                    val key = "kick:$candidate:$version"
+                                    if (kickBadgeUrls.put(key, imageUrl) == null) {
+                                        added += 1
+                                    }
+                                    cacheKickBadgeUrlIfAbsent("kick:$candidate:default", imageUrl)
                                 }
-                                cacheKickBadgeUrlIfAbsent("kick:$candidate:default", imageUrl)
                             }
                         }
                     }
@@ -3081,6 +3815,15 @@ class KickRepository @Inject constructor(
         return null
     }
 
+    private suspend fun requireKickAccessToken(networkLibrary: String?): String {
+        val headers = getHelixHeadersWithRefresh(networkLibrary)
+        return headers[C.HEADER_TOKEN]
+            ?.removePrefix("Bearer ")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: throw IOException("Kick login is required.")
+    }
+
     private suspend fun getRawAuthenticated(
         url: String,
         accessToken: String,
@@ -3109,7 +3852,6 @@ class KickRepository @Inject constructor(
         }
     }
 
-
     private fun createRequestBuilder(url: String, isKickWeb: Boolean = false): Request.Builder {
         return Request.Builder()
             .url(url)
@@ -3118,17 +3860,20 @@ class KickRepository @Inject constructor(
             .apply {
                 if (isKickWeb) {
                     header("Origin", "https://kick.com")
-                    header("Referer", "https://kick.com/")
+                    header("Referer", buildKickWebReferer(url))
                     header("Accept", "application/json, text/plain, */*")
+                    header("x-app-platform", "web")
                     header("x-kick-platform", "web")
-                    AuthStateHelper.getKickBearerToken(context)?.let { bearer ->
-                        header("Authorization", bearer)
-                    }
                     getKickCookieHeader()?.let { cookies ->
                         header("Cookie", cookies)
+                        extractKickWebAuthToken(cookies)?.let { webAuthToken ->
+                            header("Authorization", "Bearer $webAuthToken")
+                        }
                         extractKickXsrfToken(cookies)?.let { xsrfToken ->
                             header("X-XSRF-TOKEN", xsrfToken)
                         }
+                    } ?: AuthStateHelper.getKickBearerToken(context)?.let { bearer ->
+                        header("Authorization", bearer)
                     }
                 }
             }
@@ -3137,6 +3882,18 @@ class KickRepository @Inject constructor(
     private fun getKickCookieHeader(): String? {
         return CookieManager.getInstance().getCookie("https://kick.com")?.takeIf { it.isNotBlank() }
             ?: CookieManager.getInstance().getCookie("https://web.kick.com")?.takeIf { it.isNotBlank() }
+    }
+
+    private fun hasKickWebsiteSessionCookie(): Boolean {
+        val cookieHeader = getKickCookieHeader() ?: return false
+        val cookieNames = cookieHeader
+            .split(';')
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .map { it.substringBefore('=').trim().lowercase(Locale.ROOT) }
+            .toSet()
+        return cookieNames.any { it == "xsrf-token" || it == "session_token" || it.endsWith("_session") }
     }
 
     private fun extractKickXsrfToken(cookieHeader: String): String? {
@@ -3150,6 +3907,50 @@ class KickRepository @Inject constructor(
             ?.let { token ->
                 runCatching { URLDecoder.decode(token, Charsets.UTF_8.name()) }.getOrDefault(token)
             }
+    }
+
+    private fun extractKickWebAuthToken(cookieHeader: String): String? {
+        val rawCookieValue = cookieHeader
+            .split(';')
+            .asSequence()
+            .map { it.trim() }
+            .firstOrNull {
+                it.startsWith("auth-token=", ignoreCase = true) ||
+                    it.startsWith("session_token=", ignoreCase = true)
+            }
+            ?.substringAfter('=')
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        val decoded = runCatching { URLDecoder.decode(rawCookieValue, Charsets.UTF_8.name()) }.getOrDefault(rawCookieValue)
+        return decoded.takeIf { it.isNotBlank() }
+    }
+
+    private fun buildKickWebReferer(url: String): String {
+        val channelSlug = Regex("""https://kick\.com/api/v\d+/channels/([^/?]+)/""")
+            .find(url)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.takeIf { it.isNotBlank() }
+        return when {
+            url.contains("/followed-page") -> "https://kick.com/following/channels"
+            !channelSlug.isNullOrBlank() -> "https://kick.com/$channelSlug"
+            else -> "https://kick.com/"
+        }
+    }
+
+    private fun generateKickTransactionId(): String {
+        val alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+        val timestamp = System.currentTimeMillis()
+        val chars = CharArray(26)
+        var value = timestamp
+        for (index in 9 downTo 0) {
+            chars[index] = alphabet[(value % 32L).toInt()]
+            value /= 32L
+        }
+        for (index in 10 until 26) {
+            chars[index] = alphabet[kickUlidRandom.nextInt(32)]
+        }
+        return String(chars)
     }
 
     private fun normalizeDate(input: String?): String? {
