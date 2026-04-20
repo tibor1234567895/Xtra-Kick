@@ -17,8 +17,11 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.DialogKickFollowImportBinding
+import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.launch
@@ -46,7 +49,24 @@ class KickFollowImportDialog : DialogFragment() {
     private var awaitingFollowingPage = false
     private var manualLoginFallbackTriggered = false
     private var lastManualHelperInjectAtMs = 0L
+    private var directImportAttempted = false
     private val logTag = "KickFollowImport"
+
+    private fun isDebugLoggingEnabled(): Boolean {
+        return BuildConfig.DEBUG && requireContext().prefs().getBoolean(C.DEBUG_KICK_FOLLOW_IMPORT_LOGS, false)
+    }
+
+    private fun debugLogI(message: String) {
+        if (isDebugLoggingEnabled()) {
+            Log.i(logTag, message)
+        }
+    }
+
+    private fun debugLogW(message: String) {
+        if (isDebugLoggingEnabled()) {
+            Log.w(logTag, message)
+        }
+    }
 
     override fun onAttach(context: Context) {
         super.onAttach(context)
@@ -56,18 +76,18 @@ class KickFollowImportDialog : DialogFragment() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         _binding = DialogKickFollowImportBinding.inflate(layoutInflater)
-      Log.i(logTag, "onCreateDialog: starting import flow")
-      val tokenSeeded = webSessionManager.seedKickAuthCookie()
-      Log.i(logTag, "onCreateDialog: seedKickAuthCookie=$tokenSeeded")
-      binding.cancelButton.setOnClickListener {
-        dismissAllowingStateLoss()
-      }
+        debugLogI("onCreateDialog: starting import flow")
+        val tokenSeeded = webSessionManager.seedKickAuthCookie()
+        debugLogI("onCreateDialog: seedKickAuthCookie=$tokenSeeded")
+        binding.cancelButton.setOnClickListener {
+            dismissAllowingStateLoss()
+        }
         with(binding.webView) {
             webSessionManager.configureImportWebView(this)
             addJavascriptInterface(ImportBridge(), "KickFollowImportBridge")
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
-                    Log.i(logTag, "console: ${consoleMessage.message()} @${consoleMessage.sourceId()}:${consoleMessage.lineNumber()}")
+                  debugLogI("console: ${consoleMessage.message()} @${consoleMessage.sourceId()}:${consoleMessage.lineNumber()}")
                     return super.onConsoleMessage(consoleMessage)
                 }
             }
@@ -76,29 +96,29 @@ class KickFollowImportDialog : DialogFragment() {
                     return false
                 }
 
-              override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                 val requestUrl = request?.url?.toString().orEmpty()
                 if (shouldBlockKickMediaRequest(requestUrl)) {
-                  Log.i(logTag, "blocked media request in import webview: $requestUrl")
-                  return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                    debugLogI("blocked media request in import webview: $requestUrl")
+                    return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                 }
                 return super.shouldInterceptRequest(view, request)
-              }
+                }
 
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                 val activeUrl = view.url.orEmpty()
-                Log.i(logTag, "page finished: callbackUrl=$url activeUrl=$activeUrl waitingForManualLogin=$waitingForManualLogin importAttempted=$importAttempted bindingActive=${_binding != null}")
+                debugLogI("page finished: callbackUrl=$url activeUrl=$activeUrl waitingForManualLogin=$waitingForManualLogin importAttempted=$importAttempted bindingActive=${_binding != null}")
                 logRenderedPageState(view, url)
                 if (activeUrl.isNotBlank() && !activeUrl.equals(url, ignoreCase = true)) {
-                  Log.i(logTag, "skip stale onPageFinished callback: callbackUrl=$url activeUrl=$activeUrl")
+                  debugLogI("skip stale onPageFinished callback: callbackUrl=$url activeUrl=$activeUrl")
                   return
                 }
                 handleResolvedPage(if (activeUrl.isNotBlank()) activeUrl else url)
                 }
             }
             val hasExistingSession = webSessionManager.hasKickWebsiteSession()
-            Log.i(logTag, "onCreateDialog: hasKickWebsiteSession=$hasExistingSession")
+              debugLogI("onCreateDialog: hasKickWebsiteSession=$hasExistingSession")
             updateStatus(
                 if (hasExistingSession) {
                     getString(R.string.import_kick_followed_status_reusing)
@@ -107,9 +127,8 @@ class KickFollowImportDialog : DialogFragment() {
                 },
                 loading = true,
             )
-            awaitingFollowingPage = true
-            loadUrl(KICK_FOLLOWING_URL)
         }
+        startImportFlow()
         return Dialog(requireContext()).apply {
             setCancelable(true)
             setCanceledOnTouchOutside(true)
@@ -130,18 +149,16 @@ class KickFollowImportDialog : DialogFragment() {
                 WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
                     WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
             )
-            Log.i(logTag, "onStart: dialog layout=${metrics.widthPixels}x${metrics.heightPixels}")
+            debugLogI("onStart: dialog layout=${metrics.widthPixels}x${metrics.heightPixels}")
             binding.webView.post {
-              Log.i(
-                logTag,
-                "onStart: webView size measured=${binding.webView.measuredWidth}x${binding.webView.measuredHeight} layout=${binding.webView.width}x${binding.webView.height}",
-              )
+                debugLogI("onStart: webView size measured=${binding.webView.measuredWidth}x${binding.webView.measuredHeight} layout=${binding.webView.width}x${binding.webView.height}",
+                )
             }
         }
     }
 
     override fun onDestroy() {
-      Log.i(logTag, "onDestroy: tearing down import dialog")
+        debugLogI("onDestroy: tearing down import dialog")
         _binding?.webView?.apply {
             removeJavascriptInterface("KickFollowImportBridge")
             loadUrl("about:blank")
@@ -154,21 +171,60 @@ class KickFollowImportDialog : DialogFragment() {
 
     private fun updateStatus(message: String, loading: Boolean) {
         if (_binding == null) return
-        Log.i(logTag, "status: $message")
+        debugLogI("status: $message")
         binding.statusText.text = message
         binding.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
+    }
+
+    private fun startImportFlow() {
+        if (directImportAttempted) {
+            startWebsiteImportFlow()
+            return
+        }
+        directImportAttempted = true
+        val networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
+        Log.i(logTag, "starting direct Kick follow import")
+        lifecycleScope.launch {
+            runCatching {
+                importer.importStoredKickFollows(networkLibrary)
+            }.onSuccess { importedCount ->
+                Log.i(logTag, "direct Kick follow import succeeded count=$importedCount")
+                debugLogI("direct stored-auth import succeeded count=$importedCount")
+                completeImport(importedCount)
+            }.onFailure { error ->
+                Log.i(logTag, "direct Kick follow import fell back to website flow: ${error.message}")
+                debugLogW("direct stored-auth import unavailable: ${error.message}")
+                startWebsiteImportFlow()
+            }
+        }
+    }
+
+    private fun startWebsiteImportFlow() {
+        if (_binding == null || importCompleted) return
+        val hasExistingSession = webSessionManager.hasKickWebsiteSession()
+        debugLogI("startWebsiteImportFlow: hasKickWebsiteSession=$hasExistingSession")
+        updateStatus(
+            if (hasExistingSession) {
+                getString(R.string.import_kick_followed_status_reusing)
+            } else {
+                getString(R.string.import_kick_followed_status_checking)
+            },
+            loading = true,
+        )
+        awaitingFollowingPage = true
+        binding.webView.loadUrl(KICK_FOLLOWING_URL)
     }
 
     private fun loadKickPage(url: String) {
         val webView = _binding?.webView ?: return
         awaitingFollowingPage = KickFollowImportResolver.isKickFollowingUrl(url)
         val currentUrl = webView.url
-      if (currentUrl.equals(url, ignoreCase = true)) {
-        Log.i(logTag, "loadKickPage: forcing reload for $url")
-      } else {
-        Log.i(logTag, "loadKickPage: navigating from=${currentUrl ?: "<empty>"} to=$url")
-      }
-      webView.stopLoading()
+        if (currentUrl.equals(url, ignoreCase = true)) {
+            debugLogI("loadKickPage: forcing reload for $url")
+        } else {
+            debugLogI("loadKickPage: navigating from=${currentUrl ?: "<empty>"} to=$url")
+        }
+        webView.stopLoading()
         webView.loadUrl(url)
     }
 
@@ -198,12 +254,12 @@ class KickFollowImportDialog : DialogFragment() {
         })();
         """.trimIndent(),
       ) { result ->
-        Log.i(logTag, "render-state=$result")
+        debugLogI("render-state=$result")
       }
     }
 
     private fun handleResolvedPage(url: String) {
-        Log.i(logTag, "resolved page: url=$url waitingForManualLogin=$waitingForManualLogin importAttempted=$importAttempted")
+        debugLogI("resolved page: url=$url waitingForManualLogin=$waitingForManualLogin importAttempted=$importAttempted")
         if (KickFollowImportResolver.isKickFollowingUrl(url)) {
             awaitingFollowingPage = false
           manualLoginFallbackTriggered = false
@@ -213,12 +269,12 @@ class KickFollowImportDialog : DialogFragment() {
             !importAttempted &&
             (KickFollowImportResolver.isKickHomeUrl(url) || KickFollowImportResolver.isKickLoginUrl(url))
         ) {
-          Log.i(logTag, "following page redirected to $url, requiring manual website login")
+          debugLogI("following page redirected to $url, requiring manual website login")
           awaitingFollowingPage = false
           waitingForManualLogin = true
           updateStatus(getString(R.string.import_kick_followed_status_sign_in), loading = false)
           if (!KickFollowImportResolver.isKickHomeUrl(url)) {
-            Log.i(logTag, "manual login mode started on non-home url=$url, navigating to home for login button")
+            debugLogI("manual login mode started on non-home url=$url, navigating to home for login button")
             loadKickPage(KICK_HOME_URL)
           }
           prepareManualLoginUi(url)
@@ -234,6 +290,7 @@ class KickFollowImportDialog : DialogFragment() {
             importAttempted = importAttempted,
             importCompleted = importCompleted,
             kickCookieHeader = webSessionManager.getKickCookieHeader(),
+          debugLogging = isDebugLoggingEnabled(),
         ) ?: return
         waitingForManualLogin = resolution.waitingForManualLogin
         if (waitingForManualLogin) {
@@ -258,15 +315,15 @@ class KickFollowImportDialog : DialogFragment() {
     private fun startDomScrapeImport() {
         val currentUrl = _binding?.webView?.url.orEmpty()
         if (!KickFollowImportResolver.isKickFollowingUrl(currentUrl)) {
-            Log.w(logTag, "dom scrape blocked on unexpected url=$currentUrl")
+            debugLogW("dom scrape blocked on unexpected url=$currentUrl")
             importAttempted = false
             updateStatus(getString(R.string.import_kick_followed_status_sign_in), loading = false)
             return
         }
-        Log.i(logTag, "dom scrape import starting on $currentUrl")
+        debugLogI("dom scrape import starting on $currentUrl")
         updateStatus(getString(R.string.import_kick_followed_status_loading), loading = true)
         _binding?.webView?.evaluateJavascript(DOM_SCRAPE_SCRIPT) { result ->
-          Log.i(logTag, "DOM_SCRAPE_SCRIPT result=${result?.take(200)}")
+          debugLogI("DOM_SCRAPE_SCRIPT result=${result?.take(200)}")
         }
     }
 
@@ -289,7 +346,7 @@ class KickFollowImportDialog : DialogFragment() {
     private inner class ImportBridge {
         @JavascriptInterface
         fun onImport(payload: String?) {
-            Log.i(logTag, "onImport payloadLength=${payload?.length ?: 0}")
+            debugLogI("onImport payloadLength=${payload?.length ?: 0}")
             if (payload.isNullOrBlank()) {
                 handleImportError(IllegalStateException("empty payload"))
                 return
@@ -307,26 +364,29 @@ class KickFollowImportDialog : DialogFragment() {
 
         @JavascriptInterface
         fun onError(message: String?) {
-            Log.w(logTag, "onError: $message")
+            debugLogW("onError: $message")
             handleImportError(IllegalStateException(message ?: "unknown import error"))
         }
 
         @JavascriptInterface
         fun onStatus(message: String?) {
-          val status = message ?: ""
-          Log.i(logTag, "bridge status: $status")
-          val normalized = status.lowercase()
-          if (
-            waitingForManualLogin &&
-            normalized.contains("manual login input not found")
-          ) {
-            val currentUrl = _binding?.webView?.url.orEmpty()
-            handleManualLoginProgress(
-              currentUrl,
-              reason = "status:$normalized",
-              allowFallbackToLoginPage = true,
-            )
-          }
+            val status = message ?: ""
+            _binding?.webView?.post {
+                if (_binding == null) return@post
+                debugLogI("bridge status: $status")
+                val normalized = status.lowercase()
+                if (
+                    waitingForManualLogin &&
+                    normalized.contains("manual login input not found")
+                ) {
+                    val currentUrl = _binding?.webView?.url.orEmpty()
+                    handleManualLoginProgress(
+                        currentUrl,
+                        reason = "status:$normalized",
+                        allowFallbackToLoginPage = true,
+                    )
+                }
+            }
         }
     }
 
@@ -348,13 +408,13 @@ class KickFollowImportDialog : DialogFragment() {
             ?.trim('"')
             ?.replace("\\\\\"", "\"")
             .orEmpty()
-          Log.i(logTag, "manual-login-probe[$reason]: state=$state url=$currentUrl")
+          debugLogI("manual-login-probe[$reason]: state=$state url=$currentUrl")
           if (state.contains("LIKELY_LOGGED_IN", ignoreCase = true)) {
             waitingForManualLogin = false
             awaitingFollowingPage = true
             manualLoginFallbackTriggered = false
             updateStatus(getString(R.string.import_kick_followed_status_loading), loading = true)
-            Log.i(logTag, "manual-login-probe[$reason]: detected completed login, continuing import flow")
+            debugLogI("manual-login-probe[$reason]: detected completed login, continuing import flow")
             loadKickPage(KICK_FOLLOWING_URL)
             return@evaluateJavascript
           }
@@ -365,7 +425,7 @@ class KickFollowImportDialog : DialogFragment() {
           if (shouldFallbackToLoginPage) {
             manualLoginFallbackTriggered = true
             updateStatus(getString(R.string.import_kick_followed_status_loading), loading = true)
-            Log.i(logTag, "manual-login-probe[$reason]: fallback to direct login page $KICK_LOGIN_URL")
+            debugLogI("manual-login-probe[$reason]: fallback to direct login page $KICK_LOGIN_URL")
             loadKickPage(KICK_LOGIN_URL)
             return@evaluateJavascript
           }
@@ -378,7 +438,7 @@ class KickFollowImportDialog : DialogFragment() {
         val webView = _binding?.webView ?: return
         val now = System.currentTimeMillis()
         if (now - lastManualHelperInjectAtMs < 1000L) {
-          Log.i(logTag, "prepareManualLoginUi: throttled helper injection")
+          debugLogI("prepareManualLoginUi: throttled helper injection")
           return
         }
         lastManualHelperInjectAtMs = now
@@ -391,7 +451,7 @@ class KickFollowImportDialog : DialogFragment() {
             webView.evaluateJavascript(
                 MANUAL_LOGIN_HELPER_SCRIPT.replace("__URL__", url.replace("\\", "\\\\").replace("'", "\\'")),
           ) { result ->
-            Log.i(logTag, "MANUAL_LOGIN_HELPER_SCRIPT result=${result?.take(200)}")
+            debugLogI("MANUAL_LOGIN_HELPER_SCRIPT result=${result?.take(200)}")
           }
         }, 250L)
     }
@@ -424,7 +484,7 @@ class KickFollowImportDialog : DialogFragment() {
     private fun handleImportError(error: Throwable) {
         lifecycleScope.launch {
             val message = error.message?.take(160) ?: getString(R.string.connection_error)
-            Log.w(logTag, "handleImportError: $message")
+            debugLogW("handleImportError: $message")
             importAttempted = false
             val needsWebsiteLogin =
               message.contains("(401)", ignoreCase = true) ||

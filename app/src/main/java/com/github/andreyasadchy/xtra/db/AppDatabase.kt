@@ -9,6 +9,7 @@ import com.github.andreyasadchy.xtra.model.chat.RecentEmote
 import com.github.andreyasadchy.xtra.model.ui.Bookmark
 import com.github.andreyasadchy.xtra.model.ui.LocalFollowChannel
 import com.github.andreyasadchy.xtra.model.ui.LocalFollowGame
+import com.github.andreyasadchy.xtra.model.ui.MutedChatUser
 import com.github.andreyasadchy.xtra.model.ui.OfflineVideo
 import com.github.andreyasadchy.xtra.model.ui.SavedFilter
 import com.github.andreyasadchy.xtra.model.ui.RecentSearch
@@ -17,8 +18,8 @@ import com.github.andreyasadchy.xtra.model.ui.SortGame
 import com.github.andreyasadchy.xtra.model.ui.VodBookmarkIgnoredUser
 
 @Database(
-    entities = [OfflineVideo::class, RecentEmote::class, VideoPosition::class, LocalFollowChannel::class, LocalFollowGame::class, Bookmark::class, VodBookmarkIgnoredUser::class, SortChannel::class, SortGame::class, ShownNotification::class, NotificationUser::class, SavedFilter::class, RecentSearch::class],
-    version = 35
+    entities = [OfflineVideo::class, RecentEmote::class, VideoPosition::class, LocalFollowChannel::class, LocalFollowGame::class, Bookmark::class, VodBookmarkIgnoredUser::class, SortChannel::class, SortGame::class, ShownNotification::class, NotificationUser::class, SavedFilter::class, RecentSearch::class, MutedChatUser::class],
+    version = 36
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -29,6 +30,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun localFollowsGame(): LocalFollowsGameDao
     abstract fun bookmarks(): BookmarksDao
     abstract fun vodBookmarkIgnoredUsers(): VodBookmarkIgnoredUsersDao
+    abstract fun mutedChatUsers(): MutedChatUsersDao
     abstract fun sortChannelDao(): SortChannelDao
     abstract fun sortGameDao(): SortGameDao
     abstract fun shownNotificationsDao(): ShownNotificationsDao

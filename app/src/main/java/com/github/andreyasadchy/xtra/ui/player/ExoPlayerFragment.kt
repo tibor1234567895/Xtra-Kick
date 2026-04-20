@@ -44,6 +44,7 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.ui.Clip
 import com.github.andreyasadchy.xtra.model.ui.OfflineVideo
@@ -72,6 +73,18 @@ class ExoPlayerFragment : PlayerFragment() {
     private var pendingInitialLiveSync = false
     private var liveTargetOffsetMs: Long? = null
     private val updateProgressAction = Runnable { if (view != null) updateProgress() }
+
+    private fun playerDebugLog(message: String) {
+        if (BuildConfig.DEBUG && prefs.getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
+            Log.d(TAG, message)
+        }
+    }
+
+    private fun playerDebugWarn(message: String) {
+        if (BuildConfig.DEBUG && prefs.getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
+            Log.w(TAG, message)
+        }
+    }
 
     override fun onStart() {
         super.onStart()
@@ -528,13 +541,12 @@ class ExoPlayerFragment : PlayerFragment() {
             pendingInitialLiveSync = true
             playbackService?.getActiveLatencyConfig()?.let { activeConfig ->
                 if (!LiveLatencySettings.sameLoadControlConfig(latencyConfig, activeConfig)) {
-                    Log.w(
-                        TAG,
+                    playerDebugWarn(
                         "Live latency buffers differ from bound service buffers. active=${LiveLatencySettings.describe(activeConfig)} requested=${LiveLatencySettings.describe(latencyConfig)}"
                     )
                 }
             }
-            Log.d(TAG, "Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(latencyConfig)}")
+            playerDebugLog("Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(latencyConfig)}")
             playbackService?.videoId = null
             playbackService?.offlineVideoId = null
             playbackService?.proxyMediaPlaylist = false
@@ -768,26 +780,26 @@ class ExoPlayerFragment : PlayerFragment() {
 
     override fun updateProgress() {
         with(binding.playerControls) {
+            if (videoType == STREAM) {
+                val offset = player?.currentLiveOffset?.takeIf { it != androidx.media3.common.C.TIME_UNSET }
+                updateLatency(offset, liveTargetOffsetMs ?: LiveLatencySettings.resolve(prefs).targetOffsetMs)
+            }
             if (root.isVisible && !progressBar.isPressed) {
                 val currentPosition = player?.currentPosition ?: 0
                 position.text = DateUtils.formatElapsedTime(currentPosition / 1000)
                 progressBar.setPosition(currentPosition)
                 progressBar.setBufferedPosition(player?.bufferedPosition ?: 0)
-                if (videoType == STREAM) {
-                    val offset = player?.currentLiveOffset?.takeIf { it != androidx.media3.common.C.TIME_UNSET }
-                    updateLatency(offset, liveTargetOffsetMs ?: LiveLatencySettings.resolve(prefs).targetOffsetMs)
-                }
-                root.removeCallbacks(updateProgressAction)
-                player?.let { player ->
-                    if (player.isPlaying) {
-                        val speed = player.playbackParameters.speed
-                        val delay = if (speed > 0f) {
-                            (progressBar.preferredUpdateDelay / speed).toLong().coerceIn(200L..1000L)
-                        } else {
-                            1000
-                        }
-                        root.postDelayed(updateProgressAction, delay)
+            }
+            root.removeCallbacks(updateProgressAction)
+            player?.let { player ->
+                if (player.isPlaying) {
+                    val speed = player.playbackParameters.speed
+                    val delay = if (speed > 0f) {
+                        (progressBar.preferredUpdateDelay / speed).toLong().coerceIn(200L..1000L)
+                    } else {
+                        1000
                     }
+                    root.postDelayed(updateProgressAction, delay)
                 }
             }
         }
@@ -804,8 +816,7 @@ class ExoPlayerFragment : PlayerFragment() {
         }
         val liveOffset = player.currentLiveOffset.takeIf { it != androidx.media3.common.C.TIME_UNSET }
         if (LiveLatencySettings.shouldForceLiveEdgeSync(resolvedConfig, liveOffset)) {
-            Log.d(
-                TAG,
+            playerDebugLog(
                 "Correcting initial live offset from ${liveOffset}ms to target ${resolvedConfig.targetOffsetMs}ms via seekToDefaultPosition ($source)"
             )
             player.seekToDefaultPosition()
@@ -1095,6 +1106,11 @@ class ExoPlayerFragment : PlayerFragment() {
 
     override fun onStop() {
         super.onStop()
+        if (shouldClosePlaybackAfterPipDismiss()) {
+            close()
+            clearPipDismissState()
+            return
+        }
         player?.let { player ->
             if (playbackService != null) {
                 savePosition()
@@ -1141,6 +1157,7 @@ class ExoPlayerFragment : PlayerFragment() {
         playerListener = null
         serviceConnection?.let { requireContext().unbindService(it) }
         serviceConnection = null
+        clearPipDismissState()
     }
 
     override fun onNetworkRestored() {

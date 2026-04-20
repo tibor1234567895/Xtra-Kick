@@ -31,6 +31,16 @@ class ChatReplayManager(
         private const val LARGE_SEEK_THRESHOLD_MS = 20_000L
         private const val PRELOAD_WINDOW_MS = 180_000L
         private const val PRELOAD_MAX_MESSAGES = 200
+
+        private fun shouldInsertFragmentSpace(builder: StringBuilder, fragmentText: String, currentIsEmote: Boolean, previousWasEmote: Boolean): Boolean {
+            if (builder.isEmpty() || fragmentText.isEmpty()) return false
+            val previousChar = builder.last()
+            val nextChar = fragmentText.first()
+            if (previousChar.isWhitespace() || nextChar.isWhitespace()) return false
+            if (!(previousWasEmote || currentIsEmote)) return false
+            if (previousChar in "([{" || nextChar in ".,!?;:)]}") return false
+            return true
+        }
     }
 
     private var cursor: String? = null
@@ -84,15 +94,23 @@ class ChatReplayManager(
                     comment.node.let { item ->
                         item.message?.let { message ->
                             val chatMessage = StringBuilder()
+                            var previousWasEmote = false
                             val emotes = message.fragments?.mapNotNull { fragment ->
                                 fragment.text?.let { text ->
+                                    val currentIsEmote = fragment.emote?.emoteID != null
+                                    if (shouldInsertFragmentSpace(chatMessage, text, currentIsEmote, previousWasEmote)) {
+                                        chatMessage.append(' ')
+                                    }
                                     fragment.emote?.emoteID?.let { id ->
                                         TwitchEmote(
                                             id = id,
                                             begin = chatMessage.codePointCount(0, chatMessage.length),
                                             end = chatMessage.codePointCount(0, chatMessage.length) + text.lastIndex
                                         )
-                                    }.also { chatMessage.append(text) }
+                                    }.also {
+                                        chatMessage.append(text)
+                                        previousWasEmote = currentIsEmote
+                                    }
                                 }
                             }
                             val badges = message.userBadges?.mapNotNull { badge ->

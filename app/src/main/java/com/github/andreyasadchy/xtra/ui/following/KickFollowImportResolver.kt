@@ -16,6 +16,12 @@ internal object KickFollowImportResolver {
 
     private const val LOG_TAG = "KickFollowResolver"
 
+    private fun debugLog(enabled: Boolean, message: String) {
+        if (enabled) {
+            Log.i(LOG_TAG, message)
+        }
+    }
+
     fun isKickHomeUrl(url: String): Boolean {
         return url.equals(KICK_HOME_URL, ignoreCase = true) ||
             url.equals("https://kick.com", ignoreCase = true)
@@ -27,35 +33,36 @@ internal object KickFollowImportResolver {
         importAttempted: Boolean,
         importCompleted: Boolean,
         kickCookieHeader: String?,
+        debugLogging: Boolean = false,
     ): KickFollowImportResolution? {
-        Log.i(
-            LOG_TAG,
+        debugLog(
+            debugLogging,
             "resolve: url=$url waitingForManualLogin=$waitingForManualLogin importAttempted=$importAttempted importCompleted=$importCompleted",
         )
         if (!isKickImportUrl(url) || importCompleted || importAttempted) {
-            Log.i(LOG_TAG, "resolve: skipped due to url/import state")
+            debugLog(debugLogging, "resolve: skipped due to url/import state")
             return null
         }
         if (isKickLoginUrl(url)) {
-            Log.i(LOG_TAG, "resolve: login url detected")
+            debugLog(debugLogging, "resolve: login url detected")
             return KickFollowImportResolution(waitingForManualLogin = true)
         }
-        val hasWebsiteSession = hasKickWebsiteSession(kickCookieHeader)
+        val hasWebsiteSession = hasKickWebsiteSession(kickCookieHeader, debugLogging)
         val onFollowingPage = isKickFollowingUrl(url)
-        Log.i(LOG_TAG, "resolve: hasWebsiteSession=$hasWebsiteSession onFollowingPage=$onFollowingPage")
+        debugLog(debugLogging, "resolve: hasWebsiteSession=$hasWebsiteSession onFollowingPage=$onFollowingPage")
         if (waitingForManualLogin) {
             if (!onFollowingPage) {
-                Log.i(LOG_TAG, "resolve: still waiting manual login on non-following page")
+                debugLog(debugLogging, "resolve: still waiting manual login on non-following page")
                 return KickFollowImportResolution(waitingForManualLogin = true)
             }
             return if (hasWebsiteSession) {
-                Log.i(LOG_TAG, "resolve: manual login complete, attempting import")
+                debugLog(debugLogging, "resolve: manual login complete, attempting import")
                 KickFollowImportResolution(
                     waitingForManualLogin = false,
                     shouldAttemptImport = true,
                 )
             } else {
-                Log.i(LOG_TAG, "resolve: following page without confirmed website session")
+                debugLog(debugLogging, "resolve: following page without confirmed website session")
                 KickFollowImportResolution(
                     waitingForManualLogin = true,
                 )
@@ -63,10 +70,10 @@ internal object KickFollowImportResolver {
         }
         if (!hasWebsiteSession) {
             return if (onFollowingPage) {
-                Log.i(LOG_TAG, "resolve: no website session while on following page")
+                debugLog(debugLogging, "resolve: no website session while on following page")
                 KickFollowImportResolution(waitingForManualLogin = true)
             } else {
-                Log.i(LOG_TAG, "resolve: navigating to following page to trigger login/session")
+                debugLog(debugLogging, "resolve: navigating to following page to trigger login/session")
                 KickFollowImportResolution(
                     waitingForManualLogin = true,
                     navigateTo = KICK_FOLLOWING_URL,
@@ -74,13 +81,13 @@ internal object KickFollowImportResolver {
             }
         }
         return if (onFollowingPage) {
-            Log.i(LOG_TAG, "resolve: session confirmed on following page, attempt import")
+            debugLog(debugLogging, "resolve: session confirmed on following page, attempt import")
             KickFollowImportResolution(
                 waitingForManualLogin = false,
                 shouldAttemptImport = true,
             )
         } else {
-            Log.i(LOG_TAG, "resolve: session confirmed but not on following page, navigating")
+            debugLog(debugLogging, "resolve: session confirmed but not on following page, navigating")
             KickFollowImportResolution(
                 waitingForManualLogin = false,
                 navigateTo = KICK_FOLLOWING_URL,
@@ -102,9 +109,9 @@ internal object KickFollowImportResolver {
             url.startsWith("https://id.kick.com/", ignoreCase = true)
     }
 
-    fun hasKickWebsiteSession(cookieHeader: String?): Boolean {
+    fun hasKickWebsiteSession(cookieHeader: String?, debugLogging: Boolean = false): Boolean {
         if (cookieHeader.isNullOrBlank()) {
-            Log.i(LOG_TAG, "hasKickWebsiteSession: cookie header is blank")
+            debugLog(debugLogging, "hasKickWebsiteSession: cookie header is blank")
             return false
         }
         val cookieNames = cookieHeader.split(';')
@@ -114,7 +121,7 @@ internal object KickFollowImportResolver {
             .map { it.substringBefore('=').trim().lowercase() }
             .toSet()
         val hasSessionCookie = cookieNames.any { it == "xsrf-token" || it.endsWith("_session") }
-        Log.i(LOG_TAG, "hasKickWebsiteSession: cookieNames=$cookieNames hasSessionCookie=$hasSessionCookie")
+        debugLog(debugLogging, "hasKickWebsiteSession: cookieNames=$cookieNames hasSessionCookie=$hasSessionCookie")
         return hasSessionCookie
     }
 }

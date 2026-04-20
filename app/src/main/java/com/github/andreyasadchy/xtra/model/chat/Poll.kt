@@ -7,8 +7,12 @@ class Poll(
     val choices: List<PollChoice>?,
     val totalVotes: Int?,
     val remainingMilliseconds: Int?,
+    val resultDisplayMilliseconds: Int? = null,
+    val hasVoted: Boolean? = null,
+    val votedChoiceId: Int? = null,
 ) {
     class PollChoice(
+        val id: Int? = null,
         val title: String?,
         val totalVotes: Int?,
     )

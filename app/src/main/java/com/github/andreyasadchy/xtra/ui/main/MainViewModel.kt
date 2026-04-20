@@ -101,6 +101,10 @@ class MainViewModel @Inject constructor(
     private val kickAuthValidateTag = "KickAuthValidate"
     private var kickValidationJob: Job? = null
 
+    private fun isNetworkDebugEnabled(): Boolean {
+        return applicationContext.prefs().getBoolean(C.DEBUG_NETWORK_LOGS, false)
+    }
+
     val integrity = MutableStateFlow<String?>(null)
 
     private val _kickValidationState = MutableStateFlow(
@@ -890,8 +894,14 @@ class MainViewModel @Inject constructor(
 
     fun validate(networkLibrary: String?, gqlHeaders: Map<String, String>, gqlWebClientId: String?, gqlWebToken: String?, helixHeaders: Map<String, String>, accountId: String?, accountLogin: String?, activity: Activity) {
         if (_kickValidationState.value == KickValidationState.COMPLETE) {
-            KickApiHelper.checkedValidation = true
-            return
+            val accessToken = activity.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)
+            val expiresAt = activity.tokenPrefs().getLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L)
+            val now = System.currentTimeMillis() / 1000L
+            if (!accessToken.isNullOrBlank() && AuthStateHelper.isKickAccessTokenUsable(expiresAt, now)) {
+                KickApiHelper.checkedValidation = true
+                return
+            }
+            _kickValidationState.value = KickValidationState.IDLE
         }
         if (kickValidationJob?.isActive == true) {
             return
@@ -920,7 +930,9 @@ class MainViewModel @Inject constructor(
                             ),
                         )
                     }.getOrElse { error ->
-                        Log.w(kickAuthValidateTag, "Introspect failed, falling back to users endpoint: ${error.message}")
+                        if (isNetworkDebugEnabled()) {
+                            Log.w(kickAuthValidateTag, "Introspect failed, falling back to users endpoint: ${error.message}")
+                        }
                         null
                     }
                     if (introspect != null && !introspect.active) {
@@ -960,7 +972,9 @@ class MainViewModel @Inject constructor(
                 }
                 val userId = user.id?.toString()
                 val loginName = user.name ?: user.channelSlug ?: userId
-                Log.i(kickAuthValidateTag, "Kick OAuth validated via /public/v1/users. userId=${userId ?: "null"} login=${loginName ?: "unknown"}")
+                if (isNetworkDebugEnabled()) {
+                    Log.i(kickAuthValidateTag, "Kick OAuth validated via /public/v1/users. userId=${userId ?: "null"} login=${loginName ?: "unknown"}")
+                }
                 activity.tokenPrefs().edit {
                     putString(C.KICK_USER_ID, userId)
                     putString(C.KICK_USER_LOGIN, loginName)

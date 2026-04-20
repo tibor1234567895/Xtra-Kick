@@ -8,6 +8,8 @@ import android.util.Log
 import androidx.annotation.OptIn
 import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.R
+import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.prefs
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -59,7 +61,7 @@ class XtraModule {
                 addQuicHint("7tv.io", 443, 443)
                 addQuicHint("cdn.7tv.app", 443, 443)
             }.build().also {
-                if (BuildConfig.DEBUG) {
+                if (BuildConfig.DEBUG && application.prefs().getBoolean(C.DEBUG_NETWORK_LOGS, false)) {
                     it.addRequestFinishedListener(object : RequestFinishedInfo.Listener(Executors.newSingleThreadExecutor()) {
                         override fun onRequestFinished(requestInfo: RequestFinishedInfo) {
                             requestInfo.responseInfo?.let {
@@ -85,9 +87,9 @@ class XtraModule {
 
     @Singleton
     @Provides
-    fun providesOkHttpClient(trustManager: X509TrustManager?): OkHttpClient {
+    fun providesOkHttpClient(application: Application, trustManager: X509TrustManager?): OkHttpClient {
         val builder = OkHttpClient.Builder().apply {
-            if (BuildConfig.DEBUG) {
+            if (BuildConfig.DEBUG && application.prefs().getBoolean(C.DEBUG_NETWORK_LOGS, false)) {
                 addInterceptor(HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC })
             }
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {

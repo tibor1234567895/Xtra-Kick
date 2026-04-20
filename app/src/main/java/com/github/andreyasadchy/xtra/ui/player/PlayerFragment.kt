@@ -133,6 +133,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private var controllerAnimation: ViewPropertyAnimator? = null
     private var backgroundColor: Int? = null
     private var backgroundVisible = false
+    private var wasInPictureInPictureMode = false
 
     protected lateinit var prefs: SharedPreferences
 
@@ -1154,7 +1155,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         requireArguments().getString(KEY_CHANNEL_ID),
                         requireArguments().getString(KEY_CHANNEL_LOGIN),
                         requireArguments().getString(KEY_CHANNEL_NAME),
-                        requireArguments().getString(KEY_STREAM_ID)
+                        requireArguments().getString(KEY_STREAM_ID),
+                        requireArguments().getString(KEY_STREAM_SOURCE)
                     )
                     VIDEO -> ChatFragment.newInstance(
                         channelId = requireArguments().getString(KEY_CHANNEL_ID),
@@ -1164,7 +1166,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         suppressReplayUnavailable = requireArguments().getString(KEY_VIDEO_SOURCE).equals(C.KICK, true),
                         kickReplayFallback = requireArguments().getString(KEY_VIDEO_SOURCE).equals(C.KICK, true),
                         kickReplayStartTime = requireArguments().getString(KEY_UPLOAD_DATE),
-                        kickReplayUrl = requireArguments().getString(KEY_URL)
+                        kickReplayUrl = requireArguments().getString(KEY_URL),
+                        source = requireArguments().getString(KEY_VIDEO_SOURCE)
                     )
                     CLIP -> run {
                         val clipUrl = requireArguments().getString(KEY_URL)
@@ -1178,13 +1181,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             isKickClip,
                             isKickClip,
                             requireArguments().getString(KEY_CLIP_REPLAY_START_TIME) ?: requireArguments().getString(KEY_UPLOAD_DATE),
-                            clipUrl
+                            clipUrl,
+                            source = requireArguments().getString(KEY_VIDEO_SOURCE)
                         )
                     }
                     OFFLINE_VIDEO -> ChatFragment.newLocalInstance(
                         requireArguments().getString(KEY_CHANNEL_ID),
                         requireArguments().getString(KEY_CHANNEL_LOGIN),
-                        requireArguments().getString(KEY_CHAT_URL)
+                        requireArguments().getString(KEY_CHAT_URL),
+                        requireArguments().getString(KEY_VIDEO_SOURCE)
                     )
                     else -> null
                 }
@@ -2016,6 +2021,26 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
+    protected fun shouldClosePlaybackAfterPipDismiss(): Boolean {
+        if (shouldContinuePlaybackInBackground()) {
+            return false
+        }
+        val activity = activity ?: return false
+        val isInPipMode = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> activity.isInPictureInPictureMode
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> !useController && isMaximized
+            else -> false
+        }
+        return wasInPictureInPictureMode &&
+            !isInPipMode &&
+            !activity.isChangingConfigurations &&
+            !activity.isFinishing
+    }
+
+    protected fun clearPipDismissState() {
+        wasInPictureInPictureMode = false
+    }
+
     protected fun setPipActions(playing: Boolean) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
@@ -2294,6 +2319,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
+        wasInPictureInPictureMode = wasInPictureInPictureMode || isInPictureInPictureMode
         with(binding) {
             if (isInPictureInPictureMode) {
                 if (!isMaximized) {

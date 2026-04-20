@@ -1,24 +1,14 @@
 package com.github.andreyasadchy.xtra.ui.chat
 
-import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import coil3.imageLoader
-import coil3.network.NetworkHeaders
-import coil3.network.httpHeaders
-import coil3.request.ImageRequest
-import coil3.request.crossfade
-import coil3.request.target
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.engine.DiskCacheStrategy
-import com.bumptech.glide.load.model.GlideUrl
-import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
-import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.databinding.FragmentEmotesListItemBinding
 import com.github.andreyasadchy.xtra.model.chat.Emote
+import kotlin.math.max
+import kotlin.math.min
 
 class EmotesAdapter(
     private val fragment: Fragment,
@@ -36,63 +26,52 @@ class EmotesAdapter(
         }
     }
 ) {
+    private var loadedCount = 0
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-        val binding = FragmentEmotesListItemBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-        return ViewHolder(binding)
+    init {
+        setHasStableIds(true)
     }
 
-    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        holder.bind(getItem(position))
+    override fun getItemId(position: Int): Long {
+        return getItem(position).name?.hashCode()?.toLong() ?: RecyclerView.NO_ID
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        val binding = FragmentEmotesListItemBinding.inflate(android.view.LayoutInflater.from(parent.context), parent, false)
+        return ViewHolder(binding)
     }
 
     inner class ViewHolder(
         private val binding: FragmentEmotesListItemBinding,
     ) : RecyclerView.ViewHolder(binding.root) {
-        fun bind(item: Emote?) {
-            with(binding) {
-                if (item != null) {
-                    if (imageLibrary == "0" || (imageLibrary == "1" && !item.format.equals("webp", true))) {
-                        fragment.requireContext().imageLoader.enqueue(
-                            ImageRequest.Builder(fragment.requireContext()).apply {
-                                data(
-                                    when (emoteQuality) {
-                                        "4" -> item.url4x ?: item.url3x ?: item.url2x ?: item.url1x
-                                        "3" -> item.url3x ?: item.url2x ?: item.url1x
-                                        "2" -> item.url2x ?: item.url1x
-                                        else -> item.url1x
-                                    }
-                                )
-                                if (item.thirdParty) {
-                                    httpHeaders(NetworkHeaders.Builder().apply {
-                                        add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                                    }.build())
-                                }
-                                crossfade(true)
-                                target(root)
-                            }.build()
-                        )
-                    } else {
-                        Glide.with(fragment)
-                            .load(
-                                when (emoteQuality) {
-                                    "4" -> item.url4x ?: item.url3x ?: item.url2x ?: item.url1x
-                                    "3" -> item.url3x ?: item.url2x ?: item.url1x
-                                    "2" -> item.url2x ?: item.url1x
-                                    else -> item.url1x
-                                }.let {
-                                    if (item.thirdParty) {
-                                        GlideUrl(it) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) }
-                                    } else it
-                                }
-                            )
-                            .diskCacheStrategy(DiskCacheStrategy.DATA)
-                            .transition(DrawableTransitionOptions.withCrossFade())
-                            .into(root)
-                    }
-                    root.setOnClickListener { clickListener(item) }
-                }
-            }
+        fun bind(item: Emote?, isLoaded: Boolean) {
+            EmoteImageLoader.bind(
+                imageView = binding.root,
+                fragment = fragment,
+                item = if (isLoaded) item else null,
+                emoteQuality = emoteQuality,
+                imageLibrary = imageLibrary,
+                clickListener = clickListener,
+            )
+        }
+    }
+
+    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+        holder.bind(getItem(position), position < loadedCount)
+    }
+
+    fun getLoadedCount(): Int = loadedCount
+
+    fun setLoadedCount(count: Int) {
+        val newCount = count.coerceIn(0, currentList.size)
+        if (newCount == loadedCount) return
+        val oldCount = loadedCount
+        loadedCount = newCount
+        if (currentList.isEmpty()) return
+        val changedStart = min(oldCount, newCount)
+        val changedCount = max(oldCount, newCount) - changedStart
+        if (changedCount > 0) {
+            notifyItemRangeChanged(changedStart, changedCount)
         }
     }
 }

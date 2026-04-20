@@ -2,7 +2,9 @@ package com.github.andreyasadchy.xtra.ui.following
 
 import android.content.Context
 import android.util.Log
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
@@ -87,6 +89,7 @@ class KickFollowImporter @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val localFollowsChannel: LocalFollowChannelRepository,
     private val helixRepository: HelixRepository,
+    private val kickRepository: KickRepository,
 ) {
 
     private val enrichmentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -95,8 +98,52 @@ class KickFollowImporter @Inject constructor(
         private const val LOG_TAG = "KickFollowImport"
     }
 
+    private fun isDebugLoggingEnabled(): Boolean {
+        return BuildConfig.DEBUG && context.prefs().getBoolean(C.DEBUG_KICK_FOLLOW_IMPORT_LOGS, false)
+    }
+
+    private fun debugLogI(message: String) {
+        if (isDebugLoggingEnabled()) {
+            Log.i(LOG_TAG, message)
+        }
+    }
+
+    private fun debugLogW(message: String) {
+        if (isDebugLoggingEnabled()) {
+            Log.w(LOG_TAG, message)
+        }
+    }
+
     suspend fun importPayload(payload: String): Int {
         val follows = KickFollowImportPayloadParser.parse(payload)
+        return importFollows(follows)
+    }
+
+    suspend fun importStoredKickFollows(networkLibrary: String?): Int {
+        val collected = LinkedHashMap<String, KickImportedFollow>()
+        var cursor: String? = null
+        Log.i(LOG_TAG, "Kick follow import pagination started")
+        do {
+            val response = kickRepository.getFollowedChannelsWebPage(cursor)
+            response.channels.forEach { follow ->
+                val login = follow.login.trim().takeIf { it.isNotBlank() } ?: return@forEach
+                collected[login.lowercase()] = KickImportedFollow(
+                    login = login,
+                    name = follow.name,
+                    profilePicture = follow.profilePicture,
+                )
+            }
+            val nextCursor = response.nextCursor?.takeIf { it.isNotBlank() }
+            cursor = nextCursor?.takeIf { it != cursor }
+        } while (!cursor.isNullOrBlank())
+        Log.i(LOG_TAG, "Kick follow import pagination finished total=${collected.size}")
+        val follows = collected.values.map { channel ->
+            KickImportedFollow(
+                login = channel.login,
+                name = channel.name,
+                profilePicture = channel.profilePicture,
+            )
+        }
         return importFollows(follows)
     }
 
@@ -117,6 +164,7 @@ class KickFollowImporter @Inject constructor(
                 channelLogo = follow.profilePicture,
             )
         }
+        Log.i(LOG_TAG, "Kick follow import stored follows count=${dedupedFollows.size}")
         enqueueImportedFollowEnrichment(dedupedFollows.map { it.login })
         return dedupedFollows.size
     }
@@ -127,7 +175,7 @@ class KickFollowImporter @Inject constructor(
             runCatching {
                 enrichImportedFollows(snapshot)
             }.onFailure { error ->
-                Log.w(LOG_TAG, "imported follow enrichment failed: ${error.message}")
+                debugLogW("imported follow enrichment failed: ${error.message}")
             }
         }
     }
@@ -142,7 +190,7 @@ class KickFollowImporter @Inject constructor(
         }
         val headers = KickApiHelper.getHelixHeaders(context)
         if (headers[C.HEADER_TOKEN].isNullOrBlank()) {
-            Log.i(LOG_TAG, "skip imported follow id enrichment: missing auth token")
+            debugLogI("skip imported follow id enrichment: missing auth token")
             return
         }
         val networkLibrary = context.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
@@ -160,6 +208,6 @@ class KickFollowImporter @Inject constructor(
                 localFollowsChannel.upsertLocalFollow(channelId, login, name, profileImageUrl)
             }
         }
-        Log.i(LOG_TAG, "enriched imported follows with broadcaster ids count=${normalizedLogins.size}")
+        debugLogI("enriched imported follows with broadcaster ids count=${normalizedLogins.size}")
     }
 }

@@ -2,6 +2,7 @@ package com.github.andreyasadchy.xtra.util
 
 import android.util.Log
 import com.github.andreyasadchy.xtra.BuildConfig
+import com.github.andreyasadchy.xtra.XtraApp
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -34,12 +35,18 @@ object WebSocketRuntime {
 
     fun onReconnectScheduled(attempt: Int, delayMs: Long, reason: String) {
         val count = reconnectScheduledCount.incrementAndGet()
-        if (BuildConfig.DEBUG && (count <= 5 || count % 25L == 0L)) {
+        if (isWebSocketDebugEnabled() && (count <= 5 || count % 25L == 0L)) {
             Log.d(
                 TAG,
                 "reconnect#$count attempt=$attempt delayMs=$delayMs foreground=$isAppInForeground reason=$reason active=${activeSocketCount.get()}"
             )
         }
+    }
+
+    private fun isWebSocketDebugEnabled(): Boolean {
+        return BuildConfig.DEBUG && runCatching {
+            XtraApp.INSTANCE.prefs().getBoolean(C.DEBUG_WEBSOCKET_INFO, false)
+        }.getOrDefault(false)
     }
 
     fun snapshot(): String {

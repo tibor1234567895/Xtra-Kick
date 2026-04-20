@@ -127,6 +127,10 @@ class WebSocket(
         messageByteArray = null
         var validated = false
         var line = reader.readLine()
+        if (line == null) {
+            listener.onDisconnect(this@WebSocket, "Connection closed before websocket handshake completed")
+            return@withContext true
+        }
         if (!line.startsWith("HTTP/1.1 101", true)) {
             listener.onDisconnect(this@WebSocket, line)
             if (line.startsWith("HTTP/1.1 429", true)) {

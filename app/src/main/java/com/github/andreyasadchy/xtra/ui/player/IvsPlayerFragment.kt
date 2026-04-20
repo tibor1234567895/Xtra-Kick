@@ -24,6 +24,7 @@ import com.amazonaws.ivs.player.Cue
 import com.amazonaws.ivs.player.Player
 import com.amazonaws.ivs.player.PlayerException
 import com.amazonaws.ivs.player.Quality
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
@@ -49,6 +50,18 @@ class IvsPlayerFragment : PlayerFragment() {
     private var activeNetworkIsCellular: Boolean? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var backgroundAudioTransitionRequested = false
+
+    private fun playerDebugLog(message: String) {
+        if (BuildConfig.DEBUG && prefs.getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
+            Log.d(TAG, message)
+        }
+    }
+
+    private fun playerDebugWarn(message: String) {
+        if (BuildConfig.DEBUG && prefs.getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
+            Log.w(TAG, message)
+        }
+    }
 
     override fun onStart() {
         super.onStart()
@@ -104,8 +117,7 @@ class IvsPlayerFragment : PlayerFragment() {
                     }
 
                     override fun onError(exception: PlayerException) {
-                        Log.w(
-                            TAG,
+                        playerDebugWarn(
                             "IVS playback error code=${exception.code} type=${exception.errorType} source=${exception.source} session=${player?.sessionId}: ${exception.errorMessage}"
                         )
                         retryIvsPlayback(showMessage = true)
@@ -286,6 +298,7 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun updateProgress() {
         with(binding.playerControls) {
+            updateLatency(player?.liveLatency?.takeIf { it > 0L })
             if (root.isVisible && !progressBar.isPressed) {
                 val currentPosition = player?.position ?: 0L
                 progressBar.setPosition(currentPosition)
@@ -295,11 +308,10 @@ class IvsPlayerFragment : PlayerFragment() {
                 } else {
                     null
                 }
-                updateLatency(player?.liveLatency?.takeIf { it > 0L })
-                root.removeCallbacks(updateProgressAction)
-                if (player?.state == Player.State.PLAYING || player?.state == Player.State.BUFFERING) {
-                    root.postDelayed(updateProgressAction, 500L)
-                }
+            }
+            root.removeCallbacks(updateProgressAction)
+            if (player?.state == Player.State.PLAYING || player?.state == Player.State.BUFFERING) {
+                root.postDelayed(updateProgressAction, 500L)
             }
         }
     }
@@ -435,8 +447,7 @@ class IvsPlayerFragment : PlayerFragment() {
         unregisterNetworkCallback()
         val ivsPlayer = player
         val shouldKeepPlaying = ivsPlayer?.let { shouldContinueIvsInBackground(it) } ?: false
-        Log.d(
-            TAG,
+        playerDebugLog(
             "onStop state=${ivsPlayer?.state} shouldKeepPlaying=$shouldKeepPlaying urlPresent=${!currentUrl.isNullOrBlank()} recoveryInProgress=$recoveryInProgress"
         )
         if (ivsPlayer != null) {
@@ -484,16 +495,14 @@ class IvsPlayerFragment : PlayerFragment() {
     private fun retryIvsPlayback(showMessage: Boolean) {
         val resolvedUrl = currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL)
         if (recoveryInProgress || !isAdded || resolvedUrl.isNullOrBlank()) {
-            Log.d(
-                TAG,
+            playerDebugLog(
                 "retryIvsPlayback ignored recoveryInProgress=$recoveryInProgress isAdded=$isAdded urlPresent=${!resolvedUrl.isNullOrBlank()}"
             )
             return
         }
         resumeOnStart = false
         recoveryInProgress = true
-        Log.d(
-            TAG,
+        playerDebugLog(
             "retryIvsPlayback showMessage=$showMessage stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)} resolvedUrlPresent=true"
         )
         if (showMessage) {

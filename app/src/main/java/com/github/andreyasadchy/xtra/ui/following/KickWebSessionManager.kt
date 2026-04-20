@@ -10,7 +10,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebSettings
 import android.webkit.WebView
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
+import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.prefs
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,37 +25,54 @@ class KickWebSessionManager @Inject constructor(
 
     private val logTag = "KickWebSessionMgr"
 
+    private fun isDebugLoggingEnabled(): Boolean {
+        return BuildConfig.DEBUG && context.prefs().getBoolean(C.DEBUG_KICK_FOLLOW_IMPORT_LOGS, false)
+    }
+
+    private fun debugLogI(message: String) {
+        if (isDebugLoggingEnabled()) {
+            Log.i(logTag, message)
+        }
+    }
+
+    private fun debugLogW(message: String) {
+        if (isDebugLoggingEnabled()) {
+            Log.w(logTag, message)
+        }
+    }
+
     fun seedKickAuthCookie(): Boolean {
         val token = AuthStateHelper.getKickBearerToken(context)
             ?.removePrefix("Bearer ")
             ?.takeIf { it.isNotBlank() }
             ?: run {
-                Log.w(logTag, "seedKickAuthCookie: no stored Kick token")
+                debugLogW("seedKickAuthCookie: no stored Kick token")
                 return false
             }
-        Log.i(logTag, "seedKickAuthCookie: seeding auth-token cookie")
+        debugLogI("seedKickAuthCookie: seeding auth-token/session_token cookies")
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setCookie("https://kick.com", "auth-token=$token; Path=/; Secure")
+        CookieManager.getInstance().setCookie("https://kick.com", "session_token=$token; Path=/; Secure")
         CookieManager.getInstance().flush()
         val seeded = CookieManager.getInstance().getCookie("https://kick.com")
-        Log.i(logTag, "seedKickAuthCookie: cookieHeaderPresent=${!seeded.isNullOrBlank()}")
+        debugLogI("seedKickAuthCookie: cookieHeaderPresent=${!seeded.isNullOrBlank()}")
         return true
     }
 
     fun getKickCookieHeader(): String? {
         val kickCookie = CookieManager.getInstance().getCookie("https://kick.com")?.takeIf { it.isNotBlank() }
         if (!kickCookie.isNullOrBlank()) {
-            Log.i(logTag, "getKickCookieHeader: using kick.com cookies")
+            debugLogI("getKickCookieHeader: using kick.com cookies")
             return kickCookie
         }
         val webCookie = CookieManager.getInstance().getCookie("https://web.kick.com")?.takeIf { it.isNotBlank() }
-        Log.i(logTag, "getKickCookieHeader: using web.kick.com cookies=${!webCookie.isNullOrBlank()}")
+        debugLogI("getKickCookieHeader: using web.kick.com cookies=${!webCookie.isNullOrBlank()}")
         return webCookie
     }
 
     fun hasKickWebsiteSession(): Boolean {
-        val hasSession = KickFollowImportResolver.hasKickWebsiteSession(getKickCookieHeader())
-        Log.i(logTag, "hasKickWebsiteSession=$hasSession")
+        val hasSession = KickFollowImportResolver.hasKickWebsiteSession(getKickCookieHeader(), isDebugLoggingEnabled())
+        debugLogI("hasKickWebsiteSession=$hasSession")
         return hasSession
     }
 
@@ -100,8 +120,7 @@ class KickWebSessionManager @Inject constructor(
             }
             false
         }
-        Log.i(
-            logTag,
+        debugLogI(
             "configureImportWebView: js=${webView.settings.javaScriptEnabled} dom=${webView.settings.domStorageEnabled} layout=${webView.layoutParams.width}x${webView.layoutParams.height}",
         )
     }

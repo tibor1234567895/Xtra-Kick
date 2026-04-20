@@ -1,127 +1,149 @@
 <androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
-    <Preference
-        android:key="action_api_settings"
-        android:title="@string/api_settings"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
+    <PreferenceCategory
+        android:title="@string/debug_actions"
+        app:iconSpaceReserved="false">
 
-    <Preference
-        android:key="action_delete_all_followed_channels"
-        android:summary="@string/debug_delete_all_followed_channels_summary"
-        android:title="@string/debug_delete_all_followed_channels"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
+        <Preference
+            android:key="action_api_settings"
+            android:title="@string/api_settings"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
 
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="debug_chat_fullmsg"
-        android:title="@string/show_copy_fullmsg"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
+        <Preference
+            android:key="action_delete_all_followed_channels"
+            android:summary="@string/debug_delete_all_followed_channels_summary"
+            android:title="@string/debug_delete_all_followed_channels"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
 
-    <SwitchPreferenceCompat
-        android:defaultValue="true"
-        android:key="debug_api_commands"
-        android:title="@string/debug_api_commands"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
+        <Preference
+            android:key="action_customize_debug_logs"
+            android:summary="@string/customize_debug_logs_summary"
+            android:title="@string/customize_debug_logs"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
 
-    <SwitchPreferenceCompat
-        android:defaultValue="true"
-        android:key="debug_api_chat_messages"
-        android:title="@string/use_api_chat_messages"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
+        <Preference
+            android:key="action_force_kick_token_expiry"
+            android:summary="@string/debug_force_kick_token_expiry_summary"
+            android:title="@string/debug_force_kick_token_expiry"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+    </PreferenceCategory>
 
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="debug_websocket_info"
-        android:title="@string/show_more_websocket_info"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="debug_kick_realtime_chat"
-        android:title="@string/debug_kick_realtime_chat"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="debug_kick_legacy_search"
-        android:title="@string/debug_kick_legacy_search"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="debug_use_custom_playback_service"
-        android:title="@string/use_custom_playback_service"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <ListPreference
-        android:defaultValue="ExoPlayer"
-        android:entries="@array/playerEntries"
-        android:entryValues="@array/playerEntries"
-        android:key="player"
-        android:summary="%s"
-        android:title="@string/player"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="debug_eventsub_chat"
-        android:title="@string/use_eventsub_chat"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="debug_player_menu_playlist_tags"
-        android:title="@string/show_playlist_tags"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="enable_integrity"
-        android:title="@string/use_integrity"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="true"
-        android:key="use_webview_integrity"
-        android:title="@string/get_webview_integrity"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="get_all_gql_headers"
-        android:title="@string/get_all_headers"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <EditTextPreference
-        android:key="gql_headers"
-        android:title="@string/gql_headers"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <ListPreference
-        android:defaultValue="OkHttp"
-        android:entries="@array/networkLibraryEntries"
-        android:entryValues="@array/networkLibraryEntries"
-        android:key="network_library"
-        android:summary="%s"
+    <PreferenceCategory
         android:title="@string/network_library"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
+        app:iconSpaceReserved="false">
+
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="enable_integrity"
+            android:title="@string/use_integrity"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="use_webview_integrity"
+            android:title="@string/get_webview_integrity"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="get_all_gql_headers"
+            android:title="@string/get_all_headers"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <EditTextPreference
+            android:key="gql_headers"
+            android:title="@string/gql_headers"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <ListPreference
+            android:defaultValue="OkHttp"
+            android:entries="@array/networkLibraryEntries"
+            android:entryValues="@array/networkLibraryEntries"
+            android:key="network_library"
+            android:summary="%s"
+            android:title="@string/network_library"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:title="@string/debug_settings"
+        app:iconSpaceReserved="false">
+
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="debug_chat_fullmsg"
+            android:title="@string/show_copy_fullmsg"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="debug_api_commands"
+            android:title="@string/debug_api_commands"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="debug_api_chat_messages"
+            android:title="@string/use_api_chat_messages"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="debug_websocket_info"
+            android:title="@string/show_more_websocket_info"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="debug_eventsub_chat"
+            android:title="@string/use_eventsub_chat"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="debug_kick_legacy_search"
+            android:title="@string/debug_kick_legacy_search"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="debug_use_custom_playback_service"
+            android:title="@string/use_custom_playback_service"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="debug_player_menu_playlist_tags"
+            android:title="@string/show_playlist_tags"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <ListPreference
+            android:defaultValue="ExoPlayer"
+            android:entries="@array/playerEntries"
+            android:entryValues="@array/playerEntries"
+            android:key="player"
+            android:summary="%s"
+            android:title="@string/player"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+    </PreferenceCategory>
 
 </androidx.preference.PreferenceScreen>
