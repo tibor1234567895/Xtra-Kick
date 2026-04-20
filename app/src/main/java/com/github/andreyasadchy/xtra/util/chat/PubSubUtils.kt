@@ -164,6 +164,7 @@ object PubSubUtils {
     fun onPredictionUpdate(message: JSONObject): Prediction? {
         val messageData = message.optJSONObject("data")
         val prediction = messageData?.optJSONObject("event")
+        val userVote = messageData?.optJSONObject("user_vote") ?: prediction?.optJSONObject("user_vote")
         val outcomesList = mutableListOf<Prediction.PredictionOutcome>()
         val outcomes = prediction?.optJSONArray("outcomes")
         if (outcomes != null) {
@@ -177,6 +178,7 @@ object PubSubUtils {
                             title = title,
                             totalPoints = if (outcome?.isNull("total_points") == false) outcome.optInt("total_points") else null,
                             totalUsers = if (outcome?.isNull("total_users") == false) outcome.optInt("total_users") else null,
+                            returnRate = if (outcome?.isNull("return_rate") == false) outcome.optDouble("return_rate") else null,
                         )
                     )
                 }
@@ -191,6 +193,12 @@ object PubSubUtils {
                 status = if (!prediction.isNull("status")) prediction.optString("status").takeIf { it.isNotBlank() } else null,
                 title = if (!prediction.isNull("title")) prediction.optString("title").takeIf { it.isNotBlank() } else null,
                 winningOutcomeId = if (!prediction.isNull("winning_outcome_id")) prediction.optString("winning_outcome_id").takeIf { it.isNotBlank() } else null,
+                userVote = userVote?.let {
+                    Prediction.UserVote(
+                        outcomeId = if (!it.isNull("outcome_id")) it.optString("outcome_id").takeIf { outcomeId -> outcomeId.isNotBlank() } else null,
+                        totalVoteAmount = if (!it.isNull("total_vote_amount")) it.optInt("total_vote_amount") else null,
+                    )
+                },
             )
         } else null
     }

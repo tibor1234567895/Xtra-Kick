@@ -1153,30 +1153,10 @@ class KickRepository @Inject constructor(
         }
         val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
         val predictionObject = root.objOrNull("prediction") ?: root
-        val outcomes = predictionObject.arrayOrNull("outcomes").orEmpty().mapNotNull { element ->
-            val outcome = element as? JsonObject ?: return@mapNotNull null
-            val title = outcome.primitiveOrNull("title")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            Prediction.PredictionOutcome(
-                id = outcome.primitiveOrNull("id"),
-                title = title,
-                totalPoints = outcome.firstLongOrNull("total_points", "total_vote_amount")?.toInt(),
-                totalUsers = outcome.firstLongOrNull("total_users", "vote_count")?.toInt(),
-            )
-        }
-        val status = predictionObject.firstPrimitiveOrNull("status", "state") ?: when (normalizedEvent) {
-            "predictionlocked" -> "LOCKED"
-            "predictionresolved", "predictionended" -> "RESOLVED"
-            "predictioncancelled" -> "CANCELED"
-            else -> null
-        }
-        return Prediction(
-            id = predictionObject.primitiveOrNull("id"),
-            createdAt = predictionObject.primitiveOrNull("created_at")?.let(KickApiHelper::parseIso8601DateUTC),
-            outcomes = outcomes,
-            predictionWindowSeconds = predictionObject.firstLongOrNull("prediction_window_seconds", "duration")?.toInt(),
-            status = status,
-            title = predictionObject.primitiveOrNull("title"),
-            winningOutcomeId = predictionObject.firstPrimitiveOrNull("winning_outcome_id", "winningOutcomeId"),
+        return parseKickPredictionObject(
+            predictionObject = predictionObject,
+            userVoteObject = root.objOrNull("user_vote"),
+            normalizedEvent = normalizedEvent,
         )
     }
 
@@ -1195,6 +1175,21 @@ class KickRepository @Inject constructor(
         val data = root.objOrNull("data") ?: root
         val pollObject = data.objOrNull("poll") ?: return null
         return parseKickPollObject(pollObject)
+    }
+
+    fun parseKickWebPredictionResponse(raw: String): Prediction? {
+        val root = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return null
+        val data = root.objOrNull("data") ?: root
+        val predictionObject = data.objOrNull("prediction") ?: return null
+        return parseKickPredictionObject(
+            predictionObject = predictionObject,
+            userVoteObject = data.objOrNull("user_vote") ?: root.objOrNull("user_vote"),
+            normalizedEvent = null,
+        )
+    }
+
+    fun parseKickWebPredictionVoteResponse(raw: String): Prediction? {
+        return parseKickWebPredictionResponse(raw)
     }
 
     suspend fun voteKickWebPoll(
@@ -1218,6 +1213,52 @@ class KickRepository @Inject constructor(
                 throw IOException("Kick poll vote failed (${response.code}) for $url: ${raw.take(200)}")
             }
             parseKickWebPollResponse(raw)
+        }
+    }
+
+    suspend fun voteKickWebPrediction(
+        channelSlug: String,
+        outcomeId: String,
+        amount: Int,
+    ): Prediction? = withContext(Dispatchers.IO) {
+        val normalizedChannelSlug = channelSlug.trim().takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("channel slug is required")
+        val normalizedOutcomeId = outcomeId.trim().takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("outcome id is required")
+        require(amount >= 10) { "prediction amount must be at least 10" }
+        val url = "https://kick.com/api/v2/channels/${urlEncode(normalizedChannelSlug)}/predictions/vote"
+        val body = buildJsonObject {
+            put("amount", JsonPrimitive(amount))
+            put("outcome_id", JsonPrimitive(normalizedOutcomeId))
+        }.toString()
+        okHttpClient.newCall(
+            createRequestBuilder(url, isKickWeb = true)
+                .header("Content-Type", "application/json")
+                .post(body.toRequestBody("application/json".toMediaTypeOrNull()))
+                .build()
+        ).execute().use { response ->
+            val raw = response.body.string()
+            if (!response.isSuccessful) {
+                throw IOException("Kick prediction vote failed (${response.code}) for $url: ${raw.take(200)}")
+            }
+            parseKickWebPredictionResponse(raw)
+        }
+    }
+
+    suspend fun getLatestKickPrediction(channelSlug: String): Prediction? = withContext(Dispatchers.IO) {
+        val normalizedChannelSlug = channelSlug.trim().takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("channel slug is required")
+        val url = "https://kick.com/api/v2/channels/${urlEncode(normalizedChannelSlug)}/predictions/latest"
+        okHttpClient.newCall(
+            createRequestBuilder(url, isKickWeb = true)
+                .get()
+                .build()
+        ).execute().use { response ->
+            val raw = response.body.string()
+            if (!response.isSuccessful) {
+                throw IOException("Kick latest prediction fetch failed (${response.code}) for $url: ${raw.take(200)}")
+            }
+            parseKickWebPredictionResponse(raw)
         }
     }
 
@@ -1249,6 +1290,45 @@ class KickRepository @Inject constructor(
             resultDisplayMilliseconds = pollObject.firstLongOrNull("result_display_duration", "result_display_seconds")?.times(1000)?.toInt(),
             hasVoted = pollObject["has_voted"]?.let { (it as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: (it as? JsonPrimitive)?.intOrNull?.let { intValue -> intValue != 0 } },
             votedChoiceId = pollObject.firstLongOrNull("voted_option_id", "voted_choice_id")?.toInt(),
+        )
+    }
+
+    private fun parseKickPredictionObject(
+        predictionObject: JsonObject,
+        userVoteObject: JsonObject? = null,
+        normalizedEvent: String? = null,
+    ): Prediction {
+        val outcomes = predictionObject.arrayOrNull("outcomes").orEmpty().mapNotNull { element ->
+            val outcome = element as? JsonObject ?: return@mapNotNull null
+            val title = outcome.primitiveOrNull("title")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            Prediction.PredictionOutcome(
+                id = outcome.primitiveOrNull("id"),
+                title = title,
+                totalPoints = outcome.firstLongOrNull("total_points", "total_vote_amount")?.toInt(),
+                totalUsers = outcome.firstLongOrNull("total_users", "vote_count")?.toInt(),
+                returnRate = (outcome["return_rate"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull(),
+            )
+        }
+        val status = predictionObject.firstPrimitiveOrNull("status", "state") ?: when (normalizedEvent) {
+            "predictionlocked" -> "LOCKED"
+            "predictionresolved", "predictionended" -> "RESOLVED"
+            "predictioncancelled" -> "CANCELED"
+            else -> null
+        }
+        return Prediction(
+            id = predictionObject.primitiveOrNull("id"),
+            createdAt = predictionObject.primitiveOrNull("created_at")?.let(KickApiHelper::parseIso8601DateUTC),
+            outcomes = outcomes,
+            predictionWindowSeconds = predictionObject.firstLongOrNull("prediction_window_seconds", "duration")?.toInt(),
+            status = status,
+            title = predictionObject.primitiveOrNull("title"),
+            winningOutcomeId = predictionObject.firstPrimitiveOrNull("winning_outcome_id", "winningOutcomeId"),
+            userVote = userVoteObject?.let {
+                Prediction.UserVote(
+                    outcomeId = it.primitiveOrNull("outcome_id")?.takeIf { outcomeId -> outcomeId.isNotBlank() },
+                    totalVoteAmount = it.firstLongOrNull("total_vote_amount")?.toInt(),
+                )
+            },
         )
     }
 

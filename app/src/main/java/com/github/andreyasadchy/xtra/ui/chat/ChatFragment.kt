@@ -36,6 +36,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.content.res.use
 import androidx.core.graphics.ColorUtils
@@ -72,6 +73,7 @@ import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.PinnedGift
 import com.github.andreyasadchy.xtra.model.chat.Poll
+import com.github.andreyasadchy.xtra.model.chat.Prediction
 import com.github.andreyasadchy.xtra.model.chat.RoomState
 import com.github.andreyasadchy.xtra.model.kick.KickOfficialReward
 import com.github.andreyasadchy.xtra.model.kick.KickOfficialRewardCreateRequest
@@ -623,6 +625,205 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             .show()
     }
 
+    private fun getChannelPointsDialogPrediction(): Prediction? {
+        return viewModel.prediction.value ?: viewModel.latestPrediction.value
+    }
+
+    private fun formatCompactPoints(value: Long): String {
+        fun compact(amount: Double, suffix: String): String {
+            val rounded = (amount * 10).roundToInt() / 10.0
+            val text = if (rounded % 1.0 == 0.0) {
+                rounded.toInt().toString()
+            } else {
+                rounded.toString()
+            }
+            return "$text$suffix"
+        }
+        return when {
+            value >= 1_000_000_000L -> compact(value / 1_000_000_000.0, "B")
+            value >= 1_000_000L -> compact(value / 1_000_000.0, "M")
+            value >= 1_000L -> compact(value / 1_000.0, "K")
+            else -> NumberFormat.getInstance().format(value)
+        }
+    }
+
+    private fun buildChannelPointsPredictionStatusText(prediction: Prediction): String {
+        val totalPoints = prediction.outcomes.orEmpty().sumOf { it.totalPoints?.toLong() ?: 0L }
+        val statusText = when (prediction.status) {
+            "ACTIVE" -> {
+                val secondsLeft = (
+                    if (viewModel.prediction.value?.id == prediction.id) {
+                        viewModel.predictionSecondsLeft.value
+                    } else {
+                        null
+                    }
+                    ) ?: prediction.createdAt?.let { createdAt ->
+                    prediction.predictionWindowSeconds?.let { duration ->
+                        (((createdAt + (duration * 1000L)) - System.currentTimeMillis()) / 1000L).toInt()
+                    }
+                }
+                if (secondsLeft != null && secondsLeft > 0) {
+                    getString(R.string.remaining_time, DateUtils.formatElapsedTime(secondsLeft.toLong()))
+                } else {
+                    getString(R.string.channel_points_prediction_open)
+                }
+            }
+            "LOCKED" -> getString(R.string.prediction_locked)
+            "CANCELED", "CANCEL_PENDING" -> getString(R.string.prediction_refunded)
+            else -> getString(R.string.channel_points_prediction_closed)
+        }
+        val poolText = getString(R.string.channel_points_prediction_pool, formatCompactPoints(totalPoints))
+        return "$statusText • $poolText"
+    }
+
+    private fun formatPredictionOdds(returnRate: Double?): String? {
+        if (returnRate == null || returnRate <= 0.0) return null
+        val rounded = (returnRate * 10).roundToInt() / 10.0
+        val text = if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
+        return getString(R.string.channel_points_prediction_odds, text)
+    }
+
+    private fun buildChannelPointsPredictionSummaryText(prediction: Prediction): String? {
+        val userVote = prediction.userVote ?: return null
+        val stake = userVote.totalVoteAmount ?: return null
+        val selectedOutcome = prediction.outcomes.orEmpty().firstOrNull { it.id == userVote.outcomeId }
+        val payout = selectedOutcome?.returnRate
+            ?.takeIf { it > 0.0 }
+            ?.let { (stake * it).roundToInt() }
+            ?.let { NumberFormat.getInstance().format(it) }
+        return when {
+            payout != null -> {
+                getString(
+                    R.string.channel_points_prediction_summary_full,
+                    NumberFormat.getInstance().format(stake),
+                    payout,
+                )
+            }
+            else -> {
+                getString(
+                    R.string.channel_points_prediction_summary_basic,
+                    NumberFormat.getInstance().format(stake),
+                )
+            }
+        }
+    }
+
+    private fun buildResolvedPredictionResultText(prediction: Prediction): String? {
+        if (prediction.status != "RESOLVED" && prediction.status != "RESOLVE_PENDING") return null
+        val userVote = prediction.userVote ?: return null
+        val stake = userVote.totalVoteAmount ?: return null
+        val selectedOutcome = prediction.outcomes.orEmpty().firstOrNull { it.id == userVote.outcomeId }
+        val won = prediction.winningOutcomeId != null && prediction.winningOutcomeId == userVote.outcomeId
+        return if (won) {
+            val payout = selectedOutcome?.returnRate
+                ?.takeIf { it > 0.0 }
+                ?.let { (stake * it).roundToInt() }
+                ?: stake
+            getString(R.string.prediction_result_won, formatCompactPoints(payout.toLong()))
+        } else {
+            getString(R.string.prediction_result_lost, formatCompactPoints(stake.toLong()))
+        }
+    }
+
+    private fun buildChannelPointsPredictionOutcomesText(prediction: Prediction): CharSequence {
+        val totalPoints = prediction.outcomes?.sumOf { it.totalPoints?.toLong() ?: 0 } ?: 0
+        val selectedOutcomeId = prediction.userVote?.outcomeId
+        val resolved = prediction.status == "RESOLVED" || prediction.status == "RESOLVE_PENDING"
+        val builder = SpannableStringBuilder()
+        prediction.outcomes.orEmpty().forEachIndexed { index, outcome ->
+            if (index > 0) {
+                builder.append('\n')
+            }
+            val isSelected = selectedOutcomeId != null && outcome.id == selectedOutcomeId
+            val isWinner = resolved && prediction.winningOutcomeId != null && prediction.winningOutcomeId == outcome.id
+            val line = buildString {
+                val title = if (isWinner) {
+                    getString(R.string.channel_points_prediction_outcome_winner_title, outcome.title)
+                } else {
+                    outcome.title
+                }
+                append(title)
+                append(" • ")
+                append(getString(R.string.channel_points_prediction_percent, (((outcome.totalPoints ?: 0).toLong() * 100.0) / max(totalPoints, 1)).roundToInt()))
+                append(" • ")
+                append(getString(R.string.channel_points_prediction_points_short, outcome.totalPoints?.let { NumberFormat.getInstance().format(it) }))
+                append(" • ")
+                append(getString(R.string.channel_points_prediction_votes_short, outcome.totalUsers?.let { NumberFormat.getInstance().format(it) }))
+                formatPredictionOdds(outcome.returnRate)?.let {
+                    append(" • ")
+                    append(it)
+                }
+            }
+            val start = builder.length
+            builder.append(line)
+            val end = builder.length
+            when {
+                isSelected -> {
+                    builder.setSpan(BackgroundColorSpan(ColorUtils.setAlphaComponent(Color.WHITE, 36)), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                isWinner -> {
+                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+            }
+        }
+        return builder
+    }
+
+    private fun createChannelPointsPredictionCard(prediction: Prediction): View {
+        val context = requireContext()
+        val surfaceColor = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainerHighest, Color.DKGRAY)
+        val titleText = prediction.title?.takeIf { it.isNotBlank() }
+            ?: getString(R.string.channel_points_prediction_fallback_title)
+        val outcomesText = buildChannelPointsPredictionOutcomesText(prediction)
+        val summaryText = buildChannelPointsPredictionSummaryText(prediction)
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 12.dp().toFloat()
+                setColor(surfaceColor)
+            }
+            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = 12.dp()
+            }
+
+            addView(TextView(context).apply {
+                text = titleText
+                setTypeface(typeface, Typeface.BOLD)
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+            })
+
+            addView(TextView(context).apply {
+                text = buildChannelPointsPredictionStatusText(prediction)
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+                setTextColor(MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.LTGRAY))
+                setPadding(0, 4.dp(), 0, 0)
+            })
+
+            summaryText?.let {
+                addView(TextView(context).apply {
+                    text = it
+                    setTypeface(typeface, Typeface.BOLD)
+                    setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+                    setPadding(0, 8.dp(), 0, 0)
+                })
+            }
+
+            addView(TextView(context).apply {
+                text = outcomesText
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+                setPadding(0, 10.dp(), 0, 0)
+            })
+        }
+    }
+
     private fun showChannelPointRewardsDialog() {
         val context = requireContext()
         val balanceText = getString(
@@ -630,6 +831,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             viewModel.channelPointsBalance.value?.let { NumberFormat.getInstance().format(it) } ?: "?"
         )
         val rewards = viewModel.channelPointRewards.value
+        val prediction = getChannelPointsDialogPrediction()
         val dialogHorizontalPadding = 14.dp()
         val tileGap = 8.dp()
         val screenWidth = resources.displayMetrics.widthPixels
@@ -646,6 +848,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dialogHorizontalPadding, 10.dp(), dialogHorizontalPadding, 6.dp())
+        }
+        prediction?.let {
+            content.addView(createChannelPointsPredictionCard(it))
         }
         content.addView(TextView(context).apply {
             text = balanceText
@@ -844,6 +1049,144 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             }.onSuccess { updatedPoll ->
                 updatedPoll?.let(viewModel::applyLocalPollUpdate)
                 Toast.makeText(requireContext(), getString(R.string.kick_poll_vote_submitted), Toast.LENGTH_SHORT).show()
+            }.onFailure(::showKickApiError)
+        }
+    }
+
+    private fun buildKickPredictionOutcomesText(prediction: Prediction, clickable: Boolean): CharSequence {
+        val channelLogin = currentChannelLogin()
+        val primaryColor = MaterialColors.getColor(requireContext(), androidx.appcompat.R.attr.colorPrimary, Color.BLUE)
+        val neutralBackground = ColorUtils.setAlphaComponent(primaryColor, 28)
+        val selectedBackground = ColorUtils.setAlphaComponent(primaryColor, 72)
+        val selectedTextColor = Color.WHITE
+        val totalPoints = prediction.outcomes?.sumOf { it.totalPoints?.toLong() ?: 0 } ?: 0
+        val selectedOutcomeId = prediction.userVote?.outcomeId
+        val resolved = prediction.status == "RESOLVED" || prediction.status == "RESOLVE_PENDING"
+        val builder = SpannableStringBuilder()
+        prediction.outcomes.orEmpty().forEachIndexed { index, outcome ->
+            if (index > 0) {
+                builder.append('\n')
+            }
+            val isSelected = selectedOutcomeId != null && outcome.id == selectedOutcomeId
+            val isWinner = resolved && prediction.winningOutcomeId != null && prediction.winningOutcomeId == outcome.id
+            val line = getString(
+                if (isWinner) R.string.prediction_outcome_compact_winner else R.string.prediction_outcome_compact,
+                (((outcome.totalPoints ?: 0).toLong() * 100.0) / max(totalPoints, 1)).roundToInt(),
+                outcome.title
+            )
+            val start = builder.length
+            builder.append(line)
+            val end = builder.length
+            when {
+                isSelected -> {
+                    builder.setSpan(BackgroundColorSpan(selectedBackground), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    builder.setSpan(ForegroundColorSpan(selectedTextColor), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                prediction.status == "ACTIVE" && selectedOutcomeId == null && outcome.id != null -> {
+                    builder.setSpan(BackgroundColorSpan(neutralBackground), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                isWinner -> {
+                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+            }
+            if (clickable &&
+                channelLogin != null &&
+                prediction.status == "ACTIVE" &&
+                outcome.id != null &&
+                (selectedOutcomeId == null || selectedOutcomeId == outcome.id)
+            ) {
+                builder.setSpan(
+                    object : ClickableSpan() {
+                        override fun onClick(widget: View) {
+                            showKickPredictionVoteDialog(prediction, outcome)
+                        }
+
+                        override fun updateDrawState(ds: TextPaint) {
+                            ds.isUnderlineText = false
+                            ds.color = ds.linkColor
+                        }
+                    },
+                    start,
+                    end,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
+        return builder
+    }
+
+    private fun showKickPredictionVoteDialog(
+        prediction: Prediction,
+        outcome: Prediction.PredictionOutcome,
+    ) {
+        val context = requireContext()
+        val channelLogin = currentChannelLogin() ?: return
+        val outcomeId = outcome.id ?: return
+        val selectedOutcomeId = prediction.userVote?.outcomeId
+        if (selectedOutcomeId != null && selectedOutcomeId != outcomeId) {
+            Toast.makeText(context, getString(R.string.kick_prediction_vote_only_selected), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val currentBalance = viewModel.channelPointsBalance.value
+        val currentStake = prediction.userVote?.takeIf { it.outcomeId == outcomeId }?.totalVoteAmount
+        val minAmount = 10
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        content.addView(TextView(context).apply {
+            text = buildString {
+                append(getString(R.string.channel_points_balance, currentBalance?.let { NumberFormat.getInstance().format(it) } ?: getString(R.string.channel_points_loading)))
+                append('\n')
+                append(getString(R.string.kick_prediction_vote_minimum, NumberFormat.getInstance().format(minAmount)))
+                if (currentStake != null) {
+                    append('\n')
+                    append(getString(R.string.kick_prediction_vote_current_stake, NumberFormat.getInstance().format(currentStake)))
+                }
+            }
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+            setPadding(0, 0, 0, 12.dp())
+        })
+        val input = EditText(context).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            hint = getString(R.string.kick_prediction_vote_amount_hint)
+        }
+        content.addView(input)
+        val dialog = context.getAlertDialogBuilder()
+            .setTitle(outcome.title)
+            .setView(content)
+            .setPositiveButton(getString(R.string.kick_prediction_vote_submit), null)
+            .setNegativeButton(getString(R.string.close), null)
+            .show()
+        val positiveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        val updateButtonState = {
+            val amount = input.text?.toString()?.toIntOrNull()
+            positiveButton.isEnabled = currentBalance != null && amount != null && amount >= minAmount && amount <= currentBalance
+        }
+        positiveButton.isEnabled = false
+        input.addTextChangedListener(onTextChanged = { _, _, _, _ ->
+            updateButtonState()
+        })
+        updateButtonState()
+        positiveButton.setOnClickListener {
+            val amount = input.text?.toString()?.toIntOrNull() ?: return@setOnClickListener
+            submitKickPredictionVote(channelLogin, outcomeId, amount)
+            dialog.dismiss()
+        }
+    }
+
+    private fun submitKickPredictionVote(
+        channelLogin: String,
+        outcomeId: String,
+        amount: Int,
+    ) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            runCatching {
+                kickRepository.voteKickWebPrediction(channelLogin, outcomeId, amount)
+            }.onSuccess { updatedPrediction ->
+                updatedPrediction?.let(viewModel::applyLocalPredictionUpdate)
+                refreshKickRewardState()
+                Toast.makeText(requireContext(), getString(R.string.kick_prediction_vote_submitted), Toast.LENGTH_SHORT).show()
             }.onFailure(::showKickApiError)
         }
     }
@@ -1873,6 +2216,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             viewModel.hidePrediction.collectLatest {
                                 if (it) {
                                     predictionLayout.visibility = View.GONE
+                                    predictionOutcomes.movementMethod = null
                                     viewModel.predictionSecondsLeft.value = null
                                     viewModel.predictionTimer?.cancel()
                                     viewModel.predictionClosed = true
@@ -1883,6 +2227,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     }
                     predictionClose.setOnClickListener {
                         predictionLayout.visibility = View.GONE
+                        predictionOutcomes.movementMethod = null
                         viewModel.predictionSecondsLeft.value = null
                         viewModel.predictionTimer?.cancel()
                         viewModel.predictionClosed = true
@@ -1896,31 +2241,15 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                             "ACTIVE" -> {
                                                 predictionLayout.visibility = View.VISIBLE
                                                 predictionTitle.text = getString(R.string.prediction_title, prediction.title)
-                                                val totalPoints = prediction.outcomes?.sumOf { it.totalPoints?.toLong() ?: 0 } ?: 0
-                                                predictionOutcomes.text = prediction.outcomes?.joinToString("\n") {
-                                                    getString(
-                                                        R.string.prediction_outcome,
-                                                        (((it.totalPoints ?: 0).toLong() * 100.0) / max(totalPoints, 1)).roundToInt(),
-                                                        it.totalPoints?.let { NumberFormat.getInstance().format(it) },
-                                                        it.totalUsers?.let { NumberFormat.getInstance().format(it) },
-                                                        it.title
-                                                    )
-                                                }
+                                                predictionOutcomes.text = buildKickPredictionOutcomesText(prediction, clickable = true)
+                                                predictionOutcomes.movementMethod = LinkMovementMethod.getInstance()
                                                 predictionStatus.visibility = View.VISIBLE
                                             }
                                             "LOCKED" -> {
                                                 predictionLayout.visibility = View.VISIBLE
                                                 predictionTitle.text = getString(R.string.prediction_title, prediction.title)
-                                                val totalPoints = prediction.outcomes?.sumOf { it.totalPoints?.toLong() ?: 0 } ?: 0
-                                                predictionOutcomes.text = prediction.outcomes?.joinToString("\n") {
-                                                    getString(
-                                                        R.string.prediction_outcome,
-                                                        (((it.totalPoints ?: 0).toLong() * 100.0) / max(totalPoints, 1)).roundToInt(),
-                                                        it.totalPoints?.let { NumberFormat.getInstance().format(it) },
-                                                        it.totalUsers?.let { NumberFormat.getInstance().format(it) },
-                                                        it.title
-                                                    )
-                                                }
+                                                predictionOutcomes.text = buildKickPredictionOutcomesText(prediction, clickable = false)
+                                                predictionOutcomes.movementMethod = null
                                                 viewModel.predictionSecondsLeft.value = null
                                                 viewModel.predictionTimer?.cancel()
                                                 viewModel.startPredictionTimeout { predictionLayout.visibility = View.GONE }
@@ -1930,26 +2259,19 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                             "CANCELED", "CANCEL_PENDING", "RESOLVED", "RESOLVE_PENDING" -> {
                                                 predictionLayout.visibility = View.VISIBLE
                                                 predictionTitle.text = getString(R.string.prediction_title, prediction.title)
-                                                val resolved = prediction.status == "RESOLVED" || prediction.status == "RESOLVE_PENDING"
-                                                val totalPoints = prediction.outcomes?.sumOf { it.totalPoints?.toLong() ?: 0 } ?: 0
-                                                predictionOutcomes.text = prediction.outcomes?.joinToString("\n") {
-                                                    getString(
-                                                        if (resolved && prediction.winningOutcomeId != null && prediction.winningOutcomeId == it.id) {
-                                                            R.string.prediction_outcome_winner
-                                                        } else {
-                                                            R.string.prediction_outcome
-                                                        },
-                                                        (((it.totalPoints ?: 0).toLong() * 100.0) / max(totalPoints, 1)).roundToInt(),
-                                                        it.totalPoints?.let { NumberFormat.getInstance().format(it) },
-                                                        it.totalUsers?.let { NumberFormat.getInstance().format(it) },
-                                                        it.title
-                                                    )
-                                                }
+                                                predictionOutcomes.text = buildKickPredictionOutcomesText(prediction, clickable = false)
+                                                predictionOutcomes.movementMethod = null
                                                 viewModel.predictionSecondsLeft.value = null
                                                 viewModel.predictionTimer?.cancel()
                                                 viewModel.startPredictionTimeout { predictionLayout.visibility = View.GONE }
-                                                if (resolved) {
-                                                    predictionStatus.visibility = View.GONE
+                                                if (prediction.status == "RESOLVED" || prediction.status == "RESOLVE_PENDING") {
+                                                    val resultText = buildResolvedPredictionResultText(prediction)
+                                                    if (resultText != null) {
+                                                        predictionStatus.visibility = View.VISIBLE
+                                                        predictionStatus.text = resultText
+                                                    } else {
+                                                        predictionStatus.visibility = View.GONE
+                                                    }
                                                 } else {
                                                     predictionStatus.visibility = View.VISIBLE
                                                     predictionStatus.text = getString(R.string.prediction_refunded)
@@ -1957,6 +2279,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                             }
                                             else -> {
                                                 predictionLayout.visibility = View.GONE
+                                                predictionOutcomes.movementMethod = null
                                                 viewModel.predictionSecondsLeft.value = null
                                                 viewModel.predictionTimer?.cancel()
                                                 viewModel.predictionClosed = true

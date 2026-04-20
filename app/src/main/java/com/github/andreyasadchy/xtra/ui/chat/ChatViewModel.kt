@@ -184,6 +184,8 @@ class ChatViewModel @Inject constructor(
     val pollSecondsLeft = MutableStateFlow<Int?>(null)
     var pollTimer: Job? = null
     val prediction = MutableStateFlow<Prediction?>(null)
+    val latestPrediction = MutableStateFlow<Prediction?>(null)
+    private var currentPrediction: Prediction? = null
     var predictionClosed = false
     val predictionSecondsLeft = MutableStateFlow<Int?>(null)
     var predictionTimer: Timer? = null
@@ -443,6 +445,8 @@ class ChatViewModel @Inject constructor(
         stopReplayChat()
         pollSecondsLeft.value = null
         pollTimer?.cancel()
+        currentPrediction = null
+        latestPrediction.value = null
         predictionSecondsLeft.value = null
         predictionTimer?.cancel()
         super.onCleared()
@@ -1061,10 +1065,10 @@ class ChatViewModel @Inject constructor(
         }.toList()
         if (parsed.isEmpty()) return false
         val added = mutableListOf<Emote>()
-        synchronized(thirdPartyEmotes) {
+        synchronized(userEmotes) {
             parsed.forEach { emote ->
-                if (thirdPartyEmotes.none { it.name == emote.name }) {
-                    thirdPartyEmotes.add(emote)
+                if (userEmotes.none { it.name == emote.name }) {
+                    userEmotes.add(emote)
                     added.add(emote)
                 }
             }
@@ -1321,13 +1325,13 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 if (newKickEmotesAdded) {
-                    synchronized(thirdPartyEmotes) {
-                        thirdPartyEmotes.sortBy { it.source }
+                    synchronized(userEmotes) {
+                        userEmotes.sortBy { it.name?.lowercase() }
                     }
                     if (!reloadMessages.value) {
                         reloadMessages.value = true
                     }
-                    thirdPartyEmotesUpdated.emit(Unit)
+                    userEmotesUpdated.emit(Unit)
                 }
                 if (messages.isNotEmpty()) {
                     cacheKickPreferredMessageSource(source, channelId, channelLogin)
@@ -1390,13 +1394,13 @@ class ChatViewModel @Inject constructor(
                     page += 1
                 } while (cursor != null && page < maxPages && collected.size < kickReplayPreloadMaxMessages)
                 if (newKickEmotesAdded) {
-                    synchronized(thirdPartyEmotes) {
-                        thirdPartyEmotes.sortBy { it.source }
+                    synchronized(userEmotes) {
+                        userEmotes.sortBy { it.name?.lowercase() }
                     }
                     if (!reloadMessages.value) {
                         reloadMessages.value = true
                     }
-                    thirdPartyEmotesUpdated.emit(Unit)
+                    userEmotesUpdated.emit(Unit)
                 }
                 val dedupedMessages = collected
                     .distinctBy(::kickMessageKey)
@@ -1453,13 +1457,13 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 if (newKickEmotesAdded) {
-                    synchronized(thirdPartyEmotes) {
-                        thirdPartyEmotes.sortBy { it.source }
+                    synchronized(userEmotes) {
+                        userEmotes.sortBy { it.name?.lowercase() }
                     }
                     if (!reloadMessages.value) {
                         reloadMessages.value = true
                     }
-                    thirdPartyEmotesUpdated.emit(Unit)
+                    userEmotesUpdated.emit(Unit)
                 }
                 if (messages.isNotEmpty()) {
                     cacheKickPreferredMessageSource(source, channelId, channelLogin)
@@ -2206,10 +2210,16 @@ class ChatViewModel @Inject constructor(
     ) {
         updateChannelPointsBalance(null)
         updateChannelPointRewards(emptyList(), false)
+        latestPrediction.value = null
         if (channelLogin.isNullOrBlank()) {
             return
         }
         viewModelScope.launch {
+            runCatching {
+                kickRepository.getLatestKickPrediction(channelLogin)
+            }.onSuccess {
+                latestPrediction.value = it
+            }
             val fallbackResult = runCatching {
                 kickRepository.getChannelPointRewards(
                     channelSlug = channelLogin,
@@ -2344,6 +2354,8 @@ class ChatViewModel @Inject constructor(
         pollSecondsLeft.value = null
         pollTimer?.cancel()
         usedPredictionId = null
+        currentPrediction = null
+        latestPrediction.value = null
         predictionClosed = true
         predictionSecondsLeft.value = null
         predictionTimer?.cancel()
@@ -2619,12 +2631,26 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun applyPredictionUpdate(predictionUpdate: Prediction) {
-        if (predictionUpdate.id != usedPredictionId) {
-            usedPredictionId = predictionUpdate.id
+        val mergedPrediction = currentPrediction
+            ?.takeIf { it.id == predictionUpdate.id }
+            ?.let { existing ->
+                Prediction(
+                    id = predictionUpdate.id ?: existing.id,
+                    createdAt = predictionUpdate.createdAt ?: existing.createdAt,
+                    outcomes = predictionUpdate.outcomes ?: existing.outcomes,
+                    predictionWindowSeconds = predictionUpdate.predictionWindowSeconds ?: existing.predictionWindowSeconds,
+                    status = predictionUpdate.status ?: existing.status,
+                    title = predictionUpdate.title ?: existing.title,
+                    winningOutcomeId = predictionUpdate.winningOutcomeId ?: existing.winningOutcomeId,
+                    userVote = predictionUpdate.userVote ?: existing.userVote,
+                )
+            } ?: predictionUpdate
+        if (mergedPrediction.id != usedPredictionId) {
+            usedPredictionId = mergedPrediction.id
             predictionClosed = false
             predictionTimeoutJob?.cancel()
-            if (predictionUpdate.createdAt != null && predictionUpdate.predictionWindowSeconds != null) {
-                val secondsLeft = ((((predictionUpdate.createdAt + (predictionUpdate.predictionWindowSeconds * 1000)) - System.currentTimeMillis())) / 1000).toInt()
+            if (mergedPrediction.createdAt != null && mergedPrediction.predictionWindowSeconds != null) {
+                val secondsLeft = ((((mergedPrediction.createdAt + (mergedPrediction.predictionWindowSeconds * 1000)) - System.currentTimeMillis())) / 1000).toInt()
                 if (secondsLeft > 0) {
                     predictionSecondsLeft.value = secondsLeft
                     predictionTimer?.cancel()
@@ -2643,10 +2669,12 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             }
-        } else if (predictionUpdate.status == "LOCKED" || predictionUpdate.status == "CANCEL_PENDING" || predictionUpdate.status == "RESOLVE_PENDING") {
+        } else if (mergedPrediction.status == "LOCKED" || mergedPrediction.status == "CANCEL_PENDING" || mergedPrediction.status == "RESOLVE_PENDING") {
             predictionClosed = false
         }
-        prediction.value = predictionUpdate
+        currentPrediction = mergedPrediction
+        latestPrediction.value = mergedPrediction
+        prediction.value = mergedPrediction
     }
 
     private fun applyPollUpdate(pollUpdate: Poll) {
@@ -2684,6 +2712,10 @@ class ChatViewModel @Inject constructor(
 
     fun applyLocalPollUpdate(pollUpdate: Poll) {
         applyPollUpdate(pollUpdate)
+    }
+
+    fun applyLocalPredictionUpdate(predictionUpdate: Prediction) {
+        applyPredictionUpdate(predictionUpdate)
     }
 
     private fun restartPollCountdown(pollUpdate: Poll) {
