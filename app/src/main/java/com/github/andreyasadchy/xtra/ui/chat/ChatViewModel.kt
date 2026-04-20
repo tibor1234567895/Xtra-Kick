@@ -167,6 +167,7 @@ class ChatViewModel @Inject constructor(
 
     val recentEmotes by lazy { playerRepository.loadRecentEmotesFlow() }
     val hasRecentEmotes = MutableStateFlow(false)
+    val kickEmoteGroups = MutableStateFlow<List<KickRepository.KickEmoteGroup>>(emptyList())
     val userEmotes = mutableListOf<Emote>()
     private var loadedUserEmotes = false
     val localTwitchEmotes = mutableListOf<TwitchEmote>()
@@ -202,6 +203,7 @@ class ChatViewModel @Inject constructor(
     val stvUsers = mutableListOf<StvUser>()
     var channelStvEmoteSetId: String? = null
     var userStvEmoteSetId: String? = null
+    private var currentKickEmoteChannelLogin: String? = null
 
     val reloadMessages = MutableStateFlow(false)
     val hideRaid = MutableStateFlow(false)
@@ -454,6 +456,7 @@ class ChatViewModel @Inject constructor(
 
     private fun loadEmotes(channelId: String?, channelLogin: String?) {
         val kickMode = isKickPreferred()
+        currentKickEmoteChannelLogin = channelLogin?.trim()?.lowercase(Locale.ROOT)
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
         val helixHeaders = KickApiHelper.getHelixHeaders(applicationContext)
         val gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext, true)
@@ -464,6 +467,7 @@ class ChatViewModel @Inject constructor(
         synchronized(thirdPartyEmotes) {
             thirdPartyEmotes.clear()
         }
+        kickEmoteGroups.value = emptyList()
         if (kickMode && !channelLogin.isNullOrBlank()) {
             viewModelScope.launch {
                 try {
@@ -475,6 +479,32 @@ class ChatViewModel @Inject constructor(
                             kickRepository.getChannel(idCandidate)
                         }
                     }
+                }
+            }
+            viewModelScope.launch {
+                try {
+                    val includeCurrentChannelSubscriberEmotes = kickRepository.canAccessKickSubscriberEmotes(channelLogin)
+                    val groups = kickRepository.loadKickNativeEmoteGroups(channelLogin, includeCurrentChannelSubscriberEmotes)
+                    kickEmoteGroups.value = groups
+                    val emotes = groups.flatMap { it.emotes }
+                    if (emotes.isNotEmpty()) {
+                        synchronized(thirdPartyEmotes) {
+                            thirdPartyEmotes.addAll(emotes.filter { emote -> thirdPartyEmotes.none { it.name == emote.name } })
+                            thirdPartyEmotes.sortBy { it.source }
+                        }
+                        if (!reloadMessages.value) {
+                            reloadMessages.value = true
+                        }
+                        thirdPartyEmotesUpdated.emit(Unit)
+                        synchronized(autoCompleteList) {
+                            autoCompleteList.addAll(emotes.filter { it !in autoCompleteList })
+                        }
+                        synchronized(allEmotes) {
+                            allEmotes.addAll(emotes.filter { it.name !in allEmotes }.mapNotNull { it.name })
+                        }
+                    }
+                } catch (_: Exception) {
+
                 }
             }
         }
@@ -631,6 +661,175 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             }
+        }
+    }
+
+    fun getPrimaryKickEmoteGroup(): KickRepository.KickEmoteGroup? {
+        val currentLogin = currentKickEmoteChannelLogin ?: return kickEmoteGroups.value.firstOrNull()
+        return kickEmoteGroups.value.firstOrNull { group ->
+            group.id.equals(currentLogin, ignoreCase = true)
+        } ?: kickEmoteGroups.value.firstOrNull()
+    }
+
+    fun getCurrentKickEmoteGroup(): KickRepository.KickEmoteGroup? {
+        val currentLogin = currentKickEmoteChannelLogin ?: return null
+        return kickEmoteGroups.value.firstOrNull { group ->
+            group.id.equals(currentLogin, ignoreCase = true)
+        }
+    }
+
+    fun getPrimaryKickEmoteGroupTitle(): String {
+        return getPrimaryKickEmoteGroup()?.title ?: "Kick"
+    }
+
+    fun getSecondaryKickEmotes(): List<Emote> {
+        val currentId = getCurrentKickEmoteGroup()?.id
+        return kickEmoteGroups.value
+            .filterNot { group -> currentId != null && group.id.equals(currentId, ignoreCase = true) }
+            .flatMap { it.emotes }
+            .distinctBy { it.name }
+    }
+
+    fun getSevenTvEmotes(): List<Emote> {
+        val personalEmotes = userStvEmoteSetId?.let { setId ->
+            synchronized(personalEmoteSets) {
+                personalEmoteSets[setId]
+            }
+        } ?: emptyList()
+        return (personalEmotes + synchronized(thirdPartyEmotes) {
+            thirdPartyEmotes.filter { it.thirdParty }
+        }).distinctBy { it.name }
+    }
+
+    private fun getEmoteLookupMap(): Map<String, Emote> {
+        val lookup = LinkedHashMap<String, Emote>()
+        synchronized(userEmotes) {
+            userEmotes.forEach { emote ->
+                val name = emote.name ?: return@forEach
+                lookup.putIfAbsent(name, emote)
+            }
+        }
+        kickEmoteGroups.value
+            .flatMap { it.emotes }
+            .forEach { emote ->
+                val name = emote.name ?: return@forEach
+                lookup.putIfAbsent(name, emote)
+            }
+        getSevenTvEmotes().forEach { emote ->
+            val name = emote.name ?: return@forEach
+            lookup.putIfAbsent(name, emote)
+        }
+        return lookup
+    }
+
+    fun getResolvedRecentEmotes(recentEmotes: List<RecentEmote>): List<Emote> {
+        val emoteLookup = getEmoteLookupMap()
+        return recentEmotes
+            .sortedByDescending { it.usedAt }
+            .mapNotNull { recentEmote -> emoteLookup[recentEmote.name] }
+            .distinctBy { it.name }
+    }
+
+    fun getEmotePickerSections(recentEmotes: List<RecentEmote>, query: String): List<EmotePickerSection> {
+        val normalizedQuery = query.trim()
+        val hasQuery = normalizedQuery.isNotEmpty()
+        val currentKickGroup = getCurrentKickEmoteGroup()
+
+        fun List<Emote>.filterForQuery(): List<Emote> {
+            return if (hasQuery) {
+                filter { it.name?.contains(normalizedQuery, ignoreCase = true) == true }
+            } else {
+                this
+            }.distinctBy { it.name }
+        }
+
+        return buildList {
+            if (!hasQuery) {
+                getResolvedRecentEmotes(recentEmotes)
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { emotes ->
+                        add(
+                            EmotePickerSection(
+                                key = "recent",
+                                title = "Recent",
+                                emotes = emotes,
+                                expandedByDefault = true,
+                            )
+                        )
+                    }
+            }
+
+            currentKickGroup?.emotes
+                ?.filterForQuery()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { emotes ->
+                    add(
+                        EmotePickerSection(
+                            key = "kick-current",
+                            title = currentKickGroup.title,
+                            emotes = emotes,
+                            expandedByDefault = true,
+                        )
+                    )
+                }
+
+            val otherKickGroups = kickEmoteGroups.value.filterNot { group ->
+                val currentId = currentKickGroup?.id
+                currentId != null && group.id.equals(currentId, ignoreCase = true)
+            }
+            val globalKickEmotes = LinkedHashMap<String, Emote>()
+            otherKickGroups.forEach { group ->
+                val isGlobalLike = group.title.equals("Global", ignoreCase = true) ||
+                    group.title.equals("Emojis", ignoreCase = true) ||
+                    group.id.equals("Emoji", ignoreCase = true)
+                if (isGlobalLike) {
+                    group.emotes.forEach { emote ->
+                        val name = emote.name ?: return@forEach
+                        globalKickEmotes.putIfAbsent(name, emote)
+                    }
+                } else {
+                    val emotes = group.emotes.filterForQuery()
+                    if (emotes.isEmpty()) {
+                        return@forEach
+                    }
+                    add(
+                        EmotePickerSection(
+                            key = "kick-${group.id}",
+                            title = group.title,
+                            emotes = emotes,
+                            expandedByDefault = hasQuery,
+                        )
+                    )
+                }
+            }
+            globalKickEmotes.values
+                .toList()
+                .filterForQuery()
+                .takeIf { it.isNotEmpty() }
+                ?.let { emotes ->
+                    add(
+                        EmotePickerSection(
+                            key = "kick-global",
+                            title = "Global",
+                            emotes = emotes,
+                            expandedByDefault = hasQuery,
+                        )
+                    )
+                }
+
+            getSevenTvEmotes()
+                .filterForQuery()
+                .takeIf { it.isNotEmpty() }
+                ?.let { emotes ->
+                    add(
+                        EmotePickerSection(
+                            key = "7tv",
+                            title = "7TV",
+                            emotes = emotes,
+                            expandedByDefault = hasQuery,
+                        )
+                    )
+                }
         }
     }
 
@@ -1065,10 +1264,10 @@ class ChatViewModel @Inject constructor(
         }.toList()
         if (parsed.isEmpty()) return false
         val added = mutableListOf<Emote>()
-        synchronized(userEmotes) {
+        synchronized(thirdPartyEmotes) {
             parsed.forEach { emote ->
-                if (userEmotes.none { it.name == emote.name }) {
-                    userEmotes.add(emote)
+                if (thirdPartyEmotes.none { it.name == emote.name }) {
+                    thirdPartyEmotes.add(emote)
                     added.add(emote)
                 }
             }
@@ -1099,6 +1298,7 @@ class ChatViewModel @Inject constructor(
     private data class KickRealtimeMessage(
         val eventName: String?,
         val message: KickMessage,
+        val aiModerated: Boolean = false,
     )
 
     private fun isKickReplayChatDebugEnabled(): Boolean {
@@ -1325,13 +1525,13 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 if (newKickEmotesAdded) {
-                    synchronized(userEmotes) {
-                        userEmotes.sortBy { it.name?.lowercase() }
+                    synchronized(thirdPartyEmotes) {
+                        thirdPartyEmotes.sortBy { it.source }
                     }
                     if (!reloadMessages.value) {
                         reloadMessages.value = true
                     }
-                    userEmotesUpdated.emit(Unit)
+                    thirdPartyEmotesUpdated.emit(Unit)
                 }
                 if (messages.isNotEmpty()) {
                     cacheKickPreferredMessageSource(source, channelId, channelLogin)
@@ -1394,13 +1594,13 @@ class ChatViewModel @Inject constructor(
                     page += 1
                 } while (cursor != null && page < maxPages && collected.size < kickReplayPreloadMaxMessages)
                 if (newKickEmotesAdded) {
-                    synchronized(userEmotes) {
-                        userEmotes.sortBy { it.name?.lowercase() }
+                    synchronized(thirdPartyEmotes) {
+                        thirdPartyEmotes.sortBy { it.source }
                     }
                     if (!reloadMessages.value) {
                         reloadMessages.value = true
                     }
-                    userEmotesUpdated.emit(Unit)
+                    thirdPartyEmotesUpdated.emit(Unit)
                 }
                 val dedupedMessages = collected
                     .distinctBy(::kickMessageKey)
@@ -1457,13 +1657,13 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 if (newKickEmotesAdded) {
-                    synchronized(userEmotes) {
-                        userEmotes.sortBy { it.name?.lowercase() }
+                    synchronized(thirdPartyEmotes) {
+                        thirdPartyEmotes.sortBy { it.source }
                     }
                     if (!reloadMessages.value) {
                         reloadMessages.value = true
                     }
-                    userEmotesUpdated.emit(Unit)
+                    thirdPartyEmotesUpdated.emit(Unit)
                 }
                 if (messages.isNotEmpty()) {
                     cacheKickPreferredMessageSource(source, channelId, channelLogin)
@@ -1805,7 +2005,12 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun getClearMessage(chatMessage: ChatMessage, deletedMessage: ChatMessage?, nameDisplay: String?): ChatMessage {
+    private fun getClearMessage(
+        chatMessage: ChatMessage,
+        deletedMessage: ChatMessage?,
+        nameDisplay: String?,
+        deletedBy: String? = null,
+    ): ChatMessage {
         val login = deletedMessage?.userLogin ?: chatMessage.userLogin
         val userName = if (deletedMessage?.userName != null && login != null && !login.equals(deletedMessage.userName, true)) {
             when (nameDisplay) {
@@ -1816,7 +2021,21 @@ class ChatViewModel @Inject constructor(
         } else {
             deletedMessage?.userName ?: login
         }
-        val message = ContextCompat.getString(applicationContext, R.string.chat_clearmsg).format(userName, deletedMessage?.message ?: chatMessage.message)
+        val deletedText = deletedMessage?.message ?: chatMessage.message
+        val message = if (!deletedBy.isNullOrBlank()) {
+            if (deletedText.isNullOrBlank()) {
+                ContextCompat.getString(applicationContext, R.string.chat_clearmsg_by_generic).format(deletedBy)
+            } else {
+                ContextCompat.getString(applicationContext, R.string.chat_clearmsg_by).format(deletedBy, deletedText)
+            }
+        } else if (userName.isNullOrBlank() && deletedText.isNullOrBlank()) {
+            ContextCompat.getString(applicationContext, R.string.chat_clearmsg_generic)
+        } else {
+            ContextCompat.getString(applicationContext, R.string.chat_clearmsg).format(
+                userName ?: ContextCompat.getString(applicationContext, R.string.pinned_gift_unknown_user),
+                deletedText ?: ""
+            )
+        }
         val messageIndex = message.indexOf(": ") + 2
         return ChatMessage(
             userId = deletedMessage?.userId,
@@ -2559,7 +2778,7 @@ class ChatViewModel @Inject constructor(
                     return
                 }
                 if (addKickInlineEmotes(parsedChatMessage.fullMsg)) {
-                    userEmotesUpdated.emit(Unit)
+                    thirdPartyEmotesUpdated.emit(Unit)
                 }
                 emitKickMessages(listOf(parsedChatMessage))
                 return
@@ -2574,7 +2793,12 @@ class ChatViewModel @Inject constructor(
                 val targetId = kickRepository.getKickModerationTargetMessageId(kickMessage)
                 val deletedMessage = markMessageDeleted(targetId, chatMessage)
                 if (deletedMessage == null) {
-                    onMessage(getClearMessage(chatMessage, null, nameDisplay))
+                    val deletedBy = if (realtimeMessage.aiModerated) {
+                        ContextCompat.getString(applicationContext, R.string.kick_automod)
+                    } else {
+                        null
+                    }
+                    onMessage(getClearMessage(chatMessage, null, nameDisplay, deletedBy))
                 }
                 return
             }
@@ -2600,7 +2824,7 @@ class ChatViewModel @Inject constructor(
                 newKickEmotesAdded = true
             }
             if (newKickEmotesAdded) {
-                userEmotesUpdated.emit(Unit)
+                thirdPartyEmotesUpdated.emit(Unit)
             }
             emitKickMessages(listOf(chatMessage))
         }
@@ -2777,19 +3001,33 @@ class ChatViewModel @Inject constructor(
             if (raw.isNullOrBlank()) return null
             return runCatching { json.decodeFromString<KickMessage>(raw) }.getOrNull()
         }
-        decodeCandidate(messageJson)?.let { return KickRealtimeMessage(eventName, it) }
+        val directAiModerated = runCatching { JSONObject(messageJson) }.getOrNull()?.optBoolean("aiModerated", false) == true
+        decodeCandidate(messageJson)?.let { return KickRealtimeMessage(eventName, it, directAiModerated) }
         val root = runCatching { JSONObject(messageJson) }.getOrNull() ?: return null
         val candidates = mutableListOf<String>()
+        var aiModerated = root.optBoolean("aiModerated", false)
         fun addObj(obj: JSONObject?) {
             if (obj != null) candidates.add(obj.toString())
         }
         addObj(root)
-        addObj(root.optJSONObject("data"))
-        addObj(root.optJSONObject("message"))
-        addObj(root.optJSONObject("payload"))
+        root.optJSONObject("data")?.let {
+            aiModerated = aiModerated || it.optBoolean("aiModerated", false)
+            addObj(it)
+        }
+        root.optJSONObject("message")?.let {
+            aiModerated = aiModerated || it.optBoolean("aiModerated", false)
+            addObj(it)
+        }
+        root.optJSONObject("payload")?.let {
+            aiModerated = aiModerated || it.optBoolean("aiModerated", false)
+            addObj(it)
+        }
         val dataRaw = root.opt("data")
         if (dataRaw is String) {
-            addObj(runCatching { JSONObject(dataRaw) }.getOrNull())
+            runCatching { JSONObject(dataRaw) }.getOrNull()?.let {
+                aiModerated = aiModerated || it.optBoolean("aiModerated", false)
+                addObj(it)
+            }
             val arr = runCatching { JSONArray(dataRaw) }.getOrNull()
             if (arr != null) {
                 for (i in 0 until arr.length()) {
@@ -2798,9 +3036,12 @@ class ChatViewModel @Inject constructor(
             }
         }
         val payload = root.optJSONObject("payload")
-        addObj(payload?.optJSONObject("data"))
+        payload?.optJSONObject("data")?.let {
+            aiModerated = aiModerated || it.optBoolean("aiModerated", false)
+            addObj(it)
+        }
         for (candidate in candidates) {
-            decodeCandidate(candidate)?.let { return KickRealtimeMessage(eventName, it) }
+            decodeCandidate(candidate)?.let { return KickRealtimeMessage(eventName, it, aiModerated) }
         }
         return null
     }

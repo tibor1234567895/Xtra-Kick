@@ -11,6 +11,7 @@ import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.model.chat.Badge
 import com.github.andreyasadchy.xtra.model.chat.ChannelPointReward
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
+import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.PinnedGift
 import com.github.andreyasadchy.xtra.model.chat.Poll
 import com.github.andreyasadchy.xtra.model.chat.Prediction
@@ -111,6 +112,12 @@ class KickRepository @Inject constructor(
     private val authRepository: AuthRepository,
     private val kickOfficialApiClient: KickOfficialApiClient,
 ) {
+    data class KickEmoteGroup(
+        val id: String,
+        val title: String,
+        val emotes: List<Emote>,
+    )
+
     private data class KickClipPageResult(
         val clips: List<Clip>,
         val nextCursor: String? = null,
@@ -185,10 +192,14 @@ class KickRepository @Inject constructor(
     private val channelCacheTtlMs = 15_000L
     private val livestreamCacheTtlMs = 15_000L
     private val searchCacheTtlMs = 15_000L
+    private val kickSubscriberAccessCacheTtlMs = 60_000L
+    private val kickEmoteGroupsCacheTtlMs = 60_000L
     private val kickBadgeUrls = ConcurrentHashMap<String, String>()
     private val channelCache = ConcurrentHashMap<String, Pair<Long, KickChannelResponse>>()
     private val channelLivestreamCache = ConcurrentHashMap<String, Pair<Long, KickChannelLivestream?>>()
     private val websiteSearchCache = ConcurrentHashMap<String, Pair<Long, KickWebsiteSearchResponse>>()
+    private val kickSubscriberAccessCache = ConcurrentHashMap<String, Pair<Long, Boolean>>()
+    private val kickEmoteGroupsCache = ConcurrentHashMap<String, Pair<Long, List<KickEmoteGroup>>>()
     private val kickInlineBadgeSanitizedCache = ConcurrentHashMap<String, String>()
     private val kickBadgeCatalogRefreshAt = ConcurrentHashMap<String, Long>()
     private val kickBadgeCatalogRefreshInProgress = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
@@ -633,6 +644,123 @@ class KickRepository @Inject constructor(
             createdAt = createdAt,
             followingSince = followingSince
         )
+    }
+
+    suspend fun canAccessKickSubscriberEmotes(channelSlug: String): Boolean = withContext(Dispatchers.IO) {
+        val normalizedSlug = channelSlug.trim()
+        if (normalizedSlug.isBlank()) return@withContext false
+        val cacheKey = normalizedSlug.lowercase(Locale.ROOT)
+        kickSubscriberAccessCache[cacheKey]?.let { (cachedAt, cachedValue) ->
+            if (System.currentTimeMillis() - cachedAt <= kickSubscriberAccessCacheTtlMs) {
+                return@withContext cachedValue
+            }
+        }
+        val currentLogin = context.tokenPrefs().getString(C.KICK_USER_LOGIN, null)?.takeIf { it.isNotBlank() }
+            ?: context.tokenPrefs().getString(C.USERNAME, null)?.takeIf { it.isNotBlank() }
+        if (currentLogin.equals(normalizedSlug, ignoreCase = true)) {
+            kickSubscriberAccessCache[cacheKey] = System.currentTimeMillis() to true
+            return@withContext true
+        }
+        if (!hasKickWebsiteSessionCookie()) {
+            kickSubscriberAccessCache[cacheKey] = System.currentTimeMillis() to false
+            return@withContext false
+        }
+        val root = runCatching {
+            json.parseToJsonElement(
+                getRaw("https://kick.com/api/v2/channels/${urlEncode(normalizedSlug)}/me", isKickWeb = true)
+            )
+        }.getOrNull() ?: return@withContext false
+        val canAccess = findBooleanRecursive(
+            root,
+            setOf(
+                "is_subscribed",
+                "subscribed",
+                "is_subscriber",
+                "subscriber",
+                "subscription_active",
+                "is_subscription_active",
+                "viewer_is_subscribed",
+            )
+        ) == true || findPrimitiveRecursive(
+            root,
+            setOf("subscription_status", "subscriber_status", "status")
+        )?.equals("active", ignoreCase = true) == true
+        kickSubscriberAccessCache[cacheKey] = System.currentTimeMillis() to canAccess
+        canAccess
+    }
+
+    suspend fun loadKickNativeEmoteGroups(
+        channelSlug: String,
+        includeCurrentChannelSubscriberEmotes: Boolean,
+    ): List<KickEmoteGroup> = withContext(Dispatchers.IO) {
+        val normalizedSlug = channelSlug.trim()
+        if (normalizedSlug.isBlank()) {
+            return@withContext emptyList()
+        }
+        val cacheKey = normalizedSlug.lowercase(Locale.ROOT) + "|" + includeCurrentChannelSubscriberEmotes
+        kickEmoteGroupsCache[cacheKey]?.let { (cachedAt, cachedGroups) ->
+            if (System.currentTimeMillis() - cachedAt <= kickEmoteGroupsCacheTtlMs) {
+                return@withContext cachedGroups
+            }
+        }
+        val root = runCatching {
+            json.parseToJsonElement(
+                getRaw("https://kick.com/emotes/${urlEncode(normalizedSlug)}", isKickWeb = true)
+            )
+        }.getOrNull() as? JsonArray ?: return@withContext emptyList()
+        val groups = mutableListOf<KickEmoteGroup>()
+        root.forEachIndexed { index, groupElement ->
+            val group = groupElement as? JsonObject ?: return@forEachIndexed
+            val groupSlug = group.firstPrimitiveOrNull("slug")?.trim()?.lowercase(Locale.ROOT)
+            val rawTitle = group.firstPrimitiveOrNull("name")
+                ?: group.objOrNull("user")?.firstPrimitiveOrNull("username")
+                ?: group.firstPrimitiveOrNull("slug")
+                ?: "Kick ${index + 1}"
+            val groupId = group.firstPrimitiveOrNull("slug", "id")?.takeIf { it.isNotBlank() } ?: rawTitle
+            val isCurrentChannelGroup = groupSlug != null && groupSlug == normalizedSlug.lowercase(Locale.ROOT)
+            val emotes = group.arrayOrNull("emotes").orEmpty()
+            val deduped = LinkedHashMap<String, Emote>()
+            emotes.forEach { emoteElement ->
+                val emote = emoteElement as? JsonObject ?: return@forEach
+                val id = emote.firstPrimitiveOrNull("id")?.takeIf { it.isNotBlank() } ?: return@forEach
+                val name = emote.firstPrimitiveOrNull("name")?.takeIf { it.isNotBlank() } ?: return@forEach
+                val subscribersOnly = emote["subscribers_only"]?.asBooleanOrNull() == true
+                if (subscribersOnly && isCurrentChannelGroup && !includeCurrentChannelSubscriberEmotes) {
+                    return@forEach
+                }
+                deduped.putIfAbsent(
+                    name,
+                    Emote(
+                        name = name,
+                        url1x = "https://files.kick.com/emotes/$id/fullsize",
+                        url2x = "https://files.kick.com/emotes/$id/fullsize",
+                        url3x = "https://files.kick.com/emotes/$id/fullsize",
+                        url4x = "https://files.kick.com/emotes/$id/fullsize",
+                        isAnimated = true,
+                    )
+                )
+            }
+            if (deduped.isNotEmpty()) {
+                groups += KickEmoteGroup(
+                    id = groupId,
+                    title = rawTitle,
+                    emotes = deduped.values.toList(),
+                )
+            }
+        }
+        val normalizedCurrentSlug = normalizedSlug.lowercase(Locale.ROOT)
+        groups.sortedWith(
+            compareBy<KickEmoteGroup> { group ->
+                when {
+                    group.id.equals(normalizedCurrentSlug, ignoreCase = true) -> 0
+                    group.title.equals("Global", ignoreCase = true) -> 2
+                    group.title.equals("Emojis", ignoreCase = true) || group.id.equals("Emoji", ignoreCase = true) -> 3
+                    else -> 1
+                }
+            }.thenBy { it.title.lowercase(Locale.ROOT) }
+        ).also { sortedGroups ->
+            kickEmoteGroupsCache[cacheKey] = System.currentTimeMillis() to sortedGroups
+        }
     }
 
     suspend fun getChannelPointRewards(
@@ -4086,6 +4214,15 @@ class KickRepository @Inject constructor(
         return this[key] as? JsonArray
     }
 
+    private fun JsonElement?.asBooleanOrNull(): Boolean? {
+        val primitive = this as? JsonPrimitive ?: return null
+        return when (primitive.contentOrNull?.trim()?.lowercase(Locale.ROOT)) {
+            "1", "true", "yes", "active", "subscribed" -> true
+            "0", "false", "no", "inactive", "unsubscribed" -> false
+            else -> null
+        }
+    }
+
     private fun RoomState.toDebugString(): String {
         return "emote=${emote ?: "null"},followers=${followers ?: "null"},unique=${unique ?: "null"},slow=${slow ?: "null"},subs=${subs ?: "null"}"
     }
@@ -4430,6 +4567,31 @@ class KickRepository @Inject constructor(
                         val normalizedKey = key.lowercase(Locale.ROOT)
                         when {
                             normalizedKey in normalizedKeys -> value.asLongOrNull()
+                            else -> search(value)
+                        }
+                    }
+                }
+                is JsonArray -> element.firstNotNullOfOrNull(::search)
+                else -> null
+            }
+        }
+        return search(root)
+    }
+
+    private fun findBooleanRecursive(root: JsonElement?, targetKeys: Set<String>): Boolean? {
+        val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
+        fun search(element: JsonElement?): Boolean? {
+            return when (element) {
+                is JsonObject -> {
+                    element.entries.firstNotNullOfOrNull { (key, value) ->
+                        val normalizedKey = key.lowercase(Locale.ROOT)
+                        when {
+                            normalizedKey in normalizedKeys -> value.asBooleanOrNull()
+                                ?: (value as? JsonObject)?.let { nested ->
+                                    nested["active"].asBooleanOrNull()
+                                        ?: nested["enabled"].asBooleanOrNull()
+                                        ?: nested["subscribed"].asBooleanOrNull()
+                                }
                             else -> search(value)
                         }
                     }

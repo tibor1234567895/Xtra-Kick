@@ -44,23 +44,26 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isGone
+import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.core.view.setPadding
 import androidx.core.view.updateLayoutParams
 import androidx.core.text.util.LinkifyCompat
 import androidx.core.widget.addTextChangedListener
 import androidx.core.view.doOnLayout
+import androidx.core.view.doOnNextLayout
 import androidx.constraintlayout.widget.ConstraintLayout
-import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.viewpager2.adapter.FragmentStateAdapter
 import coil3.imageLoader
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.request.target
@@ -74,6 +77,7 @@ import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.PinnedGift
 import com.github.andreyasadchy.xtra.model.chat.Poll
 import com.github.andreyasadchy.xtra.model.chat.Prediction
+import com.github.andreyasadchy.xtra.model.chat.RecentEmote
 import com.github.andreyasadchy.xtra.model.chat.RoomState
 import com.github.andreyasadchy.xtra.model.kick.KickOfficialReward
 import com.github.andreyasadchy.xtra.model.kick.KickOfficialRewardCreateRequest
@@ -87,6 +91,7 @@ import com.github.andreyasadchy.xtra.ui.common.BaseNetworkFragment
 import com.github.andreyasadchy.xtra.ui.common.IntegrityDialog
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.ui.player.PlayerFragment
+import com.github.andreyasadchy.xtra.ui.view.GridAutofitLayoutManager
 import com.github.andreyasadchy.xtra.ui.view.AutoCompleteAdapter
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
@@ -96,10 +101,8 @@ import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatListParityUtils
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
-import com.github.andreyasadchy.xtra.util.reduceDragSensitivity
 import com.github.andreyasadchy.xtra.util.tokenPrefs
 import com.google.android.material.color.MaterialColors
-import com.google.android.material.tabs.TabLayoutMediator
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -110,6 +113,11 @@ import javax.inject.Inject
 
 @AndroidEntryPoint
 class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickListener, ReplyClickedDialog.OnButtonClickListener {
+    private data class PinnedGiftUiState(
+        val contentKey: String? = null,
+        val titleExpandable: Boolean = false,
+    )
+
     private var _binding: FragmentChatBinding? = null
     private val binding get() = _binding!!
     private val viewModel: ChatViewModel by viewModels()
@@ -120,7 +128,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     private var isChatTouched = false
     private var showChatStatus = false
-    private var hasRecentEmotes = false
+    private var recentEmotes = emptyList<RecentEmote>()
     private var delayBadgeActive = false
     private var roomModeBadgeText: String? = null
     private var lastRoomStateSignature: String? = null
@@ -139,10 +147,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private var messagingEnabled = false
     private var pinnedMessageDialogSeed: ChatMessage? = null
     private var tappedMessageDialogSeed: ChatMessage? = null
-    private var pinnedGiftContentKey: String? = null
-    private var pinnedGiftTitleExpandable = false
+    private var pinnedGiftUiState = PinnedGiftUiState()
 
     private var autoCompleteAdapter: AutoCompleteAdapter<Any>? = null
+    private var emoteSectionAdapter: EmoteSectionAdapter? = null
+    private var emoteSearchQuery = ""
+    private val emoteSectionExpansion = mutableMapOf<String, Boolean>()
+    private val prewarmedEmoteUrls = LinkedHashSet<String>()
+    private var pickerWarmupQueued = false
 
     private val backPressedCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
@@ -155,6 +167,110 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     private val replyDialog: ReplyClickedDialog?
         get() = childFragmentManager.findFragmentByTag("replyDialog") as? ReplyClickedDialog
+
+    private fun setupEmotePicker() {
+        val binding = _binding ?: return
+        if (emoteSectionAdapter == null) {
+            emoteSectionAdapter = EmoteSectionAdapter(
+                fragment = this,
+                onToggle = ::toggleEmoteSection,
+                onEmoteClick = ::appendEmote,
+                emoteQuality = requireContext().prefs().getString(C.CHAT_IMAGE_QUALITY, "4") ?: "4",
+                imageLibrary = requireContext().prefs().getString(C.CHAT_IMAGE_LIBRARY, "0"),
+            )
+        }
+        binding.emoteSections.itemAnimator = null
+        val columnWidth = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 52f, resources.displayMetrics).toInt()
+        val gridLayoutManager = (binding.emoteSections.layoutManager as? GridAutofitLayoutManager)
+            ?: GridAutofitLayoutManager(requireContext(), columnWidth)
+        gridLayoutManager.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+            override fun getSpanSize(position: Int): Int {
+                val adapter = emoteSectionAdapter ?: return gridLayoutManager.spanCount
+                return adapter.getSpanSize(position, gridLayoutManager.spanCount)
+            }
+        }
+        binding.emoteSections.layoutManager = gridLayoutManager
+        binding.emoteSections.adapter = emoteSectionAdapter
+        binding.emoteSections.setHasFixedSize(true)
+        binding.emoteSections.setItemViewCacheSize(64)
+        if (binding.emoteSearch.tag == null) {
+            binding.emoteSearch.setText(emoteSearchQuery)
+            binding.emoteSearch.addTextChangedListener(onTextChanged = { text, _, _, _ ->
+                val nextQuery = text?.toString().orEmpty()
+                if (nextQuery != emoteSearchQuery) {
+                    emoteSearchQuery = nextQuery
+                    refreshEmotePickerSections()
+                }
+            })
+            binding.emoteSearch.tag = true
+        }
+        refreshEmotePickerSections()
+    }
+
+    private fun toggleEmoteSection(section: EmotePickerSection) {
+        if (emoteSearchQuery.isNotBlank()) return
+        val expanded = emoteSectionExpansion[section.key] ?: section.expandedByDefault
+        emoteSectionExpansion[section.key] = !expanded
+        refreshEmotePickerSections()
+    }
+
+    private fun refreshEmotePickerSections() {
+        val adapter = emoteSectionAdapter ?: return
+        val hasQuery = emoteSearchQuery.isNotBlank()
+        val sections = viewModel.getEmotePickerSections(recentEmotes, emoteSearchQuery).map { section ->
+            section.copy(
+                expanded = if (hasQuery) true else emoteSectionExpansion[section.key] ?: section.expandedByDefault
+            )
+        }
+        adapter.submitSections(sections)
+        queueEmotePickerWarmup(sections)
+    }
+
+    private fun queueEmotePickerWarmup(sections: List<EmotePickerSection>) {
+        if (pickerWarmupQueued || sections.isEmpty()) return
+        pickerWarmupQueued = true
+        binding.emoteSections.post {
+            pickerWarmupQueued = false
+            prewarmEmotePickerAssets(sections)
+        }
+    }
+
+    private fun prewarmEmotePickerAssets(sections: List<EmotePickerSection>) {
+        val context = context ?: return
+        val quality = context.prefs().getString(C.CHAT_IMAGE_QUALITY, "4") ?: "4"
+        val warmupCandidates = sections
+            .take(4)
+            .flatMapIndexed { index, section ->
+                section.emotes.take(if (index == 0) 18 else 10)
+            }
+            .distinctBy { it.name }
+            .take(36)
+
+        warmupCandidates.forEach { emote ->
+            val url = when (quality) {
+                "4" -> emote.url4x ?: emote.url3x ?: emote.url2x ?: emote.url1x
+                "3" -> emote.url3x ?: emote.url2x ?: emote.url1x
+                "2" -> emote.url2x ?: emote.url1x
+                else -> emote.url1x
+            } ?: return@forEach
+            if (!prewarmedEmoteUrls.add(url)) {
+                return@forEach
+            }
+            context.imageLoader.enqueue(
+                ImageRequest.Builder(context).apply {
+                    data(url)
+                    if (emote.thirdParty) {
+                        httpHeaders(
+                            NetworkHeaders.Builder()
+                                .add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                                .build()
+                        )
+                    }
+                    crossfade(false)
+                }.build()
+            )
+        }
+    }
 
     private fun renderBufferedMessages() {
         val binding = _binding ?: return
@@ -304,46 +420,61 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         return builder
     }
 
-    private fun renderPinnedGift() {
-        val binding = _binding ?: return
-        val pinnedGift = viewModel.pinnedGift.value
-        val dismissed = viewModel.pinnedGiftDismissed.value
-        binding.pinnedGiftRestore.isVisible = pinnedGift != null && dismissed
-        updateHeaderBadgeLayout()
-        if (pinnedGift == null || dismissed) {
-            pinnedGiftContentKey = null
-            pinnedGiftTitleExpandable = false
-            binding.pinnedGiftLayout.isGone = true
-            return
-        }
-        val contentKey = listOf(
+    private fun resetPinnedGiftUiState() {
+        pinnedGiftUiState = PinnedGiftUiState()
+    }
+
+    private fun buildPinnedGiftContentKey(pinnedGift: PinnedGift): String {
+        return listOf(
             pinnedGift.id,
             pinnedGift.message,
             pinnedGift.giftValue?.toString(),
             pinnedGift.userId,
             pinnedGift.userLogin
         ).joinToString("|")
-        if (pinnedGiftContentKey != contentKey) {
-            pinnedGiftContentKey = contentKey
-            pinnedGiftTitleExpandable = false
+    }
+
+    private fun syncPinnedGiftUiState(pinnedGift: PinnedGift) {
+        val contentKey = buildPinnedGiftContentKey(pinnedGift)
+        if (pinnedGiftUiState.contentKey != contentKey) {
+            pinnedGiftUiState = PinnedGiftUiState(contentKey = contentKey)
         }
+    }
+
+    private fun applyPinnedGiftExpandability(isExpandable: Boolean, expanded: Boolean) {
+        if (pinnedGiftUiState.titleExpandable != isExpandable) {
+            pinnedGiftUiState = pinnedGiftUiState.copy(titleExpandable = isExpandable)
+        }
+        updatePinnedGiftExpandUi(showExpand = isExpandable, expanded = expanded)
+    }
+
+    private fun renderPinnedGift() {
+        val binding = _binding ?: return
+        val pinnedGift = viewModel.pinnedGift.value
+        val dismissed = viewModel.pinnedGiftDismissed.value
+        binding.pinnedGiftRestore.isVisible = pinnedGift != null && dismissed
+        updateHeaderBadgeLayout()
+        if (pinnedGift == null) {
+            resetPinnedGiftUiState()
+            binding.pinnedGiftLayout.isGone = true
+            return
+        }
+        if (dismissed) {
+            binding.pinnedGiftLayout.isGone = true
+            return
+        }
+        syncPinnedGiftUiState(pinnedGift)
         val expanded = viewModel.pinnedGiftExpanded.value
         binding.pinnedGiftLayout.isVisible = true
         binding.pinnedGiftTitle.text = buildPinnedMessageText(pinnedGift)
         binding.pinnedGiftText.text = buildPinnedMetadataText(pinnedGift)
-        binding.pinnedGiftTitle.maxLines = if (expanded) Int.MAX_VALUE else 1
+        binding.pinnedGiftTitle.maxLines = if (expanded) Int.MAX_VALUE else PINNED_GIFT_COLLAPSED_MAX_LINES
         binding.pinnedGiftTitle.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
-        updatePinnedGiftExpandUi(showExpand = expanded && pinnedGiftTitleExpandable, expanded = expanded)
+        updatePinnedGiftExpandUi(showExpand = pinnedGiftUiState.titleExpandable, expanded = expanded)
         if (!expanded) {
-            binding.pinnedGiftTitle.doOnLayout {
-                val layout = binding.pinnedGiftTitle.layout ?: return@doOnLayout
-                val titleIsTruncated = (0 until layout.lineCount).any { lineIndex ->
-                    layout.getEllipsisCount(lineIndex) > 0
-                }
-                if (pinnedGiftTitleExpandable != titleIsTruncated) {
-                    pinnedGiftTitleExpandable = titleIsTruncated
-                    updatePinnedGiftExpandUi(showExpand = titleIsTruncated, expanded = false)
-                }
+            binding.pinnedGiftTitle.doOnNextLayout {
+                val titleIsTruncated = isPinnedGiftTitleTruncated(binding.pinnedGiftTitle)
+                applyPinnedGiftExpandability(isExpandable = titleIsTruncated, expanded = false)
             }
         }
         binding.pinnedGiftLayout.isClickable = true
@@ -370,21 +501,32 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
     }
 
+    private fun isPinnedGiftTitleTruncated(textView: TextView): Boolean {
+        val layout = textView.layout ?: return false
+        val maxVisibleLines = textView.maxLines.takeIf { it > 0 } ?: return false
+        val visibleLineCount = minOf(layout.lineCount, maxVisibleLines)
+        if (visibleLineCount <= 0) {
+            return false
+        }
+        if ((0 until visibleLineCount).any { lineIndex -> layout.getEllipsisCount(lineIndex) > 0 }) {
+            return true
+        }
+        if (layout.lineCount > maxVisibleLines) {
+            return true
+        }
+        val lastVisibleLine = visibleLineCount - 1
+        val visibleTextEnd = layout.getLineVisibleEnd(lastVisibleLine)
+        return visibleTextEnd < textView.text.length
+    }
+
     private fun updatePinnedGiftExpandUi(showExpand: Boolean, expanded: Boolean) {
         val binding = _binding ?: return
-        binding.pinnedGiftExpand.isVisible = showExpand
+        binding.pinnedGiftExpand.isInvisible = !showExpand
         binding.pinnedGiftExpand.isEnabled = showExpand
         binding.pinnedGiftExpand.rotation = if (expanded) 180f else 0f
         binding.pinnedGiftExpand.contentDescription = getString(
             if (expanded) R.string.pinned_message_collapse else R.string.pinned_message_expand
         )
-        val endTarget = if (showExpand) R.id.pinnedGiftExpand else R.id.pinnedGiftClose
-        binding.pinnedGiftTitle.updateLayoutParams<ConstraintLayout.LayoutParams> {
-            endToStart = endTarget
-        }
-        binding.pinnedGiftText.updateLayoutParams<ConstraintLayout.LayoutParams> {
-            endToStart = endTarget
-        }
     }
 
     private fun currentKickScopes(): String? {
@@ -1838,10 +1980,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         viewModel.loadRecentEmotes()
                         viewLifecycleOwner.lifecycleScope.launch {
                             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                                viewModel.hasRecentEmotes.collectLatest {
-                                    if (it) {
-                                        hasRecentEmotes = true
-                                    }
+                                viewModel.recentEmotes.collectLatest {
+                                    recentEmotes = it
+                                    refreshEmotePickerSections()
                                 }
                             }
                         }
@@ -1896,28 +2037,31 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         } else {
                             messageView.visibility = View.VISIBLE
                         }
-                        viewPager.adapter = object : FragmentStateAdapter(this@ChatFragment) {
-                            override fun getItemCount(): Int = 3
-
-                            override fun createFragment(position: Int): Fragment {
-                                return EmotesFragment.newInstance(position)
+                        setupEmotePicker()
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                                viewModel.userEmotesUpdated.collectLatest {
+                                    refreshEmotePickerSections()
+                                }
                             }
                         }
-                        viewPager.offscreenPageLimit = 2
-                        viewPager.reduceDragSensitivity()
-                        TabLayoutMediator(tabLayout, viewPager) { tab, position ->
-                            tab.text = when (position) {
-                                0 -> getString(R.string.recent_emotes)
-                                1 -> "Kick"
-                                else -> "7TV"
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                                viewModel.thirdPartyEmotesUpdated.collectLatest {
+                                    refreshEmotePickerSections()
+                                }
                             }
-                        }.attach()
+                        }
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                                viewModel.kickEmoteGroups.collectLatest {
+                                    refreshEmotePickerSections()
+                                }
+                            }
+                        }
                         emotes.setOnClickListener {
                             //TODO add animation
                             if (emoteMenu.isGone) {
-                                if (!hasRecentEmotes && viewPager.currentItem == 0) {
-                                    viewPager.setCurrentItem(1, false)
-                                }
                                 toggleEmoteMenu(true)
                             } else {
                                 toggleEmoteMenu(false)
@@ -2819,6 +2963,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     override fun onDestroyView() {
         super.onDestroyView()
+        _binding?.emoteSections?.adapter = null
+        emoteSectionAdapter = null
+        resetPinnedGiftUiState()
         _binding = null
     }
 
@@ -2863,6 +3010,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     companion object {
         private const val FEATURE_LOG_TAG = "KickChatUi"
+        private const val PINNED_GIFT_COLLAPSED_MAX_LINES = 3
         private const val HEADER_BADGE_FLASH_DURATION_MS = 6500L
         private const val HEADER_BADGE_HORIZONTAL_MARGIN_DP = 8
         private const val HEADER_BADGE_MIN_WIDTH_DP = 96

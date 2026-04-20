@@ -123,6 +123,7 @@
     <string name="view_profile">View profile</string>
     <string name="chat">Chat</string>
     <string name="recent_emotes">Recent</string>
+    <string name="search_emotes">Search emotes</string>
     <string name="notification_playback_channel_title">Playback</string>
     <string name="channels">Channels</string>
     <string name="watch_video">Watch full video</string>
@@ -199,6 +200,9 @@
     <string name="chat_timeout">%1$s has been timed out for %2$s.</string>
     <string name="chat_ban">%s has been permanently banned.</string>
     <string name="chat_clearmsg">Message deleted from %1$s\: %2$s</string>
+    <string name="chat_clearmsg_by">Message deleted by %1$s\: %2$s</string>
+    <string name="chat_clearmsg_by_generic">Message deleted by %1$s.</string>
+    <string name="chat_clearmsg_generic">Message deleted.</string>
     <string name="chat_first">First time chat</string>
     <string name="chat_reward">Channel point redemption</string>
     <string name="always">Always</string>
@@ -562,6 +566,7 @@
     <string name="pinned_gift_pinned_by_prefix">Pinned by </string>
     <string name="pinned_gift_pinned_by_suffix_with_seconds"> for %1$ss</string>
     <string name="pinned_gift_unknown_user">Unknown user</string>
+    <string name="kick_automod">Kick AutoMod</string>
     <string name="pinned_gift_message_fallback">Pinned message</string>
     <string name="pinned_gift_value">Gift value</string>
     <string name="channel_points_balance">Channel points: %1$s</string>

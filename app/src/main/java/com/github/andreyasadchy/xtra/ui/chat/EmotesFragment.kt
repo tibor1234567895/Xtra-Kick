@@ -49,58 +49,43 @@ class EmotesFragment : Fragment() {
             root.adapter = adapter
             val columnWidth = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 50f, resources.displayMetrics).toInt()
             root.layoutManager = GridAutofitLayoutManager(requireContext(), columnWidth)
-            when (position) {
-                0 -> {
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        repeatOnLifecycle(Lifecycle.State.STARTED) {
-                            viewModel.recentEmotes.collectLatest {
-                                if (it.isNotEmpty()) {
-                                    recentEmotes = it
-                                    updateList(position, adapter)
-                                }
-                            }
+            viewLifecycleOwner.lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    viewModel.recentEmotes.collectLatest {
+                        if (it.isNotEmpty()) {
+                            recentEmotes = it
+                            updateList(position, adapter)
                         }
                     }
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        repeatOnLifecycle(Lifecycle.State.STARTED) {
-                            viewModel.userEmotesUpdated.collectLatest {
-                                updateList(position, adapter)
-                            }
-                        }
-                    }
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        repeatOnLifecycle(Lifecycle.State.STARTED) {
-                            viewModel.thirdPartyEmotesUpdated.collectLatest {
-                                updateList(position, adapter)
-                            }
-                        }
-                    }
-                }
-                1 -> {
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        repeatOnLifecycle(Lifecycle.State.STARTED) {
-                            viewModel.userEmotesUpdated.collectLatest {
-                                updateList(position, adapter)
-                            }
-                        }
-                    }
-                    updateList(position, adapter)
-                }
-                else -> {
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        repeatOnLifecycle(Lifecycle.State.STARTED) {
-                            viewModel.thirdPartyEmotesUpdated.collectLatest {
-                                updateList(position, adapter)
-                            }
-                        }
-                    }
-                    updateList(position, adapter)
                 }
             }
+            viewLifecycleOwner.lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    viewModel.userEmotesUpdated.collectLatest {
+                        updateList(position, adapter)
+                    }
+                }
+            }
+            viewLifecycleOwner.lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    viewModel.thirdPartyEmotesUpdated.collectLatest {
+                        updateList(position, adapter)
+                    }
+                }
+            }
+            viewLifecycleOwner.lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    viewModel.kickEmoteGroups.collectLatest {
+                        updateList(position, adapter)
+                    }
+                }
+            }
+            updateList(position, adapter)
         }
     }
 
     private fun updateList(position: Int, adapter: EmotesAdapter) {
+        val hasPrimaryKickGroup = viewModel.getPrimaryKickEmoteGroup() != null
         when (position) {
             0 -> {
                 if (recentEmotes.isNotEmpty()) {
@@ -116,8 +101,25 @@ class EmotesFragment : Fragment() {
                 }
             }
             1 -> {
-                synchronized(viewModel.userEmotes) {
-                    adapter.submitList(viewModel.userEmotes)
+                if (hasPrimaryKickGroup) {
+                    adapter.submitList(viewModel.getPrimaryKickEmoteGroup()?.emotes.orEmpty())
+                } else {
+                    adapter.submitList(viewModel.getSecondaryKickEmotes())
+                }
+            }
+            2 -> {
+                if (hasPrimaryKickGroup) {
+                    adapter.submitList(viewModel.getSecondaryKickEmotes())
+                } else {
+                    val personalEmotes = viewModel.userStvEmoteSetId?.let { setId ->
+                        synchronized(viewModel.personalEmoteSets) {
+                            viewModel.personalEmoteSets[setId]
+                        }
+                    } ?: emptyList()
+                    val list = personalEmotes + synchronized(viewModel.thirdPartyEmotes) {
+                        viewModel.thirdPartyEmotes.filter { it.thirdParty }
+                    }
+                    adapter.submitList(list)
                 }
             }
             else -> {
@@ -127,7 +129,7 @@ class EmotesFragment : Fragment() {
                     }
                 } ?: emptyList()
                 val list = personalEmotes + synchronized(viewModel.thirdPartyEmotes) {
-                    viewModel.thirdPartyEmotes
+                    viewModel.thirdPartyEmotes.filter { it.thirdParty }
                 }
                 adapter.submitList(list)
             }
