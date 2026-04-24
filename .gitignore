@@ -31,6 +31,12 @@ proguard/
 # Log Files
 *.log
 
+# Public repo docs/text policy
+*.md
+*.txt
+!README.md
+!**/README.md
+
 # Android Studio Navigation editor temp files
 .navigation/
 
