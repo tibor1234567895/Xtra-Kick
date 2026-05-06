@@ -13,7 +13,6 @@ import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.content.edit
 import androidx.core.net.toUri
-import androidx.core.os.bundleOf
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.ForwardingSimpleBasePlayer
 import androidx.media3.common.MediaItem
@@ -559,9 +558,9 @@ class PlaybackService : MediaSessionService() {
                                 }
                                 val enabled = dynamicsProcessing?.enabled
                                 prefs().edit { putBoolean(C.PLAYER_AUDIO_COMPRESSOR, enabled == true) }
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                    RESULT to enabled
-                                )))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                                    enabled?.let { putBoolean(RESULT, it) }
+                                }))
                             }
                             TOGGLE_PROXY -> {
                                 proxyMediaPlaylist = customCommand.customExtras.getBoolean(USING_PROXY)
@@ -585,9 +584,9 @@ class PlaybackService : MediaSessionService() {
                                     }
                                     sleepTimerEndTime = System.currentTimeMillis() + duration
                                 }
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                    RESULT to endTime
-                                )))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                                    putLong(RESULT, endTime)
+                                }))
                             }
                             CHECK_ADS -> {
                                 val playlist = (session.player.currentManifest as? HlsManifest)?.mediaPlaylist
@@ -605,49 +604,53 @@ class PlaybackService : MediaSessionService() {
                                                         && (startTime <= segmentStartTime && segmentStartTime < endTime)
                                             } != null
                                 }
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                    RESULT to adSegment
-                                )))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                                    putBoolean(RESULT, adSegment == true)
+                                }))
                             }
                             GET_QUALITIES -> {
                                 val playlist = (session.player.currentManifest as? HlsManifest)?.multivariantPlaylist
                                 val names = playlist?.variants?.mapNotNull { it.format.label }?.toTypedArray()
                                 if (!names.isNullOrEmpty()) {
-                                    Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                        NAMES to names,
-                                        CODECS to playlist.variants.map { it.format.codecs }.toTypedArray(),
-                                        URLS to playlist.variants.map { it.url.toString() }.toTypedArray(),
-                                    )))
+                                    Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                                        putStringArray(NAMES, names)
+                                        putStringArray(CODECS, playlist.variants.map { it.format.codecs }.toTypedArray())
+                                        putStringArray(URLS, playlist.variants.map { it.url.toString() }.toTypedArray())
+                                    }))
                                 } else {
                                     val variants = playlist?.variants?.mapNotNull { variant ->
                                         playlist.videos.find { it.groupId == variant.videoGroupId }?.name?.let { variant to it }
                                     }
-                                    Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                        NAMES to variants?.map { it.second }?.toTypedArray(),
-                                        CODECS to variants?.map { it.first.format.codecs }?.toTypedArray(),
-                                        URLS to variants?.map { it.first.url.toString() }?.toTypedArray(),
-                                    )))
+                                    Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                                        putStringArray(NAMES, variants?.map { it.second }?.toTypedArray())
+                                        putStringArray(CODECS, variants?.map { it.first.format.codecs }?.toTypedArray())
+                                        putStringArray(URLS, variants?.map { it.first.url.toString() }?.toTypedArray())
+                                    }))
                                 }
                             }
                             GET_DURATION -> {
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                    RESULT to (session.player.currentManifest as? HlsManifest)?.mediaPlaylist?.durationUs?.div(1000)
-                                )))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                                    (session.player.currentManifest as? HlsManifest)?.mediaPlaylist?.durationUs?.div(1000)?.let {
+                                        putLong(RESULT, it)
+                                    }
+                                }))
                             }
                             GET_ERROR_CODE -> {
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                    RESULT to (session.player.playerError?.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode,
-                                )))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                                    (session.player.playerError?.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode?.let {
+                                        putInt(RESULT, it)
+                                    }
+                                }))
                             }
                             GET_MEDIA_PLAYLIST -> {
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                    RESULT to (session.player.currentManifest as? HlsManifest)?.mediaPlaylist?.tags?.toTypedArray()
-                                )))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                                    putStringArray(RESULT, (session.player.currentManifest as? HlsManifest)?.mediaPlaylist?.tags?.toTypedArray())
+                                }))
                             }
                             GET_MULTIVARIANT_PLAYLIST -> {
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                    RESULT to (session.player.currentManifest as? HlsManifest)?.multivariantPlaylist?.tags?.toTypedArray()
-                                )))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                                    putStringArray(RESULT, (session.player.currentManifest as? HlsManifest)?.multivariantPlaylist?.tags?.toTypedArray())
+                                }))
                             }
                             else -> super.onCustomCommand(session, controller, customCommand, args)
                         }

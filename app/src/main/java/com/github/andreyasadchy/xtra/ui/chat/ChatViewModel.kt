@@ -2106,7 +2106,7 @@ class ChatViewModel @Inject constructor(
                 }
                 else -> -1
             }
-            if (rawIndex != null && rawIndex != -1) {
+            if (rawIndex != -1) {
                 rawChatMessages[rawIndex] = createDeletedMessage(rawChatMessages[rawIndex])
             }
         }
@@ -2382,7 +2382,7 @@ class ChatViewModel @Inject constructor(
                     val liveChannelId = channelId
                     if (!identity?.id.isNullOrBlank() && !liveChannelId.isNullOrBlank()) {
                         hermesWebSocket?.disconnect(pubSubJob)
-                        connectHermes(identity?.id)
+                        connectHermes(identity.id)
                     }
                 }
             }
@@ -3538,7 +3538,8 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun onRewardMessage(message: ChatMessage, networkLibrary: String?, isLoggedIn: Boolean, accountId: String?, channelId: String?) {
-        val enrichedMessage = message.reward?.id?.let { rewardId ->
+        val enrichedMessage = message.reward?.let { reward ->
+            val rewardId = reward.id
             channelPointRewards.value.find { it.id == rewardId }?.let { knownReward ->
                 ChatMessage(
                     id = message.id,
@@ -3557,15 +3558,15 @@ class ChatViewModel @Inject constructor(
                     msgId = message.msgId,
                     reward = ChannelPointReward(
                         id = rewardId,
-                        title = message.reward?.title ?: knownReward.title,
-                        cost = message.reward?.cost ?: knownReward.cost,
-                        url1x = message.reward?.url1x ?: knownReward.url1x,
-                        url2x = message.reward?.url2x ?: knownReward.url2x,
-                        url4x = message.reward?.url4x ?: knownReward.url4x,
-                        backgroundColor = message.reward?.backgroundColor ?: knownReward.backgroundColor,
-                        isEnabled = message.reward?.isEnabled ?: knownReward.isEnabled,
-                        isUserInputRequired = message.reward?.isUserInputRequired ?: knownReward.isUserInputRequired,
-                        prompt = message.reward?.prompt ?: knownReward.prompt,
+                        title = reward.title ?: knownReward.title,
+                        cost = reward.cost ?: knownReward.cost,
+                        url1x = reward.url1x ?: knownReward.url1x,
+                        url2x = reward.url2x ?: knownReward.url2x,
+                        url4x = reward.url4x ?: knownReward.url4x,
+                        backgroundColor = reward.backgroundColor ?: knownReward.backgroundColor,
+                        isEnabled = reward.isEnabled ?: knownReward.isEnabled,
+                        isUserInputRequired = reward.isUserInputRequired ?: knownReward.isUserInputRequired,
+                        prompt = reward.prompt ?: knownReward.prompt,
                     ),
                     reply = message.reply,
                     isReply = message.isReply,

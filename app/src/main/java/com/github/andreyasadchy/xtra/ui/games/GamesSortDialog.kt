@@ -5,7 +5,6 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.os.bundleOf
 import com.github.andreyasadchy.xtra.databinding.DialogGamesSortBinding
 import com.github.andreyasadchy.xtra.model.ui.Tag
 import com.google.android.material.bottomsheet.BottomSheetBehavior
@@ -24,7 +23,10 @@ class GamesSortDialog : BottomSheetDialogFragment() {
 
         fun newInstance(tagIds: Array<String>?, tagNames: Array<String>?): GamesSortDialog {
             return GamesSortDialog().apply {
-                arguments = bundleOf(TAG_IDS to tagIds, TAG_NAMES to tagNames)
+                arguments = Bundle().apply {
+                    putStringArray(TAG_IDS, tagIds)
+                    putStringArray(TAG_NAMES, tagNames)
+                }
             }
         }
     }

@@ -21,7 +21,6 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import androidx.core.content.edit
-import androidx.core.os.bundleOf
 import androidx.core.view.children
 import androidx.core.view.isVisible
 import androidx.core.widget.doOnTextChanged
@@ -79,75 +78,75 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
 
         fun newInstance(id: String?, title: String?, startedAt: String?, channelId: String?, channelLogin: String?, channelName: String?, channelLogo: String?, thumbnail: String?, gameId: String?, gameSlug: String?, gameName: String?, qualityKeys: Array<String>? = null, qualityNames: Array<String>? = null, qualityUrls: Array<String>? = null): DownloadDialog {
             return DownloadDialog().apply {
-                arguments = bundleOf(
-                    KEY_TYPE to STREAM,
-                    KEY_STREAM_ID to id,
-                    KEY_TITLE to title,
-                    KEY_STARTED_AT to startedAt,
-                    KEY_CHANNEL_ID to channelId,
-                    KEY_CHANNEL_LOGIN to channelLogin,
-                    KEY_CHANNEL_NAME to channelName,
-                    KEY_CHANNEL_LOGO to channelLogo,
-                    KEY_THUMBNAIL to thumbnail,
-                    KEY_GAME_ID to gameId,
-                    KEY_GAME_SLUG to gameSlug,
-                    KEY_GAME_NAME to gameName,
-                    KEY_QUALITY_KEYS to qualityKeys,
-                    KEY_QUALITY_NAMES to qualityNames,
-                    KEY_QUALITY_URLS to qualityUrls
-                )
+                arguments = Bundle().apply {
+                    putString(KEY_TYPE, STREAM)
+                    putString(KEY_STREAM_ID, id)
+                    putString(KEY_TITLE, title)
+                    putString(KEY_STARTED_AT, startedAt)
+                    putString(KEY_CHANNEL_ID, channelId)
+                    putString(KEY_CHANNEL_LOGIN, channelLogin)
+                    putString(KEY_CHANNEL_NAME, channelName)
+                    putString(KEY_CHANNEL_LOGO, channelLogo)
+                    putString(KEY_THUMBNAIL, thumbnail)
+                    putString(KEY_GAME_ID, gameId)
+                    putString(KEY_GAME_SLUG, gameSlug)
+                    putString(KEY_GAME_NAME, gameName)
+                    putStringArray(KEY_QUALITY_KEYS, qualityKeys)
+                    putStringArray(KEY_QUALITY_NAMES, qualityNames)
+                    putStringArray(KEY_QUALITY_URLS, qualityUrls)
+                }
             }
         }
 
         fun newInstance(id: String?, title: String?, uploadDate: String?, duration: String?, videoType: String?, animatedPreviewUrl: String?, channelId: String?, channelLogin: String?, channelName: String?, channelLogo: String?, thumbnail: String?, gameId: String?, gameSlug: String?, gameName: String?, totalDuration: Long? = null, currentPosition: Long? = null, qualityKeys: Array<String>? = null, qualityNames: Array<String>? = null, qualityUrls: Array<String>? = null): DownloadDialog {
             return DownloadDialog().apply {
-                arguments = bundleOf(
-                    KEY_TYPE to VIDEO,
-                    KEY_VIDEO_ID to id,
-                    KEY_TITLE to title,
-                    KEY_UPLOAD_DATE to uploadDate,
-                    KEY_DURATION to duration,
-                    KEY_VIDEO_TYPE to videoType,
-                    KEY_VIDEO_ANIMATED_PREVIEW to animatedPreviewUrl,
-                    KEY_CHANNEL_ID to channelId,
-                    KEY_CHANNEL_LOGIN to channelLogin,
-                    KEY_CHANNEL_NAME to channelName,
-                    KEY_CHANNEL_LOGO to channelLogo,
-                    KEY_THUMBNAIL to thumbnail,
-                    KEY_GAME_ID to gameId,
-                    KEY_GAME_SLUG to gameSlug,
-                    KEY_GAME_NAME to gameName,
-                    KEY_VIDEO_TOTAL_DURATION to totalDuration,
-                    KEY_VIDEO_CURRENT_POSITION to currentPosition,
-                    KEY_QUALITY_KEYS to qualityKeys,
-                    KEY_QUALITY_NAMES to qualityNames,
-                    KEY_QUALITY_URLS to qualityUrls
-                )
+                arguments = Bundle().apply {
+                    putString(KEY_TYPE, VIDEO)
+                    putString(KEY_VIDEO_ID, id)
+                    putString(KEY_TITLE, title)
+                    putString(KEY_UPLOAD_DATE, uploadDate)
+                    putString(KEY_DURATION, duration)
+                    putString(KEY_VIDEO_TYPE, videoType)
+                    putString(KEY_VIDEO_ANIMATED_PREVIEW, animatedPreviewUrl)
+                    putString(KEY_CHANNEL_ID, channelId)
+                    putString(KEY_CHANNEL_LOGIN, channelLogin)
+                    putString(KEY_CHANNEL_NAME, channelName)
+                    putString(KEY_CHANNEL_LOGO, channelLogo)
+                    putString(KEY_THUMBNAIL, thumbnail)
+                    putString(KEY_GAME_ID, gameId)
+                    putString(KEY_GAME_SLUG, gameSlug)
+                    putString(KEY_GAME_NAME, gameName)
+                    totalDuration?.let { putLong(KEY_VIDEO_TOTAL_DURATION, it) }
+                    currentPosition?.let { putLong(KEY_VIDEO_CURRENT_POSITION, it) }
+                    putStringArray(KEY_QUALITY_KEYS, qualityKeys)
+                    putStringArray(KEY_QUALITY_NAMES, qualityNames)
+                    putStringArray(KEY_QUALITY_URLS, qualityUrls)
+                }
             }
         }
 
         fun newInstance(clipId: String?, title: String?, uploadDate: String?, duration: Double?, videoId: String?, vodOffset: Int?, channelId: String?, channelLogin: String?, channelName: String?, channelLogo: String?, thumbnail: String?, gameId: String?, gameSlug: String?, gameName: String?, qualityKeys: Array<String>? = null, qualityNames: Array<String>? = null, qualityUrls: Array<String>? = null): DownloadDialog {
             return DownloadDialog().apply {
-                arguments = bundleOf(
-                    KEY_TYPE to CLIP,
-                    KEY_CLIP_ID to clipId,
-                    KEY_TITLE to title,
-                    KEY_UPLOAD_DATE to uploadDate,
-                    KEY_DURATION to duration,
-                    KEY_VIDEO_ID to videoId,
-                    KEY_VOD_OFFSET to vodOffset,
-                    KEY_CHANNEL_ID to channelId,
-                    KEY_CHANNEL_LOGIN to channelLogin,
-                    KEY_CHANNEL_NAME to channelName,
-                    KEY_CHANNEL_LOGO to channelLogo,
-                    KEY_THUMBNAIL to thumbnail,
-                    KEY_GAME_ID to gameId,
-                    KEY_GAME_SLUG to gameSlug,
-                    KEY_GAME_NAME to gameName,
-                    KEY_QUALITY_KEYS to qualityKeys,
-                    KEY_QUALITY_NAMES to qualityNames,
-                    KEY_QUALITY_URLS to qualityUrls
-                )
+                arguments = Bundle().apply {
+                    putString(KEY_TYPE, CLIP)
+                    putString(KEY_CLIP_ID, clipId)
+                    putString(KEY_TITLE, title)
+                    putString(KEY_UPLOAD_DATE, uploadDate)
+                    duration?.let { putDouble(KEY_DURATION, it) }
+                    putString(KEY_VIDEO_ID, videoId)
+                    vodOffset?.let { putInt(KEY_VOD_OFFSET, it) }
+                    putString(KEY_CHANNEL_ID, channelId)
+                    putString(KEY_CHANNEL_LOGIN, channelLogin)
+                    putString(KEY_CHANNEL_NAME, channelName)
+                    putString(KEY_CHANNEL_LOGO, channelLogo)
+                    putString(KEY_THUMBNAIL, thumbnail)
+                    putString(KEY_GAME_ID, gameId)
+                    putString(KEY_GAME_SLUG, gameSlug)
+                    putString(KEY_GAME_NAME, gameName)
+                    putStringArray(KEY_QUALITY_KEYS, qualityKeys)
+                    putStringArray(KEY_QUALITY_NAMES, qualityNames)
+                    putStringArray(KEY_QUALITY_URLS, qualityUrls)
+                }
             }
         }
     }

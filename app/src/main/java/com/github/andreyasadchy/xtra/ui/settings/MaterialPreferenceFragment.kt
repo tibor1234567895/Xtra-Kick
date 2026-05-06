@@ -1,6 +1,6 @@
 package com.github.andreyasadchy.xtra.ui.settings
 
-import androidx.core.os.bundleOf
+import android.os.Bundle
 import androidx.fragment.app.DialogFragment
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
@@ -27,7 +27,9 @@ abstract class MaterialPreferenceFragment : PreferenceFragmentCompat() {
 
     @Suppress("DEPRECATION")
     private fun showPreferenceDialog(preference: Preference, fragment: DialogFragment) {
-        fragment.arguments = bundleOf("key" to preference.key)
+        fragment.arguments = Bundle().apply {
+            putString("key", preference.key)
+        }
         fragment.setTargetFragment(this, 0)
         fragment.show(parentFragmentManager, "androidx.preference.PreferenceFragment.DIALOG")
     }

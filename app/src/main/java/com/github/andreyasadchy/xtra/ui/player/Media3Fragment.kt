@@ -18,7 +18,6 @@ import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
-import androidx.core.os.bundleOf
 import androidx.core.view.isVisible
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
@@ -315,9 +314,9 @@ class Media3Fragment : PlayerFragment() {
                                                 if (!viewModel.stopProxy) {
                                                     player?.sendCustomCommand(
                                                         SessionCommand(
-                                                            PlaybackService.TOGGLE_PROXY, bundleOf(
-                                                                PlaybackService.USING_PROXY to false
-                                                            )
+                                                            PlaybackService.TOGGLE_PROXY, Bundle().apply {
+                                                                putBoolean(PlaybackService.USING_PROXY, false)
+                                                            }
                                                         ), Bundle.EMPTY
                                                     )
                                                     viewModel.usingProxy = false
@@ -329,9 +328,9 @@ class Media3Fragment : PlayerFragment() {
                                                     if (!viewModel.stopProxy && !playlist.isNullOrBlank() && useProxy) {
                                                         player?.sendCustomCommand(
                                                             SessionCommand(
-                                                                PlaybackService.TOGGLE_PROXY, bundleOf(
-                                                                    PlaybackService.USING_PROXY to false
-                                                                )
+                                                                PlaybackService.TOGGLE_PROXY, Bundle().apply {
+                                                                    putBoolean(PlaybackService.USING_PROXY, false)
+                                                                }
                                                             ), Bundle.EMPTY
                                                         )
                                                         viewModel.usingProxy = true
@@ -344,9 +343,9 @@ class Media3Fragment : PlayerFragment() {
                                                             }
                                                             player?.sendCustomCommand(
                                                                 SessionCommand(
-                                                                    PlaybackService.TOGGLE_PROXY, bundleOf(
-                                                                        PlaybackService.USING_PROXY to false
-                                                                    )
+                                                                    PlaybackService.TOGGLE_PROXY, Bundle().apply {
+                                                                        putBoolean(PlaybackService.USING_PROXY, false)
+                                                                    }
                                                                 ), Bundle.EMPTY
                                                             )
                                                             viewModel.usingProxy = false
@@ -510,9 +509,9 @@ class Media3Fragment : PlayerFragment() {
             }
             player?.sendCustomCommand(
                 SessionCommand(
-                    PlaybackService.SET_SLEEP_TIMER, bundleOf(
-                        PlaybackService.DURATION to -1L
-                    )
+                    PlaybackService.SET_SLEEP_TIMER, Bundle().apply {
+                        putLong(PlaybackService.DURATION, -1L)
+                    }
                 ), Bundle.EMPTY
             )?.let { result ->
                 result.addListener({
@@ -590,12 +589,12 @@ class Media3Fragment : PlayerFragment() {
         playerDebugLog("Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(latencyConfig)}")
         player?.sendCustomCommand(
             SessionCommand(
-                PlaybackService.START_STREAM, bundleOf(
-                    PlaybackService.URI to url,
-                    PlaybackService.TITLE to requireArguments().getString(KEY_TITLE),
-                    PlaybackService.CHANNEL_NAME to requireArguments().getString(KEY_CHANNEL_NAME),
-                    PlaybackService.CHANNEL_LOGO to requireArguments().getString(KEY_CHANNEL_LOGO),
-                )
+                PlaybackService.START_STREAM, Bundle().apply {
+                    putString(PlaybackService.URI, url)
+                    putString(PlaybackService.TITLE, requireArguments().getString(KEY_TITLE))
+                    putString(PlaybackService.CHANNEL_NAME, requireArguments().getString(KEY_CHANNEL_NAME))
+                    putString(PlaybackService.CHANNEL_LOGO, requireArguments().getString(KEY_CHANNEL_LOGO))
+                }
             ), Bundle.EMPTY
         )
     }
@@ -610,14 +609,16 @@ class Media3Fragment : PlayerFragment() {
             binding.playerSurface.visibility = View.VISIBLE
             player.sendCustomCommand(
                 SessionCommand(
-                    PlaybackService.START_VIDEO, bundleOf(
-                        PlaybackService.URI to url,
-                        PlaybackService.PLAYBACK_POSITION to playbackPosition,
-                        PlaybackService.VIDEO_ID to requireArguments().getString(KEY_VIDEO_ID)?.toLongOrNull(),
-                        PlaybackService.TITLE to requireArguments().getString(KEY_TITLE),
-                        PlaybackService.CHANNEL_NAME to requireArguments().getString(KEY_CHANNEL_NAME),
-                        PlaybackService.CHANNEL_LOGO to requireArguments().getString(KEY_CHANNEL_LOGO),
-                    )
+                    PlaybackService.START_VIDEO, Bundle().apply {
+                        putString(PlaybackService.URI, url)
+                        playbackPosition?.let { putLong(PlaybackService.PLAYBACK_POSITION, it) }
+                        requireArguments().getString(KEY_VIDEO_ID)?.toLongOrNull()?.let {
+                            putLong(PlaybackService.VIDEO_ID, it)
+                        }
+                        putString(PlaybackService.TITLE, requireArguments().getString(KEY_TITLE))
+                        putString(PlaybackService.CHANNEL_NAME, requireArguments().getString(KEY_CHANNEL_NAME))
+                        putString(PlaybackService.CHANNEL_LOGO, requireArguments().getString(KEY_CHANNEL_LOGO))
+                    }
                 ), Bundle.EMPTY
             )
         }
@@ -641,12 +642,12 @@ class Media3Fragment : PlayerFragment() {
             }
             player.sendCustomCommand(
                 SessionCommand(
-                    PlaybackService.START_CLIP, bundleOf(
-                        PlaybackService.URI to url,
-                        PlaybackService.TITLE to requireArguments().getString(KEY_TITLE),
-                        PlaybackService.CHANNEL_NAME to requireArguments().getString(KEY_CHANNEL_NAME),
-                        PlaybackService.CHANNEL_LOGO to requireArguments().getString(KEY_CHANNEL_LOGO),
-                    )
+                    PlaybackService.START_CLIP, Bundle().apply {
+                        putString(PlaybackService.URI, url)
+                        putString(PlaybackService.TITLE, requireArguments().getString(KEY_TITLE))
+                        putString(PlaybackService.CHANNEL_NAME, requireArguments().getString(KEY_CHANNEL_NAME))
+                        putString(PlaybackService.CHANNEL_LOGO, requireArguments().getString(KEY_CHANNEL_LOGO))
+                    }
                 ), Bundle.EMPTY
             )
         }
@@ -670,14 +671,14 @@ class Media3Fragment : PlayerFragment() {
             }
             player.sendCustomCommand(
                 SessionCommand(
-                    PlaybackService.START_OFFLINE_VIDEO, bundleOf(
-                        PlaybackService.URI to url,
-                        PlaybackService.VIDEO_ID to requireArguments().getInt(KEY_OFFLINE_VIDEO_ID),
-                        PlaybackService.PLAYBACK_POSITION to position,
-                        PlaybackService.TITLE to requireArguments().getString(KEY_TITLE),
-                        PlaybackService.CHANNEL_NAME to requireArguments().getString(KEY_CHANNEL_NAME),
-                        PlaybackService.CHANNEL_LOGO to requireArguments().getString(KEY_CHANNEL_LOGO),
-                    )
+                    PlaybackService.START_OFFLINE_VIDEO, Bundle().apply {
+                        putString(PlaybackService.URI, url)
+                        putInt(PlaybackService.VIDEO_ID, requireArguments().getInt(KEY_OFFLINE_VIDEO_ID))
+                        putLong(PlaybackService.PLAYBACK_POSITION, position)
+                        putString(PlaybackService.TITLE, requireArguments().getString(KEY_TITLE))
+                        putString(PlaybackService.CHANNEL_NAME, requireArguments().getString(KEY_CHANNEL_NAME))
+                        putString(PlaybackService.CHANNEL_LOGO, requireArguments().getString(KEY_CHANNEL_LOGO))
+                    }
                 ), Bundle.EMPTY
             )
         }
@@ -892,9 +893,9 @@ class Media3Fragment : PlayerFragment() {
                             if (viewModel.usingProxy) {
                                 player.sendCustomCommand(
                                     SessionCommand(
-                                        PlaybackService.TOGGLE_PROXY, bundleOf(
-                                            PlaybackService.USING_PROXY to false
-                                        )
+                                        PlaybackService.TOGGLE_PROXY, Bundle().apply {
+                                            putBoolean(PlaybackService.USING_PROXY, false)
+                                        }
                                     ), Bundle.EMPTY
                                 )
                                 viewModel.usingProxy = false
@@ -917,9 +918,9 @@ class Media3Fragment : PlayerFragment() {
                             if (viewModel.usingProxy) {
                                 player.sendCustomCommand(
                                     SessionCommand(
-                                        PlaybackService.TOGGLE_PROXY, bundleOf(
-                                            PlaybackService.USING_PROXY to false
-                                        )
+                                        PlaybackService.TOGGLE_PROXY, Bundle().apply {
+                                            putBoolean(PlaybackService.USING_PROXY, false)
+                                        }
                                     ), Bundle.EMPTY
                                 )
                                 viewModel.usingProxy = false
@@ -1001,9 +1002,9 @@ class Media3Fragment : PlayerFragment() {
                 if (viewModel.usingProxy) {
                     player.sendCustomCommand(
                         SessionCommand(
-                            PlaybackService.TOGGLE_PROXY, bundleOf(
-                                PlaybackService.USING_PROXY to false
-                            )
+                            PlaybackService.TOGGLE_PROXY, Bundle().apply {
+                                putBoolean(PlaybackService.USING_PROXY, false)
+                            }
                         ), Bundle.EMPTY
                     )
                     viewModel.usingProxy = false
@@ -1036,9 +1037,9 @@ class Media3Fragment : PlayerFragment() {
                 }
                 player.sendCustomCommand(
                     SessionCommand(
-                        PlaybackService.SET_SLEEP_TIMER, bundleOf(
-                            PlaybackService.DURATION to ((activity as? MainActivity)?.getSleepTimerTimeLeft() ?: 0)
-                        )
+                        PlaybackService.SET_SLEEP_TIMER, Bundle().apply {
+                            putLong(PlaybackService.DURATION, (activity as? MainActivity)?.getSleepTimerTimeLeft() ?: 0)
+                        }
                     ), Bundle.EMPTY
                 )
             }
@@ -1106,9 +1107,9 @@ class Media3Fragment : PlayerFragment() {
                 if (viewModel.usingProxy) {
                     player.sendCustomCommand(
                         SessionCommand(
-                            PlaybackService.TOGGLE_PROXY, bundleOf(
-                                PlaybackService.USING_PROXY to false
-                            )
+                            PlaybackService.TOGGLE_PROXY, Bundle().apply {
+                                putBoolean(PlaybackService.USING_PROXY, false)
+                            }
                         ), Bundle.EMPTY
                     )
                     viewModel.usingProxy = false
@@ -1146,9 +1147,9 @@ class Media3Fragment : PlayerFragment() {
                 }
                 player.sendCustomCommand(
                     SessionCommand(
-                        PlaybackService.SET_SLEEP_TIMER, bundleOf(
-                            PlaybackService.DURATION to ((activity as? MainActivity)?.getSleepTimerTimeLeft() ?: 0)
-                        )
+                        PlaybackService.SET_SLEEP_TIMER, Bundle().apply {
+                            putLong(PlaybackService.DURATION, (activity as? MainActivity)?.getSleepTimerTimeLeft() ?: 0)
+                        }
                     ), Bundle.EMPTY
                 )
             }

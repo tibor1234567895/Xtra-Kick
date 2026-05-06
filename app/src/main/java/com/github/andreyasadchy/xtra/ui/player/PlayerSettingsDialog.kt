@@ -6,7 +6,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.edit
-import androidx.core.os.bundleOf
 import androidx.core.view.isVisible
 import androidx.media3.common.Tracks
 import com.github.andreyasadchy.xtra.R
@@ -28,11 +27,11 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
 
         fun newInstance(videoType: String?, speedText: String?, vodGames: Boolean?): PlayerSettingsDialog {
             return PlayerSettingsDialog().apply {
-                arguments = bundleOf(
-                    TYPE to videoType,
-                    SPEED to speedText,
-                    VOD_GAMES to vodGames
-                )
+                arguments = Bundle().apply {
+                    putString(TYPE, videoType)
+                    putString(SPEED, speedText)
+                    vodGames?.let { putBoolean(VOD_GAMES, it) }
+                }
             }
         }
     }

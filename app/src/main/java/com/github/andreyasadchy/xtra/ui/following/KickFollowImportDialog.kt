@@ -136,6 +136,7 @@ class KickFollowImportDialog : DialogFragment() {
         }
     }
 
+    @Suppress("DEPRECATION")
     override fun onStart() {
         super.onStart()
         dialog?.window?.let { window ->

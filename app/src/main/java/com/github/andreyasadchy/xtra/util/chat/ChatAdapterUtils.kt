@@ -781,7 +781,7 @@ object ChatAdapterUtils {
                     var imageOffset = 0
                     concatenatedEmotes.forEach { matchedEmote ->
                         if (matchedEmote.isOverlayEmote && enableOverlayEmotes && previousImage != null) {
-                            previousImage?.overlayEmote = Image(
+                            previousImage.overlayEmote = Image(
                                 localData = matchedEmote.localData?.let { getLocalEmoteData(matchedEmote.name!!, it, savedLocalEmotes, chatUrl, getEmoteBytes) },
                                 url1x = matchedEmote.url1x,
                                 url2x = matchedEmote.url2x,
@@ -791,8 +791,8 @@ object ChatAdapterUtils {
                                 isAnimated = matchedEmote.isAnimated,
                                 isEmote = true,
                                 thirdParty = matchedEmote.thirdParty,
-                                start = previousImage!!.start,
-                                end = previousImage!!.end
+                                start = previousImage.start,
+                                end = previousImage.end
                             )
                         } else {
                             val imageStart = builderIndex + imageOffset

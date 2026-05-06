@@ -6,8 +6,8 @@ import kotlin.math.roundToInt
 
 object ChatBackgroundUtils {
     data class DividerColors(
-        @ColorInt val highlightColor: Int,
-        @ColorInt val shadowColor: Int,
+        @param:ColorInt val highlightColor: Int,
+        @param:ColorInt val shadowColor: Int,
     )
 
     const val DEFAULT_ALTERNATING_LINE_SHADOW_STRENGTH = 3

@@ -37,7 +37,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.content.res.use
 import androidx.core.net.toUri
-import androidx.core.os.bundleOf
 import androidx.core.os.LocaleListCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -785,13 +784,13 @@ class MainActivity : AppCompatActivity() {
             logPlayerShell("background handoff controller connected")
             val command = SessionCommand(
                 PlaybackService.START_STREAM,
-                bundleOf(
-                    PlaybackService.URI to streamUrl,
-                    PlaybackService.TITLE to stream.title,
-                    PlaybackService.CHANNEL_NAME to stream.channelName,
-                    PlaybackService.CHANNEL_LOGO to stream.channelLogo,
-                    PlaybackService.DISABLE_VIDEO to disableVideo,
-                )
+                Bundle().apply {
+                    putString(PlaybackService.URI, streamUrl)
+                    putString(PlaybackService.TITLE, stream.title)
+                    putString(PlaybackService.CHANNEL_NAME, stream.channelName)
+                    putString(PlaybackService.CHANNEL_LOGO, stream.channelLogo)
+                    putBoolean(PlaybackService.DISABLE_VIDEO, disableVideo)
+                }
             )
             val commandResult = controller.sendCustomCommand(command, Bundle.EMPTY)
             commandResult.addListener({
