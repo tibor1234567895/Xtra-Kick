@@ -8,6 +8,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.appcompat.widget.AppCompatCheckBox
+import androidx.core.os.bundleOf
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.DialogSelectLanguagesBinding
 import com.google.android.material.bottomsheet.BottomSheetBehavior
@@ -24,9 +25,7 @@ class SelectLanguagesDialog : BottomSheetDialogFragment() {
 
         fun newInstance(languages: Array<String>): SelectLanguagesDialog {
             return SelectLanguagesDialog().apply {
-                arguments = Bundle().apply {
-                    putStringArray(SELECTED_LANGUAGES, languages)
-                }
+                arguments = bundleOf(SELECTED_LANGUAGES to languages)
             }
         }
     }

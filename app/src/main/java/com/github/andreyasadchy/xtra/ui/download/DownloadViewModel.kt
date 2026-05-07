@@ -13,6 +13,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.net.URI
 import javax.inject.Inject
 
 @HiltViewModel
@@ -102,9 +103,17 @@ class DownloadViewModel @Inject constructor(
                     null
                 }
                 if (!url.isNullOrBlank()) {
-                    _qualities.value = linkedMapOf(
-                        "source" to (ContextCompat.getString(applicationContext, R.string.source) to url)
-                    )
+                    val playlist = runCatching {
+                        playerRepository.loadTextFromUrl(networkLibrary, url)
+                    }.getOrNull()
+                    val parsedQualities = playlist?.takeIf { it.isNotBlank() }?.let {
+                        parsePlaylistQualities(it, url)
+                    }.orEmpty()
+                    _qualities.value = parsedQualities.ifEmpty {
+                        linkedMapOf(
+                            "source" to (ContextCompat.getString(applicationContext, R.string.source) to url)
+                        )
+                    }
                 } else if (skipAccessToken == 2 && !animatedPreviewUrl.isNullOrBlank()) {
                     _qualities.value = buildPreviewQualities(animatedPreviewUrl, videoType)
                 } else {
@@ -206,10 +215,14 @@ class DownloadViewModel @Inject constructor(
             .toMap()
     }
 
-    private fun parsePlaylistQualities(playlist: String): Map<String, Pair<String, String>> {
-        val names = Regex("IVS-NAME=\"(.+?)\"").findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList()
+    private fun parsePlaylistQualities(playlist: String, playlistUrl: String? = null): Map<String, Pair<String, String>> {
+        val names = Regex("(?:IVS-NAME|NAME)=\"(.+?)\"").findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList()
         val codecs = Regex("CODECS=\"(.+?)\"").findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList()
-        val urls = Regex("https://.*\\.m3u8").findAll(playlist).map(MatchResult::value).toMutableList()
+        val urls = playlist.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !it.startsWith("#") && it.substringBefore('?').endsWith(".m3u8") }
+            .map { url -> playlistUrl?.let { resolvePlaylistUrl(it, url) } ?: url }
+            .toMutableList()
         val codecList = codecs.map { codec ->
             codec.substringBefore('.').let {
                 when (it) {
@@ -248,5 +261,9 @@ class DownloadViewModel @Inject constructor(
                 it.first == "source"
             }
             .toMap()
+    }
+
+    private fun resolvePlaylistUrl(baseUrl: String, url: String): String {
+        return runCatching { URI(baseUrl).resolve(url).toString() }.getOrElse { url }
     }
 }

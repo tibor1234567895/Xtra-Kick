@@ -3,6 +3,7 @@ package com.github.andreyasadchy.xtra.repository
 import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
+import android.util.Log
 import com.apollographql.apollo.api.ApolloResponse
 import com.apollographql.apollo.api.CustomScalarAdapters
 import com.apollographql.apollo.api.Optional
@@ -181,7 +182,15 @@ class GraphQLRepository @Inject constructor(
                     header("Content-Type", "application/json")
                     post(body.toRequestBody())
                 }.build()).execute().use { response ->
-                    response.body.byteStream().source().buffer().jsonReader().use {
+                    val responseBody = response.body.string()
+                    if (!response.isSuccessful) {
+                        val operationName = Regex("\"operationName\":\"([^\"]+)\"").find(body)?.groupValues?.getOrNull(1)
+                        Log.w(
+                            "KickGraphQL",
+                            "sendQuery failed code=${response.code} operation=$operationName body=${responseBody.take(300)}"
+                        )
+                    }
+                    responseBody.byteInputStream().source().buffer().jsonReader().use {
                         query.parseResponse(it)
                     }
                 }
@@ -228,7 +237,15 @@ class GraphQLRepository @Inject constructor(
                     header("Content-Type", "application/json")
                     post(body.toRequestBody())
                 }.build()).execute().use { response ->
-                    response.body.string()
+                    val responseBody = response.body.string()
+                    if (!response.isSuccessful) {
+                        val operationName = Regex("\"operationName\":\"([^\"]+)\"").find(body)?.groupValues?.getOrNull(1)
+                        Log.w(
+                            "KickGraphQL",
+                            "sendPersistedQuery failed code=${response.code} operation=$operationName body=${responseBody.take(300)}"
+                        )
+                    }
+                    responseBody
                 }
             }
         }

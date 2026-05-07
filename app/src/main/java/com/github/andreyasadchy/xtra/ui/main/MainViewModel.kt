@@ -40,6 +40,7 @@ import com.github.andreyasadchy.xtra.ui.download.VideoDownloadWorker
 import com.github.andreyasadchy.xtra.ui.login.LoginActivity
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
 import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.KickApiHelper
@@ -931,7 +932,7 @@ class MainViewModel @Inject constructor(
                         )
                     }.getOrElse { error ->
                         if (isNetworkDebugEnabled()) {
-                            Log.w(kickAuthValidateTag, "Introspect failed, falling back to users endpoint: ${error.message}")
+                            DiagnosticLogger.w(kickAuthValidateTag, "Introspect failed, falling back to users endpoint: ${error.message}", error)
                         }
                         null
                     }

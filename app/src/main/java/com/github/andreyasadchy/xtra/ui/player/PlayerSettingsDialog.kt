@@ -2,15 +2,18 @@ package com.github.andreyasadchy.xtra.ui.player
 
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.edit
+import androidx.core.os.bundleOf
 import androidx.core.view.isVisible
 import androidx.media3.common.Tracks
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.PlayerSettingsBinding
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.tokenPrefs
@@ -27,11 +30,11 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
 
         fun newInstance(videoType: String?, speedText: String?, vodGames: Boolean?): PlayerSettingsDialog {
             return PlayerSettingsDialog().apply {
-                arguments = Bundle().apply {
-                    putString(TYPE, videoType)
-                    putString(SPEED, speedText)
-                    vodGames?.let { putBoolean(VOD_GAMES, it) }
-                }
+                arguments = bundleOf(
+                    TYPE to videoType,
+                    SPEED to speedText,
+                    VOD_GAMES to vodGames
+                )
             }
         }
     }
@@ -198,6 +201,7 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
                 qualityValue.visibility = View.VISIBLE
                 qualityValue.text = text
                 menuQuality.setOnClickListener {
+                    DiagnosticLogger.e("KickVodQuality", "settingsQualityClick parent=${parentFragment?.javaClass?.simpleName} text=$text")
                     (parentFragment as? PlayerFragment)?.showQualityDialog()
                     dismiss()
                 }

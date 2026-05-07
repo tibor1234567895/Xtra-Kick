@@ -18,6 +18,7 @@ import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import androidx.core.os.bundleOf
 import androidx.core.view.isVisible
 import androidx.core.widget.NestedScrollView
 import androidx.lifecycle.lifecycleScope
@@ -30,6 +31,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
@@ -44,6 +46,7 @@ import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.ui.download.DownloadDialog
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
@@ -68,6 +71,28 @@ class Media3Fragment : PlayerFragment() {
         if (BuildConfig.DEBUG && prefs.getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
             Log.d(TAG, message)
         }
+    }
+
+    private fun logPlayerError(error: PlaybackException) {
+        val responseCode = httpResponseCode(error)
+        val message = "Player error code=${error.errorCode} name=${error.errorCodeName} " +
+            "http=$responseCode type=$videoType message=${error.message}"
+        if (responseCode == 403 || responseCode == 404) {
+            DiagnosticLogger.w(TAG, message)
+        } else {
+            DiagnosticLogger.e(TAG, message, error)
+        }
+    }
+
+    private fun httpResponseCode(error: Throwable): Int? {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is HttpDataSource.InvalidResponseCodeException) {
+                return cause.responseCode
+            }
+            cause = cause.cause
+        }
+        return null
     }
 
     private fun attachToExistingPlaybackIfNeeded(controller: MediaController?): Boolean {
@@ -192,7 +217,7 @@ class Media3Fragment : PlayerFragment() {
                     if (videoType != STREAM) {
                         if (isPlaying) {
                             chatFragment?.startReplayChatLoad()
-                        } else {
+                        } else if (player?.playWhenReady == false) {
                             chatFragment?.stopReplayChat()
                         }
                     }
@@ -242,6 +267,13 @@ class Media3Fragment : PlayerFragment() {
                                         }
                                     }?.takeUnless { it.all { it == "H.264" || it == "mp4a" } }
                                     val urls = result.get().extras.getStringArray(PlaybackService.URLS)
+                                    if (BuildConfig.DEBUG) {
+                                        Log.d(
+                                            "KickVodQuality",
+                                            "fragment result names=${names?.toList()} urls=${urls?.toList()} " +
+                                                "existing=${viewModel.qualities.keys.toList()} update=${viewModel.updateQualities} videoType=$videoType"
+                                        )
+                                    }
                                     if (!names.isNullOrEmpty() && !urls.isNullOrEmpty()) {
                                         val map = mutableMapOf<String, Pair<String, String?>>()
                                         map[AUTO_QUALITY] = Pair(getString(R.string.auto), null)
@@ -281,6 +313,9 @@ class Media3Fragment : PlayerFragment() {
                                                 it.first == "auto"
                                             }
                                             .toMap()
+                                        if (BuildConfig.DEBUG) {
+                                            Log.d("KickVodQuality", "fragment map=${viewModel.qualities.map { "${it.key}:${it.value.first}" }}")
+                                        }
                                         setDefaultQuality()
                                         changePlayerMode()
                                         if (viewModel.quality == AUDIO_ONLY_QUALITY) {
@@ -314,9 +349,9 @@ class Media3Fragment : PlayerFragment() {
                                                 if (!viewModel.stopProxy) {
                                                     player?.sendCustomCommand(
                                                         SessionCommand(
-                                                            PlaybackService.TOGGLE_PROXY, Bundle().apply {
-                                                                putBoolean(PlaybackService.USING_PROXY, false)
-                                                            }
+                                                            PlaybackService.TOGGLE_PROXY, bundleOf(
+                                                                PlaybackService.USING_PROXY to false
+                                                            )
                                                         ), Bundle.EMPTY
                                                     )
                                                     viewModel.usingProxy = false
@@ -328,9 +363,9 @@ class Media3Fragment : PlayerFragment() {
                                                     if (!viewModel.stopProxy && !playlist.isNullOrBlank() && useProxy) {
                                                         player?.sendCustomCommand(
                                                             SessionCommand(
-                                                                PlaybackService.TOGGLE_PROXY, Bundle().apply {
-                                                                    putBoolean(PlaybackService.USING_PROXY, false)
-                                                                }
+                                                                PlaybackService.TOGGLE_PROXY, bundleOf(
+                                                                    PlaybackService.USING_PROXY to false
+                                                                )
                                                             ), Bundle.EMPTY
                                                         )
                                                         viewModel.usingProxy = true
@@ -343,9 +378,9 @@ class Media3Fragment : PlayerFragment() {
                                                             }
                                                             player?.sendCustomCommand(
                                                                 SessionCommand(
-                                                                    PlaybackService.TOGGLE_PROXY, Bundle().apply {
-                                                                        putBoolean(PlaybackService.USING_PROXY, false)
-                                                                    }
+                                                                    PlaybackService.TOGGLE_PROXY, bundleOf(
+                                                                        PlaybackService.USING_PROXY to false
+                                                                    )
                                                                 ), Bundle.EMPTY
                                                             )
                                                             viewModel.usingProxy = false
@@ -389,7 +424,7 @@ class Media3Fragment : PlayerFragment() {
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
-                    Log.e(tag, "Player error", error)
+                    logPlayerError(error)
                     when (videoType) {
                         STREAM -> {
                             if (isBehindLiveWindowError(error)) {
@@ -509,9 +544,9 @@ class Media3Fragment : PlayerFragment() {
             }
             player?.sendCustomCommand(
                 SessionCommand(
-                    PlaybackService.SET_SLEEP_TIMER, Bundle().apply {
-                        putLong(PlaybackService.DURATION, -1L)
-                    }
+                    PlaybackService.SET_SLEEP_TIMER, bundleOf(
+                        PlaybackService.DURATION to -1L
+                    )
                 ), Bundle.EMPTY
             )?.let { result ->
                 result.addListener({
@@ -589,12 +624,12 @@ class Media3Fragment : PlayerFragment() {
         playerDebugLog("Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(latencyConfig)}")
         player?.sendCustomCommand(
             SessionCommand(
-                PlaybackService.START_STREAM, Bundle().apply {
-                    putString(PlaybackService.URI, url)
-                    putString(PlaybackService.TITLE, requireArguments().getString(KEY_TITLE))
-                    putString(PlaybackService.CHANNEL_NAME, requireArguments().getString(KEY_CHANNEL_NAME))
-                    putString(PlaybackService.CHANNEL_LOGO, requireArguments().getString(KEY_CHANNEL_LOGO))
-                }
+                PlaybackService.START_STREAM, bundleOf(
+                    PlaybackService.URI to url,
+                    PlaybackService.TITLE to requireArguments().getString(KEY_TITLE),
+                    PlaybackService.CHANNEL_NAME to requireArguments().getString(KEY_CHANNEL_NAME),
+                    PlaybackService.CHANNEL_LOGO to requireArguments().getString(KEY_CHANNEL_LOGO),
+                )
             ), Bundle.EMPTY
         )
     }
@@ -609,16 +644,14 @@ class Media3Fragment : PlayerFragment() {
             binding.playerSurface.visibility = View.VISIBLE
             player.sendCustomCommand(
                 SessionCommand(
-                    PlaybackService.START_VIDEO, Bundle().apply {
-                        putString(PlaybackService.URI, url)
-                        playbackPosition?.let { putLong(PlaybackService.PLAYBACK_POSITION, it) }
-                        requireArguments().getString(KEY_VIDEO_ID)?.toLongOrNull()?.let {
-                            putLong(PlaybackService.VIDEO_ID, it)
-                        }
-                        putString(PlaybackService.TITLE, requireArguments().getString(KEY_TITLE))
-                        putString(PlaybackService.CHANNEL_NAME, requireArguments().getString(KEY_CHANNEL_NAME))
-                        putString(PlaybackService.CHANNEL_LOGO, requireArguments().getString(KEY_CHANNEL_LOGO))
-                    }
+                    PlaybackService.START_VIDEO, bundleOf(
+                        PlaybackService.URI to url,
+                        PlaybackService.PLAYBACK_POSITION to playbackPosition,
+                        PlaybackService.VIDEO_ID to requireArguments().getString(KEY_VIDEO_ID)?.toLongOrNull(),
+                        PlaybackService.TITLE to requireArguments().getString(KEY_TITLE),
+                        PlaybackService.CHANNEL_NAME to requireArguments().getString(KEY_CHANNEL_NAME),
+                        PlaybackService.CHANNEL_LOGO to requireArguments().getString(KEY_CHANNEL_LOGO),
+                    )
                 ), Bundle.EMPTY
             )
         }
@@ -642,12 +675,12 @@ class Media3Fragment : PlayerFragment() {
             }
             player.sendCustomCommand(
                 SessionCommand(
-                    PlaybackService.START_CLIP, Bundle().apply {
-                        putString(PlaybackService.URI, url)
-                        putString(PlaybackService.TITLE, requireArguments().getString(KEY_TITLE))
-                        putString(PlaybackService.CHANNEL_NAME, requireArguments().getString(KEY_CHANNEL_NAME))
-                        putString(PlaybackService.CHANNEL_LOGO, requireArguments().getString(KEY_CHANNEL_LOGO))
-                    }
+                    PlaybackService.START_CLIP, bundleOf(
+                        PlaybackService.URI to url,
+                        PlaybackService.TITLE to requireArguments().getString(KEY_TITLE),
+                        PlaybackService.CHANNEL_NAME to requireArguments().getString(KEY_CHANNEL_NAME),
+                        PlaybackService.CHANNEL_LOGO to requireArguments().getString(KEY_CHANNEL_LOGO),
+                    )
                 ), Bundle.EMPTY
             )
         }
@@ -671,14 +704,14 @@ class Media3Fragment : PlayerFragment() {
             }
             player.sendCustomCommand(
                 SessionCommand(
-                    PlaybackService.START_OFFLINE_VIDEO, Bundle().apply {
-                        putString(PlaybackService.URI, url)
-                        putInt(PlaybackService.VIDEO_ID, requireArguments().getInt(KEY_OFFLINE_VIDEO_ID))
-                        putLong(PlaybackService.PLAYBACK_POSITION, position)
-                        putString(PlaybackService.TITLE, requireArguments().getString(KEY_TITLE))
-                        putString(PlaybackService.CHANNEL_NAME, requireArguments().getString(KEY_CHANNEL_NAME))
-                        putString(PlaybackService.CHANNEL_LOGO, requireArguments().getString(KEY_CHANNEL_LOGO))
-                    }
+                    PlaybackService.START_OFFLINE_VIDEO, bundleOf(
+                        PlaybackService.URI to url,
+                        PlaybackService.VIDEO_ID to requireArguments().getInt(KEY_OFFLINE_VIDEO_ID),
+                        PlaybackService.PLAYBACK_POSITION to position,
+                        PlaybackService.TITLE to requireArguments().getString(KEY_TITLE),
+                        PlaybackService.CHANNEL_NAME to requireArguments().getString(KEY_CHANNEL_NAME),
+                        PlaybackService.CHANNEL_LOGO to requireArguments().getString(KEY_CHANNEL_LOGO),
+                    )
                 ), Bundle.EMPTY
             )
         }
@@ -703,6 +736,10 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun seek(position: Long) {
+        if (videoType != STREAM) {
+            chatFragment?.updatePosition(position)
+            chatFragment?.startReplayChatLoad(position)
+        }
         player?.seekTo(position)
     }
 
@@ -893,9 +930,9 @@ class Media3Fragment : PlayerFragment() {
                             if (viewModel.usingProxy) {
                                 player.sendCustomCommand(
                                     SessionCommand(
-                                        PlaybackService.TOGGLE_PROXY, Bundle().apply {
-                                            putBoolean(PlaybackService.USING_PROXY, false)
-                                        }
+                                        PlaybackService.TOGGLE_PROXY, bundleOf(
+                                            PlaybackService.USING_PROXY to false
+                                        )
                                     ), Bundle.EMPTY
                                 )
                                 viewModel.usingProxy = false
@@ -918,9 +955,9 @@ class Media3Fragment : PlayerFragment() {
                             if (viewModel.usingProxy) {
                                 player.sendCustomCommand(
                                     SessionCommand(
-                                        PlaybackService.TOGGLE_PROXY, Bundle().apply {
-                                            putBoolean(PlaybackService.USING_PROXY, false)
-                                        }
+                                        PlaybackService.TOGGLE_PROXY, bundleOf(
+                                            PlaybackService.USING_PROXY to false
+                                        )
                                     ), Bundle.EMPTY
                                 )
                                 viewModel.usingProxy = false
@@ -1002,9 +1039,9 @@ class Media3Fragment : PlayerFragment() {
                 if (viewModel.usingProxy) {
                     player.sendCustomCommand(
                         SessionCommand(
-                            PlaybackService.TOGGLE_PROXY, Bundle().apply {
-                                putBoolean(PlaybackService.USING_PROXY, false)
-                            }
+                            PlaybackService.TOGGLE_PROXY, bundleOf(
+                                PlaybackService.USING_PROXY to false
+                            )
                         ), Bundle.EMPTY
                     )
                     viewModel.usingProxy = false
@@ -1037,9 +1074,9 @@ class Media3Fragment : PlayerFragment() {
                 }
                 player.sendCustomCommand(
                     SessionCommand(
-                        PlaybackService.SET_SLEEP_TIMER, Bundle().apply {
-                            putLong(PlaybackService.DURATION, (activity as? MainActivity)?.getSleepTimerTimeLeft() ?: 0)
-                        }
+                        PlaybackService.SET_SLEEP_TIMER, bundleOf(
+                            PlaybackService.DURATION to ((activity as? MainActivity)?.getSleepTimerTimeLeft() ?: 0)
+                        )
                     ), Bundle.EMPTY
                 )
             }
@@ -1107,9 +1144,9 @@ class Media3Fragment : PlayerFragment() {
                 if (viewModel.usingProxy) {
                     player.sendCustomCommand(
                         SessionCommand(
-                            PlaybackService.TOGGLE_PROXY, Bundle().apply {
-                                putBoolean(PlaybackService.USING_PROXY, false)
-                            }
+                            PlaybackService.TOGGLE_PROXY, bundleOf(
+                                PlaybackService.USING_PROXY to false
+                            )
                         ), Bundle.EMPTY
                     )
                     viewModel.usingProxy = false
@@ -1147,9 +1184,9 @@ class Media3Fragment : PlayerFragment() {
                 }
                 player.sendCustomCommand(
                     SessionCommand(
-                        PlaybackService.SET_SLEEP_TIMER, Bundle().apply {
-                            putLong(PlaybackService.DURATION, (activity as? MainActivity)?.getSleepTimerTimeLeft() ?: 0)
-                        }
+                        PlaybackService.SET_SLEEP_TIMER, bundleOf(
+                            PlaybackService.DURATION to ((activity as? MainActivity)?.getSleepTimerTimeLeft() ?: 0)
+                        )
                     ), Bundle.EMPTY
                 )
             }

@@ -1,6 +1,7 @@
 package com.github.andreyasadchy.xtra.util.chat
 
 import android.util.Log
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.WebSocket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -144,7 +145,7 @@ class KickPusherChatWebSocket(
                     }
                     "pusher:error" -> {
                         val dataObj = parseJsonOrNull(root.opt("data"))
-                        Log.e(
+                        DiagnosticLogger.e(
                             tag,
                             "pusher_error channel=${root.optString("channel")} code=${dataObj?.opt("code")} message=${dataObj?.opt("message")} raw=${root.opt("data")}"
                         )
@@ -162,7 +163,7 @@ class KickPusherChatWebSocket(
                 }
             }.onFailure {
                 if (debugLogging) {
-                    Log.w(tag, "parse_error: ${it.message}")
+                    DiagnosticLogger.w(tag, "parse_error: ${it.message}", it)
                 }
             }
         }

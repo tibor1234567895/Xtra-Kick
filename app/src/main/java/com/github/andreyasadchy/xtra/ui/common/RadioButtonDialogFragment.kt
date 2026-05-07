@@ -12,6 +12,7 @@ import android.widget.RadioButton
 import android.widget.RadioGroup
 import androidx.appcompat.widget.AppCompatRadioButton
 import androidx.core.content.res.use
+import androidx.core.os.bundleOf
 import androidx.core.view.setPadding
 import androidx.core.widget.NestedScrollView
 import com.github.andreyasadchy.xtra.R
@@ -34,12 +35,7 @@ class RadioButtonDialogFragment : BottomSheetDialogFragment() {
 
         fun newInstance(requestCode: Int, labels: Collection<CharSequence>, tags: IntArray? = null, checkedIndex: Int): RadioButtonDialogFragment {
             return RadioButtonDialogFragment().apply {
-                arguments = Bundle().apply {
-                    putInt(REQUEST_CODE, requestCode)
-                    putCharSequenceArrayList(LABELS, ArrayList(labels))
-                    putIntArray(TAGS, tags)
-                    putInt(CHECKED, checkedIndex)
-                }
+                arguments = bundleOf(REQUEST_CODE to requestCode, LABELS to ArrayList(labels), TAGS to tags, CHECKED to checkedIndex)
             }
         }
     }

@@ -35,13 +35,14 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
-class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, IntegrityDialog.CallbackListener {
+class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, IntegrityDialog.CallbackListener, FollowedStreamsSortDialog.OnFilter {
 
     private var _binding: CommonRecyclerViewLayoutBinding? = null
     private val binding get() = _binding!!
     private val viewModel: FollowedStreamsViewModel by viewModels()
     private lateinit var listAdapter: ListAdapter<Stream, out RecyclerView.ViewHolder>
     private var wasRefreshing = false
+    private var scrollToTopAfterSort = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = CommonRecyclerViewLayoutBinding.inflate(inflater, container, false)
@@ -89,8 +90,9 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
                     val shouldScrollToTop = wasRefreshing && !state.isRefreshing && state.items.isNotEmpty()
                     @Suppress("UNCHECKED_CAST")
                     (listAdapter as ListAdapter<Stream, RecyclerView.ViewHolder>).submitList(state.items.toList()) {
-                        if (shouldScrollToTop) {
+                        if (shouldScrollToTop || scrollToTopAfterSort) {
                             binding.recyclerView.scrollToPosition(0)
+                            scrollToTopAfterSort = false
                         }
                     }
                     binding.progressBar.isVisible = state.isInitialLoading && state.items.isEmpty()
@@ -117,13 +119,25 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
 
     override fun setupSortBar(sortBar: SortBarBinding) {
         sortBar.root.visibility = View.VISIBLE
-        sortBar.root.setOnClickListener(null)
+        sortBar.root.setOnClickListener {
+            FollowedStreamsSortDialog.newInstance(viewModel.sort.value)
+                .show(childFragmentManager, null)
+        }
         viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.sortText.collectLatest {
                     sortBar.sortText.text = it
                 }
             }
+        }
+    }
+
+    override fun onChange(sort: String, sortText: CharSequence, changed: Boolean, saveDefault: Boolean) {
+        if (changed) {
+            scrollToTopAfterSort = true
+        }
+        if (changed || saveDefault) {
+            viewModel.setSort(sort, persist = saveDefault)
         }
     }
 

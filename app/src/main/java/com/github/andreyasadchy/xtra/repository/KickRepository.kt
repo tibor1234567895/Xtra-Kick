@@ -1,4 +1,4 @@
-﻿package com.github.andreyasadchy.xtra.repository
+package com.github.andreyasadchy.xtra.repository
 
 import android.content.Context
 import android.util.Base64
@@ -96,6 +96,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.Collections
 import java.io.IOException
+import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.security.SecureRandom
@@ -184,7 +185,7 @@ class KickRepository @Inject constructor(
     private val featureDebugTag = "KickFeatureDebug"
     private val pointsDebugTag = "KickPointsDebug"
     private val pinnedDebugTag = "KickPinnedDebug"
-    private val emoteRegex = Regex("\\[emote:\\d+:([^\\]]+)]")
+    private val emoteRegex = Regex("\\[emote:(\\d+):([^\\]]+)]")
     private val kickLegacyBadgeFallbackBaseUrl = "https://www.kickdatabase.com/kickBadges/"
     private val kickBadgeCacheKey = "kick_badge_url_cache_v1"
     private val kickBadgeCacheTtlMs = 24L * 60L * 60L * 1000L
@@ -1435,6 +1436,8 @@ class KickRepository @Inject constructor(
                 totalPoints = outcome.firstLongOrNull("total_points", "total_vote_amount")?.toInt(),
                 totalUsers = outcome.firstLongOrNull("total_users", "vote_count")?.toInt(),
                 returnRate = (outcome["return_rate"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull(),
+                isWinner = outcome.firstBooleanOrNull("is_winner", "winner", "won", "isWinningOutcome")
+                    ?: outcome.firstPrimitiveOrNull("status", "state", "result")?.equals("won", ignoreCase = true),
             )
         }
         val status = predictionObject.firstPrimitiveOrNull("status", "state") ?: when (normalizedEvent) {
@@ -1443,14 +1446,18 @@ class KickRepository @Inject constructor(
             "predictioncancelled" -> "CANCELED"
             else -> null
         }
+        val winningOutcomeId = predictionObject.firstPrimitiveOrNull("winning_outcome_id", "winningOutcomeId")
+            ?: outcomes.firstOrNull { it.isWinner == true }?.id
         return Prediction(
             id = predictionObject.primitiveOrNull("id"),
             createdAt = predictionObject.primitiveOrNull("created_at")?.let(KickApiHelper::parseIso8601DateUTC),
+            endedAt = predictionObject.firstPrimitiveOrNull("ended_at", "resolved_at", "closed_at", "updated_at")
+                ?.let(KickApiHelper::parseIso8601DateUTC),
             outcomes = outcomes,
             predictionWindowSeconds = predictionObject.firstLongOrNull("prediction_window_seconds", "duration")?.toInt(),
             status = status,
             title = predictionObject.primitiveOrNull("title"),
-            winningOutcomeId = predictionObject.firstPrimitiveOrNull("winning_outcome_id", "winningOutcomeId"),
+            winningOutcomeId = winningOutcomeId,
             userVote = userVoteObject?.let {
                 Prediction.UserVote(
                     outcomeId = it.primitiveOrNull("outcome_id")?.takeIf { outcomeId -> outcomeId.isNotBlank() },
@@ -1645,24 +1652,46 @@ class KickRepository @Inject constructor(
         return results.toList()
     }
 
+    /**
+     * Resolves the ID used by web.kick.com/api/v1/chat/{id}/history.
+     * From kick.com/api/v2/channels/{slug}, the top-level "id" (e.g. 32807 for Buddha)
+     * is what the history API expects. This is different from:
+     *   - user_id (33057) — stored as channelId on OfflineVideo
+     *   - chatroom.id (32806) — the chatroom's own ID used for WebSocket connections
+     */
+    suspend fun getChatHistoryId(channelSlug: String): String? {
+        val slug = channelSlug.trim().takeIf { it.isNotBlank() } ?: return null
+        val url = "https://kick.com/api/v2/channels/${urlEncode(slug)}"
+        val root = runCatching {
+            json.parseToJsonElement(getRaw(url, isKickWeb = true)).jsonObject
+        }.getOrNull() ?: return null
+        // Top-level "id" in the channel response (e.g. 32807) is the channel ID
+        // that web.kick.com/api/v1/chat/{id}/history uses.
+        return root.primitiveOrNull("id")?.takeIf { it.isNotBlank() }
+    }
+
     suspend fun getInitialRoomState(channelSlug: String?, channelId: String?): RoomState? {
         val candidates = linkedSetOf<String>()
-        resolveDedicatedChatroomCandidates(channelId?.takeIf { !it.isNullOrBlank() } ?: channelSlug.orEmpty())
+        val normalizedSlug = channelSlug?.trim()?.takeIf { it.isNotBlank() }
+        val normalizedChannelId = channelId?.trim()?.takeIf { it.isNotBlank() }
+        resolveDedicatedChatroomCandidates(normalizedSlug ?: normalizedChannelId.orEmpty())
             .forEach { chatroomId ->
                 val encoded = urlEncode(chatroomId)
                 candidates += "https://kick.com/api/v1/chatrooms/$encoded"
                 candidates += "https://kick.com/api/v2/chatrooms/$encoded"
             }
-        channelSlug?.trim()?.takeIf { it.isNotBlank() }?.let { slug ->
+        normalizedSlug?.let { slug ->
             val encoded = urlEncode(slug)
             candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
             candidates += "https://kick.com/api/v1/$encoded/chatroom"
             candidates += "https://kick.com/api/v2/channels/$encoded"
             candidates += "https://kick.com/api/v2/channels/$encoded/info"
         }
-        channelId?.trim()?.takeIf { it.isNotBlank() }?.let { id ->
+        normalizedChannelId?.let { id ->
             val encoded = urlEncode(id)
-            candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
+            if (normalizedSlug == null) {
+                candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
+            }
             candidates += "https://kick.com/api/v2/channels/$encoded"
             candidates += "https://kick.com/api/v1/channels/$encoded"
         }
@@ -2264,9 +2293,10 @@ class KickRepository @Inject constructor(
                 val viewCount = item.intOrNull("views")
                     ?: item.intOrNull("view_count")
                     ?: item.intOrNull("viewer_count")
-                val duration = item.primitiveOrNull("duration")
-                    ?: item.intOrNull("duration_seconds")?.toString()
-                    ?: item.intOrNull("length_seconds")?.toString()
+                val duration = normalizeVideoDurationSeconds(
+                    item.firstLongOrNull("duration_seconds", "length_seconds")
+                        ?: item.firstLongOrNull("duration")
+                )
                 val category = item.arrayOrNull("categories")?.firstNotNullOfOrNull { categoryElement ->
                     (categoryElement as? JsonObject)?.let { categoryObject ->
                         Triple(
@@ -2468,11 +2498,13 @@ class KickRepository @Inject constructor(
         val url = buildString {
             append("https://web.kick.com/api/v1/chat/")
             append(urlEncode(channelOrChatroomId))
-            append("/history?start_time=")
-            append(urlEncode(startTime))
+            append("/history?")
             if (!cursor.isNullOrBlank()) {
-                append("&cursor=")
+                append("cursor=")
                 append(urlEncode(cursor))
+            } else {
+                append("start_time=")
+                append(urlEncode(startTime))
             }
         }
         val raw = getRaw(url, isKickWeb = true)
@@ -2550,6 +2582,31 @@ class KickRepository @Inject constructor(
             normalizedUrl.endsWith("/") -> "${normalizedUrl}playlist.m3u8"
             else -> "$normalizedUrl/playlist.m3u8"
         }
+        val playlistText = loadPlaylistText(playlistUrl) ?: return@withContext null
+        val mediaPlaylistText = if (playlistText.lineSequence().none { it.startsWith("#EXTINF:", ignoreCase = true) }) {
+            playlistText.lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.isNotBlank() && !it.startsWith("#") && it.substringBefore('?').endsWith(".m3u8", ignoreCase = true) }
+                ?.let { variantUrl -> loadPlaylistText(resolvePlaylistUrl(playlistUrl, variantUrl)) }
+                ?: playlistText
+        } else {
+            playlistText
+        }
+        val firstProgramDateTime = mediaPlaylistText
+            .lineSequence()
+            .firstOrNull { it.startsWith("#EXT-X-PROGRAM-DATE-TIME:", ignoreCase = true) }
+            ?.substringAfter(':')
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return@withContext null
+        return@withContext runCatching {
+            normalizeDate(firstProgramDateTime)?.let { normalized ->
+                KickApiHelper.parseIso8601DateUTC(normalized)
+            }
+        }.getOrNull()
+    }
+
+    private fun loadPlaylistText(playlistUrl: String): String? {
         okHttpClient.newCall(
             Request.Builder()
                 .url(playlistUrl)
@@ -2558,21 +2615,14 @@ class KickRepository @Inject constructor(
                 .build()
         ).execute().use { response ->
             if (!response.isSuccessful) {
-                return@withContext null
+                return null
             }
-            val firstProgramDateTime = response.body.string()
-                .lineSequence()
-                .firstOrNull { it.startsWith("#EXT-X-PROGRAM-DATE-TIME:", ignoreCase = true) }
-                ?.substringAfter(':')
-                ?.trim()
-                ?.takeIf { it.isNotBlank() }
-                ?: return@withContext null
-            return@withContext runCatching {
-                normalizeDate(firstProgramDateTime)?.let { normalized ->
-                    KickApiHelper.parseIso8601DateUTC(normalized)
-                }
-            }.getOrNull()
+            return response.body.string()
         }
+    }
+
+    private fun resolvePlaylistUrl(baseUrl: String, url: String): String {
+        return runCatching { URI(baseUrl).resolve(url).toString() }.getOrElse { url }
     }
 
     suspend fun sendChatMessage(accessToken: String, broadcasterUserId: Long, content: String, replyToMessageId: String? = null): KickChatSendResponse = withContext(Dispatchers.IO) {
@@ -2764,7 +2814,36 @@ class KickRepository @Inject constructor(
         val targetUser = extractKickTargetUser(message)
         val actorUser = extractKickModeratorUser(message)
         val rawContent = message.content ?: message.message ?: message.text ?: message.body ?: extractKickMessageContent(deletedMessageObject)
-        val content = rawContent?.replace(emoteRegex) { result -> result.groupValues.getOrElse(1) { "" } }
+        val extractedEmotes = mutableListOf<com.github.andreyasadchy.xtra.model.chat.TwitchEmote>()
+        var content = rawContent
+        if (content != null) {
+            val sb = StringBuilder()
+            var lastIndex = 0
+            emoteRegex.findAll(content).forEach { matchResult ->
+                val start = matchResult.range.first
+                val end = matchResult.range.last + 1
+                sb.append(content.substring(lastIndex, start))
+                val id = matchResult.groups[1]?.value ?: ""
+                val name = matchResult.groups[2]?.value ?: ""
+                
+                val emoteBegin = sb.codePointCount(0, sb.length)
+                val emoteEnd = emoteBegin + name.codePointCount(0, name.length) - 1
+                extractedEmotes.add(com.github.andreyasadchy.xtra.model.chat.TwitchEmote(
+                    id = id,
+                    name = name,
+                    url1x = "https://files.kick.com/emotes/$id/fullsize",
+                    url2x = "https://files.kick.com/emotes/$id/fullsize",
+                    url3x = "https://files.kick.com/emotes/$id/fullsize",
+                    url4x = "https://files.kick.com/emotes/$id/fullsize",
+                    begin = emoteBegin,
+                    end = emoteEnd
+                ))
+                sb.append(name)
+                lastIndex = end
+            }
+            sb.append(content.substring(lastIndex))
+            content = sb.toString()
+        }
         val identityBadges = message.sender?.identity?.badges.orEmpty()
         val syntheticBadges = syntheticKickBadgesFromSender(message.sender)
         val allBadges = mergeKickMessageBadges(
@@ -2951,6 +3030,7 @@ class KickRepository @Inject constructor(
             message = effectiveMessage,
             color = message.sender?.identity?.color,
             badges = badges,
+            emotes = extractedEmotes.takeIf { it.isNotEmpty() },
             systemMsg = systemMsg,
             msgId = when (moderationType) {
                 KickModerationType.DELETE_MESSAGE -> "kick_clearmsg"
@@ -4169,6 +4249,15 @@ class KickRepository @Inject constructor(
         }
     }
 
+    private fun normalizeVideoDurationSeconds(duration: Long?): String? {
+        val normalized = when {
+            duration == null || duration < 0L -> return null
+            duration > 604_800L -> duration / 1000L
+            else -> duration
+        }
+        return normalized.toString()
+    }
+
     private fun urlEncode(value: String): String {
         return URLEncoder.encode(value, Charsets.UTF_8.name())
     }
@@ -4194,6 +4283,16 @@ class KickRepository @Inject constructor(
             (this[key] as? JsonPrimitive)?.let { primitive ->
                 primitive.longOrNull?.let { return it }
                 primitive.contentOrNull?.toLongOrNull()?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun JsonObject.firstBooleanOrNull(vararg keys: String): Boolean? {
+        keys.forEach { key ->
+            (this[key] as? JsonPrimitive)?.let { primitive ->
+                primitive.contentOrNull?.toBooleanStrictOrNull()?.let { return it }
+                primitive.intOrNull?.let { return it != 0 }
             }
         }
         return null

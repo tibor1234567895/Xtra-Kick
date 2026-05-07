@@ -37,6 +37,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.content.res.use
 import androidx.core.net.toUri
+import androidx.core.os.bundleOf
 import androidx.core.os.LocaleListCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -87,6 +88,7 @@ import com.github.andreyasadchy.xtra.ui.team.TeamFragmentDirections
 import com.github.andreyasadchy.xtra.ui.top.TopStreamsFragmentDirections
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.applyTheme
@@ -777,27 +779,27 @@ class MainActivity : AppCompatActivity() {
             val controller = try {
                 controllerFuture.get()
             } catch (e: Exception) {
-                Log.e(TAG, "background handoff controller connect failed", e)
+                DiagnosticLogger.e(TAG, "background handoff controller connect failed", e)
                 MediaController.releaseFuture(controllerFuture)
                 return@addListener
             }
             logPlayerShell("background handoff controller connected")
             val command = SessionCommand(
                 PlaybackService.START_STREAM,
-                Bundle().apply {
-                    putString(PlaybackService.URI, streamUrl)
-                    putString(PlaybackService.TITLE, stream.title)
-                    putString(PlaybackService.CHANNEL_NAME, stream.channelName)
-                    putString(PlaybackService.CHANNEL_LOGO, stream.channelLogo)
-                    putBoolean(PlaybackService.DISABLE_VIDEO, disableVideo)
-                }
+                bundleOf(
+                    PlaybackService.URI to streamUrl,
+                    PlaybackService.TITLE to stream.title,
+                    PlaybackService.CHANNEL_NAME to stream.channelName,
+                    PlaybackService.CHANNEL_LOGO to stream.channelLogo,
+                    PlaybackService.DISABLE_VIDEO to disableVideo,
+                )
             )
             val commandResult = controller.sendCustomCommand(command, Bundle.EMPTY)
             commandResult.addListener({
                 try {
                     commandResult.get()
                 } catch (e: Exception) {
-                    Log.e(TAG, "background handoff START_STREAM failed", e)
+                    DiagnosticLogger.e(TAG, "background handoff START_STREAM failed", e)
                     MediaController.releaseFuture(controllerFuture)
                     return@addListener
                 }

@@ -2,6 +2,47 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <PreferenceCategory
+        android:title="@string/debug_logs_diagnostics"
+        app:iconSpaceReserved="false">
+
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="debug_diagnostic_file_logging"
+            android:summary="@string/diagnostic_file_logging_summary"
+            android:title="@string/diagnostic_file_logging"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <ListPreference
+            android:defaultValue="error"
+            android:entries="@array/diagnosticLogLevelEntries"
+            android:entryValues="@array/diagnosticLogLevelValues"
+            android:key="debug_diagnostic_file_log_level"
+            android:summary="%s"
+            android:title="@string/diagnostic_log_level"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <Preference
+            android:key="action_share_diagnostic_log"
+            android:title="@string/diagnostic_log_share"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <Preference
+            android:key="action_test_diagnostic_log"
+            android:title="@string/diagnostic_log_test"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <Preference
+            android:key="action_clear_diagnostic_log"
+            android:title="@string/diagnostic_log_clear"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
         android:title="@string/debug_logs_chat"
         app:iconSpaceReserved="false">
 

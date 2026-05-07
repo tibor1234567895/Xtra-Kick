@@ -938,7 +938,7 @@ class StreamDownloadWorker @AssistedInject constructor(
     private suspend fun startChatJob(channelLogin: String, path: String, downloadDate: Long, streamStartTime: String) {
         val isShared = path.toUri().scheme == ContentResolver.SCHEME_CONTENT
         val fileName = "${channelLogin}${offlineVideo.quality ?: ""}${downloadDate}_chat.json"
-        val resumed = !offlineVideo.chatUrl.isNullOrBlank()
+        val resumed = !offlineVideo.chatUrl.isNullOrBlank() && offlineVideo.chatBytes > 0L
         val savedTwitchEmotes = mutableListOf<String>()
         val savedBadges = mutableListOf<Pair<String, String>>()
         val savedEmotes = mutableListOf<String>()
@@ -967,104 +967,108 @@ class StreamDownloadWorker @AssistedInject constructor(
             } else {
                 FileInputStream(File(fileUri)).bufferedReader()
             }?.use { fileReader ->
-                JsonReader(fileReader).use { reader ->
-                    reader.isLenient = true
-                    var token: JsonToken
-                    do {
-                        token = reader.peek()
-                        when (token) {
-                            JsonToken.END_DOCUMENT -> {}
-                            JsonToken.BEGIN_OBJECT -> {
-                                reader.beginObject()
-                                while (reader.hasNext()) {
-                                    when (reader.peek()) {
-                                        JsonToken.NAME -> {
-                                            when (reader.nextName()) {
-                                                "twitchEmotes" -> {
-                                                    reader.beginArray()
-                                                    while (reader.hasNext()) {
-                                                        reader.beginObject()
-                                                        var id: String? = null
+                try {
+                    JsonReader(fileReader).use { reader ->
+                        reader.isLenient = true
+                        var token: JsonToken
+                        do {
+                            token = reader.peek()
+                            when (token) {
+                                JsonToken.END_DOCUMENT -> {}
+                                JsonToken.BEGIN_OBJECT -> {
+                                    reader.beginObject()
+                                    while (reader.hasNext()) {
+                                        when (reader.peek()) {
+                                            JsonToken.NAME -> {
+                                                when (reader.nextName()) {
+                                                    "twitchEmotes" -> {
+                                                        reader.beginArray()
                                                         while (reader.hasNext()) {
-                                                            when (reader.nextName()) {
-                                                                "id" -> id = reader.nextString()
-                                                                else -> reader.skipValue()
+                                                            reader.beginObject()
+                                                            var id: String? = null
+                                                            while (reader.hasNext()) {
+                                                                when (reader.nextName()) {
+                                                                    "id" -> id = reader.nextString()
+                                                                    else -> reader.skipValue()
+                                                                }
                                                             }
+                                                            if (!id.isNullOrBlank()) {
+                                                                savedTwitchEmotes.add(id)
+                                                            }
+                                                            reader.endObject()
                                                         }
-                                                        if (!id.isNullOrBlank()) {
-                                                            savedTwitchEmotes.add(id)
-                                                        }
-                                                        reader.endObject()
+                                                        reader.endArray()
                                                     }
-                                                    reader.endArray()
-                                                }
-                                                "twitchBadges" -> {
-                                                    reader.beginArray()
-                                                    while (reader.hasNext()) {
-                                                        reader.beginObject()
-                                                        var setId: String? = null
-                                                        var version: String? = null
+                                                    "twitchBadges" -> {
+                                                        reader.beginArray()
                                                         while (reader.hasNext()) {
-                                                            when (reader.nextName()) {
-                                                                "setId" -> setId = reader.nextString()
-                                                                "version" -> version = reader.nextString()
-                                                                else -> reader.skipValue()
+                                                            reader.beginObject()
+                                                            var setId: String? = null
+                                                            var version: String? = null
+                                                            while (reader.hasNext()) {
+                                                                when (reader.nextName()) {
+                                                                    "setId" -> setId = reader.nextString()
+                                                                    "version" -> version = reader.nextString()
+                                                                    else -> reader.skipValue()
+                                                                }
                                                             }
+                                                            if (!setId.isNullOrBlank() && !version.isNullOrBlank()) {
+                                                                savedBadges.add(Pair(setId, version))
+                                                            }
+                                                            reader.endObject()
                                                         }
-                                                        if (!setId.isNullOrBlank() && !version.isNullOrBlank()) {
-                                                            savedBadges.add(Pair(setId, version))
-                                                        }
-                                                        reader.endObject()
+                                                        reader.endArray()
                                                     }
-                                                    reader.endArray()
-                                                }
-                                                "cheerEmotes" -> {
-                                                    reader.beginArray()
-                                                    while (reader.hasNext()) {
-                                                        reader.beginObject()
-                                                        var name: String? = null
+                                                    "cheerEmotes" -> {
+                                                        reader.beginArray()
                                                         while (reader.hasNext()) {
-                                                            when (reader.nextName()) {
-                                                                "name" -> name = reader.nextString()
-                                                                else -> reader.skipValue()
+                                                            reader.beginObject()
+                                                            var name: String? = null
+                                                            while (reader.hasNext()) {
+                                                                when (reader.nextName()) {
+                                                                    "name" -> name = reader.nextString()
+                                                                    else -> reader.skipValue()
+                                                                }
                                                             }
+                                                            if (!name.isNullOrBlank()) {
+                                                                savedEmotes.add(name)
+                                                            }
+                                                            reader.endObject()
                                                         }
-                                                        if (!name.isNullOrBlank()) {
-                                                            savedEmotes.add(name)
-                                                        }
-                                                        reader.endObject()
+                                                        reader.endArray()
                                                     }
-                                                    reader.endArray()
-                                                }
-                                                "emotes" -> {
-                                                    reader.beginArray()
-                                                    while (reader.hasNext()) {
-                                                        reader.beginObject()
-                                                        var name: String? = null
+                                                    "emotes" -> {
+                                                        reader.beginArray()
                                                         while (reader.hasNext()) {
-                                                            when (reader.nextName()) {
-                                                                "name" -> name = reader.nextString()
-                                                                else -> reader.skipValue()
+                                                            reader.beginObject()
+                                                            var name: String? = null
+                                                            while (reader.hasNext()) {
+                                                                when (reader.nextName()) {
+                                                                    "name" -> name = reader.nextString()
+                                                                    else -> reader.skipValue()
+                                                                }
                                                             }
+                                                            if (!name.isNullOrBlank()) {
+                                                                savedEmotes.add(name)
+                                                            }
+                                                            reader.endObject()
                                                         }
-                                                        if (!name.isNullOrBlank()) {
-                                                            savedEmotes.add(name)
-                                                        }
-                                                        reader.endObject()
+                                                        reader.endArray()
                                                     }
-                                                    reader.endArray()
+                                                    else -> reader.skipValue()
                                                 }
-                                                else -> reader.skipValue()
                                             }
+                                            else -> reader.skipValue()
                                         }
-                                        else -> reader.skipValue()
                                     }
+                                    reader.endObject()
                                 }
-                                reader.endObject()
+                                else -> reader.skipValue()
                             }
-                            else -> reader.skipValue()
-                        }
-                    } while (token != JsonToken.END_DOCUMENT)
+                        } while (token != JsonToken.END_DOCUMENT)
+                    }
+                } catch (_: Exception) {
+                    // Resume data is best-effort; if the partial file is malformed, continue with a fresh parse state.
                 }
             }
             fileUri

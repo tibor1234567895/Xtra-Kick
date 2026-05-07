@@ -68,7 +68,7 @@ android {
 
     defaultConfig {
         applicationId = "com.github.andreyasadchy.xtrakick"
-        minSdk = 23
+        minSdk = 26
         targetSdk = 36
         versionCode = 121
         versionName = "2.54.0"
@@ -106,6 +106,7 @@ android {
     }
     lint {
         disable += "ContentDescription"
+        disable += "MissingTranslation"
     }
     packaging.jniLibs.excludes.addAll(listOf(
         "lib/x86/libtranslate_jni.so",
@@ -118,7 +119,7 @@ android {
 }
 
 dependencies {
-    implementation("com.google.guava:guava:33.6.0-android") // exoplayer
+    implementation("com.google.guava:guava:33.5.0-android") // exoplayer
     implementation("com.google.android.gms:play-services-cronet:18.1.1")
     implementation(libs.material)
     implementation(libs.markwon.core)

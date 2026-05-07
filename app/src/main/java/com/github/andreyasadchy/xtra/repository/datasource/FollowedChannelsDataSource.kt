@@ -2,6 +2,7 @@ package com.github.andreyasadchy.xtra.repository.datasource
 
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
+import com.github.andreyasadchy.xtra.model.ui.LocalFollowChannel
 import com.github.andreyasadchy.xtra.model.ui.User
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 
@@ -12,28 +13,9 @@ class FollowedChannelsDataSource(
 ) : PagingSource<Int, User>() {
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, User> {
-        val list = localFollowsChannel.loadFollows()
-            .map {
-                User(
-                    channelId = it.userId,
-                    channelLogin = it.userLogin,
-                    channelName = it.userName,
-                    followLocal = true
-                )
-            }
-            .toMutableList()
-
-        val sorted = if (order == "asc") {
-            when (sort) {
-                "login" -> list.sortedWith(compareBy(nullsLast()) { it.channelLogin })
-                else -> list.sortedWith(compareBy(nullsLast()) { it.channelName })
-            }
-        } else {
-            when (sort) {
-                "login" -> list.sortedWith(compareByDescending(nullsFirst()) { it.channelLogin })
-                else -> list.sortedWith(compareByDescending(nullsFirst()) { it.channelName })
-            }
-        }
+        val follows = localFollowsChannel.loadFollows()
+        val list = follows.map { FollowedChannelRow(it.toUser(), it.id) }
+        val sorted = list.sortedForFilter().map { it.user }
 
         return LoadResult.Page(
             data = sorted,
@@ -48,4 +30,35 @@ class FollowedChannelsDataSource(
             anchorPage?.prevKey?.plus(1) ?: anchorPage?.nextKey?.minus(1)
         }
     }
+
+    private fun LocalFollowChannel.toUser(): User {
+        return User(
+            channelId = userId,
+            channelLogin = userLogin,
+            channelName = userName,
+            profileImageUrl = channelLogo,
+            followLocal = true,
+        )
+    }
+
+    private fun List<FollowedChannelRow>.sortedForFilter(): List<FollowedChannelRow> {
+        val nameComparator = compareBy<FollowedChannelRow, String?>(nullsLast(String.CASE_INSENSITIVE_ORDER)) { it.user.channelLogin }
+            .thenBy(nullsLast(String.CASE_INSENSITIVE_ORDER)) { it.user.channelName }
+        return when (sort) {
+            "created_at" -> {
+                if (order == "asc") sortedBy { it.followId } else sortedByDescending { it.followId }
+            }
+            "login" -> {
+                if (order == "asc") sortedWith(nameComparator) else sortedWith(nameComparator.reversed())
+            }
+            else -> {
+                sortedWith(nameComparator)
+            }
+        }
+    }
+
+    private data class FollowedChannelRow(
+        val user: User,
+        val followId: Int,
+    )
 }

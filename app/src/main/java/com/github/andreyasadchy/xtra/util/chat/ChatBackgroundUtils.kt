@@ -51,7 +51,6 @@ object ChatBackgroundUtils {
         return ColorUtils.compositeColors(ColorUtils.setAlphaComponent(tintBaseColor, tintAlpha), highlightedColor)
     }
 
-    @ColorInt
     fun resolveDividerColors(
         @ColorInt surfaceColor: Int,
         dividerStrength: Int,

@@ -29,6 +29,7 @@ import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 
 @OptIn(UnstableApi::class)
 class IvsPlayerFragment : PlayerFragment() {
@@ -172,8 +173,52 @@ class IvsPlayerFragment : PlayerFragment() {
         }
         serviceConnection = connection
         val intent = Intent(requireContext(), IvsPlayerService::class.java)
-        requireContext().startService(intent)
+        if (!startIvsService(intent)) {
+            serviceConnection = null
+            surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
+            surfaceHolderCallback = null
+            unregisterNetworkCallback()
+            fallbackToStandardPlayerAfterServiceStartDenied()
+            return
+        }
         requireContext().bindService(intent, connection, Context.BIND_AUTO_CREATE)
+    }
+
+    private fun startIvsService(intent: Intent): Boolean {
+        return try {
+            requireContext().startService(intent)
+            true
+        } catch (e: RuntimeException) {
+            if (!isBackgroundServiceStartDenied(e)) {
+                throw e
+            }
+            DiagnosticLogger.w(
+                TAG,
+                "IVS service start denied; falling back to standard player " +
+                    "foreground=${lifecycle.currentState} urlPresent=${!requireArguments().getString(KEY_RESOLVED_STREAM_URL).isNullOrBlank()}",
+                e
+            )
+            false
+        }
+    }
+
+    private fun isBackgroundServiceStartDenied(error: RuntimeException): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            error.javaClass.name == "android.app.BackgroundServiceStartNotAllowedException"
+    }
+
+    private fun fallbackToStandardPlayerAfterServiceStartDenied() {
+        val resolvedUrl = currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL)
+        if (!isAdded || resolvedUrl.isNullOrBlank()) {
+            return
+        }
+        Toast.makeText(requireContext(), R.string.ivs_fallback_to_standard_player, Toast.LENGTH_SHORT).show()
+        requireArguments().putBoolean(KEY_FORCE_STANDARD_LIVE_ENGINE, true)
+        (activity as? MainActivity)?.startStream(
+            stream = getCurrentStream(),
+            resolvedUrl = resolvedUrl,
+            forceStandardLiveEngine = true
+        )
     }
 
     override fun initialize() {
@@ -433,16 +478,32 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun close() {
-        playbackService?.stopPlayback()
-        playerListener?.let { player?.removeListener(it) }
+        binding.playerControls.root.removeCallbacks(updateProgressAction)
+        unregisterNetworkCallback()
+        val service = playbackService
+        val ivsPlayer = service?.player
+        playerListener?.let { ivsPlayer?.removeListener(it) }
         playerListener = null
-        serviceConnection?.let { requireContext().unbindService(it) }
+        surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
+        surfaceHolderCallback = null
+        service?.stopPlayback()
+        serviceConnection?.let {
+            try {
+                requireContext().unbindService(it)
+            } catch (_: IllegalArgumentException) {
+            }
+        }
         serviceConnection = null
         playbackService = null
     }
 
     override fun onStop() {
         super.onStop()
+        if (shouldClosePlaybackAfterPipDismiss()) {
+            close()
+            clearPipDismissState()
+            return
+        }
         binding.playerControls.root.removeCallbacks(updateProgressAction)
         unregisterNetworkCallback()
         val ivsPlayer = player

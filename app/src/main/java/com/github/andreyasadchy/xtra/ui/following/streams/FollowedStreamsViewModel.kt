@@ -5,10 +5,12 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.github.andreyasadchy.xtra.model.ui.LocalFollowChannel
+import com.github.andreyasadchy.xtra.model.ui.SortChannel
 import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.repository.HelixRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
+import com.github.andreyasadchy.xtra.repository.SortChannelRepository
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
@@ -36,6 +38,7 @@ class FollowedStreamsViewModel @Inject constructor(
     private val localFollowsChannel: LocalFollowChannelRepository,
     private val helixRepository: HelixRepository,
     private val kickRepository: KickRepository,
+    private val sortChannelRepository: SortChannelRepository,
     private val json: Json,
 ) : ViewModel() {
 
@@ -113,6 +116,7 @@ class FollowedStreamsViewModel @Inject constructor(
     )
 
     val sortText = MutableStateFlow<CharSequence?>(null)
+    val sort = MutableStateFlow(FollowedStreamsSortDialog.SORT_VIEWERS)
 
     private val _uiState = MutableStateFlow(FollowedStreamsUiState())
     val uiState: StateFlow<FollowedStreamsUiState> = _uiState.asStateFlow()
@@ -138,10 +142,32 @@ class FollowedStreamsViewModel @Inject constructor(
 
     fun initialize() {
         if (sortText.value == null) {
-            sortText.value = "${applicationContext.getString(com.github.andreyasadchy.xtra.R.string.source)}: ${applicationContext.getString(com.github.andreyasadchy.xtra.R.string.local)}"
+            sortText.value = buildSortText(sort.value)
+            viewModelScope.launch {
+                val savedSort = sortChannelRepository.getById("followed_streams")?.videoSort
+                setSort(savedSort, persist = false)
+            }
         }
         if (!_uiState.value.hasLoadedOnce && refreshJob == null) {
             refresh()
+        }
+    }
+
+    fun setSort(value: String?, persist: Boolean) {
+        val normalizedSort = normalizeSort(value)
+        sort.value = normalizedSort
+        sortText.value = buildSortText(normalizedSort)
+        _uiState.value = _uiState.value.copy(items = _uiState.value.items.sortedForFollowedLive())
+        if (persist) {
+            viewModelScope.launch {
+                val item = sortChannelRepository.getById("followed_streams")?.apply {
+                    videoSort = normalizedSort
+                } ?: SortChannel(
+                    id = "followed_streams",
+                    videoSort = normalizedSort,
+                )
+                sortChannelRepository.save(item)
+            }
         }
     }
 
@@ -587,9 +613,38 @@ class FollowedStreamsViewModel @Inject constructor(
     }
 
     private fun List<Stream>.sortedForFollowedLive(): List<Stream> {
-        return this.sortedWith(
-            compareByDescending<Stream> { it.viewerCount ?: 0 }
-                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.channelName ?: it.channelLogin ?: "" }
+        val nameComparator = compareBy<Stream, String>(String.CASE_INSENSITIVE_ORDER) { it.channelName ?: it.channelLogin ?: "" }
+        return when (sort.value) {
+            FollowedStreamsSortDialog.SORT_VIEWERS_ASC -> sortedWith(
+                compareBy<Stream> { it.viewerCount ?: 0 }.then(nameComparator)
+            )
+            FollowedStreamsSortDialog.SORT_RECENT -> sortedWith(
+                compareByDescending<Stream> { it.startedAt ?: "" }.then(nameComparator)
+            )
+            else -> sortedWith(
+                compareByDescending<Stream> { it.viewerCount ?: 0 }.then(nameComparator)
+            )
+        }
+    }
+
+    private fun normalizeSort(value: String?): String {
+        return when (value) {
+            FollowedStreamsSortDialog.SORT_VIEWERS_ASC,
+            FollowedStreamsSortDialog.SORT_RECENT -> value
+            else -> FollowedStreamsSortDialog.SORT_VIEWERS
+        }
+    }
+
+    private fun buildSortText(value: String): CharSequence {
+        return applicationContext.getString(
+            com.github.andreyasadchy.xtra.R.string.sort_by,
+            applicationContext.getString(
+                when (normalizeSort(value)) {
+                    FollowedStreamsSortDialog.SORT_VIEWERS_ASC -> com.github.andreyasadchy.xtra.R.string.viewers_low
+                    FollowedStreamsSortDialog.SORT_RECENT -> com.github.andreyasadchy.xtra.R.string.recent
+                    else -> com.github.andreyasadchy.xtra.R.string.viewers_high
+                }
+            )
         )
     }
 

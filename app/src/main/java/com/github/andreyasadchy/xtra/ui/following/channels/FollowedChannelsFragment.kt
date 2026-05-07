@@ -13,6 +13,7 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.paging.LoadState
 import androidx.paging.PagingDataAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.github.andreyasadchy.xtra.R
@@ -35,6 +36,7 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
     private val binding get() = _binding!!
     private val viewModel: FollowedChannelsViewModel by viewModels()
     private lateinit var pagingAdapter: PagingDataAdapter<User, out RecyclerView.ViewHolder>
+    private var scrollToTopAfterRefresh = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = CommonRecyclerViewLayoutBinding.inflate(inflater, container, false)
@@ -70,6 +72,16 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
                 }
             }
         }
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                pagingAdapter.loadStateFlow.collectLatest { loadState ->
+                    if (scrollToTopAfterRefresh && loadState.refresh is LoadState.NotLoading) {
+                        binding.recyclerView.scrollToPosition(0)
+                        scrollToTopAfterRefresh = false
+                    }
+                }
+            }
+        }
         initializeAdapter(binding, pagingAdapter, enableScrollTopButton = false)
     }
 
@@ -94,6 +106,7 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
         if ((parentFragment as? FragmentHost)?.currentFragment == this) {
             viewLifecycleOwner.lifecycleScope.launch {
                 if (changed) {
+                    scrollToTopAfterRefresh = true
                     viewModel.setFilter(sort, order)
                     viewModel.sortText.value = buildSortText(sortText, orderText)
                 }
@@ -116,8 +129,7 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
         sortText: CharSequence = getString(
             when (viewModel.sort) {
                 FollowedChannelsSortDialog.SORT_FOLLOWED_AT -> R.string.time_followed
-                FollowedChannelsSortDialog.SORT_ALPHABETICALLY -> R.string.alphabetically
-                else -> R.string.last_broadcast
+                else -> R.string.alphabetically
             }
         ),
         orderText: CharSequence = getString(

@@ -200,15 +200,17 @@ class MessageClickedChatAdapter(
         if (chatMessage == selectedMessage) {
             holder.textView.setBackgroundColor(resolveSelectedBackgroundColor(holder.textView.context))
         }
-        ChatAdapterUtils.loadImages(
-            fragment, holder.textView, {
-                holder.bind(chatMessage, it, position, result.backgroundRes)
-                if (chatMessage == selectedMessage) {
-                    holder.textView.setBackgroundColor(resolveSelectedBackgroundColor(holder.textView.context))
-                }
-            }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
-            backgroundColor, imageLibrary, result.builder, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes
-        )
+        if (result.images.isNotEmpty() || result.imagePaint != null) {
+            ChatAdapterUtils.loadImages(
+                fragment, holder.textView, {
+                    holder.bind(chatMessage, it, position, result.backgroundRes)
+                    if (chatMessage == selectedMessage) {
+                        holder.textView.setBackgroundColor(resolveSelectedBackgroundColor(holder.textView.context))
+                    }
+                }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
+                backgroundColor, imageLibrary, result.builder, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes
+            )
+        }
         if (chatMessage == selectedMessage) {
             holder.textView.setBackgroundColor(resolveSelectedBackgroundColor(holder.textView.context))
         }
@@ -283,6 +285,19 @@ class MessageClickedChatAdapter(
             alternatingLineShadowStrength = alternatingLineShadowStrength,
             position = visualParityPosition,
         )
+    }
+
+    private fun resolveCurrentMessagePosition(chatMessage: ChatMessage, adapterPosition: Int, fallbackPosition: Int): Int {
+        synchronized(messages) {
+            if (adapterPosition in messages.indices && messages[adapterPosition] == chatMessage) {
+                return adapterPosition
+            }
+            val currentPosition = messages.indexOf(chatMessage)
+            if (currentPosition >= 0) {
+                return currentPosition
+            }
+        }
+        return fallbackPosition
     }
 
     private fun resolveSelectedBackgroundColor(context: Context): Int {
@@ -385,8 +400,9 @@ class MessageClickedChatAdapter(
         val textView: TextView = itemView.findViewById(R.id.chatMessageText)
 
         fun bind(chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder, position: Int, backgroundRes: Int) {
-            val resolvedBackgroundColor = resolveMessageBackgroundColor(textView.context, position, backgroundRes)
-            val dividerColors = resolveDividerColor(position, resolvedBackgroundColor)
+            val currentPosition = resolveCurrentMessagePosition(chatMessage, bindingAdapterPosition, position)
+            val resolvedBackgroundColor = resolveMessageBackgroundColor(textView.context, currentPosition, backgroundRes)
+            val dividerColors = resolveDividerColor(currentPosition, resolvedBackgroundColor)
             textView.apply {
                 text = formattedMessage
                 textSize = messageTextSize

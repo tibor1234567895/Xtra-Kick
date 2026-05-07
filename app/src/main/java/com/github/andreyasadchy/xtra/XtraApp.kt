@@ -19,9 +19,10 @@ import coil3.network.NetworkRequest
 import coil3.network.NetworkResponse
 import coil3.network.NetworkResponseBody
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
-import coil3.util.DebugLogger
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
+import com.github.andreyasadchy.xtra.util.DiagnosticCoilLogger
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
 import com.github.andreyasadchy.xtra.util.WebSocketRuntime
 import com.github.andreyasadchy.xtra.util.coil.CacheControlCacheStrategy
@@ -51,9 +52,18 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         var showUnexpectedLogoutNoticeThisProcess = false
     }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
         INSTANCE = this
+        DiagnosticLogger.init(this)
+        val previousUncaughtExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            DiagnosticLogger.updateAppState(WebSocketRuntime.isAppInForeground)
+            DiagnosticLogger.logCrash(throwable)
+            previousUncaughtExceptionHandler?.uncaughtException(thread, throwable)
+                ?: kotlin.system.exitProcess(10)
+        }
         runCatching {
             val media3LogLevel = if (BuildConfig.DEBUG && prefs().getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
                 androidx.media3.common.util.Log.LOG_LEVEL_INFO
@@ -69,15 +79,19 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                 override fun onActivityStarted(activity: android.app.Activity) {
                     startedActivities += 1
                     WebSocketRuntime.isAppInForeground = startedActivities > 0
+                    DiagnosticLogger.updateAppState(WebSocketRuntime.isAppInForeground)
                 }
 
                 override fun onActivityStopped(activity: android.app.Activity) {
                     startedActivities = (startedActivities - 1).coerceAtLeast(0)
                     WebSocketRuntime.isAppInForeground = startedActivities > 0
+                    DiagnosticLogger.updateAppState(WebSocketRuntime.isAppInForeground)
                 }
 
                 override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: Bundle?) {}
-                override fun onActivityResumed(activity: android.app.Activity) {}
+                override fun onActivityResumed(activity: android.app.Activity) {
+                    DiagnosticLogger.updateAppState(WebSocketRuntime.isAppInForeground, activity.javaClass.simpleName)
+                }
                 override fun onActivityPaused(activity: android.app.Activity) {}
                 override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: Bundle) {}
                 override fun onActivityDestroyed(activity: android.app.Activity) {}
@@ -147,11 +161,13 @@ class XtraApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         return requestBuilder
     }
 
-    @OptIn(ExperimentalCoilApi::class)
+    @kotlin.OptIn(ExperimentalCoilApi::class)
     override fun newImageLoader(context: PlatformContext): ImageLoader {
         return ImageLoader.Builder(context).apply {
             if (BuildConfig.DEBUG && prefs().getBoolean(C.DEBUG_NETWORK_LOGS, false)) {
-                logger(DebugLogger())
+                logger(DiagnosticCoilLogger(coil3.util.Logger.Level.Debug))
+            } else {
+                logger(DiagnosticCoilLogger(coil3.util.Logger.Level.Error))
             }
             components {
                 val networkLibrary = prefs().getString(C.NETWORK_LIBRARY, "OkHttp")

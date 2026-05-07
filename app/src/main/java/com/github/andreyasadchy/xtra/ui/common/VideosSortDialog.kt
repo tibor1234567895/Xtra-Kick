@@ -6,6 +6,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.RadioButton
+import androidx.core.os.bundleOf
 import androidx.core.view.isVisible
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.DialogVideosSortBinding
@@ -43,13 +44,13 @@ class VideosSortDialog : BottomSheetDialogFragment(), SelectLanguagesDialog.OnSe
 
         fun newInstance(sort: String? = SORT_TIME, period: String? = PERIOD_WEEK, type: String? = VIDEO_TYPE_ALL, languages: Array<String>? = null, saved: Boolean = false): VideosSortDialog {
             return VideosSortDialog().apply {
-                arguments = Bundle().apply {
-                    putString(SORT, sort)
-                    putString(PERIOD, period)
-                    putString(TYPE, type)
-                    putStringArray(LANGUAGES, languages)
-                    putBoolean(SAVED, saved)
-                }
+                arguments = bundleOf(
+                    SORT to sort,
+                    PERIOD to period,
+                    TYPE to type,
+                    LANGUAGES to languages,
+                    SAVED to saved,
+                )
             }
         }
     }

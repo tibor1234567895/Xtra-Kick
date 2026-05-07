@@ -6,6 +6,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.RadioButton
+import androidx.core.os.bundleOf
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.DialogFollowedChannelsSortBinding
 import com.google.android.material.bottomsheet.BottomSheetBehavior
@@ -22,17 +23,13 @@ class FollowedChannelsSortDialog : BottomSheetDialogFragment() {
         const val ORDER_DESC = "desc"
         const val SORT_FOLLOWED_AT = "created_at"
         const val SORT_ALPHABETICALLY = "login"
-        const val SORT_LAST_BROADCAST = "last_broadcast"
 
         private const val SORT = "sort"
         private const val ORDER = "order"
 
         fun newInstance(sort: String?, order: String?): FollowedChannelsSortDialog {
             return FollowedChannelsSortDialog().apply {
-                arguments = Bundle().apply {
-                    putString(SORT, sort)
-                    putString(ORDER, order)
-                }
+                arguments = bundleOf(SORT to sort, ORDER to order)
             }
         }
     }
@@ -61,13 +58,12 @@ class FollowedChannelsSortDialog : BottomSheetDialogFragment() {
             val originalSortId = when (args.getString(SORT)) {
                 SORT_FOLLOWED_AT -> R.id.time_followed
                 SORT_ALPHABETICALLY -> R.id.alphabetically
-                SORT_LAST_BROADCAST -> R.id.last_broadcast
-                else -> R.id.last_broadcast
+                else -> R.id.alphabetically
             }
             val originalOrderId = when (args.getString(ORDER)) {
                 ORDER_DESC -> R.id.newest_first
                 ORDER_ASC -> R.id.oldest_first
-                else -> R.id.newest_first
+                else -> R.id.oldest_first
             }
             sort.check(originalSortId)
             order.check(originalOrderId)
@@ -92,14 +88,13 @@ class FollowedChannelsSortDialog : BottomSheetDialogFragment() {
                 when (checkedSortId) {
                     R.id.time_followed -> SORT_FOLLOWED_AT
                     R.id.alphabetically -> SORT_ALPHABETICALLY
-                    R.id.last_broadcast -> SORT_LAST_BROADCAST
-                    else -> SORT_LAST_BROADCAST
+                    else -> SORT_ALPHABETICALLY
                 },
                 sortBtn.text,
                 when (checkedOrderId) {
                     R.id.newest_first -> ORDER_DESC
                     R.id.oldest_first -> ORDER_ASC
-                    else -> ORDER_DESC
+                    else -> ORDER_ASC
                 },
                 orderBtn.text,
                 checkedSortId != originalSortId || checkedOrderId != originalOrderId,

@@ -31,6 +31,7 @@ import androidx.appcompat.widget.SwitchCompat
 import androidx.appcompat.widget.SearchView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.edit
+import androidx.core.content.FileProvider
 import androidx.core.content.res.use
 import androidx.core.net.toUri
 import androidx.core.os.LocaleListCompat
@@ -86,6 +87,7 @@ import com.github.andreyasadchy.xtra.ui.player.LiveLatencySettings
 import com.github.andreyasadchy.xtra.ui.player.PlaybackService
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.applyTheme
@@ -2421,6 +2423,35 @@ class SettingsActivity : AppCompatActivity() {
     class DebugLogSettingsFragment : MaterialPreferenceFragment() {
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.debug_log_preferences, rootKey)
+            findPreference<Preference>("action_clear_diagnostic_log")?.setOnPreferenceClickListener {
+                DiagnosticLogger.clear(requireContext())
+                Toast.makeText(requireContext(), R.string.diagnostic_log_clear_done, Toast.LENGTH_SHORT).show()
+                true
+            }
+            findPreference<Preference>("action_share_diagnostic_log")?.setOnPreferenceClickListener {
+                val exportFile = DiagnosticLogger.exportFile(requireContext())
+                if (exportFile == null) {
+                    Toast.makeText(requireContext(), R.string.diagnostic_log_share_empty, Toast.LENGTH_SHORT).show()
+                } else {
+                    val uri = FileProvider.getUriForFile(
+                        requireContext(),
+                        "${requireContext().packageName}.diagnostic-file-provider",
+                        exportFile
+                    )
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(Intent.createChooser(intent, getString(R.string.diagnostic_log_share_title)))
+                }
+                true
+            }
+            findPreference<Preference>("action_test_diagnostic_log")?.setOnPreferenceClickListener {
+                DiagnosticLogger.testEntry()
+                Toast.makeText(requireContext(), R.string.diagnostic_log_test_done, Toast.LENGTH_SHORT).show()
+                true
+            }
         }
 
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {

@@ -11,6 +11,7 @@ import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
 import android.text.TextPaint
 import android.text.style.ClickableSpan
 import android.text.style.ForegroundColorSpan
+import android.text.style.ImageSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
@@ -24,6 +25,7 @@ import coil3.imageLoader
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
+import coil3.request.crossfade
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.load.model.GlideUrl
@@ -45,6 +47,7 @@ import com.github.andreyasadchy.xtra.ui.view.NamePaintImageSpan
 import com.github.andreyasadchy.xtra.ui.view.NamePaintSpan
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import java.util.Collections
+import java.util.LinkedHashMap
 import java.util.Random
 import java.util.WeakHashMap
 import kotlin.math.floor
@@ -126,7 +129,71 @@ object ChatAdapterUtils {
     private const val BLUE_HUE_DEGREES = 240f
     private const val PI_DEGREES = 180f
     private const val TWO_PI_DEGREES = 360f
+    private const val CHAT_IMAGE_CACHE_SIZE = 300
     private val preparedMessages = Collections.synchronizedMap(WeakHashMap<ChatMessage, MutableMap<Long, MessageResult>>())
+    private val chatImageCoordinator = RequestCoordinator<ChatImageKey, Drawable>(CHAT_IMAGE_CACHE_SIZE)
+
+    internal data class ChatImageKey(
+        val source: String,
+        val targetHeight: Int,
+        val isEmote: Boolean,
+        val isAnimated: Boolean,
+    )
+
+    internal class RequestCoordinator<K, V>(private val maxEntries: Int) {
+        private val cache = object : LinkedHashMap<K, V>(maxEntries, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean {
+                return size > maxEntries
+            }
+        }
+        private val inFlight = mutableMapOf<K, MutableList<(V?) -> Unit>>()
+
+        fun load(
+            key: K,
+            onCacheHit: ((K) -> Unit)? = null,
+            onInFlightJoin: ((K) -> Unit)? = null,
+            onEnqueue: ((K) -> Unit)? = null,
+            startLoad: (((V?) -> Unit) -> Unit),
+            callback: (V?) -> Unit,
+        ) {
+            synchronized(this) {
+                cache[key]?.let {
+                    onCacheHit?.invoke(key)
+                    callback(it)
+                    return
+                }
+                inFlight[key]?.let {
+                    it.add(callback)
+                    onInFlightJoin?.invoke(key)
+                    return
+                }
+                inFlight[key] = mutableListOf(callback)
+                onEnqueue?.invoke(key)
+            }
+            startLoad { value ->
+                val callbacks = synchronized(this) {
+                    if (value != null) {
+                        cache[key] = value
+                    }
+                    inFlight.remove(key).orEmpty()
+                }
+                callbacks.forEach { it(value) }
+            }
+        }
+
+        fun clear() {
+            synchronized(this) {
+                cache.clear()
+                inFlight.clear()
+            }
+        }
+    }
+
+    internal fun chatImageKeyForTest(image: Image, emoteQuality: String, targetHeight: Int): ChatImageKey? {
+        return resolveImageSource(image, emoteQuality)?.let { source ->
+            createChatImageKey(image, source, targetHeight)
+        }
+    }
 
     private fun resolveReplyDisplayName(chatMessage: ChatMessage, nameDisplay: String?): String? {
         val replyLogin = chatMessage.replyParent?.userLogin ?: chatMessage.reply?.userLogin
@@ -586,6 +653,37 @@ object ChatAdapterUtils {
         }
     }
 
+    fun reserveImagePlaceholders(
+        builder: SpannableStringBuilder,
+        images: List<Image>,
+        emoteSize: Int,
+        badgeSize: Int,
+    ) {
+        images.forEach { image ->
+            val imageSize = if (image.isEmote) {
+                emoteSize
+            } else {
+                badgeSize
+            }
+            val placeholder = ColorDrawable(Color.TRANSPARENT).apply {
+                setBounds(0, 0, imageSize, imageSize)
+            }
+            replaceImageSpan(builder, image.start, image.end, CenteredImageSpan(placeholder))
+        }
+    }
+
+    private fun replaceImageSpan(
+        builder: SpannableStringBuilder,
+        start: Int,
+        end: Int,
+        span: CenteredImageSpan,
+    ) {
+        builder.getSpans(start, end, ImageSpan::class.java)
+            .filter { builder.getSpanStart(it) == start && builder.getSpanEnd(it) == end }
+            .forEach(builder::removeSpan)
+        builder.setSpan(span, start, end, SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+
     private fun getSavedColor(color: String, savedColors: HashMap<String, Int>, useReadableColors: Boolean, isLightTheme: Boolean): Int {
         return savedColors[color] ?: Color.parseColor(color).let { newColor ->
             if (useReadableColors) {
@@ -948,6 +1046,9 @@ object ChatAdapterUtils {
                 fragment.requireContext().imageLoader.enqueue(
                     ImageRequest.Builder(fragment.requireContext()).apply {
                         data(imagePaint.imageUrl)
+                        val targetSize = (itemView as? android.widget.TextView)?.lineHeight?.takeIf { it > 0 } ?: badgeSize
+                        size(targetSize, targetSize)
+                        crossfade(false)
                         httpHeaders(NetworkHeaders.Builder().apply {
                             add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                         }.build())
@@ -1037,40 +1138,18 @@ object ChatAdapterUtils {
             }
         }
         images.forEach { image ->
-            loadImage(imageLibrary, fragment, image, emoteQuality) { result ->
-                val imageSize = if (image.isEmote) {
-                    emoteSize
-                } else {
-                    badgeSize
-                }
-                val widthRatio = result.intrinsicWidth.toFloat() / result.intrinsicHeight.toFloat()
-                val size = if (widthRatio == 1f) {
-                    imageSize to imageSize
-                } else {
-                    (imageSize * widthRatio).toInt() to imageSize
-                }
-                result.setBounds(0, 0, size.first, size.second)
-                if (result is Animatable && image.isAnimated && animateGifs) {
-                    result.callback = object : Drawable.Callback {
-                        override fun unscheduleDrawable(who: Drawable, what: Runnable) {
-                            itemView.removeCallbacks(what)
-                        }
-
-                        override fun invalidateDrawable(who: Drawable) {
-                            itemView.invalidate()
-                        }
-
-                        override fun scheduleDrawable(who: Drawable, what: Runnable, `when`: Long) {
-                            itemView.postDelayed(what, `when`)
-                        }
-                    }
-                    (result as Animatable).start()
-                }
+            val imageSize = if (image.isEmote) {
+                emoteSize
+            } else {
+                badgeSize
+            }
+            loadImage(imageLibrary, fragment, image, emoteQuality, imageSize) { loaded ->
+                val result = prepareDrawableForChat(fragment, loaded, imageSize, itemView, image.isAnimated, animateGifs)
                 if (image.overlayEmote != null) {
                     val drawables = arrayOf(result)
                     nextOverlayEmote(imageLibrary, fragment, drawables, image.overlayEmote!!, image, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes)
                 } else {
-                    builder.setSpan(CenteredImageSpan(result), image.start, image.end, SPAN_EXCLUSIVE_EXCLUSIVE)
+                    replaceImageSpan(builder, image.start, image.end, CenteredImageSpan(result))
                     bind(builder)
                 }
             }
@@ -1078,30 +1157,8 @@ object ChatAdapterUtils {
     }
 
     private fun nextOverlayEmote(imageLibrary: String?, fragment: Fragment, drawables: Array<Drawable>, image: Image, bottomImage: Image, itemView: View, bind: (SpannableStringBuilder) -> Unit, builder: SpannableStringBuilder, emoteSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean) {
-        loadImage(imageLibrary, fragment, image, emoteQuality) { result ->
-            val widthRatio = result.intrinsicWidth.toFloat() / result.intrinsicHeight.toFloat()
-            val size = if (widthRatio == 1f) {
-                emoteSize to emoteSize
-            } else {
-                (emoteSize * widthRatio).toInt() to emoteSize
-            }
-            result.setBounds(0, 0, size.first, size.second)
-            if (result is Animatable && image.isAnimated && animateGifs) {
-                result.callback = object : Drawable.Callback {
-                    override fun unscheduleDrawable(who: Drawable, what: Runnable) {
-                        itemView.removeCallbacks(what)
-                    }
-
-                    override fun invalidateDrawable(who: Drawable) {
-                        itemView.invalidate()
-                    }
-
-                    override fun scheduleDrawable(who: Drawable, what: Runnable, `when`: Long) {
-                        itemView.postDelayed(what, `when`)
-                    }
-                }
-                (result as Animatable).start()
-            }
+        loadImage(imageLibrary, fragment, image, emoteQuality, emoteSize) { loaded ->
+            val result = prepareDrawableForChat(fragment, loaded, emoteSize, itemView, image.isAnimated, animateGifs)
             val array = drawables.plus(result)
             if (image.overlayEmote != null) {
                 nextOverlayEmote(imageLibrary, fragment, array, image.overlayEmote!!, bottomImage, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes)
@@ -1110,24 +1167,46 @@ object ChatAdapterUtils {
                 val width = array.maxOf { it.bounds.right }
                 val height = array.maxOf { it.bounds.bottom }
                 layer.setBounds(0, 0, width, height)
-                builder.setSpan(CenteredImageSpan(layer), bottomImage.start, bottomImage.end, SPAN_EXCLUSIVE_EXCLUSIVE)
+                replaceImageSpan(builder, bottomImage.start, bottomImage.end, CenteredImageSpan(layer))
                 bind(builder)
             }
         }
     }
 
-    private fun loadImage(imageLibrary: String?, fragment: Fragment, image: Image, emoteQuality: String, onLoaded: (Drawable) -> Unit) {
-        if (imageLibrary == "0" || (imageLibrary == "1" && !image.format.equals("webp", true))) {
-            loadCoil(fragment, image, emoteQuality, onLoaded)
+    private fun loadImage(imageLibrary: String?, fragment: Fragment, image: Image, emoteQuality: String, targetHeight: Int, onLoaded: (Drawable) -> Unit) {
+        val source = resolveImageSource(image, emoteQuality) ?: return
+        val key = createChatImageKey(image, source, targetHeight)
+        if (key != null) {
+            chatImageCoordinator.load(
+                key = key,
+                startLoad = { complete ->
+                    loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { result ->
+                        complete(result)
+                    }
+                },
+                callback = { cached ->
+                    cached?.let { cloneDrawableForBind(fragment, it) }?.let(onLoaded)
+                },
+            )
         } else {
-            loadGlide(fragment, image, emoteQuality, onLoaded)
+            loadImageUncached(imageLibrary, fragment, image, source, targetHeight, onLoaded)
         }
     }
 
-    private fun loadCoil(fragment: Fragment, image: Image, emoteQuality: String, onLoaded: (Drawable) -> Unit) {
+    private fun loadImageUncached(imageLibrary: String?, fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable) -> Unit) {
+        if (imageLibrary == "0" || (imageLibrary == "1" && !image.format.equals("webp", true))) {
+            loadCoil(fragment, image, source, targetHeight, onLoaded)
+        } else {
+            loadGlide(fragment, image, source, onLoaded)
+        }
+    }
+
+    private fun loadCoil(fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable) -> Unit) {
         fragment.requireContext().imageLoader.enqueue(
             ImageRequest.Builder(fragment.requireContext()).apply {
-                data(resolveImageSource(image, emoteQuality))
+                data(source)
+                size(targetHeight, targetHeight)
+                crossfade(false)
                 if (image.thirdParty) {
                     httpHeaders(NetworkHeaders.Builder().apply {
                         add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
@@ -1142,8 +1221,7 @@ object ChatAdapterUtils {
         )
     }
 
-    private fun loadGlide(fragment: Fragment, image: Image, emoteQuality: String, onLoaded: (Drawable) -> Unit) {
-        val source = resolveImageSource(image, emoteQuality)
+    private fun loadGlide(fragment: Fragment, image: Image, source: Any, onLoaded: (Drawable) -> Unit) {
         Glide.with(fragment)
             .load(source.let {
                 if (image.thirdParty && it is String) {
@@ -1159,6 +1237,60 @@ object ChatAdapterUtils {
                 override fun onLoadCleared(placeholder: Drawable?) {
                 }
             })
+    }
+
+    private fun cloneDrawableForBind(fragment: Fragment, drawable: Drawable): Drawable {
+        return (drawable.constantState?.newDrawable(fragment.resources) ?: drawable).mutate()
+    }
+
+    private fun prepareDrawableForChat(
+        fragment: Fragment,
+        drawable: Drawable,
+        targetHeight: Int,
+        itemView: View,
+        isAnimated: Boolean,
+        animateGifs: Boolean,
+    ): Drawable {
+        val result = cloneDrawableForBind(fragment, drawable)
+        val intrinsicWidth = result.intrinsicWidth.takeIf { it > 0 } ?: targetHeight
+        val intrinsicHeight = result.intrinsicHeight.takeIf { it > 0 } ?: targetHeight
+        val widthRatio = intrinsicWidth.toFloat() / intrinsicHeight.toFloat()
+        val width = if (widthRatio == 1f) {
+            targetHeight
+        } else {
+            (targetHeight * widthRatio).toInt().coerceAtLeast(1)
+        }
+        result.setBounds(0, 0, width, targetHeight)
+        if (result is Animatable && isAnimated && animateGifs) {
+            result.callback = object : Drawable.Callback {
+                override fun unscheduleDrawable(who: Drawable, what: Runnable) {
+                    itemView.removeCallbacks(what)
+                }
+
+                override fun invalidateDrawable(who: Drawable) {
+                    itemView.invalidate()
+                }
+
+                override fun scheduleDrawable(who: Drawable, what: Runnable, `when`: Long) {
+                    itemView.postDelayed(what, `when`)
+                }
+            }
+            result.start()
+        }
+        return result
+    }
+
+    private fun createChatImageKey(image: Image, source: Any, targetHeight: Int): ChatImageKey? {
+        if (image.localData != null || targetHeight <= 0) {
+            return null
+        }
+        val sourceString = source as? String ?: return null
+        return ChatImageKey(
+            source = sourceString,
+            targetHeight = targetHeight,
+            isEmote = image.isEmote,
+            isAnimated = image.isAnimated,
+        )
     }
 
     private fun resolveImageSource(image: Image, emoteQuality: String): Any? {

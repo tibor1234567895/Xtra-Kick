@@ -34,11 +34,6 @@
                 android:layout_height="wrap_content"
                 android:text="@string/alphabetically" />
 
-            <RadioButton
-                android:id="@+id/last_broadcast"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/last_broadcast" />
         </RadioGroup>
 
         <RadioGroup

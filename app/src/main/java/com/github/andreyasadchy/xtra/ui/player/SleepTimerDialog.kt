@@ -9,6 +9,7 @@ import android.content.DialogInterface
 import android.content.Intent
 import android.os.Bundle
 import androidx.core.content.edit
+import androidx.core.os.bundleOf
 import androidx.fragment.app.DialogFragment
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.DialogSleepTimerBinding
@@ -23,9 +24,7 @@ class SleepTimerDialog : DialogFragment() {
 
         fun newInstance(timeLeft: Long): SleepTimerDialog {
             return SleepTimerDialog().apply {
-                arguments = Bundle().apply {
-                    putLong(KEY_TIME_LEFT, timeLeft)
-                }
+                arguments = bundleOf(KEY_TIME_LEFT to timeLeft)
             }
         }
     }

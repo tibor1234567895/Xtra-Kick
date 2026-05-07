@@ -31,6 +31,18 @@
         <item>OkHttp</item>
     </string-array>
 
+    <string-array name="diagnosticLogLevelEntries">
+        <item>@string/diagnostic_log_level_crash</item>
+        <item>@string/diagnostic_log_level_error</item>
+        <item>@string/diagnostic_log_level_warning</item>
+    </string-array>
+
+    <string-array name="diagnosticLogLevelValues">
+        <item>crash</item>
+        <item>error</item>
+        <item>warning</item>
+    </string-array>
+
     <string-array name="nameDisplayEntries">
         <item>@string/name_display_entry1</item>
         <item>@string/name_display_entry2</item>

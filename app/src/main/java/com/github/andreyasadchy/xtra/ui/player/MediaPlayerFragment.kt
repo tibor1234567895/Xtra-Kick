@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.text.format.DateUtils
 import android.util.Base64
+import android.util.Log
 import android.view.SurfaceHolder
 import android.view.View
 import android.widget.Toast
@@ -30,6 +31,7 @@ import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.ui.download.DownloadDialog
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -372,11 +374,26 @@ class MediaPlayerFragment : PlayerFragment() {
                             }
                         }
                         if (!playlist.isNullOrBlank()) {
-                            val names = Regex("IVS-NAME=\"(.+?)\"").findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList().ifEmpty {
+                            val parsedNames = Regex("IVS-NAME=\"(.+?)\"").findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList().ifEmpty {
                                 Regex("NAME=\"(.+?)\"").findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList()
                             }
                             val codecStrings = Regex("CODECS=\"(.+?)\"").findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList()
                             val urls = Regex("https://.*\\.m3u8").findAll(playlist).map(MatchResult::value).toMutableList()
+                            val names = if (parsedNames.size == urls.size && parsedNames.all { it.isNotBlank() }) {
+                                parsedNames
+                            } else {
+                                urls.map { url ->
+                                    url.substringBeforeLast("/")
+                                        .substringAfterLast("/")
+                                        .takeIf { it.isNotBlank() && it != "hls" }
+                                        ?: parsedNames.getOrNull(urls.indexOf(url))
+                                        ?: "quality_${urls.indexOf(url)}"
+                                }.toMutableList()
+                            }
+                            DiagnosticLogger.e(
+                                "KickVodQuality",
+                                "mediaplayer parsedNames=$parsedNames names=$names urls=$urls codecs=$codecStrings"
+                            )
                             playlist.lines().filter { it.startsWith("#EXT-X-SESSION-DATA") }.let { list ->
                                 if (list.isNotEmpty()) {
                                     val url = urls.firstOrNull()?.takeIf { it.contains("/index-") }
@@ -656,6 +673,10 @@ class MediaPlayerFragment : PlayerFragment() {
     }
 
     override fun seek(position: Long) {
+        if (videoType != STREAM) {
+            chatFragment?.updatePosition(position)
+            chatFragment?.startReplayChatLoad(position)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             player?.seekTo(position, MediaPlayer.SEEK_CLOSEST)
         } else {

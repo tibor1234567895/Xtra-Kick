@@ -25,9 +25,9 @@ class FollowedChannelsViewModel @Inject constructor(
     val sortText = MutableStateFlow<CharSequence?>(null)
 
     val sort: String
-        get() = filter.value?.sort ?: FollowedChannelsSortDialog.SORT_LAST_BROADCAST
+        get() = normalizeSort(filter.value?.sort)
     val order: String
-        get() = filter.value?.order ?: FollowedChannelsSortDialog.ORDER_DESC
+        get() = normalizeOrder(filter.value?.order)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val flow = filter.flatMapLatest {
@@ -38,13 +38,12 @@ class FollowedChannelsViewModel @Inject constructor(
                 sort = when (sort) {
                     FollowedChannelsSortDialog.SORT_FOLLOWED_AT -> "created_at"
                     FollowedChannelsSortDialog.SORT_ALPHABETICALLY -> "login"
-                    FollowedChannelsSortDialog.SORT_LAST_BROADCAST -> "last_broadcast"
-                    else -> "last_broadcast"
+                    else -> "login"
                 },
                 order = when (order) {
                     FollowedChannelsSortDialog.ORDER_DESC -> "desc"
                     FollowedChannelsSortDialog.ORDER_ASC -> "asc"
-                    else -> "desc"
+                    else -> "asc"
                 },
                 localFollowsChannel = localFollowsChannel,
             )
@@ -60,7 +59,23 @@ class FollowedChannelsViewModel @Inject constructor(
     }
 
     fun setFilter(sort: String?, order: String?) {
-        filter.value = Filter(sort, order)
+        filter.value = Filter(normalizeSort(sort), normalizeOrder(order))
+    }
+
+    private fun normalizeSort(sort: String?): String {
+        return when (sort) {
+            FollowedChannelsSortDialog.SORT_FOLLOWED_AT,
+            FollowedChannelsSortDialog.SORT_ALPHABETICALLY -> sort
+            else -> FollowedChannelsSortDialog.SORT_ALPHABETICALLY
+        }
+    }
+
+    private fun normalizeOrder(order: String?): String {
+        return when (order) {
+            FollowedChannelsSortDialog.ORDER_DESC,
+            FollowedChannelsSortDialog.ORDER_ASC -> order
+            else -> FollowedChannelsSortDialog.ORDER_ASC
+        }
     }
 
     class Filter(

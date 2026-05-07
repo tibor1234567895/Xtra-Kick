@@ -27,9 +27,17 @@ class FollowedChannelsAdapter(
 ) : PagingDataAdapter<User, FollowedChannelsAdapter.PagingViewHolder>(
     object : DiffUtil.ItemCallback<User>() {
         override fun areItemsTheSame(oldItem: User, newItem: User): Boolean =
-            oldItem.channelId == newItem.channelId
+            oldItem.channelId == newItem.channelId &&
+                    oldItem.channelLogin == newItem.channelLogin
 
-        override fun areContentsTheSame(oldItem: User, newItem: User): Boolean = true
+        override fun areContentsTheSame(oldItem: User, newItem: User): Boolean =
+            oldItem.channelLogin == newItem.channelLogin &&
+                    oldItem.channelName == newItem.channelName &&
+                    oldItem.profileImageUrl == newItem.profileImageUrl &&
+                    oldItem.followedAt == newItem.followedAt &&
+                    oldItem.lastBroadcast == newItem.lastBroadcast &&
+                    oldItem.followAccount == newItem.followAccount &&
+                    oldItem.followLocal == newItem.followLocal
     }) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PagingViewHolder {

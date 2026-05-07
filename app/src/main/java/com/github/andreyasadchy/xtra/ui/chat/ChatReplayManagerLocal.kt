@@ -17,7 +17,8 @@ class ChatReplayManagerLocal(
 ) {
     companion object {
         private const val LARGE_SEEK_THRESHOLD_MS = 20_000L
-        private const val PRELOAD_WINDOW_MS = 180_000L
+        private const val PRELOAD_WINDOW_MS = 300_000L
+        private const val PRELOAD_MAX_AGE_MS = 90_000L
         private const val PRELOAD_MAX_MESSAGES = 200
     }
 
@@ -41,6 +42,8 @@ class ChatReplayManagerLocal(
     }
 
     fun startLoad() {
+        val currentPosition = getCurrentPosition() ?: 0
+        isActive = true
         if (!started) {
             started = true
             if (messages.isNotEmpty()) {
@@ -50,6 +53,7 @@ class ChatReplayManagerLocal(
     }
 
     fun start() {
+        isActive = true
         val currentPosition = getCurrentPosition() ?: 0
         lastCheckedPosition = currentPosition
         playbackSpeed = getCurrentSpeed()
@@ -73,9 +77,10 @@ class ChatReplayManagerLocal(
                 val preloadMessages = if (preload) {
                     messages.filter { message ->
                         message.timestamp?.let { timestamp ->
-                            timestamp in max(position - PRELOAD_WINDOW_MS, 0L) until position
+                            timestamp in max(position - PRELOAD_MAX_AGE_MS, 0L) until position
                         } == true
-                    }.takeLast(PRELOAD_MAX_MESSAGES)
+                    }
+                        .takeLast(PRELOAD_MAX_MESSAGES)
                 } else {
                     emptyList()
                 }
@@ -91,8 +96,8 @@ class ChatReplayManagerLocal(
                     listener.onChatMessages(preloadMessages)
                 }
                 startJob()
-            } catch (e: Exception) {
-
+            } catch (_: Exception) {
+                isLoading = false
             }
         }
     }
@@ -111,7 +116,8 @@ class ChatReplayManagerLocal(
                             currentPosition < messageOffset
                         }
                     ) {
-                        delay(max((messageOffset - currentPosition).div(playbackSpeed ?: 1f).toLong(), 0))
+                        val speed = playbackSpeed?.takeIf { it > 0f } ?: 1f
+                        delay(max((messageOffset - currentPosition).div(speed).toLong(), 0))
                     }
                     if (!isActive) {
                         break

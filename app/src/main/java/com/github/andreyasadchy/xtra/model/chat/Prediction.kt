@@ -3,6 +3,7 @@ package com.github.andreyasadchy.xtra.model.chat
 class Prediction(
     val id: String?,
     val createdAt: Long?,
+    val endedAt: Long?,
     val outcomes: List<PredictionOutcome>?,
     val predictionWindowSeconds: Int?,
     val status: String?,
@@ -16,6 +17,7 @@ class Prediction(
         val totalPoints: Int?,
         val totalUsers: Int?,
         val returnRate: Double?,
+        val isWinner: Boolean? = null,
     )
 
     class UserVote(

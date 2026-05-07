@@ -6,6 +6,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.RadioButton
+import androidx.core.os.bundleOf
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.DialogBookmarksSortBinding
 import com.google.android.material.bottomsheet.BottomSheetBehavior
@@ -29,10 +30,7 @@ class BookmarksSortDialog: BottomSheetDialogFragment() {
 
         fun newInstance(sort: String?, order: String?): BookmarksSortDialog {
             return BookmarksSortDialog().apply {
-                arguments = Bundle().apply {
-                    putString(SORT, sort)
-                    putString(ORDER, order)
-                }
+                arguments = bundleOf(SORT to sort, ORDER to order)
             }
         }
     }

@@ -46,6 +46,7 @@ import androidx.activity.trackPipAnimationHintView
 import androidx.annotation.OptIn
 import androidx.appcompat.widget.TooltipCompat
 import androidx.core.content.edit
+import androidx.core.os.bundleOf
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -877,6 +878,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.videoResult.collectLatest {
                                 if (it != null) {
+                                    viewModel.qualities = emptyMap()
+                                    viewModel.quality = null
+                                    viewModel.updateQualities = true
                                     startVideo(it, viewModel.playbackPosition, true)
                                     viewModel.videoResult.value = null
                                 }
@@ -1188,6 +1192,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         requireArguments().getString(KEY_CHANNEL_ID),
                         requireArguments().getString(KEY_CHANNEL_LOGIN),
                         requireArguments().getString(KEY_CHAT_URL),
+                        requireArguments().getInt(KEY_OFFLINE_CHAT_START_TIME, -1).takeIf { it != -1 },
                         requireArguments().getString(KEY_VIDEO_SOURCE)
                     )
                     else -> null
@@ -1200,10 +1205,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun initLayout() {
         with(binding) {
             if (isPortrait) {
-                ViewCompat.setOnApplyWindowInsetsListener(requireActivity().window.decorView, null)
+                requireActivity().window.decorView.setOnSystemUiVisibilityChangeListener(null)
                 showStatusBar()
                 playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
                     width = ViewGroup.LayoutParams.MATCH_PARENT
@@ -1255,11 +1261,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     toggleChat.visibility = View.GONE
                 }
             } else {
-                ViewCompat.setOnApplyWindowInsetsListener(requireActivity().window.decorView) { _, insets ->
+                requireActivity().window.decorView.setOnSystemUiVisibilityChangeListener {
                     if (!isKeyboardShown && isMaximized && activity != null) {
                         hideStatusBar()
                     }
-                    insets
                 }
                 if (isMaximized) {
                     hideStatusBar()
@@ -2240,13 +2245,21 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     protected fun playVideo(skipAccessToken: Boolean, playbackPosition: Long?) {
         requireArguments().getString(KEY_URL)?.takeIf { it.isNotBlank() }?.let { directUrl ->
-            viewModel.qualities = mapOf(
-                "source" to Pair(getString(R.string.source), directUrl),
-                AUDIO_ONLY_QUALITY to Pair(getString(R.string.audio_only), null)
-            )
-            setDefaultQuality()
-            changePlayerMode()
-            startVideo(directUrl, playbackPosition, false)
+            val isHlsPlaylist = directUrl.contains(".m3u8", ignoreCase = true)
+            if (isHlsPlaylist) {
+                viewModel.qualities = emptyMap()
+                viewModel.quality = null
+                viewModel.updateQualities = true
+                startVideo(directUrl, playbackPosition, true)
+            } else {
+                viewModel.qualities = mapOf(
+                    "source" to Pair(getString(R.string.source), directUrl),
+                    AUDIO_ONLY_QUALITY to Pair(getString(R.string.audio_only), null)
+                )
+                setDefaultQuality()
+                changePlayerMode()
+                startVideo(directUrl, playbackPosition, false)
+            }
             return
         }
         if (skipAccessToken && !requireArguments().getString(KEY_VIDEO_ANIMATED_PREVIEW).isNullOrBlank()) {
@@ -2719,22 +2732,22 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     protected fun getStreamArguments(item: Stream): Bundle {
-        return Bundle().apply {
-            putString(KEY_TYPE, STREAM)
-            putString(KEY_STREAM_ID, item.id)
-            putString(KEY_STREAM_SOURCE, item.source)
-            putString(KEY_TITLE, item.title)
-            putInt(KEY_VIEWER_COUNT, item.viewerCount ?: -1)
-            putString(KEY_STARTED_AT, item.startedAt)
-            putString(KEY_CHANNEL_ID, item.channelId)
-            putString(KEY_CHANNEL_LOGIN, item.channelLogin)
-            putString(KEY_CHANNEL_NAME, item.channelName)
-            putString(KEY_CHANNEL_LOGO, item.channelLogo)
-            putString(KEY_THUMBNAIL, item.thumbnail)
-            putString(KEY_GAME_ID, item.gameId)
-            putString(KEY_GAME_SLUG, item.gameSlug)
-            putString(KEY_GAME_NAME, item.gameName)
-        }
+        return bundleOf(
+            KEY_TYPE to STREAM,
+            KEY_STREAM_ID to item.id,
+            KEY_STREAM_SOURCE to item.source,
+            KEY_TITLE to item.title,
+            KEY_VIEWER_COUNT to (item.viewerCount ?: -1),
+            KEY_STARTED_AT to item.startedAt,
+            KEY_CHANNEL_ID to item.channelId,
+            KEY_CHANNEL_LOGIN to item.channelLogin,
+            KEY_CHANNEL_NAME to item.channelName,
+            KEY_CHANNEL_LOGO to item.channelLogo,
+            KEY_THUMBNAIL to item.thumbnail,
+            KEY_GAME_ID to item.gameId,
+            KEY_GAME_SLUG to item.gameSlug,
+            KEY_GAME_NAME to item.gameName,
+        )
     }
 
     protected fun getStreamArguments(item: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean, attachToExistingPlayback: Boolean = false): Bundle {
@@ -2762,68 +2775,69 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     )
 
     protected fun getVideoArguments(item: Video, offset: Long?, ignoreSavedPosition: Boolean): Bundle {
-        return Bundle().apply {
-            putString(KEY_TYPE, VIDEO)
-            putString(KEY_VIDEO_ID, item.id)
-            putString(KEY_VIDEO_SOURCE, item.source)
-            putString(KEY_TITLE, item.title)
-            putString(KEY_UPLOAD_DATE, item.uploadDate)
-            putString(KEY_DURATION, item.duration)
-            putLong(KEY_OFFSET, offset ?: -1L)
-            putBoolean(KEY_IGNORE_SAVED_POSITION, ignoreSavedPosition)
-            putString(KEY_VIDEO_TYPE, item.type)
-            putString(KEY_VIDEO_ANIMATED_PREVIEW, item.animatedPreviewURL)
-            putString(KEY_URL, item.url)
-            putString(KEY_CHANNEL_ID, item.channelId)
-            putString(KEY_CHANNEL_LOGIN, item.channelLogin)
-            putString(KEY_CHANNEL_NAME, item.channelName)
-            putString(KEY_CHANNEL_LOGO, item.channelLogo)
-            putString(KEY_THUMBNAIL, item.thumbnail)
-            putString(KEY_GAME_ID, item.gameId)
-            putString(KEY_GAME_SLUG, item.gameSlug)
-            putString(KEY_GAME_NAME, item.gameName)
-        }
+        return bundleOf(
+            KEY_TYPE to VIDEO,
+            KEY_VIDEO_ID to item.id,
+            KEY_VIDEO_SOURCE to item.source,
+            KEY_TITLE to item.title,
+            KEY_UPLOAD_DATE to item.uploadDate,
+            KEY_DURATION to item.duration,
+            KEY_OFFSET to (offset ?: -1L),
+            KEY_IGNORE_SAVED_POSITION to ignoreSavedPosition,
+            KEY_VIDEO_TYPE to item.type,
+            KEY_VIDEO_ANIMATED_PREVIEW to item.animatedPreviewURL,
+            KEY_URL to item.url,
+            KEY_CHANNEL_ID to item.channelId,
+            KEY_CHANNEL_LOGIN to item.channelLogin,
+            KEY_CHANNEL_NAME to item.channelName,
+            KEY_CHANNEL_LOGO to item.channelLogo,
+            KEY_THUMBNAIL to item.thumbnail,
+            KEY_GAME_ID to item.gameId,
+            KEY_GAME_SLUG to item.gameSlug,
+            KEY_GAME_NAME to item.gameName,
+        )
     }
 
     protected fun getClipArguments(item: Clip): Bundle {
-        return Bundle().apply {
-            putString(KEY_TYPE, CLIP)
-            putString(KEY_CLIP_ID, item.id)
-            putString(KEY_TITLE, item.title)
-            putString(KEY_UPLOAD_DATE, item.uploadDate)
-            item.duration?.let { putDouble(KEY_DURATION, it) }
-            putString(KEY_VIDEO_ID, item.videoId)
-            putString(KEY_VIDEO_ANIMATED_PREVIEW, item.videoAnimatedPreviewURL)
-            putInt(KEY_VOD_OFFSET, item.vodOffset ?: -1)
-            putString(KEY_CLIP_REPLAY_START_TIME, item.replayStartTime)
-            putString(KEY_CHANNEL_ID, item.channelId)
-            putString(KEY_CHANNEL_LOGIN, item.channelLogin)
-            putString(KEY_CHANNEL_NAME, item.channelName)
-            putString(KEY_PROFILE_IMAGE_URL, item.profileImageUrl)
-            putString(KEY_CHANNEL_LOGO, item.channelLogo)
-            putString(KEY_THUMBNAIL, item.thumbnail)
-            putString(KEY_URL, item.clipUrl)
-            putString(KEY_GAME_ID, item.gameId)
-            putString(KEY_GAME_SLUG, item.gameSlug)
-            putString(KEY_GAME_NAME, item.gameName)
-        }
+        return bundleOf(
+            KEY_TYPE to CLIP,
+            KEY_CLIP_ID to item.id,
+            KEY_TITLE to item.title,
+            KEY_UPLOAD_DATE to item.uploadDate,
+            KEY_DURATION to item.duration,
+            KEY_VIDEO_ID to item.videoId,
+            KEY_VIDEO_ANIMATED_PREVIEW to item.videoAnimatedPreviewURL,
+            KEY_VOD_OFFSET to (item.vodOffset ?: -1),
+            KEY_CLIP_REPLAY_START_TIME to item.replayStartTime,
+            KEY_CHANNEL_ID to item.channelId,
+            KEY_CHANNEL_LOGIN to item.channelLogin,
+            KEY_CHANNEL_NAME to item.channelName,
+            KEY_PROFILE_IMAGE_URL to item.profileImageUrl,
+            KEY_CHANNEL_LOGO to item.channelLogo,
+            KEY_THUMBNAIL to item.thumbnail,
+            KEY_URL to item.clipUrl,
+            KEY_GAME_ID to item.gameId,
+            KEY_GAME_SLUG to item.gameSlug,
+            KEY_GAME_NAME to item.gameName,
+        )
     }
 
     protected fun getOfflineVideoArguments(item: OfflineVideo): Bundle {
-        return Bundle().apply {
-            putString(KEY_TYPE, OFFLINE_VIDEO)
-            putInt(KEY_OFFLINE_VIDEO_ID, item.id)
-            putString(KEY_TITLE, item.name)
-            putString(KEY_URL, item.url)
-            putString(KEY_CHAT_URL, item.chatUrl)
-            putString(KEY_CHANNEL_ID, item.channelId)
-            putString(KEY_CHANNEL_LOGIN, item.channelLogin)
-            putString(KEY_CHANNEL_NAME, item.channelName)
-            putString(KEY_CHANNEL_LOGO, item.channelLogo)
-            putString(KEY_GAME_ID, item.gameId)
-            putString(KEY_GAME_SLUG, item.gameSlug)
-            putString(KEY_GAME_NAME, item.gameName)
-        }
+        return bundleOf(
+            KEY_TYPE to OFFLINE_VIDEO,
+            KEY_OFFLINE_VIDEO_ID to item.id,
+            KEY_TITLE to item.name,
+            KEY_URL to item.url,
+            KEY_CHAT_URL to item.chatUrl,
+            KEY_OFFLINE_CHAT_START_TIME to (item.sourceStartPosition?.div(1000L)?.toInt() ?: -1),
+            KEY_CHANNEL_ID to item.channelId,
+            KEY_CHANNEL_LOGIN to item.channelLogin,
+            KEY_CHANNEL_NAME to item.channelName,
+            KEY_CHANNEL_LOGO to item.channelLogo,
+            KEY_GAME_ID to item.gameId,
+            KEY_GAME_SLUG to item.gameSlug,
+            KEY_GAME_NAME to item.gameName,
+        )
     }
 
     override fun onDestroyView() {
@@ -2869,6 +2883,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         protected const val KEY_VOD_OFFSET = "vodOffset"
         protected const val KEY_URL = "url"
         protected const val KEY_CHAT_URL = "chatUrl"
+        protected const val KEY_OFFLINE_CHAT_START_TIME = "offlineChatStartTime"
         protected const val KEY_CHANNEL_ID = "channelId"
         protected const val KEY_CHANNEL_LOGIN = "channelLogin"
         protected const val KEY_CHANNEL_NAME = "channelName"

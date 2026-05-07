@@ -45,6 +45,7 @@ class DownloadsAdapter(
     private val convertVideo: (OfflineVideo) -> Unit,
     private val moveVideo: (OfflineVideo) -> Unit,
     private val updateChatUrl: (OfflineVideo) -> Unit,
+    private val redownloadChat: (OfflineVideo) -> Unit,
     private val shareVideo: (OfflineVideo) -> Unit,
     private val deleteVideo: (OfflineVideo) -> Unit,
 ) : PagingDataAdapter<OfflineVideo, DownloadsAdapter.PagingViewHolder>(
@@ -261,6 +262,9 @@ class DownloadsAdapter(
                                         menu.findItem(R.id.convertVideo).isVisible = true
                                     }
                                     menu.findItem(R.id.updateChatUrl).isVisible = true
+                                    if (!item.live) {
+                                        menu.findItem(R.id.redownloadChat).isVisible = true
+                                    }
                                     if (item.url?.toUri()?.scheme == ContentResolver.SCHEME_CONTENT) {
                                         menu.findItem(R.id.shareVideo).isVisible = true
                                     }
@@ -273,6 +277,7 @@ class DownloadsAdapter(
                                     R.id.convertVideo -> convertVideo(item)
                                     R.id.moveVideo -> moveVideo(item)
                                     R.id.updateChatUrl -> updateChatUrl(item)
+                                    R.id.redownloadChat -> redownloadChat(item)
                                     R.id.shareVideo -> shareVideo(item)
                                     R.id.delete -> deleteVideo(item)
                                     else -> menu.close()
@@ -287,7 +292,9 @@ class DownloadsAdapter(
                     } else {
                         downloadProgress.text = when (item.status) {
                             OfflineVideo.STATUS_DOWNLOADING -> {
-                                if (item.live) {
+                                if (!item.live && item.downloadChat && item.progress >= item.maxProgress && item.chatProgress < item.maxChatProgress) {
+                                    context.getString(R.string.chat_downloading_progress, min(((item.chatProgress.toFloat() / item.maxChatProgress) * 100f).toInt(), 100))
+                                } else if (item.live) {
                                     context.getString(R.string.downloading)
                                 } else {
                                     context.getString(R.string.downloading_progress, ((item.progress.toFloat() / item.maxProgress) * 100f).toInt())
@@ -302,7 +309,7 @@ class DownloadsAdapter(
                             OfflineVideo.STATUS_WAITING_FOR_STREAM -> context.getString(R.string.download_waiting_for_stream)
                             else -> context.getString(R.string.download_pending)
                         }
-                        if (item.downloadChat && item.status == OfflineVideo.STATUS_DOWNLOADING && !item.live) {
+                        if (item.downloadChat && item.status == OfflineVideo.STATUS_DOWNLOADING && !item.live && item.progress < item.maxProgress) {
                             chatDownloadProgress.visibility = View.VISIBLE
                             chatDownloadProgress.text = context.getString(R.string.chat_downloading_progress, min(((item.chatProgress.toFloat() / item.maxChatProgress) * 100f).toInt(), 100))
                         } else {

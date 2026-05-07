@@ -159,6 +159,7 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
                 viewModel.checkDownloadStatus(it.id)
             }
         }, {
+            // convertVideo
             val convert = getString(R.string.convert)
             requireActivity().getAlertDialogBuilder()
                 .setTitle(convert)
@@ -167,6 +168,7 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
                 .setNegativeButton(getString(android.R.string.cancel), null)
                 .show()
         }, {
+            // moveVideo
             if (it.url?.toUri()?.scheme == ContentResolver.SCHEME_CONTENT) {
                 val storage = requireContext().getExternalFilesDirs(".downloads").mapIndexedNotNull { index, file ->
                     file?.absolutePath?.let { path ->
@@ -223,12 +225,42 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
                 fileResultLauncher?.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE))
             }
         }, {
+            // updateChatUrl
             viewModel.selectedVideo = it
             chatFileResultLauncher?.launch(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
                 type = "*/*"
             })
         }, {
+            // redownloadChat
+            viewLifecycleOwner.lifecycleScope.launch {
+                viewModel.redownloadChat(it)
+                WorkManager.getInstance(requireContext()).enqueueUniqueWork(
+                    "download",
+                    ExistingWorkPolicy.APPEND_OR_REPLACE,
+                    OneTimeWorkRequestBuilder<VideoDownloadWorker>()
+                        .setInputData(workDataOf(
+                            VideoDownloadWorker.KEY_VIDEO_ID to it.id,
+                            VideoDownloadWorker.KEY_FORCE_CHAT_REDOWNLOAD to true,
+                        ))
+                        .addTag(it.id.toString())
+                        .setConstraints(
+                            Constraints.Builder()
+                                .setRequiredNetworkType(
+                                    if (requireContext().prefs().getBoolean(C.DOWNLOAD_WIFI_ONLY, false)) {
+                                        NetworkType.UNMETERED
+                                    } else {
+                                        NetworkType.CONNECTED
+                                    }
+                                )
+                                .build()
+                        )
+                        .build()
+                )
+                viewModel.checkDownloadStatus(it.id)
+            }
+        }, {
+            // shareVideo
             it.url?.let { videoUrl ->
                 val uri = if (videoUrl.endsWith(".m3u8")) {
                     videoUrl.substringBefore("%2F").toUri()
@@ -244,6 +276,7 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
                 }, null))
             }
         }, {
+            // deleteVideo
             val delete = getString(R.string.delete)
             val checkBox = CheckBox(requireContext()).apply {
                 text = getString(R.string.keep_files)

@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.ext.SdkExtensions
 import android.provider.DocumentsContract
 import android.util.Base64
+import android.util.Log
 import android.util.JsonReader
 import android.util.JsonToken
 import android.util.JsonWriter
@@ -30,9 +31,9 @@ import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.TwitchBadge
 import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
 import com.github.andreyasadchy.xtra.model.chat.VideoChatMessage
-import com.github.andreyasadchy.xtra.model.gql.video.VideoMessagesResponse
+import com.github.andreyasadchy.xtra.model.kick.KickMessage
 import com.github.andreyasadchy.xtra.model.ui.OfflineVideo
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.OfflineRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
@@ -61,6 +62,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
@@ -75,6 +78,8 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.StringReader
+import java.net.URI
+import java.time.Instant
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import kotlin.coroutines.suspendCoroutine
@@ -106,7 +111,7 @@ class VideoDownloadWorker @AssistedInject constructor(
     lateinit var playerRepository: PlayerRepository
 
     @Inject
-    lateinit var graphQLRepository: GraphQLRepository
+    lateinit var kickRepository: KickRepository
 
     @Inject
     lateinit var offlineRepository: OfflineRepository
@@ -116,6 +121,7 @@ class VideoDownloadWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         offlineVideo = offlineRepository.getVideoById(inputData.getInt(KEY_VIDEO_ID, 0)) ?: return Result.failure()
+        val forceChatRedownload = inputData.getBoolean(KEY_FORCE_CHAT_REDOWNLOAD, false)
         offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
         setForeground(createForegroundInfo())
         val networkLibrary = context.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
@@ -125,7 +131,8 @@ class VideoDownloadWorker @AssistedInject constructor(
             val from = offlineVideo.fromTime!!
             val to = offlineVideo.toTime!!
             val isShared = path.toUri().scheme == ContentResolver.SCHEME_CONTENT
-            val playlist = when {
+            var playlistUrl = sourceUrl
+            var playlist = when {
                 networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                     val response = suspendCoroutine { continuation ->
                         httpEngine!!.get().newUrlRequestBuilder(sourceUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
@@ -157,6 +164,15 @@ class VideoDownloadWorker @AssistedInject constructor(
                             PlaylistUtils.parseMediaPlaylist(it)
                         }
                     }
+                }
+            }
+            if (playlist.segments.isEmpty()) {
+                playlistUrl = getFirstVariantPlaylistUrl(networkLibrary, sourceUrl) ?: return Result.failure()
+                playlist = (playerRepository.loadTextFromUrl(networkLibrary, playlistUrl) ?: return Result.failure())
+                    .byteInputStream()
+                    .use { PlaylistUtils.parseMediaPlaylist(it) }
+                if (playlist.segments.isEmpty()) {
+                    return Result.failure()
                 }
             }
             val targetDuration = playlist.targetDuration * 1000L
@@ -196,7 +212,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                     }
                 }).let { if (it < 0) -it else it }
             }
-            val urlPath = sourceUrl.substringBeforeLast('/') + "/"
+            val urlPath = playlistUrl.substringBeforeLast('/') + "/"
             val remainingSegments = ArrayList<Segment>()
             if (offlineVideo.progress < offlineVideo.maxProgress) {
                 for (i in fromIndex + offlineVideo.progress..toIndex) {
@@ -715,7 +731,7 @@ class VideoDownloadWorker @AssistedInject constructor(
             }
             val chatJob = runBlocking {
                 launch {
-                    startChatJob(path)
+                    startChatJob(path, forceChatRedownload)
                 }
             }
             jobs.joinAll()
@@ -809,14 +825,14 @@ class VideoDownloadWorker @AssistedInject constructor(
             }
             val chatJob = runBlocking {
                 launch {
-                    startChatJob(path)
+                    startChatJob(path, forceChatRedownload)
                 }
             }
             jobs.join()
             chatJob.join()
         }
         if (offlineVideo.progress < offlineVideo.maxProgress || offlineVideo.downloadChat && offlineVideo.chatProgress < offlineVideo.maxChatProgress) {
-            offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
+            offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
         } else {
             offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADED })
             val notification = NotificationCompat.Builder(context, context.getString(R.string.notification_downloads_channel_id)).apply {
@@ -843,154 +859,173 @@ class VideoDownloadWorker @AssistedInject constructor(
         return Result.success()
     }
 
-    private suspend fun startChatJob(path: String) {
-        if (offlineVideo.downloadChat && offlineVideo.chatProgress < offlineVideo.maxChatProgress) {
+    private suspend fun startChatJob(path: String, forceChatRedownload: Boolean) {
+        if ((offlineVideo.downloadChat || forceChatRedownload) && offlineVideo.chatProgress < offlineVideo.maxChatProgress) {
             offlineVideo.videoId?.let { videoId ->
                 val isShared = path.toUri().scheme == ContentResolver.SCHEME_CONTENT
                 val startTimeSeconds = (offlineVideo.sourceStartPosition!! / 1000).toInt()
-                val durationSeconds = (offlineVideo.duration!! / 1000).toInt()
-                val endTimeSeconds = startTimeSeconds + durationSeconds
+                val requestedDurationSeconds = offlineVideo.fromTime?.let { from ->
+                    offlineVideo.toTime?.let { to -> ((to - from).coerceAtLeast(0L) / 1000L).toInt() }
+                } ?: 0
+                val durationSeconds = maxOf((offlineVideo.duration!! / 1000).toInt(), requestedDurationSeconds)
+                val requestedEndTimeSeconds = offlineVideo.toTime?.let { (it / 1000L).toInt() } ?: 0
+                val endTimeSeconds = maxOf(startTimeSeconds + durationSeconds, requestedEndTimeSeconds + 120)
                 val fileName = "${videoId}${offlineVideo.quality ?: ""}${offlineVideo.downloadDate}_chat.json"
-                val resumed = !offlineVideo.chatUrl.isNullOrBlank()
-                val savedOffset = offlineVideo.chatOffsetSeconds
+                val hasExistingChatFile = !offlineVideo.chatUrl.isNullOrBlank()
+                val resumed = false
+                val savedOffset = if (resumed) offlineVideo.chatOffsetSeconds else 0
                 val latestSavedMessages = mutableListOf<VideoChatMessage>()
                 val savedTwitchEmotes = mutableListOf<String>()
                 val savedBadges = mutableListOf<Pair<String, String>>()
                 val savedEmotes = mutableListOf<String>()
-                val fileUri = if (resumed) {
-                    val fileUri = offlineVideo.chatUrl!!
-                    if (isShared) {
-                        context.contentResolver.openFileDescriptor(fileUri.toUri(), "rw")!!.use {
-                            FileOutputStream(it.fileDescriptor).use { output ->
+                val existingChatFileUri = offlineVideo.chatUrl
+                val existingChatFileAccessible = if (hasExistingChatFile) {
+                    canOpenChatFile(existingChatFileUri!!, isShared)
+                } else {
+                    false
+                }
+                val fileUri = if (resumed || (forceChatRedownload && existingChatFileAccessible)) {
+                    val fileUri = existingChatFileUri!!
+                    if (resumed) {
+                        if (isShared) {
+                            context.contentResolver.openFileDescriptor(fileUri.toUri(), "rw")!!.use {
+                                FileOutputStream(it.fileDescriptor).use { output ->
+                                    output.channel.truncate(offlineVideo.chatBytes)
+                                }
+                            }
+                        } else {
+                            FileOutputStream(fileUri).use { output ->
                                 output.channel.truncate(offlineVideo.chatBytes)
                             }
                         }
-                    } else {
-                        FileOutputStream(fileUri).use { output ->
-                            output.channel.truncate(offlineVideo.chatBytes)
+                    }
+                    if (resumed) {
+                        if (isShared) {
+                            context.contentResolver.openOutputStream(fileUri.toUri(), "wa")!!.bufferedWriter()
+                        } else {
+                            FileOutputStream(fileUri, true).bufferedWriter()
+                        }.use { fileWriter ->
+                            fileWriter.write("}")
                         }
-                    }
-                    if (isShared) {
-                        context.contentResolver.openOutputStream(fileUri.toUri(), "wa")!!.bufferedWriter()
-                    } else {
-                        FileOutputStream(fileUri, true).bufferedWriter()
-                    }.use { fileWriter ->
-                        fileWriter.write("}")
-                    }
-                    if (isShared) {
-                        context.contentResolver.openInputStream(fileUri.toUri())?.bufferedReader()
-                    } else {
-                        FileInputStream(File(fileUri)).bufferedReader()
-                    }?.use { fileReader ->
-                        JsonReader(fileReader).use { reader ->
-                            reader.isLenient = true
-                            var token: JsonToken
-                            do {
-                                token = reader.peek()
-                                when (token) {
-                                    JsonToken.END_DOCUMENT -> {}
-                                    JsonToken.BEGIN_OBJECT -> {
-                                        reader.beginObject()
-                                        while (reader.hasNext()) {
-                                            when (reader.peek()) {
-                                                JsonToken.NAME -> {
-                                                    when (reader.nextName()) {
-                                                        "comments" -> {
-                                                            reader.beginArray()
-                                                            while (reader.hasNext()) {
-                                                                readMessageObject(reader)?.let {
-                                                                    if (it.offsetSeconds == savedOffset) {
-                                                                        latestSavedMessages.add(it)
+                        if (isShared) {
+                            context.contentResolver.openInputStream(fileUri.toUri())?.bufferedReader()
+                        } else {
+                            FileInputStream(File(fileUri)).bufferedReader()
+                        }?.use { fileReader ->
+                            try {
+                                JsonReader(fileReader).use { reader ->
+                                    reader.isLenient = true
+                                    var token: JsonToken
+                                    do {
+                                        token = reader.peek()
+                                        when (token) {
+                                            JsonToken.END_DOCUMENT -> {}
+                                            JsonToken.BEGIN_OBJECT -> {
+                                                reader.beginObject()
+                                                while (reader.hasNext()) {
+                                                    when (reader.peek()) {
+                                                        JsonToken.NAME -> {
+                                                            when (reader.nextName()) {
+                                                                "comments" -> {
+                                                                    reader.beginArray()
+                                                                    while (reader.hasNext()) {
+                                                                        readMessageObject(reader)?.let {
+                                                                            if (it.offsetSeconds == savedOffset) {
+                                                                                latestSavedMessages.add(it)
+                                                                            }
+                                                                        }
                                                                     }
+                                                                    reader.endArray()
                                                                 }
-                                                            }
-                                                            reader.endArray()
-                                                        }
-                                                        "twitchEmotes" -> {
-                                                            reader.beginArray()
-                                                            while (reader.hasNext()) {
-                                                                reader.beginObject()
-                                                                var id: String? = null
-                                                                while (reader.hasNext()) {
-                                                                    when (reader.nextName()) {
-                                                                        "id" -> id = reader.nextString()
-                                                                        else -> reader.skipValue()
+                                                                "twitchEmotes" -> {
+                                                                    reader.beginArray()
+                                                                    while (reader.hasNext()) {
+                                                                        reader.beginObject()
+                                                                        var id: String? = null
+                                                                        while (reader.hasNext()) {
+                                                                            when (reader.nextName()) {
+                                                                                "id" -> id = reader.nextString()
+                                                                                else -> reader.skipValue()
+                                                                            }
+                                                                        }
+                                                                        if (!id.isNullOrBlank()) {
+                                                                            savedTwitchEmotes.add(id)
+                                                                        }
+                                                                        reader.endObject()
                                                                     }
+                                                                    reader.endArray()
                                                                 }
-                                                                if (!id.isNullOrBlank()) {
-                                                                    savedTwitchEmotes.add(id)
-                                                                }
-                                                                reader.endObject()
-                                                            }
-                                                            reader.endArray()
-                                                        }
-                                                        "twitchBadges" -> {
-                                                            reader.beginArray()
-                                                            while (reader.hasNext()) {
-                                                                reader.beginObject()
-                                                                var setId: String? = null
-                                                                var version: String? = null
-                                                                while (reader.hasNext()) {
-                                                                    when (reader.nextName()) {
-                                                                        "setId" -> setId = reader.nextString()
-                                                                        "version" -> version = reader.nextString()
-                                                                        else -> reader.skipValue()
+                                                                "twitchBadges" -> {
+                                                                    reader.beginArray()
+                                                                    while (reader.hasNext()) {
+                                                                        reader.beginObject()
+                                                                        var setId: String? = null
+                                                                        var version: String? = null
+                                                                        while (reader.hasNext()) {
+                                                                            when (reader.nextName()) {
+                                                                                "setId" -> setId = reader.nextString()
+                                                                                "version" -> version = reader.nextString()
+                                                                                else -> reader.skipValue()
+                                                                            }
+                                                                        }
+                                                                        if (!setId.isNullOrBlank() && !version.isNullOrBlank()) {
+                                                                            savedBadges.add(Pair(setId, version))
+                                                                        }
+                                                                        reader.endObject()
                                                                     }
+                                                                    reader.endArray()
                                                                 }
-                                                                if (!setId.isNullOrBlank() && !version.isNullOrBlank()) {
-                                                                    savedBadges.add(Pair(setId, version))
-                                                                }
-                                                                reader.endObject()
-                                                            }
-                                                            reader.endArray()
-                                                        }
-                                                        "cheerEmotes" -> {
-                                                            reader.beginArray()
-                                                            while (reader.hasNext()) {
-                                                                reader.beginObject()
-                                                                var name: String? = null
-                                                                while (reader.hasNext()) {
-                                                                    when (reader.nextName()) {
-                                                                        "name" -> name = reader.nextString()
-                                                                        else -> reader.skipValue()
+                                                                "cheerEmotes" -> {
+                                                                    reader.beginArray()
+                                                                    while (reader.hasNext()) {
+                                                                        reader.beginObject()
+                                                                        var name: String? = null
+                                                                        while (reader.hasNext()) {
+                                                                            when (reader.nextName()) {
+                                                                                "name" -> name = reader.nextString()
+                                                                                else -> reader.skipValue()
+                                                                            }
+                                                                        }
+                                                                        if (!name.isNullOrBlank()) {
+                                                                            savedEmotes.add(name)
+                                                                        }
+                                                                        reader.endObject()
                                                                     }
+                                                                    reader.endArray()
                                                                 }
-                                                                if (!name.isNullOrBlank()) {
-                                                                    savedEmotes.add(name)
-                                                                }
-                                                                reader.endObject()
-                                                            }
-                                                            reader.endArray()
-                                                        }
-                                                        "emotes" -> {
-                                                            reader.beginArray()
-                                                            while (reader.hasNext()) {
-                                                                reader.beginObject()
-                                                                var name: String? = null
-                                                                while (reader.hasNext()) {
-                                                                    when (reader.nextName()) {
-                                                                        "name" -> name = reader.nextString()
-                                                                        else -> reader.skipValue()
+                                                                "emotes" -> {
+                                                                    reader.beginArray()
+                                                                    while (reader.hasNext()) {
+                                                                        reader.beginObject()
+                                                                        var name: String? = null
+                                                                        while (reader.hasNext()) {
+                                                                            when (reader.nextName()) {
+                                                                                "name" -> name = reader.nextString()
+                                                                                else -> reader.skipValue()
+                                                                            }
+                                                                        }
+                                                                        if (!name.isNullOrBlank()) {
+                                                                            savedEmotes.add(name)
+                                                                        }
+                                                                        reader.endObject()
                                                                     }
+                                                                    reader.endArray()
                                                                 }
-                                                                if (!name.isNullOrBlank()) {
-                                                                    savedEmotes.add(name)
-                                                                }
-                                                                reader.endObject()
+                                                                else -> reader.skipValue()
                                                             }
-                                                            reader.endArray()
                                                         }
                                                         else -> reader.skipValue()
                                                     }
                                                 }
-                                                else -> reader.skipValue()
+                                                reader.endObject()
                                             }
+                                            else -> reader.skipValue()
                                         }
-                                        reader.endObject()
-                                    }
-                                    else -> reader.skipValue()
+                                    } while (token != JsonToken.END_DOCUMENT)
                                 }
-                            } while (token != JsonToken.END_DOCUMENT)
+                            } catch (_: Exception) {
+                                // Resume data is best-effort; if the partial file is malformed, continue with a fresh parse state.
+                            }
                         }
                     }
                     fileUri
@@ -1022,27 +1057,20 @@ class VideoDownloadWorker @AssistedInject constructor(
                 val useWebp = context.prefs().getBoolean(C.CHAT_USE_WEBP, true)
                 val channelId = offlineVideo.channelId
                 val channelLogin = offlineVideo.channelLogin
-                val badgeList = mutableListOf<TwitchBadge>().apply {
-                    if (downloadEmotes) {
-                        val channelBadges = try { playerRepository.loadChannelBadges(networkLibrary, helixHeaders, gqlHeaders, channelId, channelLogin, emoteQuality, false) } catch (e: Exception) { emptyList() }
-                        addAll(channelBadges)
-                        val globalBadges = try { playerRepository.loadGlobalBadges(networkLibrary, helixHeaders, gqlHeaders, emoteQuality, false) } catch (e: Exception) { emptyList() }
-                        addAll(globalBadges.filter { badge -> badge.setId !in channelBadges.map { it.setId } })
-                    }
-                }
-                val cheerEmoteList = if (downloadEmotes) {
-                    try {
-                        playerRepository.loadCheerEmotes(networkLibrary, helixHeaders, gqlHeaders, channelId, channelLogin, animateGifs = true, enableIntegrity = false)
-                    } catch (e: Exception) {
-                        emptyList()
-                    }
-                } else emptyList()
-                val emoteList = mutableListOf<Emote>().apply {
-                    if (downloadEmotes) {
-                        if (channelId != null) {
-                            try { addAll(playerRepository.loadStvEmotes(networkLibrary, channelId, useWebp).second) } catch (e: Exception) {}
+                val badgeList = emptyList<TwitchBadge>()
+                val cheerEmoteList = emptyList<CheerEmote>()
+                val emoteList = emptyList<Emote>()
+                if (!resumed) {
+                    if (isShared) {
+                        context.contentResolver.openFileDescriptor(fileUri.toUri(), "rw")?.use {
+                            FileOutputStream(it.fileDescriptor).use { output ->
+                                output.channel.truncate(0L)
+                            }
                         }
-                        try { addAll(playerRepository.loadGlobalStvEmotes(networkLibrary, useWebp)) } catch (e: Exception) {}
+                    } else {
+                        FileOutputStream(fileUri, false).use { output ->
+                            output.channel.truncate(0L)
+                        }
                     }
                 }
                 if (isShared) {
@@ -1051,7 +1079,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                     FileOutputStream(fileUri, resumed).bufferedWriter()
                 }.use { fileWriter ->
                     JsonWriter(fileWriter).use { writer ->
-                        var position = offlineVideo.chatBytes
+                        var position = if (resumed) offlineVideo.chatBytes else 0L
                         if (!resumed) {
                             writer.beginObject().also { position += 1 }
                             writer.name("video".also { position += it.length + 3 })
@@ -1068,18 +1096,83 @@ class VideoDownloadWorker @AssistedInject constructor(
                             writer.endObject().also { position += 1 }
                             writer.name("startTime".also { position += it.length + 4 }).value(startTimeSeconds.also { position += it.toString().length })
                         }
-                        var cursor: String? = null
-                        do {
-                            val response = if (cursor == null) {
-                                graphQLRepository.loadVideoMessagesDownload(networkLibrary, gqlHeaders, videoId, offset = if (resumed) savedOffset else startTimeSeconds)
-                            } else {
-                                graphQLRepository.loadVideoMessagesDownload(networkLibrary, gqlHeaders, videoId, cursor = cursor)
+                        val downloadedComments = mutableListOf<JsonObject>()
+                        // web.kick.com/api/v1/chat/{id}/history uses the chatroom's `channel_id`
+                        // field — NOT the chatroom's own `id` nor the user/channel ID stored
+                        // on the video. getChatHistoryId fetches this specifically.
+                        val chatSourceId = channelLogin
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { login ->
+                                runCatching {
+                                    kickRepository.getChatHistoryId(login)
+                                }.getOrNull()
                             }
-                            val messageObjects = response.jsonObject["data"]?.jsonObject?.get("video")?.jsonObject?.get("comments")?.jsonObject?.get("edges")?.jsonArray?.mapNotNull {
-                                it.jsonObject["node"]?.jsonObject
-                            } ?: emptyList()
-                            val data = json.decodeFromJsonElement<VideoMessagesResponse>(response).data!!.video.comments
-                            val comments = if (cursor == null && resumed) {
+                            ?: channelId?.takeIf { it.isNotBlank() }
+                        if (chatSourceId.isNullOrBlank()) {
+                            Log.w("OfflineChatDownload", "skipping chat download because no chat source id was available for videoId=$videoId")
+                            offlineRepository.updateVideo(offlineVideo.apply {
+                                chatProgress = offlineVideo.maxChatProgress
+                            })
+                            return@use
+                        }
+                        val actualStartTimeMs = offlineVideo.uploadDate ?: 0L
+                        val fetchStartTimeMs = actualStartTimeMs + startTimeSeconds.times(1000L)
+                        var chatStartTime = formatIso8601Utc(fetchStartTimeMs)
+                        val seenStartTimes = mutableSetOf<String>()
+                        val writtenMessageIds = mutableSetOf<String>()
+                        var lastOffsetSeconds: Int? = null
+                        var page = 0
+                        val targetEndTimeMs = actualStartTimeMs + endTimeSeconds.times(1000L)
+                        val historyPollIntervalMs = 5_000L
+                        var scannedToEnd = false
+                        loop@ do {
+                            val requestStartTime = chatStartTime
+                            val requestStartTimeMs = KickApiHelper.parseIso8601DateUTC(requestStartTime) ?: fetchStartTimeMs
+                            if (!seenStartTimes.add(requestStartTime)) {
+                                Log.w(
+                                    "OfflineChatDownload",
+                                    "stop duplicateStartTime videoId=$videoId page=${page + 1} startTime=$requestStartTime last=${lastOffsetSeconds ?: -1} target=$endTimeSeconds"
+                                )
+                                break@loop
+                            }
+                            val response = kickRepository.getChatHistory(chatSourceId, requestStartTime, null)
+                            val messages = response.messages
+                            page += 1
+                            if (messages.isEmpty()) {
+                                val pollStartTimeMs = requestStartTimeMs + historyPollIntervalMs
+                                if (pollStartTimeMs <= targetEndTimeMs) {
+                                    val pollStartTime = formatIso8601Utc(pollStartTimeMs)
+                                    if (!seenStartTimes.contains(pollStartTime)) {
+                                        chatStartTime = pollStartTime
+                                        continue@loop
+                                    }
+                                } else {
+                                    scannedToEnd = true
+                                }
+                                Log.w(
+                                    "OfflineChatDownload",
+                                    "stop emptyPage videoId=$videoId page=$page chatId=$chatSourceId startTime=$chatStartTime " +
+                                        "cursor=${response.cursor ?: "-"} last=${lastOffsetSeconds ?: -1} target=$endTimeSeconds"
+                                )
+                                offlineRepository.updateVideo(offlineVideo.apply {
+                                    chatProgress = offlineVideo.maxChatProgress
+                                })
+                                break@loop
+                            }
+                            val messageObjects = messages.mapNotNull { message ->
+                                val offsetSeconds = getKickChatOffsetSeconds(message, actualStartTimeMs)
+                                    ?: return@mapNotNull null
+                                if (offsetSeconds !in startTimeSeconds..endTimeSeconds) {
+                                    return@mapNotNull null
+                                }
+                                message.id?.takeIf { it.isNotBlank() }?.let { id ->
+                                    if (!writtenMessageIds.add(id)) {
+                                        return@mapNotNull null
+                                    }
+                                }
+                                createKickChatCommentJson(message, actualStartTimeMs)
+                            }
+                            val comments = if (resumed && seenStartTimes.size == 1) {
                                 writer.beginObject().also { position += 1 }
                                 val list = mutableListOf<JsonObject>()
                                 messageObjects.forEach { json ->
@@ -1097,48 +1190,25 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 }
                                 list
                             } else messageObjects
-                            cursor = data.edges.lastOrNull()?.cursor
                             if (comments.isNotEmpty()) {
-                                writer.name("comments".also { position += it.length + 4 })
-                                writer.beginArray().also { position += 1 }
-                                var empty = true
-                                comments.forEach {
-                                    val length = writeJsonElement(null, it, writer)
-                                    if (length > 0L) {
-                                        position += length + 1
-                                        empty = false
-                                    }
-                                }
-                                writer.endArray().also { if (empty) { position += 1 } }
+                                downloadedComments.addAll(comments)
                             }
                             if (downloadEmotes) {
                                 val words = mutableListOf<String>()
                                 val emoteIds = mutableListOf<String>()
                                 val badges = mutableListOf<Badge>()
-                                data.edges.mapNotNull { comment ->
-                                    comment.node.let { item ->
-                                        item.message?.let { message ->
-                                            val chatMessage = StringBuilder()
-                                            message.fragments?.mapNotNull { fragment ->
-                                                fragment.text?.let { text ->
-                                                    fragment.emote?.emoteID.also { chatMessage.append(text) }
-                                                }
-                                            }?.let { emoteIds.addAll(it) }
-                                            message.userBadges?.mapNotNull { badge ->
-                                                badge.setID?.let { setId ->
-                                                    badge.version?.let { version ->
-                                                        Badge(
-                                                            setId = setId,
-                                                            version = version,
-                                                        )
-                                                    }
-                                                }
-                                            }?.let { badges.addAll(it) }
-                                            chatMessage.toString().split(" ").forEach {
-                                                if (!words.contains(it)) {
-                                                    words.add(it)
-                                                }
-                                            }
+                                messageObjects.mapNotNull { json ->
+                                    StringReader(json.toString()).use { string ->
+                                        JsonReader(string).use { reader ->
+                                            readMessageObject(reader)
+                                        }
+                                    }
+                                }.forEach { message ->
+                                    message.emotes?.mapNotNull { it.id }?.let { emoteIds.addAll(it) }
+                                    message.badges?.let { badges.addAll(it) }
+                                    message.message?.split(" ").orEmpty().forEach { word ->
+                                        if (!words.contains(word)) {
+                                            words.add(word)
                                         }
                                     }
                                 }
@@ -1149,7 +1219,13 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 emoteIds.forEach {
                                     if (!savedTwitchEmotes.contains(it)) {
                                         savedTwitchEmotes.add(it)
-                                        twitchEmotes.add(TwitchEmote(id = it))
+                                        twitchEmotes.add(TwitchEmote(
+                                            id = it,
+                                            url1x = "https://files.kick.com/emotes/$it/fullsize",
+                                            url2x = "https://files.kick.com/emotes/$it/fullsize",
+                                            url3x = "https://files.kick.com/emotes/$it/fullsize",
+                                            url4x = "https://files.kick.com/emotes/$it/fullsize"
+                                        ))
                                     }
                                 }
                                 badges.forEach {
@@ -1370,18 +1446,54 @@ class VideoDownloadWorker @AssistedInject constructor(
                                     writer.endArray().also { position += 1 }
                                 }
                             }
-                            val lastOffsetSeconds = data.edges.lastOrNull()?.node?.contentOffsetSeconds
+                            lastOffsetSeconds = messages.lastOrNull()?.let { getKickChatOffsetSeconds(it, actualStartTimeMs) }
                             if (lastOffsetSeconds != null) {
                                 offlineRepository.updateVideo(offlineVideo.apply {
-                                    chatProgress = lastOffsetSeconds - startTimeSeconds
+                                    chatProgress = (lastOffsetSeconds - startTimeSeconds).coerceIn(0, offlineVideo.maxChatProgress)
                                     chatBytes = position
                                     chatOffsetSeconds = lastOffsetSeconds
                                 })
                             }
-                        } while (lastOffsetSeconds?.let { it < endTimeSeconds } != false && !data.edges.lastOrNull()?.cursor.isNullOrBlank() && data.pageInfo?.hasNextPage != false)
-                        offlineRepository.updateVideo(offlineVideo.apply {
-                            chatProgress = offlineVideo.maxChatProgress
-                        })
+                            val pollStartTimeMs = requestStartTimeMs + historyPollIntervalMs
+                            if (pollStartTimeMs > targetEndTimeMs) {
+                                scannedToEnd = true
+                                break@loop
+                            }
+                            val pollStartTime = formatIso8601Utc(pollStartTimeMs)
+                            val nextStartTime = pollStartTime.takeIf { !seenStartTimes.contains(it) }
+                            if (nextStartTime == null) {
+                                Log.w(
+                                    "OfflineChatDownload",
+                                    "stop noNextStart videoId=$videoId page=$page requestStart=$requestStartTime " +
+                                        "pollStart=$pollStartTime last=${lastOffsetSeconds ?: -1} target=$endTimeSeconds"
+                                )
+                                break@loop
+                            }
+                            chatStartTime = nextStartTime
+                        } while (lastOffsetSeconds?.let { it < endTimeSeconds } != false)
+                        if (scannedToEnd || lastOffsetSeconds?.let { it >= endTimeSeconds } == true) {
+                            offlineRepository.updateVideo(offlineVideo.apply {
+                                chatProgress = offlineVideo.maxChatProgress
+                            })
+                        } else {
+                            Log.w(
+                                "OfflineChatDownload",
+                                "incomplete chat download videoId=$videoId chatId=$chatSourceId " +
+                                    "start=$startTimeSeconds end=$endTimeSeconds last=${lastOffsetSeconds ?: -1} " +
+                                    "pages=$page written=${writtenMessageIds.size} progress=${offlineVideo.chatProgress}/${offlineVideo.maxChatProgress}"
+                            )
+                        }
+                        if (downloadedComments.isNotEmpty()) {
+                            writer.name("comments".also { position += it.length + 4 })
+                            writer.beginArray().also { position += 1 }
+                            downloadedComments.forEach {
+                                val length = writeJsonElement(null, it, writer)
+                                if (length > 0L) {
+                                    position += length + 1
+                                }
+                            }
+                            writer.endArray().also { position += 1 }
+                        }
                         writer.endObject().also { position += 1 }
                     }
                 }
@@ -1449,6 +1561,107 @@ class VideoDownloadWorker @AssistedInject constructor(
             }
         }
         return position
+    }
+
+    private fun formatIso8601Utc(timestampMs: Long): String {
+        // Kick's history API requires milliseconds in the timestamp (e.g. 2026-04-30T17:06:00.000Z).
+        // Instant.toString() omits fractional seconds when they are zero, so we force the format.
+        val instant = Instant.ofEpochMilli(timestampMs)
+        val seconds = instant.epochSecond
+        val millis = instant.nano / 1_000_000
+        val base = Instant.ofEpochSecond(seconds).toString() // e.g. 2026-04-30T17:06:00Z
+        return if (base.endsWith("Z")) {
+            base.dropLast(1) + "." + millis.toString().padStart(3, '0') + "Z"
+        } else {
+            base
+        }
+    }
+
+    private fun getKickChatOffsetSeconds(message: KickMessage, startTimeMs: Long): Int? {
+        val createdAtMs = message.createdAt?.let(KickApiHelper::parseIso8601DateUTC) ?: return null
+        return ((createdAtMs - startTimeMs).coerceAtLeast(0L) / 1000L).toInt()
+    }
+
+    private fun createKickChatCommentJson(message: KickMessage, startTimeMs: Long): JsonObject? {
+        val offsetSeconds = getKickChatOffsetSeconds(message, startTimeMs) ?: return null
+        val chatMessage = kickRepository.toChatMessage(message)
+        val content = chatMessage.message
+            ?: chatMessage.systemMsg
+            ?: chatMessage.fullMsg
+            ?: message.content
+            ?: message.message
+            ?: message.text
+            ?: message.body
+            ?: return null
+        val badges = chatMessage.badges.orEmpty()
+        return buildJsonObject {
+            put("id", JsonPrimitive(message.id ?: "kick:${message.hashCode()}"))
+            put("commenter", buildJsonObject {
+                chatMessage.userId?.let { put("id", JsonPrimitive(it)) }
+                chatMessage.userLogin?.let { put("login", JsonPrimitive(it)) }
+                chatMessage.userName?.let { put("displayName", JsonPrimitive(it)) }
+            })
+            put("contentOffsetSeconds", JsonPrimitive(offsetSeconds))
+            put("message", buildJsonObject {
+                put("fragments", buildJsonArray {
+                    val emotes = chatMessage.emotes.orEmpty().sortedBy { it.begin }
+                    if (emotes.isEmpty()) {
+                        add(buildJsonObject {
+                            put("text", JsonPrimitive(content))
+                        })
+                    } else {
+                        var lastIndexCp = 0
+                        emotes.forEach { emote ->
+                            if (emote.begin > lastIndexCp) {
+                                val charStart = content.offsetByCodePoints(0, lastIndexCp)
+                                val charEnd = content.offsetByCodePoints(0, emote.begin)
+                                val textPart = content.substring(charStart, charEnd)
+                                if (textPart.isNotEmpty()) {
+                                    add(buildJsonObject {
+                                        put("text", JsonPrimitive(textPart))
+                                    })
+                                }
+                            }
+                            add(buildJsonObject {
+                                put("text", JsonPrimitive(emote.name ?: ""))
+                                put("emote", buildJsonObject {
+                                    put("emoteID", JsonPrimitive(emote.id ?: ""))
+                                })
+                            })
+                            lastIndexCp = emote.end + 1
+                        }
+                        val totalCp = content.codePointCount(0, content.length)
+                        if (lastIndexCp < totalCp) {
+                            val charStart = content.offsetByCodePoints(0, lastIndexCp)
+                            add(buildJsonObject {
+                                put("text", JsonPrimitive(content.substring(charStart)))
+                            })
+                        }
+                    }
+                })
+                if (badges.isNotEmpty()) {
+                    put("userBadges", buildJsonArray {
+                        badges.forEach { badge ->
+                            add(buildJsonObject {
+                                put("setID", JsonPrimitive(badge.setId))
+                                put("version", JsonPrimitive(badge.version))
+                            })
+                        }
+                    })
+                }
+                chatMessage.color?.let { put("userColor", JsonPrimitive(it)) }
+            })
+        }
+    }
+
+    private fun canOpenChatFile(fileUri: String, isShared: Boolean): Boolean {
+        return runCatching {
+            if (isShared) {
+                context.contentResolver.openInputStream(fileUri.toUri())?.close() != null
+            } else {
+                File(fileUri).exists()
+            }
+        }.getOrDefault(false)
     }
 
     private fun readMessageObject(reader: JsonReader): VideoChatMessage? {
@@ -1616,9 +1829,25 @@ class VideoDownloadWorker @AssistedInject constructor(
         }
     }
 
+    private suspend fun getFirstVariantPlaylistUrl(networkLibrary: String?, masterUrl: String): String? {
+        val masterPlaylist = playerRepository.loadTextFromUrl(networkLibrary, masterUrl)
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return masterPlaylist
+            .lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotBlank() && !it.startsWith("#") && it.substringBefore('?').endsWith(".m3u8") }
+            ?.let { resolvePlaylistUrl(masterUrl, it) }
+    }
+
+    private fun resolvePlaylistUrl(baseUrl: String, url: String): String {
+        return runCatching { URI(baseUrl).resolve(url).toString() }.getOrElse { url }
+    }
+
     companion object {
         const val GROUP_KEY = "com.github.andreyasadchy.xtra.DOWNLOADS"
 
         const val KEY_VIDEO_ID = "KEY_VIDEO_ID"
+        const val KEY_FORCE_CHAT_REDOWNLOAD = "forceChatRedownload"
     }
 }

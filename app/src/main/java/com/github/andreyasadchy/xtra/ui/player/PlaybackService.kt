@@ -13,6 +13,7 @@ import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.content.edit
 import androidx.core.net.toUri
+import androidx.core.os.bundleOf
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.ForwardingSimpleBasePlayer
 import androidx.media3.common.MediaItem
@@ -50,6 +51,7 @@ import com.github.andreyasadchy.xtra.repository.OfflineRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.prefs
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -192,13 +194,7 @@ class PlaybackService : MediaSessionService() {
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
-                    Log.e(
-                        TAG,
-                        "playerError code=${error.errorCode} name=${error.errorCodeName} " +
-                            "background=$background backgroundHandoffMode=$backgroundHandoffMode " +
-                            "message=${error.message}",
-                        error
-                    )
+                    logPlayerError(error)
                     if (background) {
                         if (isBehindLiveWindowError(error)) {
                             logBufferDebug("playerError recovering via seekToDefaultPosition")
@@ -558,9 +554,9 @@ class PlaybackService : MediaSessionService() {
                                 }
                                 val enabled = dynamicsProcessing?.enabled
                                 prefs().edit { putBoolean(C.PLAYER_AUDIO_COMPRESSOR, enabled == true) }
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
-                                    enabled?.let { putBoolean(RESULT, it) }
-                                }))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
+                                    RESULT to enabled
+                                )))
                             }
                             TOGGLE_PROXY -> {
                                 proxyMediaPlaylist = customCommand.customExtras.getBoolean(USING_PROXY)
@@ -584,9 +580,9 @@ class PlaybackService : MediaSessionService() {
                                     }
                                     sleepTimerEndTime = System.currentTimeMillis() + duration
                                 }
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
-                                    putLong(RESULT, endTime)
-                                }))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
+                                    RESULT to endTime
+                                )))
                             }
                             CHECK_ADS -> {
                                 val playlist = (session.player.currentManifest as? HlsManifest)?.mediaPlaylist
@@ -604,53 +600,73 @@ class PlaybackService : MediaSessionService() {
                                                         && (startTime <= segmentStartTime && segmentStartTime < endTime)
                                             } != null
                                 }
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
-                                    putBoolean(RESULT, adSegment == true)
-                                }))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
+                                    RESULT to adSegment
+                                )))
                             }
                             GET_QUALITIES -> {
                                 val playlist = (session.player.currentManifest as? HlsManifest)?.multivariantPlaylist
-                                val names = playlist?.variants?.mapNotNull { it.format.label }?.toTypedArray()
+                                if (BuildConfig.DEBUG) {
+                                    Log.d(
+                                        "KickVodQuality",
+                                        "service manifest variants=${playlist?.variants?.size ?: 0} " +
+                                            "labels=${playlist?.variants?.map { it.format.label }} " +
+                                            "videoGroups=${playlist?.videos?.map { "${it.groupId}:${it.name}" }} " +
+                                            "urls=${playlist?.variants?.map { it.url.toString() }}"
+                                    )
+                                }
+                                val names = playlist?.variants
+                                    ?.map { it.format.label }
+                                    ?.takeIf { labels -> labels.size == playlist.variants.size && labels.all { !it.isNullOrBlank() } }
+                                    ?.map { it!! }
+                                    ?.toTypedArray()
                                 if (!names.isNullOrEmpty()) {
-                                    Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
-                                        putStringArray(NAMES, names)
-                                        putStringArray(CODECS, playlist.variants.map { it.format.codecs }.toTypedArray())
-                                        putStringArray(URLS, playlist.variants.map { it.url.toString() }.toTypedArray())
-                                    }))
+                                    if (BuildConfig.DEBUG) {
+                                        Log.d("KickVodQuality", "service usingLabels=${names.toList()}")
+                                    }
+                                    Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
+                                        NAMES to names,
+                                        CODECS to playlist.variants.map { it.format.codecs }.toTypedArray(),
+                                        URLS to playlist.variants.map { it.url.toString() }.toTypedArray(),
+                                    )))
                                 } else {
                                     val variants = playlist?.variants?.mapNotNull { variant ->
-                                        playlist.videos.find { it.groupId == variant.videoGroupId }?.name?.let { variant to it }
+                                        val name = playlist.videos.find { it.groupId == variant.videoGroupId }?.name
+                                            ?: variant.url.toString()
+                                                .substringBeforeLast("/")
+                                                .substringAfterLast("/")
+                                                .takeIf { it.isNotBlank() && it != "hls" }
+                                        name?.let { variant to it }
                                     }
-                                    Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
-                                        putStringArray(NAMES, variants?.map { it.second }?.toTypedArray())
-                                        putStringArray(CODECS, variants?.map { it.first.format.codecs }?.toTypedArray())
-                                        putStringArray(URLS, variants?.map { it.first.url.toString() }?.toTypedArray())
-                                    }))
+                                    if (BuildConfig.DEBUG) {
+                                        Log.d("KickVodQuality", "service usingFallback=${variants?.map { it.second }}")
+                                    }
+                                    Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
+                                        NAMES to variants?.map { it.second }?.toTypedArray(),
+                                        CODECS to variants?.map { it.first.format.codecs }?.toTypedArray(),
+                                        URLS to variants?.map { it.first.url.toString() }?.toTypedArray(),
+                                    )))
                                 }
                             }
                             GET_DURATION -> {
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
-                                    (session.player.currentManifest as? HlsManifest)?.mediaPlaylist?.durationUs?.div(1000)?.let {
-                                        putLong(RESULT, it)
-                                    }
-                                }))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
+                                    RESULT to (session.player.currentManifest as? HlsManifest)?.mediaPlaylist?.durationUs?.div(1000)
+                                )))
                             }
                             GET_ERROR_CODE -> {
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
-                                    (session.player.playerError?.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode?.let {
-                                        putInt(RESULT, it)
-                                    }
-                                }))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
+                                    RESULT to (session.player.playerError?.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode,
+                                )))
                             }
                             GET_MEDIA_PLAYLIST -> {
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
-                                    putStringArray(RESULT, (session.player.currentManifest as? HlsManifest)?.mediaPlaylist?.tags?.toTypedArray())
-                                }))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
+                                    RESULT to (session.player.currentManifest as? HlsManifest)?.mediaPlaylist?.tags?.toTypedArray()
+                                )))
                             }
                             GET_MULTIVARIANT_PLAYLIST -> {
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
-                                    putStringArray(RESULT, (session.player.currentManifest as? HlsManifest)?.multivariantPlaylist?.tags?.toTypedArray())
-                                }))
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
+                                    RESULT to (session.player.currentManifest as? HlsManifest)?.multivariantPlaylist?.tags?.toTypedArray()
+                                )))
                             }
                             else -> super.onCustomCommand(session, controller, customCommand, args)
                         }
@@ -745,6 +761,29 @@ class PlaybackService : MediaSessionService() {
             mediaSession = null
         }
         super.onDestroy()
+    }
+
+    private fun logPlayerError(error: PlaybackException) {
+        val responseCode = httpResponseCode(error)
+        val message = "playerError code=${error.errorCode} name=${error.errorCodeName} " +
+            "http=$responseCode background=$background backgroundHandoffMode=$backgroundHandoffMode " +
+            "message=${error.message}"
+        if (responseCode == 403 || responseCode == 404) {
+            DiagnosticLogger.w(TAG, message)
+        } else {
+            DiagnosticLogger.e(TAG, message, error)
+        }
+    }
+
+    private fun httpResponseCode(error: Throwable): Int? {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is HttpDataSource.InvalidResponseCodeException) {
+                return cause.responseCode
+            }
+            cause = cause.cause
+        }
+        return null
     }
 
     private fun isBehindLiveWindowError(error: PlaybackException): Boolean {

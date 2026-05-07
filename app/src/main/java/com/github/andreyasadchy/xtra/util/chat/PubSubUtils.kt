@@ -179,20 +179,45 @@ object PubSubUtils {
                             totalPoints = if (outcome?.isNull("total_points") == false) outcome.optInt("total_points") else null,
                             totalUsers = if (outcome?.isNull("total_users") == false) outcome.optInt("total_users") else null,
                             returnRate = if (outcome?.isNull("return_rate") == false) outcome.optDouble("return_rate") else null,
+                            isWinner = listOf("is_winner", "winner", "won", "isWinningOutcome").firstNotNullOfOrNull { key ->
+                                if (outcome?.isNull(key) == false) {
+                                    outcome.optString(key).toBooleanStrictOrNull() ?: outcome.optInt(key, -1).takeIf { it >= 0 }?.let { it != 0 }
+                                } else {
+                                    null
+                                }
+                            } ?: listOf("status", "state", "result").firstNotNullOfOrNull { key ->
+                                if (outcome?.isNull(key) == false) {
+                                    outcome.optString(key).takeIf { it.equals("won", ignoreCase = true) }
+                                } else {
+                                    null
+                                }
+                            }?.let { true },
                         )
                     )
                 }
             }
         }
         return if (prediction != null) {
+            val winningOutcomeId = if (!prediction.isNull("winning_outcome_id")) {
+                prediction.optString("winning_outcome_id").takeIf { it.isNotBlank() }
+            } else {
+                null
+            } ?: outcomesList.firstOrNull { it.isWinner == true }?.id
             Prediction(
                 id = if (!prediction.isNull("id")) prediction.optString("id").takeIf { it.isNotBlank() } else null,
                 createdAt = if (!prediction.isNull("created_at")) prediction.optString("created_at").takeIf { it.isNotBlank() }?.let { KickApiHelper.parseIso8601DateUTC(it) } else null,
+                endedAt = listOf("ended_at", "resolved_at", "closed_at", "updated_at").firstNotNullOfOrNull { key ->
+                    if (!prediction.isNull(key)) {
+                        prediction.optString(key).takeIf { it.isNotBlank() }?.let { KickApiHelper.parseIso8601DateUTC(it) }
+                    } else {
+                        null
+                    }
+                },
                 outcomes = outcomesList,
                 predictionWindowSeconds = if (!prediction.isNull("prediction_window_seconds")) prediction.optInt("prediction_window_seconds") else null,
                 status = if (!prediction.isNull("status")) prediction.optString("status").takeIf { it.isNotBlank() } else null,
                 title = if (!prediction.isNull("title")) prediction.optString("title").takeIf { it.isNotBlank() } else null,
-                winningOutcomeId = if (!prediction.isNull("winning_outcome_id")) prediction.optString("winning_outcome_id").takeIf { it.isNotBlank() } else null,
+                winningOutcomeId = winningOutcomeId,
                 userVote = userVote?.let {
                     Prediction.UserVote(
                         outcomeId = if (!it.isNull("outcome_id")) it.optString("outcome_id").takeIf { outcomeId -> outcomeId.isNotBlank() } else null,

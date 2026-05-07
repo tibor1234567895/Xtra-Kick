@@ -118,7 +118,7 @@ class KickFollowImportDialog : DialogFragment() {
                 }
             }
             val hasExistingSession = webSessionManager.hasKickWebsiteSession()
-              debugLogI("onCreateDialog: hasKickWebsiteSession=$hasExistingSession")
+            debugLogI("onCreateDialog: hasKickWebsiteSession=$hasExistingSession")
             updateStatus(
                 if (hasExistingSession) {
                     getString(R.string.import_kick_followed_status_reusing)

@@ -1,6 +1,7 @@
 package com.github.andreyasadchy.xtra.ui.chat
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -104,9 +105,13 @@ import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.tokenPrefs
 import com.google.android.material.color.MaterialColors
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import java.text.DateFormat
 import java.text.NumberFormat
+import java.util.Date
+import java.util.Random
 import kotlin.math.max
 import kotlin.math.roundToInt
 import javax.inject.Inject
@@ -148,6 +153,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private var pinnedMessageDialogSeed: ChatMessage? = null
     private var tappedMessageDialogSeed: ChatMessage? = null
     private var pinnedGiftUiState = PinnedGiftUiState()
+    private var cachedPinnedGiftMessageKey: String? = null
+    private var cachedPinnedGiftMessageResult: ChatAdapterUtils.MessageResult? = null
+    private var channelPointsDialog: AlertDialog? = null
+    private var rebuildingChannelPointsDialog = false
+    private var scrollToBottomQueued = false
+    private var pendingScrollToBottomPosition: Int? = null
 
     private var autoCompleteAdapter: AutoCompleteAdapter<Any>? = null
     private var emoteSectionAdapter: EmoteSectionAdapter? = null
@@ -259,6 +270,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             context.imageLoader.enqueue(
                 ImageRequest.Builder(context).apply {
                     data(url)
+                    size(40.dp(), 40.dp())
                     if (emote.thirdParty) {
                         httpHeaders(
                             NetworkHeaders.Builder()
@@ -289,10 +301,16 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private fun scrollChatToBottom(position: Int) {
         val binding = _binding ?: return
         if (position < 0) return
+        pendingScrollToBottomPosition = position
+        if (scrollToBottomQueued) return
+        scrollToBottomQueued = true
         val recyclerView = binding.recyclerView
         recyclerView.post {
             val activeBinding = _binding ?: return@post
-            activeBinding.recyclerView.scrollToPosition(position)
+            scrollToBottomQueued = false
+            val targetPosition = pendingScrollToBottomPosition ?: return@post
+            pendingScrollToBottomPosition = null
+            activeBinding.recyclerView.scrollToPosition(targetPosition)
             activeBinding.recyclerView.doOnLayout { view ->
                 val laidOutRecyclerView = view as? RecyclerView ?: return@doOnLayout
                 if (laidOutRecyclerView.canScrollVertically(1)) {
@@ -344,7 +362,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         userColor: String?,
     ): SpannableStringBuilder {
         return SpannableStringBuilder().apply {
-            append(label)
+            append(label.trimEnd())
+            append(' ')
             val start = length
             append(displayName)
             setSpan(ForegroundColorSpan(color), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -361,20 +380,124 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
     }
 
-    private fun buildPinnedMessageText(pinnedGift: PinnedGift): SpannableStringBuilder {
-        val builder = SpannableStringBuilder()
-        pinnedGift.message?.takeIf { it.isNotBlank() }?.let { builder.append(it) }
+    private fun buildPinnedMessageResult(pinnedGift: PinnedGift): ChatAdapterUtils.MessageResult {
+        val (message, pinnedEmotes) = normalizePinnedGiftMessage(pinnedGift.message)
+        val thirdPartyEmotes = buildList {
+            synchronized(viewModel.thirdPartyEmotes) {
+                addAll(viewModel.thirdPartyEmotes)
+            }
+            addAll(pinnedEmotes)
+        }.distinctBy { it.name }
+        val result = if (message != null) {
+            ChatAdapterUtils.prepareChatMessage(
+                ChatMessage(
+                    id = pinnedGift.id,
+                    userId = pinnedGift.userId,
+                    message = message,
+                ),
+                buildPinnedGiftContentKey(pinnedGift).hashCode().toLong(),
+                enableTimestamps = false,
+
+                timestampFormat = null,
+                firstMsgVisibility = 2,
+                firstChatMsg = "",
+                redeemedChatMsg = "",
+                redeemedNoMsg = "",
+                rewardChatMsg = "",
+                replyMessage = "",
+                imageClick = null,
+                useRandomColors = false,
+                random = Random(),
+                useReadableColors = false,
+                isLightTheme = false,
+                nameDisplay = null,
+                useBoldNames = false,
+                showNamePaints = false,
+                namePaints = emptyList(),
+                showStvBadges = false,
+                showKickBadges = false,
+                stvBadges = emptyList(),
+                showPersonalEmotes = true,
+                personalEmoteSets = viewModel.personalEmoteSets,
+                stvUsers = viewModel.stvUsers,
+                enableOverlayEmotes = requireContext().prefs().getBoolean(C.CHAT_ZEROWIDTH, true),
+                showSystemMessageEmotes = false,
+                loggedInUser = null,
+                chatUrl = requireArguments().getString(KEY_CHAT_URL),
+                getEmoteBytes = viewModel::getEmoteBytes,
+                userColors = hashMapOf(),
+                savedColors = hashMapOf(),
+                localTwitchEmotes = viewModel.localTwitchEmotes,
+                thirdPartyEmotes = thirdPartyEmotes,
+                globalBadges = viewModel.globalBadges,
+                channelBadges = viewModel.channelBadges,
+                cheerEmotes = viewModel.cheerEmotes,
+                savedLocalTwitchEmotes = mutableMapOf(),
+                savedLocalBadges = mutableMapOf(),
+                savedLocalCheerEmotes = mutableMapOf(),
+                savedLocalEmotes = mutableMapOf(),
+            )
+        } else {
+            ChatAdapterUtils.MessageResult(SpannableStringBuilder(), arrayListOf(), null, null, null, 0)
+        }
         pinnedGift.giftValue?.let { giftValue ->
-            if (builder.isNotEmpty()) builder.append(" • ")
-            builder.append(getString(R.string.pinned_gift_value))
-            builder.append(": ")
-            builder.append(NumberFormat.getInstance().format(giftValue))
+            if (result.builder.isNotEmpty()) result.builder.append(" • ")
+            result.builder.append(getString(R.string.pinned_gift_value))
+            result.builder.append(": ")
+            result.builder.append(NumberFormat.getInstance().format(giftValue))
         }
-        if (builder.isEmpty()) {
-            builder.append(getString(R.string.pinned_gift_message_fallback))
+        if (result.builder.isEmpty()) {
+            result.builder.append(getString(R.string.pinned_gift_message_fallback))
         }
-        LinkifyCompat.addLinks(builder, Linkify.WEB_URLS)
-        return builder
+        LinkifyCompat.addLinks(result.builder, Linkify.WEB_URLS)
+        return result
+    }
+
+    private fun normalizePinnedGiftMessage(message: String?): Pair<String?, List<Emote>> {
+        if (message.isNullOrBlank()) {
+            return null to emptyList()
+        }
+        val builder = StringBuilder(message.length)
+        val emotes = mutableListOf<Emote>()
+        var consumedIndex = 0
+        pinnedInlineEmoteRegex.findAll(message).forEach { match ->
+            appendPinnedGiftSegment(builder, message.substring(consumedIndex, match.range.first))
+            val emoteId = match.groupValues.getOrNull(1)?.trim()
+            val emoteName = match.groupValues.getOrNull(2)?.trim()
+            if (!emoteId.isNullOrBlank() && !emoteName.isNullOrBlank()) {
+                if (builder.isNotEmpty() && builder.last().isPinnedGiftWordChar() && emoteName.firstOrNull()?.isPinnedGiftWordChar() == true) {
+                    builder.append(' ')
+                }
+                builder.append(emoteName)
+                emotes.add(
+                    Emote(
+                        name = emoteName,
+                        url1x = "https://files.kick.com/emotes/$emoteId/fullsize",
+                        url2x = "https://files.kick.com/emotes/$emoteId/fullsize",
+                        url3x = "https://files.kick.com/emotes/$emoteId/fullsize",
+                        url4x = "https://files.kick.com/emotes/$emoteId/fullsize",
+                        format = "gif",
+                        isAnimated = true,
+                        source = Emote.GLOBAL_STV,
+                    )
+                )
+            }
+            consumedIndex = match.range.last + 1
+        }
+        appendPinnedGiftSegment(builder, message.substring(consumedIndex))
+        return builder.toString().trim().takeIf { it.isNotBlank() } to emotes
+    }
+
+    private fun appendPinnedGiftSegment(builder: StringBuilder, segment: String) {
+        if (segment.isBlank()) return
+        if (builder.isNotEmpty() && builder.last().isPinnedGiftWordChar() && segment.first().isPinnedGiftWordChar()) {
+            builder.append(' ')
+        }
+        builder.append(segment)
+    }
+
+    private fun Char.isPinnedGiftWordChar(): Boolean {
+        return isLetterOrDigit() || this == '_' || this == '-'
     }
 
     private fun buildPinnedMetadataText(pinnedGift: PinnedGift): SpannableStringBuilder {
@@ -422,6 +545,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     private fun resetPinnedGiftUiState() {
         pinnedGiftUiState = PinnedGiftUiState()
+        cachedPinnedGiftMessageKey = null
+        cachedPinnedGiftMessageResult = null
     }
 
     private fun buildPinnedGiftContentKey(pinnedGift: PinnedGift): String {
@@ -432,6 +557,23 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             pinnedGift.userId,
             pinnedGift.userLogin
         ).joinToString("|")
+    }
+
+    private fun getPinnedGiftMessageResult(pinnedGift: PinnedGift): ChatAdapterUtils.MessageResult {
+        val key = listOf(
+            buildPinnedGiftContentKey(pinnedGift),
+            viewModel.thirdPartyEmotes.size,
+            viewModel.personalEmoteSets.size,
+            viewModel.stvUsers.size,
+            requireArguments().getString(KEY_CHAT_URL),
+        ).joinToString("|")
+        if (cachedPinnedGiftMessageKey == key) {
+            cachedPinnedGiftMessageResult?.let { return it.copyForBind() }
+        }
+        val result = buildPinnedMessageResult(pinnedGift)
+        cachedPinnedGiftMessageKey = key
+        cachedPinnedGiftMessageResult = result
+        return result.copyForBind()
     }
 
     private fun syncPinnedGiftUiState(pinnedGift: PinnedGift) {
@@ -465,8 +607,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
         syncPinnedGiftUiState(pinnedGift)
         val expanded = viewModel.pinnedGiftExpanded.value
+        val pinnedGiftMessageResult = getPinnedGiftMessageResult(pinnedGift)
         binding.pinnedGiftLayout.isVisible = true
-        binding.pinnedGiftTitle.text = buildPinnedMessageText(pinnedGift)
+        binding.pinnedGiftTitle.text = pinnedGiftMessageResult.builder
         binding.pinnedGiftText.text = buildPinnedMetadataText(pinnedGift)
         binding.pinnedGiftTitle.maxLines = if (expanded) Int.MAX_VALUE else PINNED_GIFT_COLLAPSED_MAX_LINES
         binding.pinnedGiftTitle.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
@@ -476,6 +619,41 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 val titleIsTruncated = isPinnedGiftTitleTruncated(binding.pinnedGiftTitle)
                 applyPinnedGiftExpandability(isExpandable = titleIsTruncated, expanded = false)
             }
+        }
+        if (pinnedGiftMessageResult.images.isNotEmpty() || pinnedGiftMessageResult.imagePaint != null) {
+            ChatAdapterUtils.loadImages(
+                this,
+                binding.pinnedGiftTitle,
+                { updatedBuilder ->
+                    binding.pinnedGiftTitle.text = updatedBuilder
+                    if (!expanded) {
+                        binding.pinnedGiftTitle.doOnNextLayout {
+                            val titleIsTruncated = isPinnedGiftTitleTruncated(binding.pinnedGiftTitle)
+                            applyPinnedGiftExpandability(isExpandable = titleIsTruncated, expanded = false)
+                        }
+                    }
+                },
+                pinnedGiftMessageResult.images,
+                pinnedGiftMessageResult.imagePaint,
+                pinnedGiftMessageResult.userName,
+                pinnedGiftMessageResult.userNameStartIndex,
+                binding.pinnedGiftTitle.currentTextColor,
+                requireContext().prefs().getString(C.CHAT_IMAGE_LIBRARY, "0"),
+                pinnedGiftMessageResult.builder,
+                TypedValue.applyDimension(
+                    TypedValue.COMPLEX_UNIT_DIP,
+                    (requireContext().prefs().getString(C.CHAT_EMOTE_SIZE, "29.5")?.toFloatOrNull() ?: 29.5f) * (requireContext().prefs().getInt(C.CHAT_SIZE_MODIFIER, 100).toFloat() / 100f),
+                    resources.displayMetrics,
+                ).toInt(),
+                TypedValue.applyDimension(
+                    TypedValue.COMPLEX_UNIT_DIP,
+                    (requireContext().prefs().getString(C.CHAT_BADGE_SIZE, "18.5")?.toFloatOrNull() ?: 18.5f) * (requireContext().prefs().getInt(C.CHAT_SIZE_MODIFIER, 100).toFloat() / 100f),
+                    resources.displayMetrics,
+                ).toInt(),
+                requireContext().prefs().getString(C.CHAT_IMAGE_QUALITY, "4") ?: "4",
+                requireContext().prefs().getBoolean(C.ANIMATED_EMOTES, true),
+                requireContext().prefs().getBoolean(C.CHAT_ZEROWIDTH, true),
+            )
         }
         binding.pinnedGiftLayout.isClickable = true
         binding.pinnedGiftLayout.isFocusable = true
@@ -825,6 +1003,25 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         return getString(R.string.channel_points_prediction_odds, text)
     }
 
+    private fun isPastPrediction(prediction: Prediction): Boolean {
+        return when (prediction.status) {
+            "RESOLVED", "RESOLVE_PENDING", "CANCELED", "CANCEL_PENDING" -> true
+            "ACTIVE", "LOCKED" -> false
+            else -> prediction.endedAt != null
+        }
+    }
+
+    private fun predictionFinishedAt(prediction: Prediction): Long? {
+        return prediction.endedAt ?: prediction.createdAt?.let { createdAt ->
+            prediction.predictionWindowSeconds?.let { duration -> createdAt + (duration * 1000L) }
+        }
+    }
+
+    private fun formatPredictionFinishedAt(prediction: Prediction): String? {
+        val finishedAt = predictionFinishedAt(prediction) ?: return null
+        return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(finishedAt))
+    }
+
     private fun buildChannelPointsPredictionSummaryText(prediction: Prediction): String? {
         val userVote = prediction.userVote ?: return null
         val stake = userVote.totalVoteAmount ?: return null
@@ -855,7 +1052,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val userVote = prediction.userVote ?: return null
         val stake = userVote.totalVoteAmount ?: return null
         val selectedOutcome = prediction.outcomes.orEmpty().firstOrNull { it.id == userVote.outcomeId }
-        val won = prediction.winningOutcomeId != null && prediction.winningOutcomeId == userVote.outcomeId
+        val won = selectedOutcome?.isWinner == true || (prediction.winningOutcomeId != null && prediction.winningOutcomeId == userVote.outcomeId)
         return if (won) {
             val payout = selectedOutcome?.returnRate
                 ?.takeIf { it > 0.0 }
@@ -877,7 +1074,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 builder.append('\n')
             }
             val isSelected = selectedOutcomeId != null && outcome.id == selectedOutcomeId
-            val isWinner = resolved && prediction.winningOutcomeId != null && prediction.winningOutcomeId == outcome.id
+            val isWinner = resolved && (outcome.isWinner == true || (prediction.winningOutcomeId != null && prediction.winningOutcomeId == outcome.id))
             val line = buildString {
                 val title = if (isWinner) {
                     getString(R.string.channel_points_prediction_outcome_winner_title, outcome.title)
@@ -912,19 +1109,41 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         return builder
     }
 
-    private fun createChannelPointsPredictionCard(prediction: Prediction): View {
+    private fun createChannelPointsPredictionCard(
+        prediction: Prediction,
+        compact: Boolean = false,
+    ): View {
         val context = requireContext()
-        val surfaceColor = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainerHighest, Color.DKGRAY)
+        val surfaceBaseColor = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainerHighest, Color.DKGRAY)
+        val surfaceColor = ColorUtils.blendARGB(surfaceBaseColor, Color.WHITE, 0.06f)
+        val onSurfaceVariant = MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.LTGRAY)
+        val primaryColor = MaterialColors.getColor(context, androidx.appcompat.R.attr.colorPrimary, Color.WHITE)
         val titleText = prediction.title?.takeIf { it.isNotBlank() }
             ?: getString(R.string.channel_points_prediction_fallback_title)
-        val outcomesText = buildChannelPointsPredictionOutcomesText(prediction)
         val summaryText = buildChannelPointsPredictionSummaryText(prediction)
+        val totalPoints = prediction.outcomes.orEmpty().sumOf { it.totalPoints?.toLong() ?: 0L }
+        val resolved = prediction.status == "RESOLVED" || prediction.status == "RESOLVE_PENDING"
+        val selectedOutcomeId = prediction.userVote?.outcomeId
+        val pastPrediction = isPastPrediction(prediction)
+        val metaText = buildString {
+            append(getString(if (pastPrediction) R.string.channel_points_prediction_past_label else R.string.channel_points_prediction_current_label))
+            formatPredictionFinishedAt(prediction)?.let {
+                append('\n')
+                append(getString(R.string.channel_points_prediction_closed_at, it))
+            } ?: run {
+                append('\n')
+                append(buildChannelPointsPredictionStatusText(prediction))
+            }
+            append('\n')
+            append(getString(R.string.channel_points_prediction_pool, formatCompactPoints(totalPoints)))
+        }
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 12.dp().toFloat()
                 setColor(surfaceColor)
+                setStroke(1.dp(), ColorUtils.setAlphaComponent(Color.WHITE, 42))
             }
             setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
             layoutParams = LinearLayout.LayoutParams(
@@ -943,9 +1162,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             })
 
             addView(TextView(context).apply {
-                text = buildChannelPointsPredictionStatusText(prediction)
+                text = metaText
                 setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
-                setTextColor(MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.LTGRAY))
+                setTextColor(onSurfaceVariant)
                 setPadding(0, 4.dp(), 0, 0)
             })
 
@@ -958,11 +1177,64 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 })
             }
 
-            addView(TextView(context).apply {
-                text = outcomesText
-                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
-                setPadding(0, 10.dp(), 0, 0)
-            })
+            val outcomes = prediction.outcomes.orEmpty()
+            val visibleOutcomes = if (compact) {
+                outcomes.filter { outcome ->
+                    resolved && (outcome.isWinner == true || (prediction.winningOutcomeId != null && prediction.winningOutcomeId == outcome.id))
+                }.ifEmpty {
+                    outcomes.take(1)
+                }
+            } else {
+                outcomes
+            }
+            visibleOutcomes.forEach { outcome ->
+                val isSelected = selectedOutcomeId != null && outcome.id == selectedOutcomeId
+                val isWinner = resolved && (outcome.isWinner == true || (prediction.winningOutcomeId != null && prediction.winningOutcomeId == outcome.id))
+                val percent = (((outcome.totalPoints ?: 0).toLong() * 100.0) / max(totalPoints, 1)).roundToInt()
+                val details = listOfNotNull(
+                    getString(R.string.channel_points_prediction_percent, percent),
+                    getString(R.string.channel_points_prediction_points_short, outcome.totalPoints?.let { NumberFormat.getInstance().format(it) }),
+                    getString(R.string.channel_points_prediction_votes_short, outcome.totalUsers?.let { NumberFormat.getInstance().format(it) }),
+                    formatPredictionOdds(outcome.returnRate),
+                ).joinToString("  ")
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    if (isWinner || isSelected) {
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.RECTANGLE
+                            cornerRadius = 8.dp().toFloat()
+                            if (isWinner) {
+                                setColor(ColorUtils.setAlphaComponent(primaryColor, 34))
+                                setStroke(1.dp(), ColorUtils.setAlphaComponent(primaryColor, 120))
+                            } else {
+                                setColor(ColorUtils.setAlphaComponent(Color.WHITE, 24))
+                            }
+                        }
+                    }
+                    setPadding(if (isWinner || isSelected) 8.dp() else 0, 7.dp(), if (isWinner || isSelected) 8.dp() else 0, 7.dp())
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        topMargin = 6.dp()
+                    }
+                    addView(TextView(context).apply {
+                        text = if (isWinner) {
+                            getString(R.string.channel_points_prediction_outcome_winner_title, outcome.title)
+                        } else {
+                            outcome.title
+                        }
+                        setTypeface(typeface, if (isWinner || isSelected) Typeface.BOLD else Typeface.NORMAL)
+                        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+                    })
+                    addView(TextView(context).apply {
+                        text = details
+                        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
+                        setTextColor(onSurfaceVariant)
+                        setPadding(0, 2.dp(), 0, 0)
+                    })
+                })
+            }
         }
     }
 
@@ -977,31 +1249,102 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val dialogHorizontalPadding = 14.dp()
         val tileGap = 8.dp()
         val screenWidth = resources.displayMetrics.widthPixels
-        val dialogWidth = (screenWidth - 16.dp()).coerceAtLeast(280.dp())
+        val screenHeight = resources.displayMetrics.heightPixels
+        val isWideViewport = screenWidth > screenHeight
+        val useCompactPrediction = isWideViewport && prediction != null
+        val useWidePanels = useCompactPrediction && screenWidth >= 700.dp()
+        val landscapeHeightLimit = (screenHeight - 24.dp()).coerceAtLeast(240.dp())
+        val landscapeScrollableHeight = (landscapeHeightLimit - 112.dp()).coerceAtLeast(160.dp())
+        val dialogWidth = (
+            if (isWideViewport) {
+                (screenWidth * 0.72f).roundToInt()
+            } else {
+                screenWidth - 16.dp()
+            }
+            ).coerceAtLeast(if (isWideViewport) 520.dp() else 280.dp())
+            .coerceAtMost(screenWidth - 16.dp())
+        val tileColumns = 3
         // AlertDialog adds its own horizontal insets around a custom view, so reserve space for them
-        // before dividing the remaining width into three equal tiles.
+        // before dividing the remaining width into equal tiles.
+        val rewardsWidth = if (useWidePanels) {
+            ((dialogWidth - 48.dp() - (dialogHorizontalPadding * 2) - 12.dp()) * 0.48f).roundToInt()
+        } else {
+            dialogWidth - 48.dp() - (dialogHorizontalPadding * 2)
+        }
         val tileWidth = (
-            dialogWidth -
-                48.dp() -
-                (dialogHorizontalPadding * 2) -
-                (tileGap * 2)
-            ).div(3)
-            .coerceAtLeast(72.dp())
-        val content = LinearLayout(context).apply {
+            rewardsWidth - (tileGap * (tileColumns - 1))
+            ).div(tileColumns)
+            .coerceAtLeast(if (useWidePanels) 58.dp() else 72.dp())
+        val dialogContent = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dialogHorizontalPadding, 10.dp(), dialogHorizontalPadding, 6.dp())
         }
-        prediction?.let {
-            content.addView(createChannelPointsPredictionCard(it))
+        val closeButton = TextView(context).apply {
+            text = getString(R.string.close)
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
+            setTextColor(MaterialColors.getColor(context, androidx.appcompat.R.attr.colorAccent, Color.WHITE))
+            gravity = android.view.Gravity.CENTER
+            setPadding(18.dp(), 6.dp(), 0, 8.dp())
         }
-        content.addView(TextView(context).apply {
+        dialogContent.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 8.dp())
+            addView(TextView(context).apply {
+                text = getString(R.string.channel_points_rewards_title)
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_HeadlineSmall)
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
+            })
+            addView(closeButton)
+        })
+        val scrollContent = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val content = LinearLayout(context).apply {
+            orientation = if (useWidePanels) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val rewardsContent = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            if (useWidePanels) {
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                ).apply {
+                    leftMargin = 12.dp()
+                }
+            }
+        }
+        prediction?.let {
+            val predictionView = createChannelPointsPredictionCard(it, compact = useCompactPrediction && !useWidePanels)
+            if (useWidePanels) {
+                content.addView(predictionView.apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        0,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        1.08f
+                    )
+                })
+            } else {
+                content.addView(predictionView)
+            }
+        }
+        rewardsContent.addView(TextView(context).apply {
             text = balanceText
             setTypeface(typeface, Typeface.BOLD)
             setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyLarge)
             setPadding(0, 0, 0, 10.dp())
         })
         val rewardsContainer = GridLayout(context).apply {
-            columnCount = 3
+            columnCount = tileColumns
             useDefaultMargins = false
             alignmentMode = GridLayout.ALIGN_BOUNDS
             layoutParams = LinearLayout.LayoutParams(
@@ -1009,14 +1352,27 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-        content.addView(rewardsContainer)
+        rewardsContent.addView(rewardsContainer)
+        content.addView(rewardsContent)
+        scrollContent.addView(content)
+        dialogContent.addView(ScrollView(context).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            if (isWideViewport) {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    landscapeScrollableHeight
+                )
+            } else {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+            addView(scrollContent)
+        })
         val builder = context.getAlertDialogBuilder()
-            .setTitle(getString(R.string.channel_points_rewards_title))
-            .setView(ScrollView(context).apply {
-                isFillViewport = true
-                addView(content)
-            })
-            .setNegativeButton(getString(R.string.close), null)
+            .setView(dialogContent)
         if (rewards.isEmpty()) {
             rewardsContainer.addView(TextView(context).apply {
                 text = buildString {
@@ -1045,6 +1401,15 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 }
         }
         val dialog = builder.show()
+        closeButton.setOnClickListener {
+            dialog.dismiss()
+        }
+        channelPointsDialog = dialog
+        dialog.setOnDismissListener {
+            if (channelPointsDialog === dialog) {
+                channelPointsDialog = null
+            }
+        }
         if (rewards.isNotEmpty()) {
             rewards.forEach { reward ->
                 rewardsContainer.addView(createViewerRewardTile(reward, tileWidth) {
@@ -1053,7 +1418,28 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 })
             }
         }
-        dialog.window?.setLayout(dialogWidth, WindowManager.LayoutParams.WRAP_CONTENT)
+        dialog.window?.setLayout(
+            dialogWidth,
+            if (isWideViewport) landscapeHeightLimit else WindowManager.LayoutParams.WRAP_CONTENT
+        )
+        dialog.window?.decorView?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (channelPointsDialog === dialog && (resources.displayMetrics.widthPixels > resources.displayMetrics.heightPixels) != isWideViewport) {
+                rebuildChannelPointsDialogAfterLayoutChange()
+            }
+        }
+    }
+
+    private fun rebuildChannelPointsDialogAfterLayoutChange() {
+        if (channelPointsDialog?.isShowing == true && !rebuildingChannelPointsDialog) {
+            rebuildingChannelPointsDialog = true
+            channelPointsDialog?.dismiss()
+            _binding?.root?.post {
+                rebuildingChannelPointsDialog = false
+                if (_binding != null && isAdded) {
+                    showChannelPointRewardsDialog()
+                }
+            }
+        }
     }
 
     private fun formatViewerKickRewardLabel(reward: com.github.andreyasadchy.xtra.model.chat.ChannelPointReward): String {
@@ -1270,13 +1656,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             Toast.makeText(context, getString(R.string.kick_prediction_vote_only_selected), Toast.LENGTH_SHORT).show()
             return
         }
-        val currentBalance = viewModel.channelPointsBalance.value
+        var currentBalance = viewModel.channelPointsBalance.value
         val currentStake = prediction.userVote?.takeIf { it.outcomeId == outcomeId }?.totalVoteAmount
         val minAmount = 10
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
-        content.addView(TextView(context).apply {
+        val balanceText = TextView(context).apply {
             text = buildString {
                 append(getString(R.string.channel_points_balance, currentBalance?.let { NumberFormat.getInstance().format(it) } ?: getString(R.string.channel_points_loading)))
                 append('\n')
@@ -1288,7 +1674,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             }
             setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
             setPadding(0, 0, 0, 12.dp())
-        })
+        }
+        content.addView(balanceText)
         val input = EditText(context).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
             hint = getString(R.string.kick_prediction_vote_amount_hint)
@@ -1303,13 +1690,39 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val positiveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
         val updateButtonState = {
             val amount = input.text?.toString()?.toIntOrNull()
-            positiveButton.isEnabled = currentBalance != null && amount != null && amount >= minAmount && amount <= currentBalance
+            val balance = currentBalance
+            positiveButton.isEnabled = balance != null && amount != null && amount >= minAmount && amount <= balance
+        }
+        val updateBalanceText = {
+            balanceText.text = buildString {
+                append(getString(R.string.channel_points_balance, currentBalance?.let { NumberFormat.getInstance().format(it) } ?: getString(R.string.channel_points_loading)))
+                append('\n')
+                append(getString(R.string.kick_prediction_vote_minimum, NumberFormat.getInstance().format(minAmount)))
+                if (currentStake != null) {
+                    append('\n')
+                    append(getString(R.string.kick_prediction_vote_current_stake, NumberFormat.getInstance().format(currentStake)))
+                }
+            }
         }
         positiveButton.isEnabled = false
         input.addTextChangedListener(onTextChanged = { _, _, _, _ ->
             updateButtonState()
         })
         updateButtonState()
+        var balanceJob: Job? = viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.channelPointsBalance.collectLatest { balance ->
+                currentBalance = balance
+                updateBalanceText()
+                updateButtonState()
+            }
+        }
+        dialog.setOnDismissListener {
+            balanceJob?.cancel()
+            balanceJob = null
+        }
+        if (currentBalance == null) {
+            refreshKickRewardState()
+        }
         positiveButton.setOnClickListener {
             val amount = input.text?.toString()?.toIntOrNull() ?: return@setOnClickListener
             submitKickPredictionVote(channelLogin, outcomeId, amount)
@@ -2549,7 +2962,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.refreshMessages.collect {
-                                adapter?.notifyDataSetChanged()
                                 renderBufferedMessages()
                             }
                         }
@@ -2684,6 +3096,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     fun reconnect() {
         val channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)
         if (channelLogin != null) {
+            viewModel.autoReconnect = true
             refreshKickRewardState()
             viewModel.startLiveChat(requireArguments().getString(KEY_CHANNEL_ID), channelLogin)
             if (requireContext().prefs().getBoolean(C.CHAT_RECENT, true)) {
@@ -2694,7 +3107,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 )
             }
         }
-        viewModel.autoReconnect = true
     }
 
     fun reloadEmotes() {
@@ -2704,8 +3116,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         )
     }
 
-    fun startReplayChatLoad() {
-        viewModel.startReplayChatLoad()
+    fun startReplayChatLoad(seekPosition: Long? = null) {
+        viewModel.startReplayChatLoad(seekPosition)
     }
 
     fun stopReplayChat() {
@@ -2961,8 +3373,15 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        rebuildChannelPointsDialogAfterLayoutChange()
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
+        channelPointsDialog?.dismiss()
+        channelPointsDialog = null
         _binding?.emoteSections?.adapter = null
         emoteSectionAdapter = null
         resetPinnedGiftUiState()
@@ -3027,6 +3446,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         private const val KEY_KICK_REPLAY_START_TIME = "kickReplayStartTime"
         private const val KEY_KICK_REPLAY_URL = "kickReplayUrl"
         private const val KEY_SOURCE = "source"
+        private val pinnedInlineEmoteRegex = Regex("\\[emote:(\\d+):([^\\]]+)]")
 
         fun newInstance(channelId: String?, channelLogin: String?, channelName: String?, streamId: String?, source: String? = null): ChatFragment {
             return ChatFragment().apply {
@@ -3068,12 +3488,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             }
         }
 
-        fun newLocalInstance(channelId: String?, channelLogin: String?, chatUrl: String?, source: String? = null): ChatFragment {
+        fun newLocalInstance(channelId: String?, channelLogin: String?, chatUrl: String?, startTime: Int? = null, source: String? = null): ChatFragment {
             return ChatFragment().apply {
                 arguments = Bundle().apply {
                     putString(KEY_CHANNEL_ID, channelId)
                     putString(KEY_CHANNEL_LOGIN, channelLogin)
                     putString(KEY_CHAT_URL, chatUrl)
+                    putInt(KEY_START_TIME, startTime ?: -1)
                     putString(KEY_SOURCE, source)
                 }
             }

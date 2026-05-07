@@ -181,15 +181,18 @@ class ChatAdapter(
             loggedInUser, chatUrl, getEmoteBytes, userColors, savedColors, localTwitchEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalTwitchEmotes, savedLocalBadges,
             savedLocalCheerEmotes, savedLocalEmotes
         )
+        ChatAdapterUtils.reserveImagePlaceholders(result.builder, result.images, emoteSize, badgeSize)
         holder.bind(bindKey, chatMessage, result.builder, position, result.backgroundRes)
-        ChatAdapterUtils.loadImages(
-            fragment, holder.textView, { updatedBuilder ->
-                if (holder.isBoundTo(bindKey)) {
-                    holder.bind(bindKey, chatMessage, updatedBuilder, position, result.backgroundRes)
-                }
-            }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
-            backgroundColor, imageLibrary, result.builder, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes
-        )
+        if (result.images.isNotEmpty() || result.imagePaint != null) {
+            ChatAdapterUtils.loadImages(
+                fragment, holder.textView, { updatedBuilder ->
+                    if (holder.isBoundTo(bindKey)) {
+                        holder.bind(bindKey, chatMessage, updatedBuilder, position, result.backgroundRes)
+                    }
+                }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
+                backgroundColor, imageLibrary, result.builder, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes
+            )
+        }
     }
 
     fun createMessageClickedChatAdapter(selectedMessageOverride: ChatMessage? = selectedMessage): MessageClickedChatAdapter {
@@ -245,6 +248,19 @@ class ChatAdapter(
             alternatingLineShadowStrength = alternatingLineShadowStrength,
             position = visualParityPosition,
         )
+    }
+
+    private fun resolveCurrentMessagePosition(chatMessage: ChatMessage, adapterPosition: Int, fallbackPosition: Int): Int {
+        synchronized(messages) {
+            if (adapterPosition in messages.indices && messages[adapterPosition] == chatMessage) {
+                return adapterPosition
+            }
+            val currentPosition = messages.indexOf(chatMessage)
+            if (currentPosition >= 0) {
+                return currentPosition
+            }
+        }
+        return fallbackPosition
     }
 
     private fun resolveDividerColor(position: Int, backgroundColor: Int): ChatBackgroundUtils.DividerColors? {
@@ -370,8 +386,9 @@ class ChatAdapter(
 
         fun bind(bindKey: String, chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder, position: Int, backgroundRes: Int) {
             currentBindKey = bindKey
-            val resolvedBackgroundColor = resolveMessageBackgroundColor(textView.context, position, backgroundRes)
-            val dividerColors = resolveDividerColor(position, resolvedBackgroundColor)
+            val currentPosition = resolveCurrentMessagePosition(chatMessage, bindingAdapterPosition, position)
+            val resolvedBackgroundColor = resolveMessageBackgroundColor(textView.context, currentPosition, backgroundRes)
+            val dividerColors = resolveDividerColor(currentPosition, resolvedBackgroundColor)
             val previewKey = replyPreviewKey(chatMessage)
             val expanded = previewKey != null && previewKey in expandedReplyPreviewKeys
             val rewardColor = parseRewardColor(chatMessage.reward?.backgroundColor)
@@ -387,6 +404,7 @@ class ChatAdapter(
                     containerView.setBackgroundColor(resolvedBackgroundColor)
                     setPaddingRelative(5, 1, 5, 1)
                 }
+                minHeight = emoteSize + paddingTop + paddingBottom
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 if (chatMessage.isReply) {
                     movementMethod = null

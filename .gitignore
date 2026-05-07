@@ -31,12 +31,6 @@ proguard/
 # Log Files
 *.log
 
-# Public repo docs/text policy
-*.md
-*.txt
-!README.md
-!**/README.md
-
 # Android Studio Navigation editor temp files
 .navigation/
 
@@ -75,3 +69,8 @@ fastlane/readme.md
 .env
 .env.*
 !.env.example
+
+# Ignore exported chat/history files and local dumps
+106813460160p1777924348280_chat.json
+1068134601080p601777913902557_chat.json
+Kick_VOD_Chat_history.txt

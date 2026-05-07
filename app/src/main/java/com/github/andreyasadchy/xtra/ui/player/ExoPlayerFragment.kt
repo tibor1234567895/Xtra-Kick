@@ -54,6 +54,7 @@ import com.github.andreyasadchy.xtra.ui.download.DownloadDialog
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.ui.player.PlaybackService.CustomHlsPlaylistParserFactory
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
@@ -84,6 +85,28 @@ class ExoPlayerFragment : PlayerFragment() {
         if (BuildConfig.DEBUG && prefs.getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
             Log.w(TAG, message)
         }
+    }
+
+    private fun logPlayerError(error: PlaybackException) {
+        val responseCode = httpResponseCode(error)
+        val message = "Player error code=${error.errorCode} name=${error.errorCodeName} " +
+            "http=$responseCode type=$videoType message=${error.message}"
+        if (responseCode == 403 || responseCode == 404) {
+            DiagnosticLogger.w(TAG, message)
+        } else {
+            DiagnosticLogger.e(TAG, message, error)
+        }
+    }
+
+    private fun httpResponseCode(error: Throwable): Int? {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is HttpDataSource.InvalidResponseCodeException) {
+                return cause.responseCode
+            }
+            cause = cause.cause
+        }
+        return null
     }
 
     override fun onStart() {
@@ -181,7 +204,7 @@ class ExoPlayerFragment : PlayerFragment() {
                             if (videoType != STREAM) {
                                 if (isPlaying) {
                                     chatFragment?.startReplayChatLoad()
-                                } else {
+                                } else if (player?.playWhenReady == false) {
                                     chatFragment?.stopReplayChat()
                                 }
                             }
@@ -214,17 +237,36 @@ class ExoPlayerFragment : PlayerFragment() {
                             }
                             if (viewModel.qualities.isEmpty() || viewModel.updateQualities) {
                                 val playlist = (player?.currentManifest as? HlsManifest)?.multivariantPlaylist
+                                if (BuildConfig.DEBUG) {
+                                    Log.d(
+                                        "KickVodQuality",
+                                        "exo manifest variants=${playlist?.variants?.size ?: 0} " +
+                                            "labels=${playlist?.variants?.map { it.format.label }} " +
+                                            "videoGroups=${playlist?.videos?.map { "${it.groupId}:${it.name}" }} " +
+                                            "urls=${playlist?.variants?.map { it.url.toString() }} " +
+                                            "existing=${viewModel.qualities.keys.toList()} update=${viewModel.updateQualities} videoType=$videoType"
+                                    )
+                                }
                                 val names: Array<String>?
                                 val codecStrings: Array<String?>?
                                 val urls: Array<String>?
-                                val labels = playlist?.variants?.mapNotNull { it.format.label }?.toTypedArray()
+                                val labels = playlist?.variants
+                                    ?.map { it.format.label }
+                                    ?.takeIf { labels -> labels.size == playlist.variants.size && labels.all { !it.isNullOrBlank() } }
+                                    ?.map { it!! }
+                                    ?.toTypedArray()
                                 if (!labels.isNullOrEmpty()) {
                                     names = labels
                                     codecStrings = playlist.variants.map { it.format.codecs }.toTypedArray()
                                     urls = playlist.variants.map { it.url.toString() }.toTypedArray()
                                 } else {
                                     val variants = playlist?.variants?.mapNotNull { variant ->
-                                        playlist.videos.find { it.groupId == variant.videoGroupId }?.name?.let { variant to it }
+                                        val name = playlist.videos.find { it.groupId == variant.videoGroupId }?.name
+                                            ?: variant.url.toString()
+                                                .substringBeforeLast("/")
+                                                .substringAfterLast("/")
+                                                .takeIf { it.isNotBlank() && it != "hls" }
+                                        name?.let { variant to it }
                                     }
                                     names = variants?.map { it.second }?.toTypedArray()
                                     codecStrings = variants?.map { it.first.format.codecs }?.toTypedArray()
@@ -264,6 +306,9 @@ class ExoPlayerFragment : PlayerFragment() {
                                     }
                                     if (videoType == STREAM) {
                                         map[CHAT_ONLY_QUALITY] = Pair(getString(R.string.chat_only), null)
+                                    }
+                                    if (BuildConfig.DEBUG) {
+                                        Log.d("KickVodQuality", "exo sourceNames=${names.toList()} map=${map.map { "${it.key}:${it.value.first}" }}")
                                     }
                                     viewModel.qualities = map.toList()
                                         .sortedByDescending {
@@ -371,7 +416,7 @@ class ExoPlayerFragment : PlayerFragment() {
                         }
 
                         override fun onPlayerError(error: PlaybackException) {
-                            Log.e(tag, "Player error", error)
+                            logPlayerError(error)
                             when (videoType) {
                                 STREAM -> {
                                     if (isBehindLiveWindowError(error)) {
@@ -763,6 +808,10 @@ class ExoPlayerFragment : PlayerFragment() {
     }
 
     override fun seek(position: Long) {
+        if (videoType != STREAM) {
+            chatFragment?.updatePosition(position)
+            chatFragment?.startReplayChatLoad(position)
+        }
         player?.seekTo(position)
     }
 

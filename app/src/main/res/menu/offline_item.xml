@@ -21,6 +21,10 @@
         android:title="@string/change_chat_file"
         android:visible="false" />
     <item
+        android:id="@+id/redownloadChat"
+        android:title="@string/redownload_chat"
+        android:visible="false" />
+    <item
         android:id="@+id/shareVideo"
         android:title="@string/share"
         android:visible="false" />

@@ -322,6 +322,8 @@ object C {
     const val DEBUG_KICK_REALTIME_CHAT = "debug_kick_realtime_chat"
     const val DEBUG_KICK_LEGACY_SEARCH = "debug_kick_legacy_search"
     const val DEBUG_NETWORK_LOGS = "debug_network_logs"
+    const val DEBUG_DIAGNOSTIC_FILE_LOGGING = "debug_diagnostic_file_logging"
+    const val DEBUG_DIAGNOSTIC_FILE_LOG_LEVEL = "debug_diagnostic_file_log_level"
     const val DEBUG_PLAYER_BUFFER_LOGS = "debug_player_buffer_logs"
     const val DEBUG_PLAYER_SHELL_LOGS = "debug_player_shell_logs"
     const val DEBUG_KICK_FOLLOW_IMPORT_LOGS = "debug_kick_follow_import_logs"

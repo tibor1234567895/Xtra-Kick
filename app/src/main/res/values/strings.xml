@@ -562,9 +562,9 @@
     <string name="pinned_gift_title_without_seconds">Sent by %1$s</string>
     <string name="pinned_gift_title_prefix">Sent by </string>
     <string name="pinned_gift_pinned_by">Pinned by %1$s</string>
-    <string name="pinned_gift_pinned_by_with_seconds">Pinned by %1$s for %2$ss</string>
+    <string name="pinned_gift_pinned_by_with_seconds">Pinned by %1$s for %2$ds</string>
     <string name="pinned_gift_pinned_by_prefix">Pinned by </string>
-    <string name="pinned_gift_pinned_by_suffix_with_seconds"> for %1$ss</string>
+    <string name="pinned_gift_pinned_by_suffix_with_seconds"> for %1$ds</string>
     <string name="pinned_gift_unknown_user">Unknown user</string>
     <string name="kick_automod">Kick AutoMod</string>
     <string name="pinned_gift_message_fallback">Pinned message</string>
@@ -575,8 +575,11 @@
     <string name="channel_points_rewards_unavailable">Reward details are not available for this channel right now.</string>
     <string name="channel_points_rewards_balance">Balance: %1$s</string>
     <string name="channel_points_prediction_fallback_title">Prediction</string>
+    <string name="channel_points_prediction_past_label">Past prediction</string>
+    <string name="channel_points_prediction_current_label">Current prediction</string>
     <string name="channel_points_prediction_open">Open</string>
     <string name="channel_points_prediction_closed">Prediction closed</string>
+    <string name="channel_points_prediction_closed_at">Closed %1$s</string>
     <string name="channel_points_prediction_pool">%1$s in the pool</string>
     <string name="channel_points_prediction_odds">%1$sx</string>
     <string name="channel_points_prediction_summary_basic">Bet: %1$s points</string>
@@ -720,6 +723,7 @@
     <string name="convert">Convert</string>
     <string name="download_chat">Download chat replay</string>
     <string name="download_chat_emotes">Download emotes and badges</string>
+    <string name="redownload_chat">Redownload chat</string>
     <string name="chat_downloading_progress">Chat: %d%%</string>
     <string name="change_chat_file">Change chat file</string>
     <string name="download_queued">Queued</string>
@@ -920,6 +924,20 @@
     <string name="debug_logs_chat">Chat debug logs</string>
     <string name="debug_logs_player">Player and buffering debug logs</string>
     <string name="debug_logs_kick_import">Kick import debug logs</string>
+    <string name="debug_logs_diagnostics">Diagnostic file logging</string>
+    <string name="diagnostic_file_logging">Write diagnostic log file</string>
+    <string name="diagnostic_file_logging_summary">When enabled, crashes and selected app warnings/errors are written to private app storage for sharing later.</string>
+    <string name="diagnostic_log_level">Minimum diagnostic level</string>
+    <string name="diagnostic_log_level_crash">Crash only</string>
+    <string name="diagnostic_log_level_error">Error and crash</string>
+    <string name="diagnostic_log_level_warning">Warning, error and crash</string>
+    <string name="diagnostic_log_clear">Clear diagnostic log</string>
+    <string name="diagnostic_log_clear_done">Diagnostic log cleared</string>
+    <string name="diagnostic_log_share">Share diagnostic log</string>
+    <string name="diagnostic_log_share_empty">No diagnostic log has been written yet</string>
+    <string name="diagnostic_log_share_title">Share diagnostic log</string>
+    <string name="diagnostic_log_test">Write test diagnostic entry</string>
+    <string name="diagnostic_log_test_done">Test diagnostic entry written</string>
     <string name="debug_kick_clip_chat" translatable="false">Kick replay and clip chat debug logs</string>
     <string name="debug_kick_badge_logs" translatable="false">Kick badge parser debug logs</string>
     <string name="debug_kick_feature_logs" translatable="false">Kick points and pinned feature debug logs</string>

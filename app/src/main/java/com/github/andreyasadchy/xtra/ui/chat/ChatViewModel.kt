@@ -143,9 +143,16 @@ class ChatViewModel @Inject constructor(
     private var kickInitialRoomStateLoaded = false
     private var kickRealtimeLastDisconnectMessage: String? = null
     private var kickRealtimeLastDisconnectAtMs: Long = 0L
+    private var kickReplayMessageSources: List<String>? = null
     private var intentionalChatDisconnectUntilMs: Long = 0L
-    private val kickReplayPreloadWindowMs = 60_000L
-    private val kickReplayPreloadMaxMessages = 120
+    private val kickReplayPreloadWindowMs = 1L * 60L * 1000L
+    private val kickReplayPreloadFallbackWindowsMs = listOf(
+        30L * 60L * 1000L,
+        60L * 60L * 1000L,
+        3L * 60L * 60L * 1000L,
+        6L * 60L * 60L * 1000L,
+    )
+    private val kickReplayPreloadMaxMessages = 30
     private val kickReplayPollIntervalMs = 5_000L
     private val kickReplayEmitIntervalMs = 750L
     private val kickReplayEmitLeadMs = 500L
@@ -1554,7 +1561,8 @@ class ChatViewModel @Inject constructor(
         debugSessionKey: String? = null,
         debugPhase: String = "timeline",
         maxPages: Int = 1,
-        throwOnTotalFailure: Boolean = false
+        throwOnTotalFailure: Boolean = false,
+        initialCursor: String? = null
     ): List<ChatMessage> {
         var lastError: Exception? = null
         var hadSuccessfulResponse = false
@@ -1562,17 +1570,19 @@ class ChatViewModel @Inject constructor(
             try {
                 val collected = mutableListOf<ChatMessage>()
                 var newKickEmotesAdded = false
-                var cursor: String? = null
+                var cursor: String? = initialCursor
                 var page = 0
+                val seenCursors = mutableSetOf<String>()
                 do {
+                    val requestCursor = cursor
                     val requestId = kickReplayChatRequestSeq.incrementAndGet()
                     logKickReplayChat(
                         stage = "request",
                         sessionKey = debugSessionKey
                     ) {
-                        "id=$requestId phase=$debugPhase source=$source startTime=$startTime cursor=${cursor ?: "-"} page=${page + 1}"
+                        "id=$requestId phase=$debugPhase source=$source startTime=$startTime cursor=${requestCursor ?: "-"} page=${page + 1}"
                     }
-                    val response = kickRepository.getChatHistory(source, startTime, cursor)
+                    val response = kickRepository.getChatHistory(source, startTime, requestCursor)
                     hadSuccessfulResponse = true
                     val rawMessages = response.messages
                     val rawCount = rawMessages.size
@@ -1590,7 +1600,7 @@ class ChatViewModel @Inject constructor(
                         }
                     }
                     collected += messages
-                    cursor = response.cursor?.takeIf { it.isNotBlank() }
+                    cursor = response.cursor?.takeIf { it.isNotBlank() && it != requestCursor && seenCursors.add(it) }
                     page += 1
                 } while (cursor != null && page < maxPages && collected.size < kickReplayPreloadMaxMessages)
                 if (newKickEmotesAdded) {
@@ -1626,6 +1636,34 @@ class ChatViewModel @Inject constructor(
             throw lastError
         }
         return emptyList()
+    }
+
+    private suspend fun fetchKickPreloadHistoryMessages(
+        messageSources: List<String>,
+        playbackTimestampMs: Long,
+        channelId: String,
+        channelLogin: String,
+        debugSessionKey: String,
+        maxPages: Int,
+    ): List<ChatMessage> {
+        val syntheticCursor = ((playbackTimestampMs - kickReplayPreloadWindowMs) * 1000L).toString()
+        val messages = fetchKickHistoryMessages(
+            messageSources = messageSources,
+            startTime = "",
+            channelId = channelId,
+            channelLogin = channelLogin,
+            debugSessionKey = debugSessionKey,
+            debugPhase = "preload_fast",
+            maxPages = maxPages,
+            initialCursor = syntheticCursor
+        )
+            .filter { it.timestamp == null || it.timestamp < playbackTimestampMs }
+            .takeLast(kickReplayPreloadMaxMessages)
+            
+        logKickReplayChat(stage = "preload_fast", sessionKey = debugSessionKey) {
+            "${messageRangeSummary(messages)} total=${messages.size}"
+        }
+        return messages
     }
 
     private suspend fun fetchKickLiveHistoryMessages(
@@ -1859,9 +1897,10 @@ class ChatViewModel @Inject constructor(
         kickReplayUrl: String?,
         getCurrentPosition: () -> Long?,
         showClipStartMarker: Boolean = true,
-        forceNewSession: Boolean = false
+        forceNewSession: Boolean = false,
+        seekPosition: Long? = null
     ) {
-        val currentPlaybackPositionMs = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
+        val currentPlaybackPositionMs = seekPosition ?: getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
         val sessionKey = "$channelId|$replayStartTimeMs"
         val previousPlaybackPositionMs = kickReplaySessionStartPositionMs
         val largeSeek = previousPlaybackPositionMs != null &&
@@ -1893,17 +1932,22 @@ class ChatViewModel @Inject constructor(
                     "from=$replayStartTimeMs to=$resolvedReplayStartTimeMs clipUrl=$kickReplayUrl"
                 }
             }
-            val initialPlaybackPositionMs = currentPlaybackPositionMs
+            val initialPlaybackPositionMs = resolveInitialKickReplayPlaybackPosition(
+                currentPlaybackPositionMs = currentPlaybackPositionMs,
+                getCurrentPosition = getCurrentPosition,
+                sessionKey = sessionKey
+            )
             val initialPlaybackTimestampMs = effectiveReplayStartTimeMs + initialPlaybackPositionMs
-            runCatching {
-                kickRepository.getChannel(channelLogin)
-            }.onFailure {
-            runCatching { kickRepository.getChannel(channelId) }
+            
+            val kickMessageSources = kickReplayMessageSources ?: run {
+                val sources = resolveKickMessageSources(channelId, channelLogin)
+                    .map { it.trim() }
+                    .filter { source -> source.isNotBlank() && source.all(Char::isDigit) }
+                    .ifEmpty { listOf(channelId.trim()) }
+                kickReplayMessageSources = sources
+                sources
             }
-            val kickMessageSources = resolveKickMessageSources(channelId, channelLogin)
-                .map { it.trim() }
-                .filter { source -> source.isNotBlank() && source.all(Char::isDigit) }
-                .ifEmpty { listOf(channelId.trim()) }
+            
             logKickReplayChat(stage = "sources", sessionKey = sessionKey) {
                 "values=${kickMessageSources.joinToString(",")}"
             }
@@ -1912,19 +1956,15 @@ class ChatViewModel @Inject constructor(
                 logKickReplayChat(stage = "clear_messages", sessionKey = sessionKey) {
                     "removed=$removedMessages"
                 }
-                val preloadStartTime = formatIso8601Utc((initialPlaybackTimestampMs - kickReplayPreloadWindowMs).coerceAtLeast(0L))
                 try {
-                    val preloadMessages = fetchKickHistoryMessages(
+                    val preloadMessages = fetchKickPreloadHistoryMessages(
                         messageSources = kickMessageSources,
-                        startTime = preloadStartTime,
+                        playbackTimestampMs = initialPlaybackTimestampMs,
                         channelId = channelId,
                         channelLogin = channelLogin,
                         debugSessionKey = sessionKey,
-                        debugPhase = "preload",
                         maxPages = 4
                     )
-                        .filter { it.timestamp == null || it.timestamp < initialPlaybackTimestampMs }
-                        .takeLast(kickReplayPreloadMaxMessages)
                     val stats = emitKickMessages(preloadMessages)
                     logKickReplayChat(stage = "emit", sessionKey = sessionKey) {
                         "phase=preload startPositionMs=$initialPlaybackPositionMs playbackTs=$initialPlaybackTimestampMs " +
@@ -2559,8 +2599,11 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun isActive(): Boolean? {
-        return kickChatJob?.isActive ?: chatReadJob?.isActive
+    fun isActive(): Boolean {
+        if (!autoReconnect) {
+            return false
+        }
+        return kickLivePollingFallbackActive || kickChatJob?.isActive == true || chatReadJob?.isActive == true
     }
 
     fun disconnect() {
@@ -2861,6 +2904,7 @@ class ChatViewModel @Inject constructor(
                 Prediction(
                     id = predictionUpdate.id ?: existing.id,
                     createdAt = predictionUpdate.createdAt ?: existing.createdAt,
+                    endedAt = predictionUpdate.endedAt ?: existing.endedAt,
                     outcomes = predictionUpdate.outcomes ?: existing.outcomes,
                     predictionWindowSeconds = predictionUpdate.predictionWindowSeconds ?: existing.predictionWindowSeconds,
                     status = predictionUpdate.status ?: existing.status,
@@ -3538,8 +3582,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun onRewardMessage(message: ChatMessage, networkLibrary: String?, isLoggedIn: Boolean, accountId: String?, channelId: String?) {
-        val enrichedMessage = message.reward?.let { reward ->
-            val rewardId = reward.id
+        val enrichedMessage = message.reward?.id?.let { rewardId ->
             channelPointRewards.value.find { it.id == rewardId }?.let { knownReward ->
                 ChatMessage(
                     id = message.id,
@@ -3558,15 +3601,15 @@ class ChatViewModel @Inject constructor(
                     msgId = message.msgId,
                     reward = ChannelPointReward(
                         id = rewardId,
-                        title = reward.title ?: knownReward.title,
-                        cost = reward.cost ?: knownReward.cost,
-                        url1x = reward.url1x ?: knownReward.url1x,
-                        url2x = reward.url2x ?: knownReward.url2x,
-                        url4x = reward.url4x ?: knownReward.url4x,
-                        backgroundColor = reward.backgroundColor ?: knownReward.backgroundColor,
-                        isEnabled = reward.isEnabled ?: knownReward.isEnabled,
-                        isUserInputRequired = reward.isUserInputRequired ?: knownReward.isUserInputRequired,
-                        prompt = reward.prompt ?: knownReward.prompt,
+                        title = message.reward.title ?: knownReward.title,
+                        cost = message.reward.cost ?: knownReward.cost,
+                        url1x = message.reward.url1x ?: knownReward.url1x,
+                        url2x = message.reward.url2x ?: knownReward.url2x,
+                        url4x = message.reward.url4x ?: knownReward.url4x,
+                        backgroundColor = message.reward.backgroundColor ?: knownReward.backgroundColor,
+                        isEnabled = message.reward.isEnabled ?: knownReward.isEnabled,
+                        isUserInputRequired = message.reward.isUserInputRequired ?: knownReward.isUserInputRequired,
+                        prompt = message.reward.prompt ?: knownReward.prompt,
                     ),
                     reply = message.reply,
                     isReply = message.isReply,
@@ -4546,7 +4589,7 @@ class ChatViewModel @Inject constructor(
                 coroutineScope = viewModelScope,
                 listener = ChatReplayListener(),
             )
-            readChatFile(chatUrl, channelId, channelLogin)
+            readChatFile(chatUrl, channelId, channelLogin, startTime.takeIf { it >= 0 })
         } else {
             if (kickReplayFallback && !channelId.isNullOrBlank() && !channelLogin.isNullOrBlank()) {
                 logKickReplayChat(stage = "fallback_enabled", sessionKey = null) {
@@ -4559,11 +4602,18 @@ class ChatViewModel @Inject constructor(
                     ?.let { KickApiHelper.parseIso8601DateUTC(it) }
                 kickReplayFallbackUrl = kickReplayUrl
                 kickReplayFallbackGetCurrentPosition = getCurrentPosition
-                kickReplayFallbackStartTimeMs?.let { replayStartTimeMs ->
-                    val isClipReplay = kickReplayUrl?.contains("/clips/", ignoreCase = true) == true ||
-                            kickReplayUrl?.contains("clips.kick.com", ignoreCase = true) == true
-                    startKickReplayChat(channelId, channelLogin, channelLogin, replayStartTimeMs, kickReplayUrl, getCurrentPosition, isClipReplay)
-                }
+                val startTimeMs = kickReplayFallbackStartTimeMs ?: 0L
+                val isClipReplay = kickReplayUrl?.contains("/clips/", ignoreCase = true) == true ||
+                        kickReplayUrl?.contains("clips.kick.com", ignoreCase = true) == true
+                startKickReplayChat(
+                    channelId = channelId,
+                    channelLogin = channelLogin,
+                    channelName = channelLogin,
+                    replayStartTimeMs = startTimeMs,
+                    kickReplayUrl = kickReplayUrl,
+                    getCurrentPosition = getCurrentPosition,
+                    showClipStartMarker = isClipReplay
+                )
                 return
             }
             logKickReplayChat(stage = "fallback_disabled", sessionKey = kickReplaySessionKey) {
@@ -4595,7 +4645,7 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun startReplayChatLoad() {
+    fun startReplayChatLoad(seekPosition: Long? = null) {
         if (kickReplayFallbackEnabled) {
             val channelId = kickReplayFallbackChannelId
             val channelLogin = kickReplayFallbackChannelLogin
@@ -4607,14 +4657,23 @@ class ChatViewModel @Inject constructor(
                 !channelLogin.isNullOrBlank() &&
                 replayStartTimeMs != null &&
                 getCurrentPosition != null &&
-                kickChatJob?.isActive != true
+                (seekPosition != null || kickChatJob?.isActive != true)
             ) {
                 logKickReplayChat(stage = "startReplayChatLoad", sessionKey = kickReplaySessionKey) {
-                    "restarting_fallback channelId=$channelId"
+                    "restarting_fallback channelId=$channelId seekPosition=$seekPosition"
                 }
                 val isClipReplay = kickReplayUrl?.contains("/clips/", ignoreCase = true) == true ||
                         kickReplayUrl?.contains("clips.kick.com", ignoreCase = true) == true
-                startKickReplayChat(channelId, channelLogin, channelLogin, replayStartTimeMs, kickReplayUrl, getCurrentPosition, isClipReplay)
+                startKickReplayChat(
+                    channelId = channelId,
+                    channelLogin = channelLogin,
+                    channelName = channelLogin,
+                    replayStartTimeMs = replayStartTimeMs,
+                    kickReplayUrl = kickReplayUrl,
+                    getCurrentPosition = getCurrentPosition,
+                    showClipStartMarker = isClipReplay,
+                    seekPosition = seekPosition
+                )
             }
         } else {
             chatReplayManager?.start() ?: chatReplayManagerLocal?.startLoad()
@@ -4645,9 +4704,40 @@ class ChatViewModel @Inject constructor(
         chatReplayManager?.updateSpeed(speed) ?: chatReplayManagerLocal?.updateSpeed(speed)
     }
 
+    private suspend fun resolveInitialKickReplayPlaybackPosition(
+        currentPlaybackPositionMs: Long,
+        getCurrentPosition: () -> Long?,
+        sessionKey: String,
+    ): Long {
+        if (currentPlaybackPositionMs > 0L) {
+            return currentPlaybackPositionMs
+        }
+        repeat(10) {
+            delay(150L)
+            val resolvedPosition = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
+            if (resolvedPosition > 0L) {
+                logKickReplayChat(stage = "initial_position_resolved", sessionKey = sessionKey) {
+                    "from=$currentPlaybackPositionMs to=$resolvedPosition"
+                }
+                return resolvedPosition
+            }
+        }
+        return currentPlaybackPositionMs
+    }
+
     private fun formatIso8601Utc(timestampMs: Long): String {
+        // Kick's history API requires milliseconds in the timestamp (e.g. 2026-04-30T17:06:00.000Z).
+        // Without milliseconds the VOD history endpoint returns empty results.
         return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            java.time.Instant.ofEpochMilli(timestampMs).toString()
+            val instant = java.time.Instant.ofEpochMilli(timestampMs)
+            val seconds = instant.epochSecond
+            val millis = instant.nano / 1_000_000
+            val base = java.time.Instant.ofEpochSecond(seconds).toString() // e.g. 2026-04-30T17:06:00Z
+            if (base.endsWith("Z")) {
+                base.dropLast(1) + "." + millis.toString().padStart(3, '0') + "Z"
+            } else {
+                base
+            }
         } else {
             SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
                 timeZone = TimeZone.getTimeZone("UTC")
@@ -4697,12 +4787,13 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun readChatFile(url: String, channelId: String?, channelLogin: String?) {
+    private fun readChatFile(url: String, channelId: String?, channelLogin: String?, fallbackStartTimeSeconds: Int? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val nameDisplay = applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "1")
                 val messages = mutableListOf<ChatMessage>()
-                var startTimeMs = 0L
+                var startTimeMs = fallbackStartTimeSeconds?.times(1000L) ?: 0L
+                var fileStartTimeFound = false
                 val twitchEmotes = mutableListOf<TwitchEmote>()
                 val twitchBadges = mutableListOf<TwitchBadge>()
                 val cheerEmotesList = mutableListOf<CheerEmote>()
@@ -4712,20 +4803,21 @@ class ChatViewModel @Inject constructor(
                 } else {
                     FileInputStream(File(url)).bufferedReader()
                 }?.use { fileReader ->
-                    JsonReader(fileReader).use { reader ->
-                        reader.isLenient = true
-                        var position = 0L
-                        var token: JsonToken
-                        do {
-                            token = reader.peek()
-                            when (token) {
-                                JsonToken.END_DOCUMENT -> {}
-                                JsonToken.BEGIN_OBJECT -> {
-                                    reader.beginObject().also { position += 1 }
-                                    while (reader.hasNext()) {
-                                        when (reader.peek()) {
-                                            JsonToken.NAME -> {
-                                                when (reader.nextName().also { position += it.length + 3 }) {
+                    try {
+                        JsonReader(fileReader).use { reader ->
+                            reader.isLenient = true
+                            var position = 0L
+                            var token: JsonToken
+                            do {
+                                token = reader.peek()
+                                when (token) {
+                                    JsonToken.END_DOCUMENT -> {}
+                                    JsonToken.BEGIN_OBJECT -> {
+                                        reader.beginObject().also { position += 1 }
+                                        while (reader.hasNext()) {
+                                            when (reader.peek()) {
+                                                JsonToken.NAME -> {
+                                                    when (reader.nextName().also { position += it.length + 3 }) {
                                                     "liveStartTime" -> { KickApiHelper.parseIso8601DateUTC(reader.nextString().also { position += it.length + 2 })?.let { startTimeMs = it } }
                                                     "liveComments" -> {
                                                         reader.beginArray().also { position += 1 }
@@ -5070,21 +5162,27 @@ class ChatViewModel @Inject constructor(
                                                         }
                                                         reader.endArray().also { position += 1 }
                                                     }
-                                                    "startTime" -> { startTimeMs = reader.nextInt().also { position += it.toString().length }.times(1000L) }
+                                                    "startTime" -> {
+                                                        fileStartTimeFound = true
+                                                        startTimeMs = reader.nextInt().also { position += it.toString().length }.times(1000L)
+                                                    }
                                                     else -> position += skipJsonValue(reader)
+                                                    }
                                                 }
+                                                else -> position += skipJsonValue(reader)
                                             }
-                                            else -> position += skipJsonValue(reader)
+                                            if (reader.peek() != JsonToken.END_OBJECT) {
+                                                position += 1
+                                            }
                                         }
-                                        if (reader.peek() != JsonToken.END_OBJECT) {
-                                            position += 1
-                                        }
+                                        reader.endObject().also { position += 1 }
                                     }
-                                    reader.endObject().also { position += 1 }
+                                    else -> position += skipJsonValue(reader)
                                 }
-                                else -> position += skipJsonValue(reader)
-                            }
-                        } while (token != JsonToken.END_DOCUMENT)
+                            } while (token != JsonToken.END_DOCUMENT)
+                        }
+                    } catch (_: Exception) {
+                        // Partial local chat files are common during interrupted downloads; keep the messages parsed so far.
                     }
                 }
                 synchronized(localTwitchEmotes) {
@@ -5108,13 +5206,19 @@ class ChatViewModel @Inject constructor(
                         loadEmotes(channelId, channelLogin)
                     }
                 }
+                if (!fileStartTimeFound && (fallbackStartTimeSeconds == null || fallbackStartTimeSeconds <= 0) && startTimeMs == 0L) {
+                    messages.firstOrNull()?.timestamp?.let { firstTimestamp ->
+                        if (firstTimestamp >= 10 * 60 * 1000L) {
+                            startTimeMs = firstTimestamp
+                        }
+                    }
+                }
                 if (messages.isNotEmpty()) {
                     viewModelScope.launch {
                         chatReplayManagerLocal?.setMessages(messages, startTimeMs)
                     }
                 }
-            } catch (e: Exception) {
-
+            } catch (_: Exception) {
             }
         }
     }

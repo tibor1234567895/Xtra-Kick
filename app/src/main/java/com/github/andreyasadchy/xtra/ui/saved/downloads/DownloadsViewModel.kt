@@ -746,6 +746,20 @@ class DownloadsViewModel @Inject internal constructor(
         }
     }
 
+    fun redownloadChat(video: OfflineVideo) {
+        if (videosInUse.contains(video)) {
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateVideo(video.apply {
+                chatProgress = 0
+                chatBytes = 0
+                chatOffsetSeconds = 0
+                status = OfflineVideo.STATUS_PENDING
+            })
+        }
+    }
+
     fun delete(video: OfflineVideo, keepFiles: Boolean) {
         val videoUrl = video.url
         if (!videosInUse.contains(video)) {
