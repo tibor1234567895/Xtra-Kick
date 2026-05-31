@@ -52,6 +52,7 @@ class MediaPlayerFragment : PlayerFragment() {
 
     override fun onStart() {
         super.onStart()
+        registerAutoQualityNetworkCallback()
         val callback = object : SurfaceHolder.Callback {
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
 
@@ -773,7 +774,7 @@ class MediaPlayerFragment : PlayerFragment() {
                 val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                 val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
                 val cellular = networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
-                if ((!cellular && prefs.getString(C.PLAYER_DEFAULTQUALITY, "saved") == "saved") || (cellular && prefs.getString(C.PLAYER_DEFAULT_CELLULAR_QUALITY, "saved") == "saved")) {
+                if (!automaticQualityChangeInProgress && ((!cellular && prefs.getString(C.PLAYER_DEFAULTQUALITY, "saved") == "saved") || (cellular && prefs.getString(C.PLAYER_DEFAULT_CELLULAR_QUALITY, "saved") == "saved"))) {
                     prefs.edit { putString(C.PLAYER_QUALITY, quality.key) }
                 }
             }

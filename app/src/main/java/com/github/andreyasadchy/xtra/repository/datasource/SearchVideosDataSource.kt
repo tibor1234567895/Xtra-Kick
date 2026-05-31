@@ -4,14 +4,14 @@ import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.github.andreyasadchy.xtra.graphql.SearchVideosQuery
 import com.github.andreyasadchy.xtra.model.ui.Video
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.util.C
 
 class SearchVideosDataSource(
     private val query: String,
-    private val gqlHeaders: Map<String, String>,
-    private val graphQLRepository: GraphQLRepository,
+    private val kickWebHeaders: Map<String, String>,
+    private val kickGraphQLRepository: KickGraphQLRepository,
     private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
@@ -106,7 +106,7 @@ class SearchVideosDataSource(
     }
 
     private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
-        val response = graphQLRepository.loadQuerySearchVideos(networkLibrary, gqlHeaders, query, params.loadSize, offset)
+        val response = kickGraphQLRepository.loadQuerySearchVideos(networkLibrary, kickWebHeaders, query, params.loadSize, offset)
         if (enableIntegrity) {
             response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
         }
@@ -124,7 +124,7 @@ class SearchVideosDataSource(
     }
 
     private suspend fun gqlLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
-        val response = graphQLRepository.loadSearchVideos(networkLibrary, gqlHeaders, query, offset)
+        val response = kickGraphQLRepository.loadSearchVideos(networkLibrary, kickWebHeaders, query, offset)
         if (enableIntegrity) {
             response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
         }

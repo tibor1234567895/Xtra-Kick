@@ -7,6 +7,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.CountDownTimer
 import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -138,6 +139,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private var roomModeBadgeText: String? = null
     private var lastRoomStateSignature: String? = null
     private var delayBadgeFirstShown = false
+    private var raidCountdownTimer: CountDownTimer? = null
     private val hideDelayBadgeRunnable = Runnable {
         _binding?.chatDelayText?.visibility = View.GONE
         updateHeaderBadgeLayout()
@@ -178,6 +180,84 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     private val replyDialog: ReplyClickedDialog?
         get() = childFragmentManager.findFragmentByTag("replyDialog") as? ReplyClickedDialog
+
+    private fun openRaidTarget(raid: com.github.andreyasadchy.xtra.model.chat.Raid) {
+        (requireActivity() as? MainActivity)?.startStream(
+            Stream(
+                source = C.KICK,
+                channelId = raid.targetId,
+                channelLogin = raid.targetLogin,
+                channelName = raid.targetName,
+                profileImageUrl = raid.targetProfileImage,
+            )
+        )
+    }
+
+    private fun formatRaidTargetName(raid: com.github.andreyasadchy.xtra.model.chat.Raid): String? {
+        return if (raid.targetLogin != null && !raid.targetLogin.equals(raid.targetName, true)) {
+            when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
+                "0" -> "${raid.targetName}(${raid.targetLogin})"
+                "1" -> raid.targetName
+                else -> raid.targetLogin
+            }
+        } else {
+            raid.targetName ?: raid.targetLogin
+        }
+    }
+
+    private fun setRaidBannerText(raid: com.github.andreyasadchy.xtra.model.chat.Raid, secondsLeft: Int? = null) {
+        val baseText = getString(
+            R.string.raid_text,
+            formatRaidTargetName(raid),
+            raid.viewerCount ?: 0
+        )
+        binding.raidText.text = secondsLeft?.takeIf { it > 0 }?.let {
+            "$baseText - switching in ${it}s"
+        } ?: baseText
+    }
+
+    private fun dismissRaidBanner() {
+        raidCountdownTimer?.cancel()
+        raidCountdownTimer = null
+        binding.raidLayout.visibility = View.GONE
+        viewModel.raidClosed = true
+    }
+
+    private fun configureRaidAction(raid: com.github.andreyasadchy.xtra.model.chat.Raid) {
+        val autoSwitch = requireContext().prefs().getBoolean(C.CHAT_RAIDS_AUTO_SWITCH, true) && parentFragment is PlayerFragment
+        val countdownActive = (raid.countdownSeconds ?: 0) > 0
+        if (autoSwitch && countdownActive) {
+            binding.raidAction.setText(R.string.raid_stay)
+            binding.raidAction.setOnClickListener { dismissRaidBanner() }
+        } else {
+            binding.raidAction.setText(R.string.raid_join)
+            binding.raidAction.setOnClickListener {
+                dismissRaidBanner()
+                openRaidTarget(raid)
+            }
+        }
+    }
+
+    private fun startRaidCountdown(raid: com.github.andreyasadchy.xtra.model.chat.Raid, seconds: Int) {
+        raidCountdownTimer?.cancel()
+        setRaidBannerText(raid, seconds)
+        raidCountdownTimer = object : CountDownTimer(seconds * 1000L, 1000L) {
+            override fun onTick(millisUntilFinished: Long) {
+                setRaidBannerText(raid, ((millisUntilFinished + 999L) / 1000L).toInt())
+            }
+
+            override fun onFinish() {
+                if (requireContext().prefs().getBoolean(C.CHAT_RAIDS_AUTO_SWITCH, true) && parentFragment is PlayerFragment) {
+                    dismissRaidBanner()
+                    openRaidTarget(raid)
+                } else {
+                    raidCountdownTimer = null
+                    setRaidBannerText(raid)
+                    configureRaidAction(raid)
+                }
+            }
+        }.also { it.start() }
+    }
 
     private fun setupEmotePicker() {
         val binding = _binding ?: return
@@ -427,12 +507,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 getEmoteBytes = viewModel::getEmoteBytes,
                 userColors = hashMapOf(),
                 savedColors = hashMapOf(),
-                localTwitchEmotes = viewModel.localTwitchEmotes,
+                localChatEmotes = viewModel.localChatEmotes,
                 thirdPartyEmotes = thirdPartyEmotes,
                 globalBadges = viewModel.globalBadges,
                 channelBadges = viewModel.channelBadges,
                 cheerEmotes = viewModel.cheerEmotes,
-                savedLocalTwitchEmotes = mutableMapOf(),
+                savedLocalChatEmotes = mutableMapOf(),
                 savedLocalBadges = mutableMapOf(),
                 savedLocalCheerEmotes = mutableMapOf(),
                 savedLocalEmotes = mutableMapOf(),
@@ -2267,7 +2347,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     val sizeModifier = (requireContext().prefs().getInt(C.CHAT_SIZE_MODIFIER, 100).toFloat() / 100f)
                     adapter = ChatAdapter(
                         messages = viewModel.chatMessages,
-                        localTwitchEmotes = viewModel.localTwitchEmotes,
+                        localChatEmotes = viewModel.localChatEmotes,
                         thirdPartyEmotes = viewModel.thirdPartyEmotes,
                         globalBadges = viewModel.globalBadges,
                         channelBadges = viewModel.channelBadges,
@@ -2616,8 +2696,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.hideRaid.collectLatest {
                                 if (it) {
-                                    raidLayout.visibility = View.GONE
-                                    viewModel.raidClosed = true
+                                    dismissRaidBanner()
                                     viewModel.hideRaid.value = false
                                 }
                             }
@@ -2630,19 +2709,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                     if (!viewModel.raidClosed) {
                                         if (raid.openStream) {
                                             if (requireContext().prefs().getBoolean(C.CHAT_RAIDS_AUTO_SWITCH, true) && parentFragment is PlayerFragment) {
-                                                (requireActivity() as? MainActivity)?.startStream(
-                                                    Stream(
-                                                        source = C.KICK,
-                                                        channelId = raid.targetId,
-                                                        channelLogin = raid.targetLogin,
-                                                        channelName = raid.targetName,
-                                                        profileImageUrl = raid.targetProfileImage,
-                                                    )
-                                                )
+                                                openRaidTarget(raid)
                                             }
                                             raidLayout.visibility = View.GONE
                                             viewModel.raidClosed = true
                                         } else {
+                                            raidCountdownTimer?.cancel()
+                                            raidCountdownTimer = null
                                             raidLayout.visibility = View.VISIBLE
                                             raidLayout.setOnClickListener { viewModel.raidClicked.value = raid }
                                             requireContext().imageLoader.enqueue(
@@ -2656,22 +2729,15 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                                 }.build()
                                             )
                                             raidClose.setOnClickListener {
-                                                raidLayout.visibility = View.GONE
-                                                viewModel.raidClosed = true
+                                                dismissRaidBanner()
                                             }
-                                            raidText.text = getString(
-                                                R.string.raid_text,
-                                                if (raid.targetLogin != null && !raid.targetLogin.equals(raid.targetName, true)) {
-                                                    when (requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1")) {
-                                                        "0" -> "${raid.targetName}(${raid.targetLogin})"
-                                                        "1" -> raid.targetName
-                                                        else -> raid.targetLogin
-                                                    }
-                                                } else {
-                                                    raid.targetName
-                                                },
-                                                raid.viewerCount
-                                            )
+                                            configureRaidAction(raid)
+                                            val countdownSeconds = raid.countdownSeconds
+                                            if (countdownSeconds != null && countdownSeconds > 0) {
+                                                startRaidCountdown(raid, countdownSeconds)
+                                            } else {
+                                                setRaidBannerText(raid)
+                                            }
                                         }
                                     }
                                     viewModel.raid.value = null
@@ -2683,15 +2749,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.raidClicked.collectLatest {
                                 if (it != null) {
-                                    (requireActivity() as? MainActivity)?.startStream(
-                                        Stream(
-                                            source = C.KICK,
-                                            channelId = it.targetId,
-                                            channelLogin = it.targetLogin,
-                                            channelName = it.targetName,
-                                            profileImageUrl = it.targetProfileImage,
-                                        )
-                                    )
+                                    raidCountdownTimer?.cancel()
+                                    raidCountdownTimer = null
+                                    openRaidTarget(it)
                                     viewModel.raidClicked.value = null
                                 }
                             }
@@ -2888,7 +2948,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 val lastIndex = result.second
                                 val removeCount = result.third
                                 adapter?.let { adapter ->
-                                    adapter.notifyItemInserted(lastIndex)
                                     if (removeCount > 0) {
                                         adapter.notifyItemRangeRemoved(0, removeCount)
                                         val remainingCount = synchronized(viewModel.chatMessages) {
@@ -2901,8 +2960,10 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                             adapter.notifyItemRangeChanged(it.start, it.count, ChatAdapter.PAYLOAD_REFORMAT)
                                         }
                                     }
+                                    val appendPosition = ChatListParityUtils.appendPositionAfterHeadRemoval(lastIndex, removeCount)
+                                    adapter.notifyItemInserted(appendPosition)
                                     if (!isChatTouched && binding.btnDown.isGone) {
-                                        scrollChatToBottom(lastIndex - removeCount)
+                                        scrollChatToBottom(appendPosition)
                                     }
                                 }
                                 messageDialog?.newMessage(message)
@@ -3225,8 +3286,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     message = text,
                     replyId = replyId,
                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), true),
-                    helixHeaders = KickApiHelper.getHelixHeaders(requireContext()),
+                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), true),
+                    kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext()),
                     accountId = requireContext().tokenPrefs().getString(C.USER_ID, null),
                     channelId = requireArguments().getString(KEY_CHANNEL_ID),
                     channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
@@ -3380,6 +3441,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     override fun onDestroyView() {
         super.onDestroyView()
+        raidCountdownTimer?.cancel()
+        raidCountdownTimer = null
         channelPointsDialog?.dismiss()
         channelPointsDialog = null
         _binding?.emoteSections?.adapter = null

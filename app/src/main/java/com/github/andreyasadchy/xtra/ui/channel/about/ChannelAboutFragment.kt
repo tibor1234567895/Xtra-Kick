@@ -180,7 +180,7 @@ class ChannelAboutFragment : BaseNetworkFragment(), IntegrityDialog.CallbackList
             channelId = args.channelId,
             channelLogin = args.channelLogin,
             networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+            kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
             enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
         )
     }
@@ -190,7 +190,7 @@ class ChannelAboutFragment : BaseNetworkFragment(), IntegrityDialog.CallbackList
             channelId = args.channelId,
             channelLogin = args.channelLogin,
             networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+            kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
             enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
         )
     }
@@ -204,7 +204,7 @@ class ChannelAboutFragment : BaseNetworkFragment(), IntegrityDialog.CallbackList
                         channelId = args.channelId,
                         channelLogin = args.channelLogin,
                         networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
                         enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                     )
                 }

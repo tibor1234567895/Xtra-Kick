@@ -7,7 +7,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.datasource.ChannelSuggestedDataSource
 import com.github.andreyasadchy.xtra.ui.channel.ChannelPagerFragmentArgs
@@ -21,7 +21,7 @@ import javax.inject.Inject
 @HiltViewModel
 class ChannelSuggestedViewModel @Inject constructor(
     @ApplicationContext applicationContext: Context,
-    private val graphQLRepository: GraphQLRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
     private val kickRepository: KickRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -33,8 +33,8 @@ class ChannelSuggestedViewModel @Inject constructor(
     ) {
         ChannelSuggestedDataSource(
             channelLogin = args.channelLogin,
-            gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext, true),
-            graphQLRepository = graphQLRepository,
+            kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext, true),
+            kickGraphQLRepository = kickGraphQLRepository,
             kickRepository = kickRepository,
             enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),

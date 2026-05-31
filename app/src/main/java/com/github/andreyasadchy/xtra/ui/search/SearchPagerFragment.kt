@@ -183,7 +183,7 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
                                         checkedId = checkedId,
                                         result = result,
                                         networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                        gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+                                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
                                         enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                     )
                                     viewLifecycleOwner.lifecycleScope.launch {

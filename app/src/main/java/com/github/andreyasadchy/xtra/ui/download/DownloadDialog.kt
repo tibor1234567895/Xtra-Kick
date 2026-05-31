@@ -216,7 +216,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                 }
                 viewModel.setStream(
                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), requireContext().prefs().getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
+                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), requireContext().prefs().getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
                     channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
                     qualities = requireArguments().getStringArray(KEY_QUALITY_KEYS)?.let { keys ->
                         requireArguments().getStringArray(KEY_QUALITY_NAMES)?.let { names ->
@@ -226,7 +226,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                         }
                     },
                     randomDeviceId = requireContext().prefs().getBoolean(C.TOKEN_RANDOM_DEVICEID, true),
-                    xDeviceId = requireContext().prefs().getString(C.TOKEN_XDEVICEID, "twitch-web-wall-mason"),
+                    xDeviceId = requireContext().prefs().getString(C.TOKEN_XDEVICEID, "kick-web-player"),
                     playerType = requireContext().prefs().getString(C.TOKEN_PLAYERTYPE, "site"),
                     supportedCodecs = requireContext().prefs().getString(C.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
                     enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
@@ -260,7 +260,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                 }
                 viewModel.setVideo(
                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), requireContext().prefs().getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
+                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), requireContext().prefs().getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
                     videoId = requireArguments().getString(KEY_VIDEO_ID),
                     animatedPreviewUrl = requireArguments().getString(KEY_VIDEO_ANIMATED_PREVIEW),
                     videoType = requireArguments().getString(KEY_VIDEO_TYPE),
@@ -291,7 +291,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                 }
                 viewModel.setClip(
                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
                     clipId = requireArguments().getString(KEY_CLIP_ID),
                     qualities = requireArguments().getStringArray(KEY_QUALITY_KEYS)?.let { keys ->
                         requireArguments().getStringArray(KEY_QUALITY_NAMES)?.let { names ->
@@ -659,7 +659,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                 STREAM -> {
                     viewModel.setStream(
                         networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), requireContext().prefs().getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
+                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), requireContext().prefs().getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
                         channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
                         qualities = requireArguments().getStringArray(KEY_QUALITY_KEYS)?.let { keys ->
                             requireArguments().getStringArray(KEY_QUALITY_NAMES)?.let { names ->
@@ -669,7 +669,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                             }
                         },
                         randomDeviceId = requireContext().prefs().getBoolean(C.TOKEN_RANDOM_DEVICEID, true),
-                        xDeviceId = requireContext().prefs().getString(C.TOKEN_XDEVICEID, "twitch-web-wall-mason"),
+                        xDeviceId = requireContext().prefs().getString(C.TOKEN_XDEVICEID, "kick-web-player"),
                         playerType = requireContext().prefs().getString(C.TOKEN_PLAYERTYPE, "site"),
                         supportedCodecs = requireContext().prefs().getString(C.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
                         enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
@@ -678,7 +678,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                 VIDEO -> {
                     viewModel.setVideo(
                         networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), requireContext().prefs().getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
+                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), requireContext().prefs().getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
                         videoId = requireArguments().getString(KEY_VIDEO_ID),
                         animatedPreviewUrl = requireArguments().getString(KEY_VIDEO_ANIMATED_PREVIEW),
                         videoType = requireArguments().getString(KEY_VIDEO_TYPE),
@@ -700,7 +700,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                 CLIP -> {
                     viewModel.setClip(
                         networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
                         clipId = requireArguments().getString(KEY_CLIP_ID),
                         qualities = requireArguments().getStringArray(KEY_QUALITY_KEYS)?.let { keys ->
                             requireArguments().getStringArray(KEY_QUALITY_NAMES)?.let { names ->

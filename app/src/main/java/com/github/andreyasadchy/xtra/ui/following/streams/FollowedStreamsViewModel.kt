@@ -7,7 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.github.andreyasadchy.xtra.model.ui.LocalFollowChannel
 import com.github.andreyasadchy.xtra.model.ui.SortChannel
 import com.github.andreyasadchy.xtra.model.ui.Stream
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.repository.SortChannelRepository
@@ -36,7 +36,7 @@ import org.json.JSONObject
 class FollowedStreamsViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
     private val localFollowsChannel: LocalFollowChannelRepository,
-    private val helixRepository: HelixRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val sortChannelRepository: SortChannelRepository,
     private val json: Json,
@@ -322,7 +322,7 @@ class FollowedStreamsViewModel @Inject constructor(
 
     private suspend fun loadStreamsFromPublicApi(follows: List<LocalFollowChannel>): PublicApiLoadResult? {
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-        val headers = kickRepository.getHelixHeadersWithRefresh(networkLibrary)
+        val headers = kickRepository.getKickPublicApiHeadersWithRefresh(networkLibrary)
         if (headers[C.HEADER_TOKEN].isNullOrBlank()) {
             logFollowedStreamsInfo("Fast followed-live path skipped: missing auth token")
             return null
@@ -351,7 +351,7 @@ class FollowedStreamsViewModel @Inject constructor(
                     currentCoroutineContext().ensureActive()
                     requestWindow.map { ids ->
                         async {
-                            helixRepository.getLivestreams(
+                            kickPublicApiRepository.getLivestreams(
                                 networkLibrary = networkLibrary,
                                 headers = headers,
                                 broadcasterUserIds = ids,
@@ -389,7 +389,7 @@ class FollowedStreamsViewModel @Inject constructor(
         }
 
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-        val headers = kickRepository.getHelixHeadersWithRefresh(networkLibrary)
+        val headers = kickRepository.getKickPublicApiHeadersWithRefresh(networkLibrary)
         if (headers[C.HEADER_TOKEN].isNullOrBlank()) {
             logFollowedStreamsInfo("Bulk followed-live fallback skipped: missing auth token")
             return null
@@ -419,7 +419,7 @@ class FollowedStreamsViewModel @Inject constructor(
                     currentCoroutineContext().ensureActive()
                     requestWindow.map { logins ->
                         async {
-                            helixRepository.getUsers(
+                            kickPublicApiRepository.getUsers(
                                 networkLibrary = networkLibrary,
                                 headers = headers,
                                 logins = logins,
@@ -453,7 +453,7 @@ class FollowedStreamsViewModel @Inject constructor(
                     currentCoroutineContext().ensureActive()
                     requestWindow.map { ids ->
                         async {
-                            helixRepository.getLivestreams(
+                            kickPublicApiRepository.getLivestreams(
                                 networkLibrary = networkLibrary,
                                 headers = headers,
                                 broadcasterUserIds = ids,

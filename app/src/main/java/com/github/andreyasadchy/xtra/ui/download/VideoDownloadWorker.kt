@@ -28,8 +28,8 @@ import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.chat.Badge
 import com.github.andreyasadchy.xtra.model.chat.CheerEmote
 import com.github.andreyasadchy.xtra.model.chat.Emote
-import com.github.andreyasadchy.xtra.model.chat.TwitchBadge
-import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
+import com.github.andreyasadchy.xtra.model.chat.ChatBadge
+import com.github.andreyasadchy.xtra.model.chat.ChatEmote
 import com.github.andreyasadchy.xtra.model.chat.VideoChatMessage
 import com.github.andreyasadchy.xtra.model.kick.KickMessage
 import com.github.andreyasadchy.xtra.model.ui.OfflineVideo
@@ -846,7 +846,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                         context,
                         -offlineVideo.id,
                         Intent(context, MainActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                             action = MainActivity.INTENT_OPEN_DOWNLOADED_VIDEO
                             putExtra(MainActivity.KEY_VIDEO, offlineVideo)
                         },
@@ -875,7 +875,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                 val resumed = false
                 val savedOffset = if (resumed) offlineVideo.chatOffsetSeconds else 0
                 val latestSavedMessages = mutableListOf<VideoChatMessage>()
-                val savedTwitchEmotes = mutableListOf<String>()
+                val savedChatEmotes = mutableListOf<String>()
                 val savedBadges = mutableListOf<Pair<String, String>>()
                 val savedEmotes = mutableListOf<String>()
                 val existingChatFileUri = offlineVideo.chatUrl
@@ -937,7 +937,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                                                     }
                                                                     reader.endArray()
                                                                 }
-                                                                "twitchEmotes" -> {
+                                                                "chatEmotes" -> {
                                                                     reader.beginArray()
                                                                     while (reader.hasNext()) {
                                                                         reader.beginObject()
@@ -949,13 +949,13 @@ class VideoDownloadWorker @AssistedInject constructor(
                                                                             }
                                                                         }
                                                                         if (!id.isNullOrBlank()) {
-                                                                            savedTwitchEmotes.add(id)
+                                                                            savedChatEmotes.add(id)
                                                                         }
                                                                         reader.endObject()
                                                                     }
                                                                     reader.endArray()
                                                                 }
-                                                                "twitchBadges" -> {
+                                                                "ChatBadges" -> {
                                                                     reader.beginArray()
                                                                     while (reader.hasNext()) {
                                                                         reader.beginObject()
@@ -1051,13 +1051,13 @@ class VideoDownloadWorker @AssistedInject constructor(
                 }
                 val downloadEmotes = offlineVideo.downloadChatEmotes
                 val networkLibrary = context.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-                val gqlHeaders = KickApiHelper.getGQLHeaders(context, true)
-                val helixHeaders = KickApiHelper.getGQLHeaders(context)
+                val kickWebHeaders = KickApiHelper.getKickWebHeaders(context, true)
+                val kickPublicApiHeaders = KickApiHelper.getKickWebHeaders(context)
                 val emoteQuality = context.prefs().getString(C.CHAT_IMAGE_QUALITY, "4") ?: "4"
                 val useWebp = context.prefs().getBoolean(C.CHAT_USE_WEBP, true)
                 val channelId = offlineVideo.channelId
                 val channelLogin = offlineVideo.channelLogin
-                val badgeList = emptyList<TwitchBadge>()
+                val badgeList = emptyList<ChatBadge>()
                 val cheerEmoteList = emptyList<CheerEmote>()
                 val emoteList = emptyList<Emote>()
                 if (!resumed) {
@@ -1212,14 +1212,14 @@ class VideoDownloadWorker @AssistedInject constructor(
                                         }
                                     }
                                 }
-                                val twitchEmotes = mutableListOf<TwitchEmote>()
-                                val twitchBadges = mutableListOf<TwitchBadge>()
+                                val chatEmotes = mutableListOf<ChatEmote>()
+                                val ChatBadges = mutableListOf<ChatBadge>()
                                 val cheerEmotes = mutableListOf<CheerEmote>()
                                 val emotes = mutableListOf<Emote>()
                                 emoteIds.forEach {
-                                    if (!savedTwitchEmotes.contains(it)) {
-                                        savedTwitchEmotes.add(it)
-                                        twitchEmotes.add(TwitchEmote(
+                                    if (!savedChatEmotes.contains(it)) {
+                                        savedChatEmotes.add(it)
+                                        chatEmotes.add(ChatEmote(
                                             id = it,
                                             url1x = "https://files.kick.com/emotes/$it/fullsize",
                                             url2x = "https://files.kick.com/emotes/$it/fullsize",
@@ -1234,7 +1234,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                         savedBadges.add(pair)
                                         val badge = badgeList.find { badge -> badge.setId == it.setId && badge.version == it.version }
                                         if (badge != null) {
-                                            twitchBadges.add(badge)
+                                            ChatBadges.add(badge)
                                         }
                                     }
                                 }
@@ -1257,11 +1257,11 @@ class VideoDownloadWorker @AssistedInject constructor(
                                         }
                                     }
                                 }
-                                if (twitchEmotes.isNotEmpty()) {
-                                    writer.name("twitchEmotes".also { position += it.length + 4 })
+                                if (chatEmotes.isNotEmpty()) {
+                                    writer.name("chatEmotes".also { position += it.length + 4 })
                                     writer.beginArray().also { position += 1 }
-                                    val last = twitchEmotes.lastOrNull()
-                                    twitchEmotes.forEach { emote ->
+                                    val last = chatEmotes.lastOrNull()
+                                    chatEmotes.forEach { emote ->
                                         val url = when (emoteQuality) {
                                             "4" -> emote.url4x ?: emote.url3x ?: emote.url2x ?: emote.url1x
                                             "3" -> emote.url3x ?: emote.url2x ?: emote.url1x
@@ -1303,11 +1303,11 @@ class VideoDownloadWorker @AssistedInject constructor(
                                     }
                                     writer.endArray().also { position += 1 }
                                 }
-                                if (twitchBadges.isNotEmpty()) {
-                                    writer.name("twitchBadges".also { position += it.length + 4 })
+                                if (ChatBadges.isNotEmpty()) {
+                                    writer.name("ChatBadges".also { position += it.length + 4 })
                                     writer.beginArray().also { position += 1 }
-                                    val last = twitchBadges.lastOrNull()
-                                    twitchBadges.forEach { badge ->
+                                    val last = ChatBadges.lastOrNull()
+                                    ChatBadges.forEach { badge ->
                                         val url = when (emoteQuality) {
                                             "4" -> badge.url4x ?: badge.url3x ?: badge.url2x ?: badge.url1x
                                             "3" -> badge.url3x ?: badge.url2x ?: badge.url1x
@@ -1674,7 +1674,7 @@ class VideoDownloadWorker @AssistedInject constructor(
         var userLogin: String? = null
         var userName: String? = null
         var color: String? = null
-        val emotesList = mutableListOf<TwitchEmote>()
+        val emotesList = mutableListOf<ChatEmote>()
         val badgesList = mutableListOf<Badge>()
         while (reader.hasNext()) {
             when (reader.nextName()) {
@@ -1729,7 +1729,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                         }
                                     }
                                     if (fragmentText != null && !emoteId.isNullOrBlank()) {
-                                        emotesList.add(TwitchEmote(
+                                        emotesList.add(ChatEmote(
                                             id = emoteId,
                                             begin = message.codePointCount(0, message.length),
                                             end = message.codePointCount(0, message.length) + fragmentText.lastIndex
@@ -1814,7 +1814,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                     context,
                     offlineVideo.id,
                     Intent(context, MainActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                         action = MainActivity.INTENT_OPEN_DOWNLOADS_TAB
                     },
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT

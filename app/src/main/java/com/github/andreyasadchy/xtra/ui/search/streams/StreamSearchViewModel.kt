@@ -7,8 +7,8 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.github.andreyasadchy.xtra.model.ui.RecentSearch
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.RecentSearchRepository
 import com.github.andreyasadchy.xtra.repository.datasource.SearchStreamsDataSource
@@ -28,8 +28,8 @@ import javax.inject.Inject
 class StreamSearchViewModel @Inject constructor(
     @ApplicationContext applicationContext: Context,
     private val recentSearchRepository: RecentSearchRepository,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
 ) : ViewModel() {
 
@@ -48,18 +48,13 @@ class StreamSearchViewModel @Inject constructor(
         ) {
             SearchStreamsDataSource(
                 query = query,
-                helixHeaders = KickApiHelper.getHelixHeaders(applicationContext),
-                helixRepository = helixRepository,
-                gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext),
-                graphQLRepository = graphQLRepository,
+                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext),
+                kickPublicApiRepository = kickPublicApiRepository,
+                kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext),
+                kickGraphQLRepository = kickGraphQLRepository,
                 kickRepository = kickRepository,
                 enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                apiPref = (applicationContext.prefs().getString(C.API_PREFS_SEARCH_STREAMS, null) ?: C.DEFAULT_API_PREFS_SEARCH_STREAMS).split(',').mapNotNull {
-                    val split = it.split(':')
-                    val key = split[0]
-                    val enabled = split[1] != "0"
-                    if (enabled) key else null
-                },
+                apiPref = listOf(C.KICK),
                 networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
                 useLegacyKickSearch = applicationContext.prefs().getBoolean(C.DEBUG_KICK_LEGACY_SEARCH, false),
             )

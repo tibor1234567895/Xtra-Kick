@@ -3,13 +3,13 @@ package com.github.andreyasadchy.xtra.repository.datasource
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.github.andreyasadchy.xtra.model.ui.Stream
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 
 class ChannelSuggestedDataSource(
     private val channelLogin: String?,
-    private val gqlHeaders: Map<String, String>,
-    private val graphQLRepository: GraphQLRepository,
+    private val kickWebHeaders: Map<String, String>,
+    private val kickGraphQLRepository: KickGraphQLRepository,
     private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val networkLibrary: String?,

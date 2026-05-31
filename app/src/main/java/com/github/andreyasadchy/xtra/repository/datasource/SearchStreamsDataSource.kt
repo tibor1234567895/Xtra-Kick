@@ -4,18 +4,18 @@ import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import android.util.Log
 import com.github.andreyasadchy.xtra.model.ui.Stream
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.KickWebsiteSearchMapper
 import com.github.andreyasadchy.xtra.util.C
 
 class SearchStreamsDataSource(
     private val query: String,
-    private val gqlHeaders: Map<String, String>,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixHeaders: Map<String, String>,
-    private val helixRepository: HelixRepository,
+    private val kickWebHeaders: Map<String, String>,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiHeaders: Map<String, String>,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
@@ -76,7 +76,7 @@ class SearchStreamsDataSource(
     }
 
     private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val response = graphQLRepository.loadQuerySearchStreams(networkLibrary, gqlHeaders, query, params.loadSize, offset)
+        val response = kickGraphQLRepository.loadQuerySearchStreams(networkLibrary, kickWebHeaders, query, params.loadSize, offset)
         if (enableIntegrity) {
             response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
         }
@@ -112,9 +112,9 @@ class SearchStreamsDataSource(
     }
 
     private suspend fun helixLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val response = helixRepository.getSearchChannels(
+        val response = kickPublicApiRepository.getSearchChannels(
             networkLibrary = networkLibrary,
-            headers = helixHeaders,
+            headers = kickPublicApiHeaders,
             query = query,
             limit = params.loadSize,
             offset = offset,
@@ -183,9 +183,9 @@ class SearchStreamsDataSource(
         if (publicBatchIds.isNotEmpty()) {
             runCatching {
                 publicBatchIds.chunked(KICK_PUBLIC_BATCH_SIZE).forEach { batch ->
-                    val response = helixRepository.getLivestreams(
+                    val response = kickPublicApiRepository.getLivestreams(
                         networkLibrary = networkLibrary,
-                        headers = helixHeaders,
+                        headers = kickPublicApiHeaders,
                         broadcasterUserIds = batch,
                         limit = batch.size,
                         sort = "viewer_count",

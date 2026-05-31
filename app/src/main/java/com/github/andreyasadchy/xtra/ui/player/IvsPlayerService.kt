@@ -258,6 +258,14 @@ class IvsPlayerService : Service() {
         player?.pause()
     }
 
+    fun resetForReload() {
+        backgroundPlaybackEnabled = false
+        playbackRequested = false
+        player?.pause()
+        updatePlaybackState()
+        updateNotification()
+    }
+
     fun toggleDynamicsProcessing(): Boolean {
         val enabled = !prefs().getBoolean(C.PLAYER_AUDIO_COMPRESSOR, false)
         prefs().edit { putBoolean(C.PLAYER_AUDIO_COMPRESSOR, enabled) }
@@ -408,7 +416,7 @@ class IvsPlayerService : Service() {
                     this@IvsPlayerService,
                     REQUEST_CODE_RESUME,
                     Intent(this@IvsPlayerService, MainActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                         action = MainActivity.INTENT_OPEN_PLAYER
                     },
                     PendingIntent.FLAG_IMMUTABLE

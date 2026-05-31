@@ -25,6 +25,12 @@
                     android:layout_width="match_parent"
                     android:layout_height="match_parent" />
 
+                <TextureView
+                    android:id="@+id/playerTexture"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:visibility="gone" />
+
             </androidx.media3.ui.AspectRatioFrameLayout>
 
             <androidx.media3.ui.SubtitleView
@@ -38,6 +44,29 @@
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
                 android:indeterminate="true"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/zoomIndicator"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|center_horizontal"
+                android:layout_marginTop="12dp"
+                android:alpha="0"
+                android:background="@drawable/bg_player_zoom_indicator"
+                android:elevation="4dp"
+                android:gravity="center"
+                android:minWidth="54dp"
+                android:textColor="@android:color/white"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <com.github.andreyasadchy.xtra.ui.view.VideoFillHintView
+                android:id="@+id/zoomFillHint"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:alpha="0"
                 android:visibility="gone" />
 
             <include

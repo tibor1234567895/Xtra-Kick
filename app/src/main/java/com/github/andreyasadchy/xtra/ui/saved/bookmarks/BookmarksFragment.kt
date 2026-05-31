@@ -74,8 +74,8 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                 requireContext().filesDir.path,
                 it,
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                KickApiHelper.getGQLHeaders(requireContext()),
-                KickApiHelper.getHelixHeaders(requireContext()),
+                KickApiHelper.getKickWebHeaders(requireContext()),
+                KickApiHelper.getKickPublicApiHeaders(requireContext()),
                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             )
         }, {
@@ -266,14 +266,14 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
             }
             viewModel.updateUsers(
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                KickApiHelper.getGQLHeaders(requireContext()),
-                KickApiHelper.getHelixHeaders(requireContext()),
+                KickApiHelper.getKickWebHeaders(requireContext()),
+                KickApiHelper.getKickPublicApiHeaders(requireContext()),
                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             )
         }
-        val helixHeaders = KickApiHelper.getHelixHeaders(requireContext())
-        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-            viewModel.updateVideos(requireContext().filesDir.path, requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), helixHeaders)
+        val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext())
+        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+            viewModel.updateVideos(requireContext().filesDir.path, requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), kickPublicApiHeaders)
         }
     }
 
@@ -331,8 +331,8 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                     when (callback) {
                         "users" -> viewModel.updateUsers(
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getGQLHeaders(requireContext()),
-                            KickApiHelper.getHelixHeaders(requireContext()),
+                            KickApiHelper.getKickWebHeaders(requireContext()),
+                            KickApiHelper.getKickPublicApiHeaders(requireContext()),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                     }

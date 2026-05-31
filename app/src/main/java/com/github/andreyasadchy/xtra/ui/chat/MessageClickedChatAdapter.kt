@@ -27,8 +27,8 @@ import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.NamePaint
 import com.github.andreyasadchy.xtra.model.chat.StvBadge
 import com.github.andreyasadchy.xtra.model.chat.StvUser
-import com.github.andreyasadchy.xtra.model.chat.TwitchBadge
-import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
+import com.github.andreyasadchy.xtra.model.chat.ChatBadge
+import com.github.andreyasadchy.xtra.model.chat.ChatEmote
 import com.github.andreyasadchy.xtra.ui.view.NamePaintImageSpan
 import com.github.andreyasadchy.xtra.util.chat.ChatAdapterUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
@@ -37,10 +37,10 @@ import java.util.Random
 
 class MessageClickedChatAdapter(
     private val sourceMessages: List<ChatMessage>,
-    private val localTwitchEmotes: List<TwitchEmote>,
+    private val localChatEmotes: List<ChatEmote>,
     private val thirdPartyEmotes: List<Emote>,
-    private val globalBadges: List<TwitchBadge>,
-    private val channelBadges: List<TwitchBadge>,
+    private val globalBadges: List<ChatBadge>,
+    private val channelBadges: List<ChatBadge>,
     private val cheerEmotes: List<CheerEmote>,
     private val namePaints: List<NamePaint>,
     private val stvBadges: List<StvBadge>,
@@ -82,7 +82,7 @@ class MessageClickedChatAdapter(
     private val random: Random,
     private val userColors: HashMap<String, Int>,
     private val savedColors: HashMap<String, Int>,
-    private val savedLocalTwitchEmotes: MutableMap<String, ByteArray>,
+    private val savedLocalChatEmotes: MutableMap<String, ByteArray>,
     private val savedLocalBadges: MutableMap<String, ByteArray>,
     private val savedLocalCheerEmotes: MutableMap<String, ByteArray>,
     private val savedLocalEmotes: MutableMap<String, ByteArray>,
@@ -193,8 +193,8 @@ class MessageClickedChatAdapter(
             rewardChatMsg, replyMessage, { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClick(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, random, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, namePaints, showStvBadges,
             showKickBadges, stvBadges, showPersonalEmotes, personalEmoteSets, stvUsers, enableOverlayEmotes, showSystemMessageEmotes, loggedInUser, chatUrl,
-            getEmoteBytes, userColors, savedColors, localTwitchEmotes,
-            thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalTwitchEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes
+            getEmoteBytes, userColors, savedColors, localChatEmotes,
+            thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalChatEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes
         )
         holder.bind(chatMessage, result.builder, position, result.backgroundRes)
         if (chatMessage == selectedMessage) {

@@ -179,18 +179,18 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                         viewModel.notificationsEnabled.value?.let {
                             if (it) {
                                 args.channelId?.let {
-                                    viewModel.disableNotifications(requireContext().tokenPrefs().getString(C.USER_ID, null), it, setting, requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getGQLHeaders(requireContext(), true), requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false))
+                                    viewModel.disableNotifications(requireContext().tokenPrefs().getString(C.USER_ID, null), it, setting, requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false))
                                 }
                             } else {
                                 args.channelId?.let {
                                     val notificationsEnabled = requireContext().prefs().getBoolean(C.LIVE_NOTIFICATIONS_ENABLED, false)
-                                    viewModel.enableNotifications(requireContext().tokenPrefs().getString(C.USER_ID, null), it, setting, notificationsEnabled, requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getGQLHeaders(requireContext(), true), requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false))
+                                    viewModel.enableNotifications(requireContext().tokenPrefs().getString(C.USER_ID, null), it, setting, notificationsEnabled, requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false))
                                     if (!notificationsEnabled) {
                                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                                             ActivityCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                                             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
                                         }
-                                        viewModel.updateNotifications(requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getGQLHeaders(requireContext(), true), KickApiHelper.getHelixHeaders(requireContext()))
+                                        viewModel.updateNotifications(requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), KickApiHelper.getKickPublicApiHeaders(requireContext()))
                                         WorkManager.getInstance(requireContext()).enqueueUniquePeriodicWork(
                                             "live_notifications",
                                             ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
@@ -233,7 +233,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                             args.channelLogin,
                                             setting,
                                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                            KickApiHelper.getGQLHeaders(requireContext(), true),
+                                            KickApiHelper.getKickWebHeaders(requireContext(), true),
                                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                         )
                                     }
@@ -247,7 +247,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                     setting,
                                     requireContext().prefs().getBoolean(C.LIVE_NOTIFICATIONS_ENABLED, false),
                                     requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getGQLHeaders(requireContext(), true),
+                                    KickApiHelper.getKickWebHeaders(requireContext(), true),
                                     requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -520,8 +520,8 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
     override fun initialize() {
         viewModel.loadStream(
             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            KickApiHelper.getGQLHeaders(requireContext()),
-            KickApiHelper.getHelixHeaders(requireContext()),
+            KickApiHelper.getKickWebHeaders(requireContext()),
+            KickApiHelper.getKickPublicApiHeaders(requireContext()),
             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
         )
         viewLifecycleOwner.lifecycleScope.launch {
@@ -532,7 +532,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                         if (stream.user != null) {
                             updateUserLayout(stream.user)
                         } else {
-                            viewModel.loadUser(requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getHelixHeaders(requireContext()))
+                            viewModel.loadUser(requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickPublicApiHeaders(requireContext()))
                         }
                     }
                 }
@@ -553,8 +553,8 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
             args.channelLogin,
             requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            KickApiHelper.getGQLHeaders(requireContext(), true),
-            KickApiHelper.getHelixHeaders(requireContext()),
+            KickApiHelper.getKickWebHeaders(requireContext(), true),
+            KickApiHelper.getKickPublicApiHeaders(requireContext()),
         )
     }
 
@@ -767,8 +767,8 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
     override fun onNetworkRestored() {
         viewModel.retry(
             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            KickApiHelper.getGQLHeaders(requireContext()),
-            KickApiHelper.getHelixHeaders(requireContext()),
+            KickApiHelper.getKickWebHeaders(requireContext()),
+            KickApiHelper.getKickPublicApiHeaders(requireContext()),
             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
         )
     }
@@ -781,8 +781,8 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                         "refresh" -> {
                             viewModel.retry(
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getGQLHeaders(requireContext()),
-                                KickApiHelper.getHelixHeaders(requireContext()),
+                                KickApiHelper.getKickWebHeaders(requireContext()),
+                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
                                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                             )
                             viewModel.isFollowingChannel(
@@ -791,8 +791,8 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                 args.channelLogin,
                                 requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getGQLHeaders(requireContext(), true),
-                                KickApiHelper.getHelixHeaders(requireContext()),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
                             )
                         }
                         "follow" -> viewModel.saveFollowChannel(
@@ -803,7 +803,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                             requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                             requireContext().prefs().getBoolean(C.LIVE_NOTIFICATIONS_ENABLED, false),
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getGQLHeaders(requireContext(), true),
+                            KickApiHelper.getKickWebHeaders(requireContext(), true),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                         "unfollow" -> viewModel.deleteFollowChannel(
@@ -812,7 +812,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                             args.channelLogin,
                             requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getGQLHeaders(requireContext(), true),
+                            KickApiHelper.getKickWebHeaders(requireContext(), true),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                         "enableNotifications" -> args.channelId?.let {
@@ -822,7 +822,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                 requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                                 requireContext().prefs().getBoolean(C.LIVE_NOTIFICATIONS_ENABLED, false),
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getGQLHeaders(requireContext(), true),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
                                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                             )
                         }
@@ -832,7 +832,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                 it,
                                 requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getGQLHeaders(requireContext(), true),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
                                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                             )
                         }

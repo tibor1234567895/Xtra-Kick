@@ -34,7 +34,7 @@ object PlaylistUtils {
                                     endDate = Pattern.compile("END-DATE=\"(.+?)\"").matcher(line).let { if (it.find()) it.group(1) else null },
                                     duration = Pattern.compile("DURATION=(.+?)").matcher(line).let { if (it.find()) it.group(1)?.toFloatOrNull() else null },
                                     plannedDuration = Pattern.compile("PLANNED-DURATION=(.+?)").matcher(line).let { if (it.find()) it.group(1)?.toFloatOrNull() else null },
-                                    ad = Pattern.compile("X-TV-TWITCH-AD-.+?=\"(.+?)\"").matcher(line).let { if (it.find()) it.group(1) else null } != null
+                                    ad = line.contains("AD", ignoreCase = true)
                                 ))
                             }
                         }

@@ -24,23 +24,28 @@ class KickPusherChatWebSocket(
     private val tag = "KickRealtimeChat"
     private val appKey = "32cbd69e4b950bf97679"
     private val host = "ws-us2.pusher.com"
-    private val channelNames = buildList {
-        add("chatroom_$chatroomId")
-        add("chatrooms.$chatroomId")
-        add("chatrooms.$chatroomId.v2")
-        channelId?.takeIf { it.isNotBlank() }?.let {
-            add("channel_$it")
-            add("channel.$it")
-            add("predictions-channel-$it")
-        }
-        addAll(publicChannelNames)
-    }
+    private val channelNames = buildChannelNames(chatroomId, channelId, publicChannelNames)
     private var webSocket: WebSocket? = null
     private var hasEmittedConnect = false
 
+    companion object {
+        fun buildChannelNames(
+            chatroomId: String,
+            channelId: String?,
+            publicChannelNames: List<String> = emptyList(),
+        ): List<String> = buildList {
+            add("chatrooms.$chatroomId.v2")
+            channelId?.takeIf { it.isNotBlank() }?.let {
+                add("channel.$it")
+                add("predictions-channel-$it")
+            }
+            addAll(publicChannelNames)
+        }
+    }
+
     interface Listener {
         suspend fun onConnect() {}
-        suspend fun onChatEvent(eventName: String, messageJson: String) {}
+        suspend fun onChatEvent(eventName: String, channelName: String?, messageJson: String) {}
         suspend fun onDisconnect(message: String, fullMsg: String?) {}
     }
 
@@ -154,7 +159,7 @@ class KickPusherChatWebSocket(
                         if (!event.startsWith("pusher:") && !event.startsWith("pusher_internal:")) {
                             payload?.takeIf { it.isNotBlank() }?.let {
                                 Log.i(tag, "chat_event event=$event channel=${root.optString("channel")}")
-                                listener.onChatEvent(event, it)
+                                listener.onChatEvent(event, channel.takeIf { value -> value.isNotBlank() }, it)
                             }
                         } else if (debugLogging && event.isNotBlank()) {
                             Log.d(tag, "event=$event")

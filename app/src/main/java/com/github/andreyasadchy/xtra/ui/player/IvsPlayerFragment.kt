@@ -51,6 +51,8 @@ class IvsPlayerFragment : PlayerFragment() {
     private var activeNetworkIsCellular: Boolean? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var backgroundAudioTransitionRequested = false
+    private var pendingAutomaticQualityLog: String? = null
+    private var pendingAutomaticQualityTransport: NetworkTransport? = null
 
     private fun playerDebugLog(message: String) {
         if (BuildConfig.DEBUG && prefs.getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
@@ -66,7 +68,7 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun onStart() {
         super.onStart()
-        registerNetworkCallback()
+        registerAutoQualityNetworkCallback()
         val callback = object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 surfaceCreated = true
@@ -140,6 +142,15 @@ class IvsPlayerFragment : PlayerFragment() {
                             if (key != null) {
                                 viewModel.quality = key
                                 setQualityText()
+                                if (pendingAutomaticQualityLog == key) {
+                                    val transport = pendingAutomaticQualityTransport
+                                    pendingAutomaticQualityLog = null
+                                    pendingAutomaticQualityTransport = null
+                                    logAutomaticQualityChange(key, transport)
+                                } else if (pendingAutomaticQualityLog != null) {
+                                    pendingAutomaticQualityLog = null
+                                    pendingAutomaticQualityTransport = null
+                                }
                             }
                         }
                     }
@@ -155,6 +166,7 @@ class IvsPlayerFragment : PlayerFragment() {
                     resumeOnStart = false
                     updatePlayingState()
                 }
+                recoverEmptyIvsServiceIfNeeded()
                 if (player?.state == Player.State.READY || player?.state == Player.State.PLAYING || player?.state == Player.State.BUFFERING) {
                     if (!viewModel.loaded.value) {
                         viewModel.loaded.value = true
@@ -177,7 +189,7 @@ class IvsPlayerFragment : PlayerFragment() {
             serviceConnection = null
             surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
             surfaceHolderCallback = null
-            unregisterNetworkCallback()
+            unregisterAutoQualityNetworkCallback()
             fallbackToStandardPlayerAfterServiceStartDenied()
             return
         }
@@ -290,6 +302,7 @@ class IvsPlayerFragment : PlayerFragment() {
         binding.playerControls.progressBar.setDuration(0L)
         binding.playerControls.duration.text = null
         binding.playerControls.position.text = null
+        attachSurfaceIfAvailable()
         playbackService?.playStream(
             url = resolvedUrl,
             title = requireArguments().getString(KEY_TITLE),
@@ -309,8 +322,12 @@ class IvsPlayerFragment : PlayerFragment() {
         when (player?.state) {
             Player.State.PLAYING -> playbackService?.pause(clearPlaybackRequest = true)
             Player.State.READY,
-            Player.State.IDLE,
             Player.State.ENDED -> playbackService?.play()
+            Player.State.IDLE -> {
+                if (!reloadIvsLiveStreamWithFreshUrl("idle play")) {
+                    currentUrl?.let { startStream(it) } ?: playbackService?.play()
+                }
+            }
             else -> Unit
         }
         updatePlayingState()
@@ -394,7 +411,16 @@ class IvsPlayerFragment : PlayerFragment() {
         connectivityManager = manager
         activeNetworkIsCellular = isActiveNetworkCellular()
         val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                val networkCapabilities = connectivityManager?.getNetworkCapabilities(network) ?: return
+                handleNetworkCapabilities(network, networkCapabilities)
+            }
+
             override fun onCapabilitiesChanged(network: android.net.Network, networkCapabilities: NetworkCapabilities) {
+                handleNetworkCapabilities(network, networkCapabilities)
+            }
+
+            private fun handleNetworkCapabilities(network: android.net.Network, networkCapabilities: NetworkCapabilities) {
                 val isActiveNetwork = connectivityManager?.activeNetwork == network
                 if (!isActiveNetwork || !networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
                     return
@@ -428,11 +454,35 @@ class IvsPlayerFragment : PlayerFragment() {
         }
         val preferredQuality = resolvePreferredQuality(isCellular) ?: return
         if (preferredQuality != viewModel.quality) {
+            pendingAutomaticQualityLog = preferredQuality
+            pendingAutomaticQualityTransport = if (isCellular) NetworkTransport.CELLULAR else NetworkTransport.WIFI
             changeQuality(preferredQuality)
         }
     }
 
+    override fun handleAutoQualityNetworkChanged(transport: NetworkTransport) {
+        val previousTransport = activeNetworkTransport
+        activeNetworkTransport = transport
+        if (previousTransport == null || previousTransport == transport || videoType != STREAM) {
+            return
+        }
+        if (transport == NetworkTransport.OTHER) {
+            return
+        }
+        val preferredQuality = resolvePreferredQuality(transport == NetworkTransport.CELLULAR) ?: return
+        if (preferredQuality != viewModel.quality) {
+            pendingAutomaticQualityLog = preferredQuality
+            pendingAutomaticQualityTransport = transport
+            runAutomaticQualityChange {
+                changeQuality(preferredQuality)
+            }
+        }
+    }
+
     private fun persistSelectedQuality(selectedQuality: String?) {
+        if (automaticQualityChangeInProgress) {
+            return
+        }
         val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
         val cellular = networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
@@ -479,7 +529,7 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun close() {
         binding.playerControls.root.removeCallbacks(updateProgressAction)
-        unregisterNetworkCallback()
+        unregisterAutoQualityNetworkCallback()
         val service = playbackService
         val ivsPlayer = service?.player
         playerListener?.let { ivsPlayer?.removeListener(it) }
@@ -505,7 +555,7 @@ class IvsPlayerFragment : PlayerFragment() {
             return
         }
         binding.playerControls.root.removeCallbacks(updateProgressAction)
-        unregisterNetworkCallback()
+        unregisterAutoQualityNetworkCallback()
         val ivsPlayer = player
         val shouldKeepPlaying = ivsPlayer?.let { shouldContinueIvsInBackground(it) } ?: false
         playerDebugLog(
@@ -566,9 +616,20 @@ class IvsPlayerFragment : PlayerFragment() {
         playerDebugLog(
             "retryIvsPlayback showMessage=$showMessage stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)} resolvedUrlPresent=true"
         )
+        if (reloadIvsLiveStreamWithFreshUrl("IVS error")) {
+            DiagnosticLogger.w(
+                TAG,
+                "IVS playback error recovery: retrying IVS with fresh Kick URL stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)}"
+            )
+            return
+        }
         if (showMessage) {
             Toast.makeText(requireContext(), R.string.ivs_fallback_to_standard_player, Toast.LENGTH_SHORT).show()
         }
+        DiagnosticLogger.w(
+            TAG,
+            "IVS playback error recovery: falling back to standard player stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)}"
+        )
         playbackService?.stopPlayback()
         requireArguments().putBoolean(KEY_FORCE_STANDARD_LIVE_ENGINE, true)
         (activity as? MainActivity)?.startStream(
@@ -576,6 +637,38 @@ class IvsPlayerFragment : PlayerFragment() {
             resolvedUrl = resolvedUrl,
             forceStandardLiveEngine = true
         )
+    }
+
+    private fun recoverEmptyIvsServiceIfNeeded() {
+        if (!viewModel.started || viewModel.loaded.value || player?.state != Player.State.IDLE) {
+            return
+        }
+        DiagnosticLogger.w(
+            TAG,
+            "IVS resumed with empty service stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)} " +
+                "urlPresent=${!currentUrl.isNullOrBlank()}"
+        )
+        updatePlayingState()
+    }
+
+    private fun reloadIvsLiveStreamWithFreshUrl(reason: String): Boolean {
+        val resolvedUrl = currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL)
+        if (resolvedUrl.isNullOrBlank()) {
+            return false
+        }
+        binding.playerSurface.visibility = View.VISIBLE
+        attachSurfaceIfAvailable()
+        val started = reloadKickStreamWithFreshResolvedUrl(
+            stalePlaybackUrl = resolvedUrl,
+            reason = "IVS $reason",
+            delayMs = 0L
+        )
+        if (started) {
+            recoveryInProgress = true
+            resumeOnStart = false
+            playbackService?.resetForReload()
+        }
+        return started
     }
 
     private fun shouldContinueIvsInBackground(player: Player): Boolean {
@@ -591,11 +684,16 @@ class IvsPlayerFragment : PlayerFragment() {
 
     private fun exitAudioOnlyMode() {
         binding.playerSurface.visibility = View.VISIBLE
-        if (surfaceCreated) {
-            playbackService?.attachSurface(binding.playerSurface.holder.surface)
-        }
+        attachSurfaceIfAvailable()
         changePlayerMode()
         updatePlayingState()
+    }
+
+    private fun attachSurfaceIfAvailable() {
+        val surface = binding.playerSurface.holder.surface
+        if (surfaceCreated && surface?.isValid == true) {
+            playbackService?.attachSurface(surface)
+        }
     }
 
     companion object {

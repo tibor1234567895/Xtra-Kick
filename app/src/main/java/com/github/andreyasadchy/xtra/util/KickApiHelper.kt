@@ -178,6 +178,9 @@ object KickApiHelper {
     }
 
     fun getTimestamp(input: Long, timestampFormat: String?): String? {
+        if (input in 0L until DateUtils.WEEK_IN_MILLIS) {
+            return DateUtils.formatElapsedTime(input / 1000L)
+        }
         val pattern = when (timestampFormat) {
             "0" -> "H:mm"
             "1" -> "HH:mm"
@@ -312,10 +315,10 @@ object KickApiHelper {
         }
     }
 
-    fun addTokenPrefixGQL(token: String) = "OAuth $token"
-    fun addTokenPrefixHelix(token: String) = "Bearer $token"
+    fun addKickWebTokenPrefix(token: String) = "OAuth $token"
+    fun addKickPublicApiTokenPrefix(token: String) = "Bearer $token"
 
-    fun getGQLHeaders(context: Context, includeToken: Boolean = false): Map<String, String> {
+    fun getKickWebHeaders(context: Context, includeToken: Boolean = false): Map<String, String> {
         return mutableMapOf<String, String>().apply {
             if (context.prefs().getBoolean(C.ENABLE_INTEGRITY, false)) {
                 context.tokenPrefs().getString(C.GQL_HEADERS, null)?.let {
@@ -347,7 +350,7 @@ object KickApiHelper {
         }
     }
 
-    fun getHelixHeaders(context: Context): Map<String, String> {
+    fun getKickPublicApiHeaders(context: Context): Map<String, String> {
         return mutableMapOf<String, String>().apply {
             (KickOAuthConfig.getClientId(context)
                 ?: context.prefs().getString(C.HELIX_CLIENT_ID, "ilfexgv3nnljz3isbm257gzwrzr7bi"))?.let {

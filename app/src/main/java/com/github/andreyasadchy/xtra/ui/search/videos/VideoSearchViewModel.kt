@@ -14,8 +14,8 @@ import com.github.andreyasadchy.xtra.model.ui.RecentSearch
 import com.github.andreyasadchy.xtra.model.ui.User
 import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.repository.BookmarksRepository
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.repository.RecentSearchRepository
@@ -51,8 +51,8 @@ class VideoSearchViewModel @Inject constructor(
     private val recentSearchRepository: RecentSearchRepository,
     playerRepository: PlayerRepository,
     private val bookmarksRepository: BookmarksRepository,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val httpEngine: Lazy<HttpEngine>?,
     private val cronetEngine: Lazy<CronetEngine>?,
@@ -73,16 +73,11 @@ class VideoSearchViewModel @Inject constructor(
         ) {
             SearchVideosDataSource(
                 query = query,
-                gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext),
-                graphQLRepository = graphQLRepository,
+                kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext),
+                kickGraphQLRepository = kickGraphQLRepository,
                 kickRepository = kickRepository,
                 enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                apiPref = (applicationContext.prefs().getString(C.API_PREFS_SEARCH_VIDEOS, null) ?: C.DEFAULT_API_PREFS_SEARCH_VIDEOS).split(',').mapNotNull {
-                    val split = it.split(':')
-                    val key = split[0]
-                    val enabled = split[1] != "0"
-                    if (enabled) key else null
-                },
+                apiPref = listOf(C.KICK),
                 networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
             )
         }.flow
@@ -111,7 +106,7 @@ class VideoSearchViewModel @Inject constructor(
         }
     }
 
-    fun saveBookmark(filesDir: String, video: Video, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>) {
+    fun saveBookmark(filesDir: String, video: Video, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         viewModelScope.launch {
             val item = video.id?.let { bookmarksRepository.getBookmarkByVideoId(it) }
             if (item != null) {
@@ -233,7 +228,7 @@ class VideoSearchViewModel @Inject constructor(
                 }
                 val userTypes = video.channelId?.let {
                     try {
-                        val response = graphQLRepository.loadQueryUsersType(networkLibrary, gqlHeaders, listOf(it))
+                        val response = kickGraphQLRepository.loadQueryUsersType(networkLibrary, kickWebHeaders, listOf(it))
                         response.data!!.users?.firstOrNull()?.let {
                             User(
                                 channelId = it.id,
@@ -249,11 +244,11 @@ class VideoSearchViewModel @Inject constructor(
                             )
                         }
                     } catch (e: Exception) {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                             try {
-                                helixRepository.getUsers(
+                                kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     ids = listOf(it)
                                 ).data.firstOrNull()?.let {
                                     User(

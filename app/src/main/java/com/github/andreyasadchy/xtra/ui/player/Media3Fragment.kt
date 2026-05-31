@@ -120,6 +120,7 @@ class Media3Fragment : PlayerFragment() {
 
     override fun onStart() {
         super.onStart()
+        registerAutoQualityNetworkCallback()
         controllerFuture = MediaController.Builder(
             requireContext(),
             SessionToken(
@@ -447,7 +448,8 @@ class Media3Fragment : PlayerFragment() {
                                 result.addListener({
                                     if (result.get().resultCode == SessionResult.RESULT_SUCCESS) {
                                         val responseCode = result.get().extras.getInt(PlaybackService.RESULT)
-                                        val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                                        val context = context ?: return@addListener
+                                        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                                         val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
                                         val isNetworkAvailable = networkCapabilities != null
                                                 && networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -455,13 +457,13 @@ class Media3Fragment : PlayerFragment() {
                                         if (isNetworkAvailable) {
                                             when {
                                                 responseCode == 404 -> {
-                                                    Toast.makeText(requireContext(), R.string.stream_ended, Toast.LENGTH_LONG).show()
+                                                    Toast.makeText(context, R.string.stream_ended, Toast.LENGTH_LONG).show()
                                                 }
                                                 responseCode == 403 && retryKickStreamWithFreshResolvedUrl() -> {
-                                                    Toast.makeText(requireContext(), R.string.player_error, Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, R.string.player_error, Toast.LENGTH_SHORT).show()
                                                 }
                                                 viewModel.useCustomProxy && responseCode >= 400 -> {
-                                                    Toast.makeText(requireContext(), R.string.proxy_error, Toast.LENGTH_LONG).show()
+                                                    Toast.makeText(context, R.string.proxy_error, Toast.LENGTH_LONG).show()
                                                     viewModel.useCustomProxy = false
                                                     viewLifecycleOwner.lifecycleScope.launch {
                                                         delay(1500L)
@@ -472,10 +474,10 @@ class Media3Fragment : PlayerFragment() {
                                                     }
                                                 }
                                                 responseCode == 403 -> {
-                                                    Toast.makeText(requireContext(), R.string.player_error, Toast.LENGTH_LONG).show()
+                                                    Toast.makeText(context, R.string.player_error, Toast.LENGTH_LONG).show()
                                                 }
                                                 else -> {
-                                                    Toast.makeText(requireContext(), R.string.player_error, Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, R.string.player_error, Toast.LENGTH_SHORT).show()
                                                     viewLifecycleOwner.lifecycleScope.launch {
                                                         delay(1500L)
                                                         try {
@@ -498,7 +500,8 @@ class Media3Fragment : PlayerFragment() {
                                 result.addListener({
                                     if (result.get().resultCode == SessionResult.RESULT_SUCCESS) {
                                         val responseCode = result.get().extras.getInt(PlaybackService.RESULT)
-                                        val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                                        val context = context ?: return@addListener
+                                        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                                         val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
                                         val isNetworkAvailable = networkCapabilities != null
                                                 && networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -515,10 +518,10 @@ class Media3Fragment : PlayerFragment() {
                                                     playVideo(true, player?.currentPosition)
                                                 }
                                                 responseCode == 403 -> {
-                                                    Toast.makeText(requireContext(), R.string.video_subscribers_only, Toast.LENGTH_LONG).show()
+                                                    Toast.makeText(context, R.string.video_subscribers_only, Toast.LENGTH_LONG).show()
                                                 }
                                                 else -> {
-                                                    Toast.makeText(requireContext(), R.string.player_error, Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, R.string.player_error, Toast.LENGTH_SHORT).show()
                                                     viewLifecycleOwner.lifecycleScope.launch {
                                                         delay(1500L)
                                                         try {
@@ -621,8 +624,14 @@ class Media3Fragment : PlayerFragment() {
         val latencyConfig = LiveLatencySettings.resolve(prefs)
         liveTargetOffsetMs = latencyConfig.targetOffsetMs
         pendingInitialLiveSync = true
+        val urlHash = url.shortHash()
         playerDebugLog("Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(latencyConfig)}")
-        player?.sendCustomCommand(
+        DiagnosticLogger.w(
+            TAG,
+            "START_STREAM command sending channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)} " +
+                "urlPresent=${!url.isNullOrBlank()} urlHash=$urlHash latency=${LiveLatencySettings.describe(latencyConfig)}"
+        )
+        val commandResult = player?.sendCustomCommand(
             SessionCommand(
                 PlaybackService.START_STREAM, bundleOf(
                     PlaybackService.URI to url,
@@ -632,6 +641,48 @@ class Media3Fragment : PlayerFragment() {
                 )
             ), Bundle.EMPTY
         )
+        commandResult?.addListener({
+            runCatching { commandResult.get() }
+                .onSuccess {
+                    DiagnosticLogger.w(
+                        TAG,
+                        "START_STREAM command result channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)} " +
+                            "result=${it.resultCode} urlHash=$urlHash"
+                    )
+                }
+                .onFailure {
+                    DiagnosticLogger.e(TAG, "START_STREAM command failed channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)} urlHash=$urlHash", it)
+                }
+        }, MoreExecutors.directExecutor())
+        viewLifecycleOwner.lifecycleScope.launch {
+            delay(5000L)
+            val controller = player
+            DiagnosticLogger.w(
+                TAG,
+                "START_STREAM followup channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)} urlHash=$urlHash " +
+                    "state=${controller?.playbackState?.let(::playbackStateName) ?: "missing"} " +
+                    "playWhenReady=${controller?.playWhenReady} isPlaying=${controller?.isPlaying} " +
+                    "error=${controller?.playerError?.errorCodeName}"
+            )
+        }
+    }
+
+    private fun String?.shortHash(): String {
+        return if (isNullOrBlank()) {
+            "none"
+        } else {
+            Integer.toHexString(hashCode())
+        }
+    }
+
+    private fun playbackStateName(playbackState: Int): String {
+        return when (playbackState) {
+            Player.STATE_IDLE -> "IDLE"
+            Player.STATE_BUFFERING -> "BUFFERING"
+            Player.STATE_READY -> "READY"
+            Player.STATE_ENDED -> "ENDED"
+            else -> playbackState.toString()
+        }
     }
 
     override fun startVideo(url: String?, playbackPosition: Long?, multivariantPlaylist: Boolean) {
@@ -1024,7 +1075,7 @@ class Media3Fragment : PlayerFragment() {
                     val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                     val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
                     val cellular = networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
-                    if ((!cellular && prefs.getString(C.PLAYER_DEFAULTQUALITY, "saved") == "saved") || (cellular && prefs.getString(C.PLAYER_DEFAULT_CELLULAR_QUALITY, "saved") == "saved")) {
+                    if (!automaticQualityChangeInProgress && ((!cellular && prefs.getString(C.PLAYER_DEFAULTQUALITY, "saved") == "saved") || (cellular && prefs.getString(C.PLAYER_DEFAULT_CELLULAR_QUALITY, "saved") == "saved"))) {
                         prefs.edit { putString(C.PLAYER_QUALITY, quality.key) }
                     }
                 }

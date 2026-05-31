@@ -7,7 +7,7 @@ import com.github.andreyasadchy.xtra.model.chat.Badge
 import com.github.andreyasadchy.xtra.model.chat.ChannelPointReward
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.Reply
-import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
+import com.github.andreyasadchy.xtra.model.chat.ChatEmote
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import kotlin.collections.set
 
@@ -44,14 +44,14 @@ object RecentMessageUtils {
                     isAction = true
                 }
             }
-            val emotesList = mutableListOf<TwitchEmote>()
+            val emotesList = mutableListOf<ChatEmote>()
             val emotes = prefixes["emotes"]
             if (emotes != null) {
                 val entries = splitAndMakeMap(emotes, "/", ":").entries
                 entries.forEach { emote ->
                     emote.value?.split(",")?.forEach { indexes ->
                         val index = indexes.split("-")
-                        emotesList.add(TwitchEmote(id = emote.key, begin = index[0].toInt(), end = index[1].toInt()))
+                        emotesList.add(ChatEmote(id = emote.key, begin = index[0].toInt(), end = index[1].toInt()))
                     }
                 }
             }

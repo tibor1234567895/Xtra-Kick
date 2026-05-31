@@ -9,6 +9,7 @@ class Raid(
     val targetName: String? = null,
     val targetProfileImage: String? = null,
     val viewerCount: Int? = null,
+    val countdownSeconds: Int? = null,
     val openStream: Boolean,
 ) {
 

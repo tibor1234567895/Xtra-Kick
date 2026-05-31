@@ -9,8 +9,8 @@ import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.github.andreyasadchy.xtra.graphql.type.ClipsPeriod
 import com.github.andreyasadchy.xtra.model.ui.SortChannel
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.SortChannelRepository
 import com.github.andreyasadchy.xtra.repository.datasource.ChannelClipsDataSource
@@ -30,8 +30,8 @@ import javax.inject.Inject
 class ChannelClipsViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
     private val sortChannelRepository: SortChannelRepository,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -85,18 +85,13 @@ class ChannelClipsViewModel @Inject constructor(
                 gqlPeriod = gqlPeriod,
                 startedAt = started,
                 endedAt = ended,
-                gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext),
-                graphQLRepository = graphQLRepository,
-                helixHeaders = KickApiHelper.getHelixHeaders(applicationContext),
-                helixRepository = helixRepository,
+                kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext),
+                kickGraphQLRepository = kickGraphQLRepository,
+                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext),
+                kickPublicApiRepository = kickPublicApiRepository,
                 kickRepository = kickRepository,
                 enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                apiPref = (applicationContext.prefs().getString(C.API_PREFS_CHANNEL_CLIPS, null) ?: C.DEFAULT_API_PREFS_CHANNEL_CLIPS).split(',').mapNotNull {
-                    val split = it.split(':')
-                    val key = split[0]
-                    val enabled = split[1] != "0"
-                    if (enabled) key else null
-                },
+                apiPref = listOf(C.KICK),
                 networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
             )
         }.flow

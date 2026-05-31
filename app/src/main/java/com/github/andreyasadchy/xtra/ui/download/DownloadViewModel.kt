@@ -34,7 +34,7 @@ class DownloadViewModel @Inject constructor(
 
     fun setStream(
         networkLibrary: String?,
-        gqlHeaders: Map<String, String>,
+        kickWebHeaders: Map<String, String>,
         channelLogin: String?,
         qualities: Map<String, Pair<String, String>>?,
         randomDeviceId: Boolean?,
@@ -72,7 +72,7 @@ class DownloadViewModel @Inject constructor(
 
     fun setVideo(
         networkLibrary: String?,
-        gqlHeaders: Map<String, String>,
+        kickWebHeaders: Map<String, String>,
         videoId: String?,
         animatedPreviewUrl: String?,
         videoType: String?,
@@ -129,14 +129,14 @@ class DownloadViewModel @Inject constructor(
         }
     }
 
-    fun setClip(networkLibrary: String?, gqlHeaders: Map<String, String>, clipId: String?, qualities: Map<String, Pair<String, String>>?, enableIntegrity: Boolean) {
+    fun setClip(networkLibrary: String?, kickWebHeaders: Map<String, String>, clipId: String?, qualities: Map<String, Pair<String, String>>?, enableIntegrity: Boolean) {
         if (_qualities.value == null) {
             if (!qualities.isNullOrEmpty()) {
                 _qualities.value = qualities
             } else {
                 viewModelScope.launch {
                     try {
-                        val urls = playerRepository.loadClipUrls(networkLibrary, gqlHeaders, clipId, enableIntegrity)
+                        val urls = playerRepository.loadClipUrls(networkLibrary, kickWebHeaders, clipId, enableIntegrity)
                         val hideCodecs = urls?.all {
                             it.key.second?.substringBefore('.').let { codec ->
                                 codec == "avc1" || codec == "mp4a" || codec.isNullOrBlank()

@@ -10,8 +10,8 @@ import androidx.paging.cachedIn
 import com.github.andreyasadchy.xtra.graphql.type.ClipsPeriod
 import com.github.andreyasadchy.xtra.graphql.type.Language
 import com.github.andreyasadchy.xtra.model.ui.SortGame
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.SortGameRepository
 import com.github.andreyasadchy.xtra.repository.datasource.GameClipsDataSource
@@ -31,8 +31,8 @@ import javax.inject.Inject
 class GameClipsViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
     private val sortGameRepository: SortGameRepository,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -95,18 +95,13 @@ class GameClipsViewModel @Inject constructor(
                 gqlPeriod = gqlPeriod,
                 startedAt = started,
                 endedAt = ended,
-                helixHeaders = KickApiHelper.getHelixHeaders(applicationContext),
-                helixRepository = helixRepository,
+                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext),
+                kickPublicApiRepository = kickPublicApiRepository,
                 kickRepository = kickRepository,
-                gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext),
-                graphQLRepository = graphQLRepository,
+                kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext),
+                kickGraphQLRepository = kickGraphQLRepository,
                 enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                apiPref = (applicationContext.prefs().getString(C.API_PREFS_GAME_CLIPS, null) ?: C.DEFAULT_API_PREFS_GAME_CLIPS).split(',').mapNotNull {
-                    val split = it.split(':')
-                    val key = split[0]
-                    val enabled = split[1] != "0"
-                    if (enabled) key else null
-                },
+                apiPref = listOf(C.KICK),
                 networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
             )
         }.flow

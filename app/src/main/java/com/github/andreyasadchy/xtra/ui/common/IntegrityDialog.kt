@@ -45,7 +45,7 @@ class IntegrityDialog : DialogFragment() {
         val builder = context.getAlertDialogBuilder()
             .setView(binding.root)
         CookieManager.getInstance().removeAllCookies(null)
-        val token = KickApiHelper.getGQLHeaders(context, true)[C.HEADER_TOKEN]?.removePrefix("OAuth ")
+        val token = KickApiHelper.getKickWebHeaders(context, true)[C.HEADER_TOKEN]?.removePrefix("OAuth ")
         if (!token.isNullOrBlank()) {
             CookieManager.getInstance().setCookie("https://kick.com", "auth-token=$token")
         }

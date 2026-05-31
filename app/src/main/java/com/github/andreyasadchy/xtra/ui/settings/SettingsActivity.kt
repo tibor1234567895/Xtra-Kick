@@ -367,8 +367,8 @@ class SettingsActivity : AppCompatActivity() {
                     viewModel.restoreSettings(
                         list = list,
                         networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), true),
-                        helixHeaders = KickApiHelper.getHelixHeaders(requireContext())
+                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), true),
+                        kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext())
                     )
                 }
             }
@@ -419,8 +419,8 @@ class SettingsActivity : AppCompatActivity() {
                 viewModel.toggleNotifications(
                     enabled = newValue as Boolean,
                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), true),
-                    helixHeaders = KickApiHelper.getHelixHeaders(requireContext())
+                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), true),
+                    kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext())
                 )
                 (requireActivity() as? SettingsActivity)?.setResult()
                 true
@@ -2280,19 +2280,17 @@ class SettingsActivity : AppCompatActivity() {
                         }
                     })
                     val prefKey = item.second
-                    val list = (requireContext().prefs().getString(prefKey, null) ?: item.third).split(',').map {
+                    val list = (requireContext().prefs().getString(prefKey, null) ?: item.third).split(',').mapNotNull {
                         val split = it.split(':')
+                        if (split.getOrNull(0) != C.KICK) return@mapNotNull null
                         SettingsDragListItem(
                             key = split[0],
                             text = when (split[0]) {
-                                "0" -> getString(R.string.api_gql)
-                                "1" -> getString(R.string.api_gql_persisted_query)
-                                "2" -> getString(R.string.api_helix)
                                 "3" -> getString(R.string.api_kick)
-                                else -> getString(R.string.api_gql)
+                                else -> getString(R.string.api_kick)
                             },
                             default = false,
-                            enabled = split[1] != "0",
+                            enabled = split.getOrNull(1) != "0",
                         )
                     }
                     val listAdapter = SettingsDragListAdapter()

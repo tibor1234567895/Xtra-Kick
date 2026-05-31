@@ -197,10 +197,30 @@ class PlaybackService : MediaSessionService() {
                     logPlayerError(error)
                     if (background) {
                         if (isBehindLiveWindowError(error)) {
-                            logBufferDebug("playerError recovering via seekToDefaultPosition")
+                            DiagnosticLogger.w(
+                                TAG,
+                                "behindLiveWindow recovery start background=$background backgroundHandoffMode=$backgroundHandoffMode " +
+                                    "state=${playbackStateName(player.playbackState)} playWhenReady=${player.playWhenReady} " +
+                                    "isPlaying=${player.isPlaying} mediaItemPresent=${player.currentMediaItem != null}"
+                            )
                             player.seekToDefaultPosition()
+                            player.playWhenReady = true
+                            player.prepare()
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                DiagnosticLogger.w(
+                                    TAG,
+                                    "behindLiveWindow recovery followup background=$background backgroundHandoffMode=$backgroundHandoffMode " +
+                                        "state=${playbackStateName(player.playbackState)} playWhenReady=${player.playWhenReady} " +
+                                        "isPlaying=${player.isPlaying} error=${player.playerError?.errorCodeName}"
+                                )
+                            }, 5000L)
+                            return
                         }
-                        logBufferDebug("playerError recovering via prepare")
+                        DiagnosticLogger.w(
+                            TAG,
+                            "background playerError recovery via prepare code=${error.errorCodeName} " +
+                                "state=${playbackStateName(player.playbackState)} playWhenReady=${player.playWhenReady}"
+                        )
                         player.prepare()
                     }
                 }
@@ -252,7 +272,7 @@ class PlaybackService : MediaSessionService() {
                     this@PlaybackService,
                     REQUEST_CODE_RESUME,
                     Intent(this@PlaybackService, MainActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                         action = MainActivity.INTENT_OPEN_PLAYER
                     },
                     PendingIntent.FLAG_IMMUTABLE
@@ -291,6 +311,12 @@ class PlaybackService : MediaSessionService() {
                                 logBufferDebug(
                                     "START_STREAM received channel=$channelName disableVideo=$disableVideo " +
                                         "backgroundHandoffMode=$backgroundHandoffMode uriPresent=${!uri.isNullOrBlank()}"
+                                )
+                                DiagnosticLogger.w(
+                                    TAG,
+                                    "START_STREAM service received channel=$channelName disableVideo=$disableVideo " +
+                                        "background=$background backgroundHandoffMode=$backgroundHandoffMode " +
+                                        "${summarizePlaybackUri(uri)}"
                                 )
                                 videoId = null
                                 offlineVideoId = null
@@ -407,6 +433,15 @@ class PlaybackService : MediaSessionService() {
                                 session.player.setPlaybackSpeed(1f)
                                 session.player.prepare()
                                 session.player.playWhenReady = true
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    DiagnosticLogger.w(
+                                        TAG,
+                                        "START_STREAM service followup channel=$channelName ${summarizePlaybackUri(uri)} " +
+                                            "state=${playbackStateName(session.player.playbackState)} " +
+                                            "playWhenReady=${session.player.playWhenReady} isPlaying=${session.player.isPlaying} " +
+                                            "error=${session.player.playerError?.errorCodeName}"
+                                    )
+                                }, 5000L)
                                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                             }
                             START_VIDEO -> {
@@ -595,8 +630,8 @@ class PlaybackService : MediaSessionService() {
                                                     ?: it.durationUs.takeIf { it != androidx.media3.common.C.TIME_UNSET }?.let { startTime + it }
                                                     ?: it.plannedDurationUs.takeIf { it != androidx.media3.common.C.TIME_UNSET }?.let { startTime + it }
                                                 endTime != null && (it.id.startsWith("stitched-ad-") ||
-                                                        it.clientDefinedAttributes.find { it.name == "CLASS" }?.textValue == "twitch-stitched-ad" ||
-                                                        it.clientDefinedAttributes.find { it.name.startsWith("X-TV-TWITCH-AD-") } != null)
+                                                        it.clientDefinedAttributes.find { it.name == "CLASS" }?.textValue?.contains("stitched-ad") == true ||
+                                                        it.clientDefinedAttributes.find { it.name.contains("AD", ignoreCase = true) } != null)
                                                         && (startTime <= segmentStartTime && segmentStartTime < endTime)
                                             } != null
                                 }
@@ -768,7 +803,7 @@ class PlaybackService : MediaSessionService() {
         val message = "playerError code=${error.errorCode} name=${error.errorCodeName} " +
             "http=$responseCode background=$background backgroundHandoffMode=$backgroundHandoffMode " +
             "message=${error.message}"
-        if (responseCode == 403 || responseCode == 404) {
+        if (responseCode == 403 || responseCode == 404 || isBehindLiveWindowError(error)) {
             DiagnosticLogger.w(TAG, message)
         } else {
             DiagnosticLogger.e(TAG, message, error)
@@ -784,6 +819,26 @@ class PlaybackService : MediaSessionService() {
             cause = cause.cause
         }
         return null
+    }
+
+    private fun summarizePlaybackUri(uri: String?): String {
+        if (uri.isNullOrBlank()) {
+            return "uri=missing"
+        }
+        return runCatching {
+            val parsed = uri.toUri()
+            val query = parsed.query
+            "uriHost=${parsed.host ?: "unknown"} uriPath=${parsed.path ?: "unknown"} " +
+                "queryPresent=${!query.isNullOrBlank()} queryHash=${query.shortHash()} uriHash=${uri.shortHash()}"
+        }.getOrDefault("uri=unparseable uriHash=${uri.shortHash()}")
+    }
+
+    private fun String?.shortHash(): String {
+        return if (isNullOrBlank()) {
+            "none"
+        } else {
+            Integer.toHexString(hashCode())
+        }
     }
 
     private fun isBehindLiveWindowError(error: PlaybackException): Boolean {

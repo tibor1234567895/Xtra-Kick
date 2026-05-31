@@ -1,1 +1,1 @@
-è un lettore e browser per Twitch
+﻿Kick streaming client

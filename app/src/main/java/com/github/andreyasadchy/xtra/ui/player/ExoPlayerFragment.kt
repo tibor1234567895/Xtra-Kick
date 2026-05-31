@@ -109,14 +109,21 @@ class ExoPlayerFragment : PlayerFragment() {
         return null
     }
 
+    private fun setVideoOutputVisible(visible: Boolean) {
+        binding.playerSurface.visibility = View.GONE
+        binding.playerTexture.visibility = if (visible) View.VISIBLE else View.GONE
+    }
+
     override fun onStart() {
         super.onStart()
+        registerAutoQualityNetworkCallback()
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
                 if (view != null) {
                     val binder = service as ExoPlayerService.ServiceBinder
                     playbackService = binder.getService()
-                    player?.setVideoSurfaceView(binding.playerSurface)
+                    setVideoOutputVisible(true)
+                    player?.setVideoTextureView(binding.playerTexture)
                     val listener = object : Player.Listener {
 
                         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -207,6 +214,16 @@ class ExoPlayerFragment : PlayerFragment() {
                                 } else if (player?.playWhenReady == false) {
                                     chatFragment?.stopReplayChat()
                                 }
+                            }
+                        }
+
+                        private var lastAutoHeight = 0
+
+                        override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                            super.onVideoSizeChanged(videoSize)
+                            if (videoSize.height > 0 && viewModel.quality == AUTO_QUALITY && lastAutoHeight != videoSize.height) {
+                                lastAutoHeight = videoSize.height
+                                viewModel.resolutionChangeFlow.tryEmit("${videoSize.height}p")
                             }
                         }
 
@@ -350,8 +367,8 @@ class ExoPlayerFragment : PlayerFragment() {
                                                         ?: it.durationUs.takeIf { it != androidx.media3.common.C.TIME_UNSET }?.let { startTime + it }
                                                         ?: it.plannedDurationUs.takeIf { it != androidx.media3.common.C.TIME_UNSET }?.let { startTime + it }
                                                     endTime != null && (it.id.startsWith("stitched-ad-") ||
-                                                            it.clientDefinedAttributes.find { it.name == "CLASS" }?.textValue == "twitch-stitched-ad" ||
-                                                            it.clientDefinedAttributes.find { it.name.startsWith("X-TV-TWITCH-AD-") } != null)
+                                                            it.clientDefinedAttributes.find { it.name == "CLASS" }?.textValue?.contains("stitched-ad") == true ||
+                                                            it.clientDefinedAttributes.find { it.name.contains("AD", ignoreCase = true) } != null)
                                                             && (startTime <= segmentStartTime && segmentStartTime < endTime)
                                                 } != null
                                     } == true
@@ -388,7 +405,7 @@ class ExoPlayerFragment : PlayerFragment() {
                                                                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                                                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                                                                 }.build()
-                                                                binding.playerSurface.visibility = View.GONE
+                                                                setVideoOutputVisible(false)
                                                             }
                                                             player.volume = 0f
                                                         }
@@ -405,7 +422,7 @@ class ExoPlayerFragment : PlayerFragment() {
                                                     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                                         setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
                                                     }.build()
-                                                    binding.playerSurface.visibility = View.VISIBLE
+                                                    setVideoOutputVisible(true)
                                                 }
                                                 player.volume = prefs.getInt(C.PLAYER_VOLUME, 100) / 100f
                                             }
@@ -657,7 +674,7 @@ class ExoPlayerFragment : PlayerFragment() {
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                 setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
             }.build()
-            binding.playerSurface.visibility = View.VISIBLE
+            setVideoOutputVisible(true)
             val newId = requireArguments().getString(KEY_VIDEO_ID)?.toLongOrNull()
             val position = if (playbackService?.videoId == newId && player.currentMediaItem != null) {
                 player.currentPosition
@@ -704,12 +721,12 @@ class ExoPlayerFragment : PlayerFragment() {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                 }.build()
-                binding.playerSurface.visibility = View.GONE
+                setVideoOutputVisible(false)
             } else {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
                 }.build()
-                binding.playerSurface.visibility = View.VISIBLE
+                setVideoOutputVisible(true)
             }
             playbackService?.videoId = null
             playbackService?.offlineVideoId = null
@@ -754,12 +771,12 @@ class ExoPlayerFragment : PlayerFragment() {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                 }.build()
-                binding.playerSurface.visibility = View.GONE
+                setVideoOutputVisible(false)
             } else {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
                 }.build()
-                binding.playerSurface.visibility = View.VISIBLE
+                setVideoOutputVisible(true)
             }
             val newId = requireArguments().getInt(KEY_OFFLINE_VIDEO_ID).takeIf { it != 0 }
             val position = if (playbackService?.offlineVideoId == newId && player.currentMediaItem != null) {
@@ -974,7 +991,7 @@ class ExoPlayerFragment : PlayerFragment() {
                                 setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
                                 clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
                             }.build()
-                            binding.playerSurface.visibility = View.VISIBLE
+                            setVideoOutputVisible(true)
                         }
                         AUDIO_ONLY_QUALITY -> {
                             if (viewModel.usingProxy) {
@@ -984,7 +1001,7 @@ class ExoPlayerFragment : PlayerFragment() {
                             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                 setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                             }.build()
-                            binding.playerSurface.visibility = View.GONE
+                            setVideoOutputVisible(false)
                             quality.value.second?.let {
                                 val position = player.currentPosition
                                 if (viewModel.qualities.containsKey(AUTO_QUALITY)) {
@@ -1015,7 +1032,7 @@ class ExoPlayerFragment : PlayerFragment() {
                                 } ?: player.prepare()
                                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
-                                    binding.playerSurface.visibility = View.VISIBLE
+                                    setVideoOutputVisible(true)
                                     if (!player.currentTracks.isEmpty) {
                                         player.currentTracks.groups.find { it.type == androidx.media3.common.C.TRACK_TYPE_VIDEO }?.let {
                                             val selectedQuality = quality.key.split("p")
@@ -1055,14 +1072,14 @@ class ExoPlayerFragment : PlayerFragment() {
                                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
                                 }.build()
-                                binding.playerSurface.visibility = View.VISIBLE
+                                setVideoOutputVisible(true)
                             }
                         }
                     }
                     val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                     val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
                     val cellular = networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
-                    if ((!cellular && prefs.getString(C.PLAYER_DEFAULTQUALITY, "saved") == "saved") || (cellular && prefs.getString(C.PLAYER_DEFAULT_CELLULAR_QUALITY, "saved") == "saved")) {
+                    if (!automaticQualityChangeInProgress && ((!cellular && prefs.getString(C.PLAYER_DEFAULTQUALITY, "saved") == "saved") || (cellular && prefs.getString(C.PLAYER_DEFAULT_CELLULAR_QUALITY, "saved") == "saved"))) {
                         prefs.edit { putString(C.PLAYER_QUALITY, quality.key) }
                     }
                 }
@@ -1088,7 +1105,7 @@ class ExoPlayerFragment : PlayerFragment() {
                                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                                 }.build()
-                                binding.playerSurface.visibility = View.GONE
+                                setVideoOutputVisible(false)
                             }
                             if (prefs.getBoolean(C.PLAYER_USE_BACKGROUND_AUDIO_TRACK, false)) {
                                 quality.value.second?.let {
@@ -1178,7 +1195,7 @@ class ExoPlayerFragment : PlayerFragment() {
                                     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                         setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                                     }.build()
-                                    binding.playerSurface.visibility = View.GONE
+                                    setVideoOutputVisible(false)
                                 }
                                 if (prefs.getBoolean(C.PLAYER_USE_BACKGROUND_AUDIO_TRACK, false)) {
                                     quality.value.second?.let {

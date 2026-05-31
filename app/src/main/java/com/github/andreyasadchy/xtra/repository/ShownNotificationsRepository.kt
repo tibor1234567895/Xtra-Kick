@@ -63,15 +63,15 @@ class ShownNotificationsRepository @Inject constructor(
         list.filter { it.channelId in newStreams }
     }
 
-    suspend fun getNewStreams(notificationUsersRepository: NotificationUsersRepository, networkLibrary: String?, gqlHeaders: Map<String, String>, graphQLRepository: GraphQLRepository, helixHeaders: Map<String, String>, helixRepository: HelixRepository): List<Stream> = withContext(Dispatchers.IO) {
+    suspend fun getNewStreams(notificationUsersRepository: NotificationUsersRepository, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickGraphQLRepository: KickGraphQLRepository, kickPublicApiHeaders: Map<String, String>, kickPublicApiRepository: KickPublicApiRepository): List<Stream> = withContext(Dispatchers.IO) {
         getNewKickStreams(notificationUsersRepository)
     }
 
-    private suspend fun gqlQueryLoad(networkLibrary: String?, gqlHeaders: Map<String, String>, graphQLRepository: GraphQLRepository): List<Stream> {
+    private suspend fun kickWebQueryLoad(networkLibrary: String?, kickWebHeaders: Map<String, String>, kickGraphQLRepository: KickGraphQLRepository): List<Stream> {
         val list = mutableListOf<Stream>()
         var offset: String? = null
         do {
-            val response = graphQLRepository.loadQueryUserFollowedStreams(networkLibrary, gqlHeaders, 100, offset)
+            val response = kickGraphQLRepository.loadQueryUserFollowedStreams(networkLibrary, kickWebHeaders, 100, offset)
             val data = response.data!!.user!!.followedLiveUsers!!
             val items = data.edges!!
             items.mapNotNull { item ->
@@ -100,9 +100,9 @@ class ShownNotificationsRepository @Inject constructor(
         return list
     }
 
-    private suspend fun gqlQueryLocal(networkLibrary: String?, gqlHeaders: Map<String, String>, ids: List<String>, graphQLRepository: GraphQLRepository): List<Stream> {
+    private suspend fun kickWebQueryLocal(networkLibrary: String?, kickWebHeaders: Map<String, String>, ids: List<String>, kickGraphQLRepository: KickGraphQLRepository): List<Stream> {
         val items = ids.chunked(100).map { list ->
-            graphQLRepository.loadQueryUsersStream(networkLibrary, gqlHeaders, list)
+            kickGraphQLRepository.loadQueryUsersStream(networkLibrary, kickWebHeaders, list)
         }.flatMap { it.data!!.users!! }
         val list = items.mapNotNull { item ->
             item?.let {
@@ -128,18 +128,18 @@ class ShownNotificationsRepository @Inject constructor(
         return list
     }
 
-    private suspend fun helixLocal(networkLibrary: String?, helixHeaders: Map<String, String>, ids: List<String>, helixRepository: HelixRepository): List<Stream> {
+    private suspend fun kickPublicApiLocal(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, ids: List<String>, kickPublicApiRepository: KickPublicApiRepository): List<Stream> {
         val items = ids.chunked(100).map {
-            helixRepository.getStreams(
+            kickPublicApiRepository.getStreams(
                 networkLibrary = networkLibrary,
-                headers = helixHeaders,
+                headers = kickPublicApiHeaders,
                 ids = it
             )
         }.flatMap { it.data }
         val users = items.mapNotNull { it.channelId }.chunked(100).map {
-            helixRepository.getUsers(
+            kickPublicApiRepository.getUsers(
                 networkLibrary = networkLibrary,
-                headers = helixHeaders,
+                headers = kickPublicApiHeaders,
                 ids = it
             )
         }.flatMap { it.data }

@@ -23,8 +23,8 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.github.andreyasadchy.xtra.db.AppDatabase
 import com.github.andreyasadchy.xtra.model.ui.OfflineVideo
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.NotificationUsersRepository
 import com.github.andreyasadchy.xtra.repository.OfflineRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
@@ -73,8 +73,8 @@ class SettingsViewModel @Inject constructor(
     private val recentSearchRepository: RecentSearchRepository,
     private val shownNotificationsRepository: ShownNotificationsRepository,
     private val notificationUsersRepository: NotificationUsersRepository,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val appDatabase: AppDatabase,
     private val httpEngine: Lazy<HttpEngine>?,
     private val cronetEngine: Lazy<CronetEngine>?,
@@ -368,6 +368,7 @@ class SettingsViewModel @Inject constructor(
                             applicationContext,
                             0,
                             Intent(applicationContext, MainActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                                 setAction(MainActivity.INTENT_INSTALL_UPDATE)
                             },
                             PendingIntent.FLAG_MUTABLE
@@ -415,7 +416,7 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun restoreSettings(list: List<String>, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>) {
+    fun restoreSettings(list: List<String>, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         viewModelScope.launch(Dispatchers.IO) {
             list.take(2).forEach { url ->
                 if (url.endsWith(".xml")) {
@@ -427,7 +428,7 @@ class SettingsViewModel @Inject constructor(
                     val prefs = applicationContext.contentResolver.openInputStream(url.toUri())!!.bufferedReader().use {
                         it.readText()
                     }
-                    toggleNotifications(prefs.contains("name=\"${C.LIVE_NOTIFICATIONS_ENABLED}\" value=\"true\""), networkLibrary, gqlHeaders, helixHeaders)
+                    toggleNotifications(prefs.contains("name=\"${C.LIVE_NOTIFICATIONS_ENABLED}\" value=\"true\""), networkLibrary, kickWebHeaders, kickPublicApiHeaders)
                     val language = Regex("<string name=\"${C.UI_LANGUAGE}\">(.+?)</string>").find(prefs)?.groups?.get(1)?.value
                     AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(language.takeIf { it != "auto" }))
                 } else {
@@ -450,10 +451,10 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun toggleNotifications(enabled: Boolean, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>) {
+    fun toggleNotifications(enabled: Boolean, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         viewModelScope.launch(Dispatchers.IO) {
             if (enabled) {
-                shownNotificationsRepository.getNewStreams(notificationUsersRepository, networkLibrary, gqlHeaders, graphQLRepository, helixHeaders, helixRepository)
+                shownNotificationsRepository.getNewStreams(notificationUsersRepository, networkLibrary, kickWebHeaders, kickGraphQLRepository, kickPublicApiHeaders, kickPublicApiRepository)
                 WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
                     "live_notifications",
                     ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,

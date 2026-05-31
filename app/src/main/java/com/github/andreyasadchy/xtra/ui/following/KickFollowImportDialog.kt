@@ -117,16 +117,7 @@ class KickFollowImportDialog : DialogFragment() {
                 handleResolvedPage(if (activeUrl.isNotBlank()) activeUrl else url)
                 }
             }
-            val hasExistingSession = webSessionManager.hasKickWebsiteSession()
-            debugLogI("onCreateDialog: hasKickWebsiteSession=$hasExistingSession")
-            updateStatus(
-                if (hasExistingSession) {
-                    getString(R.string.import_kick_followed_status_reusing)
-                } else {
-                    getString(R.string.import_kick_followed_status_checking)
-                },
-                loading = true,
-            )
+            updateStatus(getString(R.string.import_kick_followed_status_loading), loading = true)
         }
         startImportFlow()
         return Dialog(requireContext()).apply {
@@ -144,7 +135,7 @@ class KickFollowImportDialog : DialogFragment() {
             window.clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
             window.setLayout(
               WindowManager.LayoutParams.MATCH_PARENT,
-              WindowManager.LayoutParams.MATCH_PARENT,
+              WindowManager.LayoutParams.WRAP_CONTENT,
             )
             window.setSoftInputMode(
                 WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
@@ -177,6 +168,15 @@ class KickFollowImportDialog : DialogFragment() {
         binding.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
     }
 
+    private fun showWebsiteImportWebView() {
+        if (_binding == null) return
+        binding.webView.visibility = View.VISIBLE
+        dialog?.window?.setLayout(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+        )
+    }
+
     private fun startImportFlow() {
         if (directImportAttempted) {
             startWebsiteImportFlow()
@@ -204,6 +204,7 @@ class KickFollowImportDialog : DialogFragment() {
         if (_binding == null || importCompleted) return
         val hasExistingSession = webSessionManager.hasKickWebsiteSession()
         debugLogI("startWebsiteImportFlow: hasKickWebsiteSession=$hasExistingSession")
+        showWebsiteImportWebView()
         updateStatus(
             if (hasExistingSession) {
                 getString(R.string.import_kick_followed_status_reusing)

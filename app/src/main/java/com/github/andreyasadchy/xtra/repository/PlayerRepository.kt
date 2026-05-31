@@ -14,8 +14,8 @@ import com.github.andreyasadchy.xtra.model.VideoPosition
 import com.github.andreyasadchy.xtra.model.chat.CheerEmote
 import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.RecentEmote
-import com.github.andreyasadchy.xtra.model.chat.TwitchBadge
-import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
+import com.github.andreyasadchy.xtra.model.chat.ChatBadge
+import com.github.andreyasadchy.xtra.model.chat.ChatEmote
 import com.github.andreyasadchy.xtra.model.misc.RecentMessagesResponse
 import com.github.andreyasadchy.xtra.model.misc.StvChannelResponse
 import com.github.andreyasadchy.xtra.model.misc.StvGlobalResponse
@@ -59,11 +59,14 @@ class PlayerRepository @Inject constructor(
     private val cronetExecutor: ExecutorService,
     private val okHttpClient: OkHttpClient,
     private val json: Json,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val recentEmotes: RecentEmotesDao,
     private val videoPositions: VideoPositionsDao,
 ) {
+
+    val resolutionChangeFlow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val qualityChangeFlow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 1)
 
     suspend fun loadTextFromUrl(networkLibrary: String?, url: String): String? = withContext(Dispatchers.IO) {
         when {
@@ -102,9 +105,9 @@ class PlayerRepository @Inject constructor(
         }
     }
 
-    suspend fun loadClipUrls(networkLibrary: String?, gqlHeaders: Map<String, String>, clipId: String?, enableIntegrity: Boolean): Map<Pair<String, String?>, String>? = withContext(Dispatchers.IO) {
+    suspend fun loadClipUrls(networkLibrary: String?, kickWebHeaders: Map<String, String>, clipId: String?, enableIntegrity: Boolean): Map<Pair<String, String?>, String>? = withContext(Dispatchers.IO) {
         try {
-            val response = graphQLRepository.loadClipUrls(networkLibrary, gqlHeaders, clipId)
+            val response = kickGraphQLRepository.loadClipUrls(networkLibrary, kickWebHeaders, clipId)
             if (enableIntegrity) {
                 response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
             }
@@ -129,7 +132,7 @@ class PlayerRepository @Inject constructor(
             }
         } catch (e: Exception) {
             if (e.message == "failed integrity check") throw e
-            val response = graphQLRepository.loadQueryClipUrls(networkLibrary, gqlHeaders, clipId!!)
+            val response = kickGraphQLRepository.loadQueryClipUrls(networkLibrary, kickWebHeaders, clipId!!)
             if (enableIntegrity) {
                 response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
             }
@@ -546,9 +549,9 @@ class PlayerRepository @Inject constructor(
         }
     }
 
-    suspend fun loadGlobalBadges(networkLibrary: String?, helixHeaders: Map<String, String>, gqlHeaders: Map<String, String>, emoteQuality: String, enableIntegrity: Boolean): List<TwitchBadge> = withContext(Dispatchers.IO) {
+    suspend fun loadGlobalBadges(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, emoteQuality: String, enableIntegrity: Boolean): List<ChatBadge> = withContext(Dispatchers.IO) {
         try {
-            val response = graphQLRepository.loadQueryBadges(networkLibrary, gqlHeaders,
+            val response = kickGraphQLRepository.loadQueryBadges(networkLibrary, kickWebHeaders,
                 when (emoteQuality) {
                     "4" -> BadgeImageSize.QUADRUPLE
                     "3" -> BadgeImageSize.QUADRUPLE
@@ -563,7 +566,7 @@ class PlayerRepository @Inject constructor(
                 it?.setID?.let { setId ->
                     it.version?.let { version ->
                         it.imageURL?.let { url ->
-                            TwitchBadge(
+                            ChatBadge(
                                 setId = setId,
                                 version = version,
                                 url1x = url,
@@ -579,14 +582,14 @@ class PlayerRepository @Inject constructor(
         } catch (e: Exception) {
             if (e.message == "failed integrity check") throw e
             try {
-                val response = graphQLRepository.loadChatBadges(networkLibrary, gqlHeaders, "")
+                val response = kickGraphQLRepository.loadChatBadges(networkLibrary, kickWebHeaders, "")
                 if (enableIntegrity) {
                     response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
                 }
                 response.data!!.badges?.mapNotNull {
                     it.setID?.let { setId ->
                         it.version?.let { version ->
-                            TwitchBadge(
+                            ChatBadge(
                                 setId = setId,
                                 version = version,
                                 url1x = it.image1x,
@@ -600,12 +603,12 @@ class PlayerRepository @Inject constructor(
                 } ?: emptyList()
             } catch (e: Exception) {
                 if (e.message == "failed integrity check") throw e
-                if (helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
-                helixRepository.getGlobalBadges(networkLibrary, helixHeaders).data.mapNotNull { set ->
+                if (kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
+                kickPublicApiRepository.getGlobalBadges(networkLibrary, kickPublicApiHeaders).data.mapNotNull { set ->
                     set.setId?.let { setId ->
                         set.versions?.mapNotNull {
                             it.id?.let { version ->
-                                TwitchBadge(
+                                ChatBadge(
                                     setId = setId,
                                     version = version,
                                     url1x = it.url1x,
@@ -621,9 +624,9 @@ class PlayerRepository @Inject constructor(
         }
     }
 
-    suspend fun loadChannelBadges(networkLibrary: String?, helixHeaders: Map<String, String>, gqlHeaders: Map<String, String>, channelId: String?, channelLogin: String?, emoteQuality: String, enableIntegrity: Boolean): List<TwitchBadge> = withContext(Dispatchers.IO) {
+    suspend fun loadChannelBadges(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, channelId: String?, channelLogin: String?, emoteQuality: String, enableIntegrity: Boolean): List<ChatBadge> = withContext(Dispatchers.IO) {
         try {
-            val response = graphQLRepository.loadQueryUserBadges(networkLibrary, gqlHeaders, channelId, channelLogin.takeIf { channelId.isNullOrBlank() },
+            val response = kickGraphQLRepository.loadQueryUserBadges(networkLibrary, kickWebHeaders, channelId, channelLogin.takeIf { channelId.isNullOrBlank() },
                 when (emoteQuality) {
                     "4" -> BadgeImageSize.QUADRUPLE
                     "3" -> BadgeImageSize.QUADRUPLE
@@ -638,7 +641,7 @@ class PlayerRepository @Inject constructor(
                 it?.setID?.let { setId ->
                     it.version?.let { version ->
                         it.imageURL?.let { url ->
-                            TwitchBadge(
+                            ChatBadge(
                                 setId = setId,
                                 version = version,
                                 url1x = url,
@@ -654,14 +657,14 @@ class PlayerRepository @Inject constructor(
         } catch (e: Exception) {
             if (e.message == "failed integrity check") throw e
             try {
-                val response = graphQLRepository.loadChatBadges(networkLibrary, gqlHeaders, channelLogin)
+                val response = kickGraphQLRepository.loadChatBadges(networkLibrary, kickWebHeaders, channelLogin)
                 if (enableIntegrity) {
                     response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
                 }
                 response.data!!.badges?.mapNotNull {
                     it.setID?.let { setId ->
                         it.version?.let { version ->
-                            TwitchBadge(
+                            ChatBadge(
                                 setId = setId,
                                 version = version,
                                 url1x = it.image1x,
@@ -675,12 +678,12 @@ class PlayerRepository @Inject constructor(
                 } ?: emptyList()
             } catch (e: Exception) {
                 if (e.message == "failed integrity check") throw e
-                if (helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
-                helixRepository.getChannelBadges(networkLibrary, helixHeaders, channelId).data.mapNotNull { set ->
+                if (kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
+                kickPublicApiRepository.getChannelBadges(networkLibrary, kickPublicApiHeaders, channelId).data.mapNotNull { set ->
                     set.setId?.let { setId ->
                         set.versions?.mapNotNull {
                             it.id?.let { version ->
-                                TwitchBadge(
+                                ChatBadge(
                                     setId = setId,
                                     version = version,
                                     url1x = it.url1x,
@@ -696,10 +699,10 @@ class PlayerRepository @Inject constructor(
         }
     }
 
-    suspend fun loadCheerEmotes(networkLibrary: String?, helixHeaders: Map<String, String>, gqlHeaders: Map<String, String>, channelId: String?, channelLogin: String?, animateGifs: Boolean, enableIntegrity: Boolean): List<CheerEmote> = withContext(Dispatchers.IO) {
+    suspend fun loadCheerEmotes(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, channelId: String?, channelLogin: String?, animateGifs: Boolean, enableIntegrity: Boolean): List<CheerEmote> = withContext(Dispatchers.IO) {
         try {
             val emotes = mutableListOf<CheerEmote>()
-            val response = graphQLRepository.loadQueryUserCheerEmotes(networkLibrary, gqlHeaders, channelId, channelLogin.takeIf { channelId.isNullOrBlank() })
+            val response = kickGraphQLRepository.loadQueryUserCheerEmotes(networkLibrary, kickWebHeaders, channelId, channelLogin.takeIf { channelId.isNullOrBlank() })
             if (enableIntegrity) {
                 response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
             }
@@ -770,7 +773,7 @@ class PlayerRepository @Inject constructor(
             if (e.message == "failed integrity check") throw e
             try {
                 val emotes = mutableListOf<CheerEmote>()
-                val response = graphQLRepository.loadGlobalCheerEmotes(networkLibrary, gqlHeaders)
+                val response = kickGraphQLRepository.loadGlobalCheerEmotes(networkLibrary, kickWebHeaders)
                 if (enableIntegrity) {
                     response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
                 }
@@ -810,7 +813,7 @@ class PlayerRepository @Inject constructor(
                             }
                         }.flatten()
                     }.flatten().let { emotes.addAll(it) }
-                    graphQLRepository.loadChannelCheerEmotes(networkLibrary, gqlHeaders, channelLogin).data?.channel?.cheer?.cheerGroups?.map { group ->
+                    kickGraphQLRepository.loadChannelCheerEmotes(networkLibrary, kickWebHeaders, channelLogin).data?.channel?.cheer?.cheerGroups?.map { group ->
                         group.nodes.map { emote ->
                             emote.tiers.mapNotNull { tier ->
                                 config.colors.find { it.bits == tier.bits }?.let { item ->
@@ -839,8 +842,8 @@ class PlayerRepository @Inject constructor(
                 emotes
             } catch (e: Exception) {
                 if (e.message == "failed integrity check") throw e
-                if (helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
-                helixRepository.getCheerEmotes(networkLibrary, helixHeaders, channelId).data.map { set ->
+                if (kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
+                kickPublicApiRepository.getCheerEmotes(networkLibrary, kickPublicApiHeaders, channelId).data.map { set ->
                     set.tiers.mapNotNull { tier ->
                         tier.images.let { it.dark ?: it.light }?.let { formats ->
                             if (animateGifs) {
@@ -867,13 +870,13 @@ class PlayerRepository @Inject constructor(
         }
     }
 
-    suspend fun loadUserEmotes(networkLibrary: String?, helixHeaders: Map<String, String>, gqlHeaders: Map<String, String>, channelId: String?, userId: String?, animateGifs: Boolean, enableIntegrity: Boolean): List<TwitchEmote> = withContext(Dispatchers.IO) {
+    suspend fun loadUserEmotes(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, channelId: String?, userId: String?, animateGifs: Boolean, enableIntegrity: Boolean): List<ChatEmote> = withContext(Dispatchers.IO) {
         try {
-            if (gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
-            val emotes = mutableListOf<TwitchEmote>()
+            if (kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
+            val emotes = mutableListOf<ChatEmote>()
             var offset: String? = null
             do {
-                val response = graphQLRepository.loadUserEmotes(networkLibrary, gqlHeaders, channelId, offset)
+                val response = kickGraphQLRepository.loadUserEmotes(networkLibrary, kickWebHeaders, channelId, offset)
                 if (enableIntegrity) {
                     response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
                 }
@@ -883,7 +886,7 @@ class PlayerRepository @Inject constructor(
                     item.node.let { set ->
                         set.emotes.mapNotNull { emote ->
                             emote.token?.let { token ->
-                                TwitchEmote(
+                                ChatEmote(
                                     id = emote.id,
                                     name = if (emote.type == "SMILIES") {
                                         token.replace("\\", "").replace("?", "")
@@ -904,15 +907,15 @@ class PlayerRepository @Inject constructor(
         } catch (e: Exception) {
             if (e.message == "failed integrity check") throw e
             try {
-                if (gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
-                val response = graphQLRepository.loadQueryUserEmotes(networkLibrary, gqlHeaders)
+                if (kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
+                val response = kickGraphQLRepository.loadQueryUserEmotes(networkLibrary, kickWebHeaders)
                 if (enableIntegrity) {
                     response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
                 }
                 response.data!!.user?.emoteSets?.mapNotNull { set ->
                     set.emotes?.mapNotNull { emote ->
                         if (emote?.token != null && (!emote.type?.toString().equals("follower", true) || (emote.owner?.id == null || emote.owner.id == channelId))) {
-                            TwitchEmote(
+                            ChatEmote(
                                 id = emote.id,
                                 name = if (emote.type == EmoteType.SMILIES) {
                                     emote.token.replace("\\", "").replace("?", "")
@@ -928,11 +931,11 @@ class PlayerRepository @Inject constructor(
                 }?.flatten() ?: emptyList()
             } catch (e: Exception) {
                 if (e.message == "failed integrity check") throw e
-                if (helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
-                val emotes = mutableListOf<TwitchEmote>()
+                if (kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
+                val emotes = mutableListOf<ChatEmote>()
                 var offset: String? = null
                 do {
-                    val response = helixRepository.getUserEmotes(networkLibrary, helixHeaders, userId, channelId, offset)
+                    val response = kickPublicApiRepository.getUserEmotes(networkLibrary, kickPublicApiHeaders, userId, channelId, offset)
                     response.data.mapNotNull { emote ->
                         emote.name?.let { name ->
                             emote.id?.let { id ->
@@ -949,7 +952,7 @@ class PlayerRepository @Inject constructor(
                                     .replaceFirst("{{id}}", id)
                                     .replaceFirst("{{format}}", format)
                                     .replaceFirst("{{theme_mode}}", theme)
-                                TwitchEmote(
+                                ChatEmote(
                                     name = if (emote.type == "smilies") {
                                         name.replace("\\", "").replace("?", "")
                                             .replace("&lt;", "<").replace("&gt;", ">")
@@ -974,8 +977,8 @@ class PlayerRepository @Inject constructor(
         }
     }
 
-    suspend fun loadEmotesFromSet(networkLibrary: String?, helixHeaders: Map<String, String>, setIds: List<String>, animateGifs: Boolean): List<TwitchEmote> = withContext(Dispatchers.IO) {
-        val response = helixRepository.getEmotesFromSet(networkLibrary, helixHeaders, setIds)
+    suspend fun loadEmotesFromSet(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, setIds: List<String>, animateGifs: Boolean): List<ChatEmote> = withContext(Dispatchers.IO) {
+        val response = kickPublicApiRepository.getEmotesFromSet(networkLibrary, kickPublicApiHeaders, setIds)
         response.data.mapNotNull { emote ->
             emote.name?.let { name ->
                 emote.id?.let { id ->
@@ -992,7 +995,7 @@ class PlayerRepository @Inject constructor(
                         .replaceFirst("{{id}}", id)
                         .replaceFirst("{{format}}", format)
                         .replaceFirst("{{theme_mode}}", theme)
-                    TwitchEmote(
+                    ChatEmote(
                         name = if (emote.type == "smilies") {
                             name.replace("\\", "").replace("?", "")
                                 .replace("&lt;", "<").replace("&gt;", ">")

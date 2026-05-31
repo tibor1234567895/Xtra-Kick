@@ -324,7 +324,7 @@ class LoginActivity : AppCompatActivity() {
                 val userId = user?.id?.toString()
                 val loginName = user?.name ?: user?.channelSlug ?: userId
 
-                AuthStateHelper.clearLegacyTwitchAuth(this@LoginActivity)
+                AuthStateHelper.clearLegacyWebAuth(this@LoginActivity)
                 tokenPrefs().edit {
                     putString(C.KICK_ACCESS_TOKEN, accessToken)
                     putString(C.KICK_REFRESH_TOKEN, refreshToken)
@@ -394,7 +394,7 @@ class LoginActivity : AppCompatActivity() {
             }
             AuthStateHelper.clearUnexpectedLogoutNotice(this@LoginActivity)
             AuthStateHelper.clearKickAuth(this@LoginActivity)
-            AuthStateHelper.clearLegacyTwitchAuth(this@LoginActivity)
+            AuthStateHelper.clearLegacyWebAuth(this@LoginActivity)
             Toast.makeText(this@LoginActivity, R.string.logout_success_toast, Toast.LENGTH_SHORT).show()
             setResult(RESULT_OK)
             finish()

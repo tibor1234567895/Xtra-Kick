@@ -11,8 +11,8 @@ import com.github.andreyasadchy.xtra.model.ui.User
 import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.model.ui.VodBookmarkIgnoredUser
 import com.github.andreyasadchy.xtra.repository.BookmarksRepository
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.repository.SortChannelRepository
 import com.github.andreyasadchy.xtra.repository.VodBookmarkIgnoredUsersRepository
@@ -39,8 +39,8 @@ import kotlin.coroutines.suspendCoroutine
 
 @HiltViewModel
 class BookmarksViewModel @Inject internal constructor(
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val bookmarksRepository: BookmarksRepository,
     private val sortChannelRepository: SortChannelRepository,
     playerRepository: PlayerRepository,
@@ -87,7 +87,7 @@ class BookmarksViewModel @Inject internal constructor(
         }
     }
 
-    fun updateUsers(networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun updateUsers(networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (!updatedUsers) {
             viewModelScope.launch {
                 val bookmarks = bookmarksRepository.loadBookmarks()
@@ -96,7 +96,7 @@ class BookmarksViewModel @Inject internal constructor(
                     bookmark.userId?.takeIf { ignored.find { it.userId == bookmark.userId } == null }
                 }.chunked(100).forEach { ids ->
                     try {
-                        val response = graphQLRepository.loadQueryUsersType(networkLibrary, gqlHeaders, ids)
+                        val response = kickGraphQLRepository.loadQueryUsersType(networkLibrary, kickWebHeaders, ids)
                         if (enableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "users"
@@ -120,11 +120,11 @@ class BookmarksViewModel @Inject internal constructor(
                             } else null
                         }
                     } catch (e: Exception) {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                             try {
-                                helixRepository.getUsers(
+                                kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     ids = ids,
                                 ).data.map {
                                     User(
@@ -159,11 +159,11 @@ class BookmarksViewModel @Inject internal constructor(
         }
     }
 
-    fun updateVideo(filesDir: String, videoId: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun updateVideo(filesDir: String, videoId: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             if (!videoId.isNullOrBlank()) {
                 val video = try {
-                    val response = graphQLRepository.loadQueryVideo(networkLibrary, gqlHeaders, videoId)
+                    val response = kickGraphQLRepository.loadQueryVideo(networkLibrary, kickWebHeaders, videoId)
                     if (enableIntegrity && integrity.value == null) {
                         response.errors?.find { it.message == "failed integrity check" }?.let {
                             integrity.value = "video"
@@ -188,11 +188,11 @@ class BookmarksViewModel @Inject internal constructor(
                         }
                     }
                 } catch (e: Exception) {
-                    if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                    if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                         try {
-                            helixRepository.getVideos(
+                            kickPublicApiRepository.getVideos(
                                 networkLibrary = networkLibrary,
-                                headers = helixHeaders,
+                                headers = kickPublicApiHeaders,
                                 ids = listOf(videoId),
                             ).data.firstOrNull()?.let {
                                 Video(
@@ -296,14 +296,14 @@ class BookmarksViewModel @Inject internal constructor(
         }
     }
 
-    fun updateVideos(filesDir: String, networkLibrary: String?, helixHeaders: Map<String, String>) {
+    fun updateVideos(filesDir: String, networkLibrary: String?, kickPublicApiHeaders: Map<String, String>) {
         if (!updatedVideos) {
             viewModelScope.launch {
                 val bookmarks = bookmarksRepository.loadBookmarks()
                 bookmarks.mapNotNull { it.videoId }.chunked(100).forEach { ids ->
-                    helixRepository.getVideos(
+                    kickPublicApiRepository.getVideos(
                         networkLibrary = networkLibrary,
-                        headers = helixHeaders,
+                        headers = kickPublicApiHeaders,
                         ids = ids,
                     ).data.map {
                         Video(

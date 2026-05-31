@@ -30,8 +30,8 @@ import com.github.andreyasadchy.xtra.model.ui.Tag
 import com.github.andreyasadchy.xtra.model.ui.User
 import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.repository.AuthRepository
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickAuthRequestException
 import com.github.andreyasadchy.xtra.repository.OfflineRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
@@ -81,8 +81,8 @@ import kotlin.math.max
 @HiltViewModel
 class MainViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val playerRepository: PlayerRepository,
     private val offlineRepository: OfflineRepository,
     private val authRepository: AuthRepository,
@@ -141,10 +141,10 @@ class MainViewModel @Inject constructor(
         }
         validate(
             networkLibrary = activity.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            gqlHeaders = emptyMap(),
+            kickWebHeaders = emptyMap(),
             gqlWebClientId = null,
             gqlWebToken = null,
-            helixHeaders = emptyMap(),
+            kickPublicApiHeaders = emptyMap(),
             accountId = activity.tokenPrefs().getString(C.KICK_USER_ID, null),
             accountLogin = activity.tokenPrefs().getString(C.KICK_USER_LOGIN, null),
             activity = activity,
@@ -161,11 +161,11 @@ class MainViewModel @Inject constructor(
         } ?: false
     }
 
-    fun loadVideo(videoId: String?, offset: Long?, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadVideo(videoId: String?, offset: Long?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (video.value == null) {
             viewModelScope.launch {
                 val item = try {
-                    val response = graphQLRepository.loadQueryVideo(networkLibrary, gqlHeaders, videoId)
+                    val response = kickGraphQLRepository.loadQueryVideo(networkLibrary, kickWebHeaders, videoId)
                     if (enableIntegrity && integrity.value == null) {
                         response.errors?.find { it.message == "failed integrity check" }?.let {
                             integrity.value = "refresh"
@@ -190,11 +190,11 @@ class MainViewModel @Inject constructor(
                         }
                     }
                 } catch (e: Exception) {
-                    if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                    if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                         try {
-                            helixRepository.getVideos(
+                            kickPublicApiRepository.getVideos(
                                 networkLibrary = networkLibrary,
-                                headers = helixHeaders,
+                                headers = kickPublicApiHeaders,
                                 ids = videoId?.let { listOf(it) }
                             ).data.firstOrNull()?.let {
                                 Video(
@@ -223,16 +223,16 @@ class MainViewModel @Inject constructor(
         playerRepository.saveVideoPosition(VideoPosition(id, position))
     }
 
-    fun loadClip(clipId: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadClip(clipId: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (clip.value == null) {
             viewModelScope.launch {
                 clip.value = try {
                     val user = try {
-                        graphQLRepository.loadClipData(networkLibrary, gqlHeaders, clipId).data?.clip
+                        kickGraphQLRepository.loadClipData(networkLibrary, kickWebHeaders, clipId).data?.clip
                     } catch (e: Exception) {
                         null
                     }
-                    val clip = graphQLRepository.loadClipVideo(networkLibrary, gqlHeaders, clipId).also { response ->
+                    val clip = kickGraphQLRepository.loadClipVideo(networkLibrary, kickWebHeaders, clipId).also { response ->
                         if (enableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "refresh"
@@ -257,11 +257,11 @@ class MainViewModel @Inject constructor(
                         }
                     )
                 } catch (e: Exception) {
-                    if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                    if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                         try {
-                            helixRepository.getClips(
+                            kickPublicApiRepository.getClips(
                                 networkLibrary = networkLibrary,
-                                headers = helixHeaders,
+                                headers = kickPublicApiHeaders,
                                 ids = clipId?.let { listOf(it) }
                             ).data.firstOrNull()?.let {
                                 Clip(
@@ -291,11 +291,11 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun loadUser(login: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadUser(login: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (user.value == null) {
             viewModelScope.launch {
                 user.value = try {
-                    val response = graphQLRepository.loadQueryUser(networkLibrary, gqlHeaders, login = login)
+                    val response = kickGraphQLRepository.loadQueryUser(networkLibrary, kickWebHeaders, login = login)
                     if (enableIntegrity && integrity.value == null) {
                         response.errors?.find { it.message == "failed integrity check" }?.let {
                             integrity.value = "refresh"
@@ -311,11 +311,11 @@ class MainViewModel @Inject constructor(
                         )
                     }
                 } catch (e: Exception) {
-                    if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                    if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                         try {
-                            helixRepository.getUsers(
+                            kickPublicApiRepository.getUsers(
                                 networkLibrary = networkLibrary,
-                                headers = helixHeaders,
+                                headers = kickPublicApiHeaders,
                                 logins = login?.let { listOf(it) }
                             ).data.firstOrNull()?.let {
                                 User(
@@ -337,13 +337,13 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun loadGame(gameSlug: String? = null, gameName: String? = null, tag: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadGame(gameSlug: String? = null, gameName: String? = null, tag: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (game.value == null) {
             viewModelScope.launch {
                 game.value = try {
-                    val response = graphQLRepository.loadQueryGame(
+                    val response = kickGraphQLRepository.loadQueryGame(
                         networkLibrary = networkLibrary,
-                        headers = gqlHeaders,
+                        headers = kickWebHeaders,
                         slug = gameSlug,
                         name = gameName.takeIf { gameSlug.isNullOrBlank() },
                     )
@@ -362,11 +362,11 @@ class MainViewModel @Inject constructor(
                         )
                     }
                 } catch (e: Exception) {
-                    if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank() && !gameName.isNullOrBlank()) {
+                    if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank() && !gameName.isNullOrBlank()) {
                         try {
-                            helixRepository.getGames(
+                            kickPublicApiRepository.getGames(
                                 networkLibrary = networkLibrary,
-                                headers = helixHeaders,
+                                headers = kickPublicApiHeaders,
                                 names = listOf(gameName)
                             ).data.firstOrNull()?.let {
                                 Game(
@@ -384,11 +384,11 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun loadTag(tagId: String, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadTag(tagId: String, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (tag.value == null) {
             viewModelScope.launch {
                 tag.value = try {
-                    val response = graphQLRepository.loadQueryTag(networkLibrary, gqlHeaders, tagId)
+                    val response = kickGraphQLRepository.loadQueryTag(networkLibrary, kickWebHeaders, tagId)
                     if (enableIntegrity && integrity.value == null) {
                         response.errors?.find { it.message == "failed integrity check" }?.let {
                             integrity.value = "refresh"
@@ -403,7 +403,7 @@ class MainViewModel @Inject constructor(
                     }
                 } catch (e: Exception) {
                     try {
-                        val response = graphQLRepository.loadTag(networkLibrary, gqlHeaders, tagId)
+                        val response = kickGraphQLRepository.loadTag(networkLibrary, kickWebHeaders, tagId)
                         if (enableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "refresh"
@@ -893,7 +893,7 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun validate(networkLibrary: String?, gqlHeaders: Map<String, String>, gqlWebClientId: String?, gqlWebToken: String?, helixHeaders: Map<String, String>, accountId: String?, accountLogin: String?, activity: Activity) {
+    fun validate(networkLibrary: String?, kickWebHeaders: Map<String, String>, gqlWebClientId: String?, gqlWebToken: String?, kickPublicApiHeaders: Map<String, String>, accountId: String?, accountLogin: String?, activity: Activity) {
         if (_kickValidationState.value == KickValidationState.COMPLETE) {
             val accessToken = activity.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)
             val expiresAt = activity.tokenPrefs().getLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L)
@@ -987,7 +987,7 @@ class MainViewModel @Inject constructor(
                     AuthStateHelper.markUnexpectedLogout(activity)
                     Toast.makeText(activity, R.string.token_expired, Toast.LENGTH_LONG).show()
                     AuthStateHelper.clearKickAuth(activity)
-                    AuthStateHelper.clearLegacyTwitchAuth(activity)
+                    AuthStateHelper.clearLegacyWebAuth(activity)
                     (activity as? MainActivity)?.loginResultLauncher?.launch(Intent(activity, LoginActivity::class.java))
                 } else if (KickAuthRequestException.isBackendUnavailable(e)) {
                     Toast.makeText(activity, R.string.kick_oauth_backend_unreachable, Toast.LENGTH_LONG).show()
@@ -1097,6 +1097,7 @@ class MainViewModel @Inject constructor(
                             applicationContext,
                             0,
                             Intent(applicationContext, MainActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                                 setAction(MainActivity.INTENT_INSTALL_UPDATE)
                             },
                             PendingIntent.FLAG_MUTABLE

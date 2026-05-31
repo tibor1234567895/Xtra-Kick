@@ -1,1 +1,1 @@
-Client Twitch avec divers fonctions
+﻿Kick streaming client

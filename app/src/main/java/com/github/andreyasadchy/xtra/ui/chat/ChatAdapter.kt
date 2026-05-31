@@ -33,8 +33,8 @@ import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.NamePaint
 import com.github.andreyasadchy.xtra.model.chat.StvBadge
 import com.github.andreyasadchy.xtra.model.chat.StvUser
-import com.github.andreyasadchy.xtra.model.chat.TwitchBadge
-import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
+import com.github.andreyasadchy.xtra.model.chat.ChatBadge
+import com.github.andreyasadchy.xtra.model.chat.ChatEmote
 import com.github.andreyasadchy.xtra.ui.view.NamePaintImageSpan
 import com.github.andreyasadchy.xtra.util.chat.ChatAdapterUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatBackgroundUtils
@@ -43,10 +43,10 @@ import java.util.Random
 
 class ChatAdapter(
     private val messages: List<ChatMessage>,
-    private val localTwitchEmotes: List<TwitchEmote>,
+    private val localChatEmotes: List<ChatEmote>,
     private val thirdPartyEmotes: List<Emote>,
-    private val globalBadges: List<TwitchBadge>,
-    private val channelBadges: List<TwitchBadge>,
+    private val globalBadges: List<ChatBadge>,
+    private val channelBadges: List<ChatBadge>,
     private val cheerEmotes: List<CheerEmote>,
     private val namePaints: List<NamePaint>,
     private val stvBadges: List<StvBadge>,
@@ -99,7 +99,7 @@ class ChatAdapter(
     private val random = Random()
     private val userColors = HashMap<String, Int>()
     private val savedColors = HashMap<String, Int>()
-    private val savedLocalTwitchEmotes = mutableMapOf<String, ByteArray>()
+    private val savedLocalChatEmotes = mutableMapOf<String, ByteArray>()
     private val savedLocalBadges = mutableMapOf<String, ByteArray>()
     private val savedLocalCheerEmotes = mutableMapOf<String, ByteArray>()
     private val savedLocalEmotes = mutableMapOf<String, ByteArray>()
@@ -178,7 +178,7 @@ class ChatAdapter(
             chatMessage, renderSignature(), enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg,
             rewardChatMsg, replyMessage, null, useRandomColors, random, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints,
             namePaints, showStvBadges, showKickBadges, stvBadges, showPersonalEmotes, personalEmoteSets, stvUsers, enableOverlayEmotes, showSystemMessageEmotes,
-            loggedInUser, chatUrl, getEmoteBytes, userColors, savedColors, localTwitchEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalTwitchEmotes, savedLocalBadges,
+            loggedInUser, chatUrl, getEmoteBytes, userColors, savedColors, localChatEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalChatEmotes, savedLocalBadges,
             savedLocalCheerEmotes, savedLocalEmotes
         )
         ChatAdapterUtils.reserveImagePlaceholders(result.builder, result.images, emoteSize, badgeSize)
@@ -197,26 +197,26 @@ class ChatAdapter(
 
     fun createMessageClickedChatAdapter(selectedMessageOverride: ChatMessage? = selectedMessage): MessageClickedChatAdapter {
         return MessageClickedChatAdapter(
-            messages, localTwitchEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, namePaints, stvBadges, personalEmoteSets,
+            messages, localChatEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, namePaints, stvBadges, personalEmoteSets,
             stvUsers, enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg, rewardChatMsg, replyMessage,
             { chatMessage -> selectedMessage = chatMessage; replyClickListener?.invoke() },
             { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClickListener?.invoke(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, showStvBadges, showKickBadges, showPersonalEmotes,
             enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize, badgeSize,
             emoteQuality, animateGifs, enableOverlayEmotes, random, userColors,
-            savedColors, savedLocalTwitchEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessageOverride
+            savedColors, savedLocalChatEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessageOverride
         )
     }
 
     fun createReplyClickedChatAdapter(): ReplyClickedChatAdapter {
         return ReplyClickedChatAdapter(
-            messages, localTwitchEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, namePaints, stvBadges, personalEmoteSets,
+            messages, localChatEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, namePaints, stvBadges, personalEmoteSets,
             stvUsers, enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg, rewardChatMsg, replyMessage,
             { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClickListener?.invoke(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, showStvBadges, showKickBadges, showPersonalEmotes,
             enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize, badgeSize,
             emoteQuality, animateGifs, enableOverlayEmotes, random, userColors,
-            savedColors, savedLocalTwitchEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessage
+            savedColors, savedLocalChatEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessage
         )
     }
 

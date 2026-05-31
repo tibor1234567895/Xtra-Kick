@@ -5,8 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.github.andreyasadchy.xtra.model.ui.LocalFollowChannel
 import com.github.andreyasadchy.xtra.model.ui.MutedChatUser
 import com.github.andreyasadchy.xtra.model.ui.User
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.repository.MutedChatUsersRepository
@@ -30,8 +30,8 @@ data class MessageClickedUiState(
 
 @HiltViewModel
 class MessageClickedViewModel @Inject constructor(
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val localFollowChannelRepository: LocalFollowChannelRepository,
     private val mutedChatUsersRepository: MutedChatUsersRepository,
@@ -50,8 +50,8 @@ class MessageClickedViewModel @Inject constructor(
     private var currentTargetId: String? = null
     private var currentTargetLogin: String? = null
     private var currentNetworkLibrary: String? = null
-    private var currentGqlHeaders: Map<String, String> = emptyMap()
-    private var currentHelixHeaders: Map<String, String> = emptyMap()
+    private var currentKickWebHeaders: Map<String, String> = emptyMap()
+    private var currentKickPublicApiHeaders: Map<String, String> = emptyMap()
     private var currentEnableIntegrity = false
     private var currentIsKick = false
     private var isLoadingUser = false
@@ -63,8 +63,8 @@ class MessageClickedViewModel @Inject constructor(
         targetId: String?,
         targetLogin: String?,
         networkLibrary: String?,
-        gqlHeaders: Map<String, String>,
-        helixHeaders: Map<String, String>,
+        kickWebHeaders: Map<String, String>,
+        kickPublicApiHeaders: Map<String, String>,
         enableIntegrity: Boolean,
         isKick: Boolean = false,
     ) {
@@ -76,8 +76,8 @@ class MessageClickedViewModel @Inject constructor(
         currentTargetId = targetId?.takeIf { it.isNotBlank() }
         currentTargetLogin = targetLogin?.takeIf { it.isNotBlank() }
         currentNetworkLibrary = networkLibrary
-        currentGqlHeaders = gqlHeaders
-        currentHelixHeaders = helixHeaders
+        currentKickWebHeaders = kickWebHeaders
+        currentKickPublicApiHeaders = kickPublicApiHeaders
         currentEnableIntegrity = enableIntegrity
         currentIsKick = isKick
 
@@ -88,7 +88,7 @@ class MessageClickedViewModel @Inject constructor(
             uiState.value = uiState.value.copy(
                 isLoadingUser = true,
                 isFollowing = existingFollow != null,
-                canFollow = !currentChannelId.isNullOrBlank() && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank(),
+                canFollow = !currentChannelId.isNullOrBlank() && !kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank(),
                 isMuted = mutedUser != null,
             )
 
@@ -108,7 +108,7 @@ class MessageClickedViewModel @Inject constructor(
                 user = response,
                 isLoadingUser = false,
                 isFollowing = remoteFollowing ?: (existingFollow != null),
-                canFollow = !currentChannelId.isNullOrBlank() && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank(),
+                canFollow = !currentChannelId.isNullOrBlank() && !kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank(),
                 isMuted = currentMutedUser != null,
             )
             isLoadingUser = false
@@ -147,9 +147,9 @@ class MessageClickedViewModel @Inject constructor(
             }
         } else {
             try {
-                val response = graphQLRepository.loadQueryUserMessageClicked(
+                val response = kickGraphQLRepository.loadQueryUserMessageClicked(
                     currentNetworkLibrary,
-                    currentGqlHeaders,
+                    currentKickWebHeaders,
                     currentChannelId,
                     currentChannelLogin.takeIf { currentChannelId.isNullOrBlank() },
                     currentTargetId
@@ -172,11 +172,11 @@ class MessageClickedViewModel @Inject constructor(
                     )
                 }
             } catch (_: Exception) {
-                if (!currentHelixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                if (!currentKickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                     try {
-                        helixRepository.getUsers(
+                        kickPublicApiRepository.getUsers(
                             networkLibrary = currentNetworkLibrary,
-                            headers = currentHelixHeaders,
+                            headers = currentKickPublicApiHeaders,
                             ids = currentChannelId?.let { listOf(it) },
                             logins = if (currentChannelId.isNullOrBlank()) currentChannelLogin?.let { listOf(it) } else null
                         ).data.firstOrNull()?.let {
@@ -202,11 +202,11 @@ class MessageClickedViewModel @Inject constructor(
 
     private suspend fun loadFollowingState(): Boolean? {
         val userId = currentChannelId ?: return null
-        if (currentGqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) return null
+        if (currentKickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) return null
         return try {
-            val response = graphQLRepository.loadQueryFollowingUser(
+            val response = kickGraphQLRepository.loadQueryFollowingUser(
                 currentNetworkLibrary,
-                currentGqlHeaders,
+                currentKickWebHeaders,
                 userId,
                 currentChannelLogin.takeIf { userId.isBlank() }
             )
@@ -226,7 +226,7 @@ class MessageClickedViewModel @Inject constructor(
         val userId = currentChannelId ?: return
         val channelLogin = currentChannelLogin
         viewModelScope.launch {
-            if (currentGqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+            if (currentKickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                 _events.emit("Follow requires a signed-in Kick account.")
                 return@launch
             }
@@ -234,7 +234,7 @@ class MessageClickedViewModel @Inject constructor(
             uiState.value = uiState.value.copy(isFollowActionInProgress = true)
             try {
                 val errorMessage = if (isFollowing) {
-                    graphQLRepository.loadUnfollowUser(currentNetworkLibrary, currentGqlHeaders, userId).also { response ->
+                    kickGraphQLRepository.loadUnfollowUser(currentNetworkLibrary, currentKickWebHeaders, userId).also { response ->
                         if (currentEnableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "refresh"
@@ -244,7 +244,7 @@ class MessageClickedViewModel @Inject constructor(
                         }
                     }.errors?.firstOrNull()?.message
                 } else {
-                    graphQLRepository.loadFollowUser(currentNetworkLibrary, currentGqlHeaders, userId).also { response ->
+                    kickGraphQLRepository.loadFollowUser(currentNetworkLibrary, currentKickWebHeaders, userId).also { response ->
                         if (currentEnableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "refresh"

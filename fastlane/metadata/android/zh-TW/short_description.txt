@@ -1,1 +1,1 @@
-Twitch 播放器與瀏覽器
+﻿Kick streaming client

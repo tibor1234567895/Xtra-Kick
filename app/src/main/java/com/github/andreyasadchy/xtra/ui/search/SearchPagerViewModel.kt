@@ -2,7 +2,7 @@ package com.github.andreyasadchy.xtra.ui.search
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -10,7 +10,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class SearchPagerViewModel @Inject constructor(
-    private val graphQLRepository: GraphQLRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
 ) : ViewModel() {
 
     val integrity = MutableStateFlow<String?>(null)
@@ -18,13 +18,13 @@ class SearchPagerViewModel @Inject constructor(
     val userResult = MutableStateFlow<Pair<String?, String?>?>(null)
     private var isLoading = false
 
-    fun loadUserResult(checkedId: Int, result: String, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadUserResult(checkedId: Int, result: String, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (userResult.value == null && !isLoading) {
             isLoading = true
             viewModelScope.launch {
                 try {
                     userResult.value = if (checkedId == 0) {
-                        val response = graphQLRepository.loadQueryUserResultID(networkLibrary, gqlHeaders, result)
+                        val response = kickGraphQLRepository.loadQueryUserResultID(networkLibrary, kickWebHeaders, result)
                         if (enableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "refresh"
@@ -41,7 +41,7 @@ class SearchPagerViewModel @Inject constructor(
                             }
                         }
                     } else {
-                        val response = graphQLRepository.loadQueryUserResultLogin(networkLibrary, gqlHeaders, result)
+                        val response = kickGraphQLRepository.loadQueryUserResultLogin(networkLibrary, kickWebHeaders, result)
                         if (enableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "refresh"

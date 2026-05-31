@@ -3,7 +3,7 @@ package com.github.andreyasadchy.xtra.ui.channel.about
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.github.andreyasadchy.xtra.model.ui.ChannelPanel
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -12,7 +12,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class ChannelAboutViewModel @Inject constructor(
-    private val graphQLRepository: GraphQLRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
     private val kickRepository: KickRepository,
 ) : ViewModel() {
 
@@ -26,7 +26,7 @@ class ChannelAboutViewModel @Inject constructor(
 
     private var isLoading = false
 
-    fun loadAbout(channelId: String?, channelLogin: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadAbout(channelId: String?, channelLogin: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if ((description.value == null || team.value == null || socialMedias.value == null || panels.value == null) && !isLoading) {
             isLoading = true
             viewModelScope.launch {
@@ -52,7 +52,7 @@ class ChannelAboutViewModel @Inject constructor(
                     }
                     val queryId = channelId.takeIf { channelLogin.isNullOrBlank() }
                     val queryLogin = channelLogin.takeIf { queryId.isNullOrBlank() }
-                    val response = graphQLRepository.loadQueryUserAbout(networkLibrary, gqlHeaders, queryId, queryLogin)
+                    val response = kickGraphQLRepository.loadQueryUserAbout(networkLibrary, kickWebHeaders, queryId, queryLogin)
                     if (enableIntegrity && integrity.value == null) {
                         response.errors?.find { it.message == "failed integrity check" }?.let {
                             integrity.value = "refresh"

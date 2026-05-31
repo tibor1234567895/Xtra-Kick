@@ -149,7 +149,7 @@ class ImageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callback
                 viewModel.loadEmoteCard(
                     it,
                     requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    KickApiHelper.getGQLHeaders(requireContext()),
+                    KickApiHelper.getKickWebHeaders(requireContext()),
                     requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                 )
                 viewLifecycleOwner.lifecycleScope.launch {
@@ -202,7 +202,7 @@ class ImageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callback
                         viewModel.loadEmoteCard(
                             it,
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getGQLHeaders(requireContext()),
+                            KickApiHelper.getKickWebHeaders(requireContext()),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                     }

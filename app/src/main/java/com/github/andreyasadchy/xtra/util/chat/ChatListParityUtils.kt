@@ -24,6 +24,14 @@ object ChatListParityUtils {
         return ChatParityRebindRange(start = 0, count = totalCountAfterRemoval)
     }
 
+    fun appendPositionAfterHeadRemoval(lastIndexAfterAppend: Int, removedCount: Int): Int {
+        return if (removedCount > 0) {
+            lastIndexAfterAppend.coerceAtLeast(0)
+        } else {
+            lastIndexAfterAppend
+        }
+    }
+
     fun resolveVisualParityPosition(messages: List<ChatMessage>, position: Int): Int {
         if (position <= 0 || messages.isEmpty()) {
             return 0

@@ -18,6 +18,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.Icon
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
@@ -28,9 +29,11 @@ import android.text.format.DateUtils
 import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.RoundedCorner
+import android.view.ScaleGestureDetector
 import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
@@ -81,6 +84,7 @@ import com.github.andreyasadchy.xtra.ui.game.GameMediaFragmentDirections
 import com.github.andreyasadchy.xtra.ui.game.GamePagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.isKeyboardShown
@@ -94,6 +98,8 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.max
 
 @OptIn(UnstableApi::class)
@@ -134,6 +140,35 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private var backgroundColor: Int? = null
     private var backgroundVisible = false
     private var wasInPictureInPictureMode = false
+    private var videoZoomScale = 1f
+    private var videoZoomTranslationX = 0f
+    private var videoZoomTranslationY = 0f
+    private var videoZoomGestureActive = false
+    private var videoZoomGestureStartScale = 1f
+    private var videoZoomGestureStartSpan = 0f
+    private var videoZoomGestureScaleDeadzonePassed = false
+    private var videoZoomGestureLastFocusX = 0f
+    private var videoZoomGestureLastFocusY = 0f
+    private var videoZoomPanLastX = 0f
+    private var videoZoomPanLastY = 0f
+    private var videoZoomPanMoved = false
+    private var videoZoomFillHintActive = false
+    private var videoZoomFillMode = false
+    private var videoZoomFillHintAnimation: ViewPropertyAnimator? = null
+    private var videoZoomIndicatorAnimation: ViewPropertyAnimator? = null
+    private var qualityConnectivityManager: ConnectivityManager? = null
+    private var qualityNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    protected var activeNetworkTransport: NetworkTransport? = null
+    protected var automaticQualityChangeInProgress = false
+    private val networkTransportPollAction = object : Runnable {
+        override fun run() {
+            if (view == null || qualityNetworkCallback == null) {
+                return
+            }
+            handleAutoQualityNetworkChanged(resolveActiveNetworkTransport())
+            view?.postDelayed(this, NETWORK_TRANSPORT_POLL_MS)
+        }
+    }
 
     protected lateinit var prefs: SharedPreferences
 
@@ -345,6 +380,100 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
             )
 
+            val zoomDetector = ScaleGestureDetector(
+                requireContext(),
+                object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                    override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                        videoZoomGestureActive = true
+                        if (videoZoomFillMode) {
+                            videoZoomFillMode = false
+                            restoreVideoResizeMode()
+                        }
+                        videoZoomGestureStartScale = videoZoomScale
+                        videoZoomGestureStartSpan = detector.currentSpan
+                        videoZoomGestureScaleDeadzonePassed = isVideoZoomed()
+                        videoZoomGestureLastFocusX = detector.focusX
+                        videoZoomGestureLastFocusY = detector.focusY
+                        activePointerId = -1
+                        playerControls.root.dispatchTouchEvent(
+                            MotionEvent.obtain(
+                                detector.eventTime,
+                                detector.eventTime,
+                                MotionEvent.ACTION_CANCEL,
+                                detector.focusX,
+                                detector.focusY,
+                                0
+                            )
+                        )
+                        showVideoZoomIndicator(formatVideoZoomScale(videoZoomScale), false)
+                        return true
+                    }
+
+                    override fun onScale(detector: ScaleGestureDetector): Boolean {
+                        if (!videoZoomGestureScaleDeadzonePassed) {
+                            val spanRatio = if (videoZoomGestureStartSpan > 0f) detector.currentSpan / videoZoomGestureStartSpan else 1f
+                            if (abs(spanRatio - 1f) < VIDEO_ZOOM_SCALE_DEADZONE_RATIO) {
+                                videoZoomGestureLastFocusX = detector.focusX
+                                videoZoomGestureLastFocusY = detector.focusY
+                                return true
+                            }
+                            videoZoomGestureScaleDeadzonePassed = true
+                        }
+                        val oldScale = videoZoomScale
+                        val newScale = (oldScale * detector.scaleFactor).coerceIn(MIN_VIDEO_ZOOM_SCALE, MAX_VIDEO_ZOOM_SCALE)
+                        if (newScale > MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_EPSILON) {
+                            binding.aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        }
+                        videoZoomTranslationX += (detector.focusX - videoZoomGestureLastFocusX) * VIDEO_ZOOM_TWO_FINGER_PAN_MULTIPLIER
+                        videoZoomTranslationY += (detector.focusY - videoZoomGestureLastFocusY) * VIDEO_ZOOM_TWO_FINGER_PAN_MULTIPLIER
+                        if (newScale != oldScale) {
+                            val scaleChange = newScale / oldScale
+                            videoZoomTranslationX = getScaledVideoTranslation(
+                                focus = detector.focusX,
+                                viewStart = getVideoSurfaceLeft(),
+                                currentTranslation = videoZoomTranslationX,
+                                scaleChange = scaleChange
+                            )
+                            videoZoomTranslationY = getScaledVideoTranslation(
+                                focus = detector.focusY,
+                                viewStart = getVideoSurfaceTop(),
+                                currentTranslation = videoZoomTranslationY,
+                                scaleChange = scaleChange
+                            )
+                        }
+                        videoZoomScale = newScale
+                        videoZoomGestureLastFocusX = detector.focusX
+                        videoZoomGestureLastFocusY = detector.focusY
+                        clampVideoZoomTranslation()
+                        applyVideoZoom()
+                        updateVideoZoomFillHint()
+                        showVideoZoomIndicator(formatVideoZoomScale(videoZoomScale), false)
+                        return true
+                    }
+
+                    override fun onScaleEnd(detector: ScaleGestureDetector) {
+                        when {
+                            videoZoomFillHintActive -> {
+                                snapVideoZoomToFill()
+                            }
+                            videoZoomGestureStartScale > MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_EPSILON && videoZoomScale <= MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_RESET_TOLERANCE -> {
+                                resetVideoZoom(true)
+                            }
+                            videoZoomScale <= MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_EPSILON -> {
+                                resetVideoZoom(false)
+                            }
+                            else -> {
+                                clampVideoZoomTranslation()
+                                applyVideoZoom()
+                                updateVideoZoomFillHint(false)
+                                showVideoZoomIndicator(formatVideoZoomScale(videoZoomScale), true)
+                            }
+                        }
+                        videoZoomGestureActive = false
+                    }
+                }
+            )
+
             fun downAction(event: MotionEvent) {
                 moveAnimation?.cancel()
                 isTap = true
@@ -490,6 +619,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
             dragView.setOnTouchListener { _, event ->
                 if (!isAnimating) {
+                    if (event.pointerCount > 1 || videoZoomGestureActive) {
+                        zoomDetector.onTouchEvent(event)
+                        isTap = false
+                        activePointerId = -1
+                        return@setOnTouchListener true
+                    }
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
                             activePointerId = event.getPointerId(0)
@@ -497,9 +632,23 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             val y = event.y
                             lastX = x * slidingLayout.scaleX
                             lastY = y * slidingLayout.scaleY
+                            videoZoomPanLastX = x
+                            videoZoomPanLastY = y
                             statusBarSwipe = !isPortrait && y <= 100
-                            downAction(event)
-                            if (isMaximized) swipeChatDetector.onTouchEvent(event)
+                            if (isVideoZoomed()) {
+                                isTap = true
+                                tapEventTime = event.eventTime
+                                videoZoomPanMoved = false
+                                moveAnimation?.cancel()
+                                if (playerControls.root.isVisible) {
+                                    playerControls.root.dispatchTouchEvent(event)
+                                } else {
+                                    controllerTapDetector.onTouchEvent(event)
+                                }
+                            } else {
+                                downAction(event)
+                                if (isMaximized) swipeChatDetector.onTouchEvent(event)
+                            }
                         }
                         MotionEvent.ACTION_POINTER_DOWN -> {
                             if (activePointerId == -1) {
@@ -517,7 +666,29 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             }
                         }
                         MotionEvent.ACTION_MOVE -> {
-                            if (isMaximized) {
+                            if (isMaximized && isVideoZoomed()) {
+                                if (playerControls.root.isVisible) {
+                                    playerControls.root.dispatchTouchEvent(event)
+                                }
+                                if (!playerControls.progressBar.isPressed && activePointerId != -1) {
+                                    val pointerIndex = event.findPointerIndex(activePointerId)
+                                    if (pointerIndex != -1) {
+                                        val x = event.getX(pointerIndex)
+                                        val y = event.getY(pointerIndex)
+                                        val translationX = x - videoZoomPanLastX
+                                        val translationY = y - videoZoomPanLastY
+                                        if (abs(translationX) > touchSlop || abs(translationY) > touchSlop) {
+                                            videoZoomPanMoved = true
+                                        }
+                                        videoZoomTranslationX += translationX
+                                        videoZoomTranslationY += translationY
+                                        videoZoomPanLastX = x
+                                        videoZoomPanLastY = y
+                                        clampVideoZoomTranslation()
+                                        applyVideoZoom()
+                                    }
+                                }
+                            } else if (isMaximized) {
                                 swipeChatDetector.onTouchEvent(event)
                                 playerControls.root.dispatchTouchEvent(event)
                                 if (!playerControls.progressBar.isPressed && !statusBarSwipe && activePointerId != -1) {
@@ -599,8 +770,17 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             }
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                            if (isMaximized) swipeChatDetector.onTouchEvent(event)
-                            upAction(event)
+                            if (isVideoZoomed()) {
+                                if (playerControls.root.isVisible) {
+                                    playerControls.root.dispatchTouchEvent(event)
+                                } else if (!videoZoomPanMoved && isTap && (event.eventTime - tapEventTime) < longPressTimeout) {
+                                    controllerTapDetector.onTouchEvent(event)
+                                }
+                                activePointerId = -1
+                            } else {
+                                if (isMaximized) swipeChatDetector.onTouchEvent(event)
+                                upAction(event)
+                            }
                         }
                     }
                 }
@@ -626,6 +806,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     else -> chatLinearLayout.dispatchTouchEvent(event)
                 }
                 true
+            }
+            zoomIndicator.setOnClickListener {
+                if (isVideoZoomed() || videoZoomFillMode) {
+                    resetVideoZoom(true)
+                }
             }
             with(playerControls) {
                 root.setOnTouchListener { _, event ->
@@ -1092,7 +1277,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                                 requireArguments().getString(KEY_CHANNEL_LOGIN),
                                                 setting,
                                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                                KickApiHelper.getGQLHeaders(requireContext(), true),
+                                                KickApiHelper.getKickWebHeaders(requireContext(), true),
                                                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                             )
                                         }
@@ -1107,7 +1292,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                         requireContext().prefs().getBoolean(C.LIVE_NOTIFICATIONS_ENABLED, false),
                                         requireArguments().getString(KEY_STARTED_AT),
                                         requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                        KickApiHelper.getGQLHeaders(requireContext(), true),
+                                        KickApiHelper.getKickWebHeaders(requireContext(), true),
                                         requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                     )
                                 }
@@ -1244,6 +1429,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     }
                 }
                 aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                if (videoZoomFillMode) {
+                    aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                }
                 aspectRatioFrameLayout.updateLayoutParams<FrameLayout.LayoutParams> {
                     gravity = Gravity.NO_GRAVITY
                 }
@@ -1321,6 +1509,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     }
                 }
                 aspectRatioFrameLayout.resizeMode = resizeMode
+                if (videoZoomFillMode) {
+                    aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                }
                 aspectRatioFrameLayout.updateLayoutParams<FrameLayout.LayoutParams> {
                     gravity = Gravity.CENTER
                 }
@@ -1356,6 +1547,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     fun setResizeMode() {
         resizeMode = (resizeMode + 1).let { if (it < 5) it else 0 }
+        videoZoomFillMode = false
         binding.aspectRatioFrameLayout.resizeMode = resizeMode
         prefs.edit { putInt(C.ASPECT_RATIO_LANDSCAPE, resizeMode) }
     }
@@ -1682,20 +1874,47 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     protected fun retryKickStreamWithFreshResolvedUrl(): Boolean {
-        val hasCachedResolvedUrl = requireArguments().getString(KEY_RESOLVED_STREAM_URL)?.isNotBlank() == true
+        return reloadKickStreamWithFreshResolvedUrl(
+            stalePlaybackUrl = requireArguments().getString(KEY_RESOLVED_STREAM_URL),
+            reason = "403 recovery",
+            delayMs = 1500L
+        )
+    }
+
+    protected fun reloadKickStreamWithFreshResolvedUrl(
+        stalePlaybackUrl: String? = requireArguments().getString(KEY_RESOLVED_STREAM_URL),
+        reason: String,
+        delayMs: Long = 0L
+    ): Boolean {
+        if (!isAdded) {
+            return false
+        }
         val isKickStream =
             videoType == STREAM &&
                 requireArguments().getString(KEY_STREAM_SOURCE).equals(C.KICK, true)
-        if (!isKickStream || !hasCachedResolvedUrl || !viewModel.shouldRetry) {
+        val hasChannelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)?.isNotBlank() == true
+        if (!isKickStream || !hasChannelLogin || !viewModel.shouldRetryKickStreamWithFreshUrl()) {
             return false
         }
-        viewModel.shouldRetry = false
         requireArguments().putString(KEY_RESOLVED_STREAM_URL, null)
+        viewModel.streamResult.value = null
+        DiagnosticLogger.w(
+            "PlayerFragment",
+            "Kick stream $reason: forcing fresh playback URL channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)} " +
+                "hadStaleUrl=${!stalePlaybackUrl.isNullOrBlank()} customProxy=${viewModel.useCustomProxy}"
+        )
         viewLifecycleOwner.lifecycleScope.launch {
-            delay(1500L)
+            if (delayMs > 0L) {
+                delay(delayMs)
+            }
             try {
-                restartPlayer()
+                DiagnosticLogger.w(
+                    "PlayerFragment",
+                    "Kick stream $reason: loading fresh URL channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)}"
+                )
+                loadStream(forceRefresh = true, stalePlaybackUrl = stalePlaybackUrl)
             } catch (e: Exception) {
+                DiagnosticLogger.e("PlayerFragment", "Kick stream $reason failed", e)
             }
         }
         return true
@@ -1735,8 +1954,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         viewModel.saveBookmark(
             filesDir = requireContext().filesDir.path,
             networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            helixHeaders = KickApiHelper.getHelixHeaders(requireContext()),
-            gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+            kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext()),
+            kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
             videoId = requireArguments().getString(KEY_VIDEO_ID),
             title = requireArguments().getString(KEY_TITLE),
             uploadDate = requireArguments().getString(KEY_UPLOAD_DATE),
@@ -1758,10 +1977,116 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         viewModel.quality = resolvePreferredQualityForCurrentNetwork()
     }
 
+    protected fun registerAutoQualityNetworkCallback() {
+        if (qualityNetworkCallback != null) {
+            return
+        }
+        val manager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        qualityConnectivityManager = manager
+        activeNetworkTransport = resolveActiveNetworkTransport()
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val networkCapabilities = qualityConnectivityManager?.getNetworkCapabilities(network) ?: return
+                handleNetworkCapabilities(network, networkCapabilities)
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                handleNetworkCapabilities(network, networkCapabilities)
+            }
+
+            private fun handleNetworkCapabilities(network: Network, networkCapabilities: NetworkCapabilities) {
+                if (qualityConnectivityManager?.activeNetwork != network ||
+                    !networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                ) {
+                    return
+                }
+                val transport = resolveNetworkTransport(networkCapabilities)
+                view?.post {
+                    handleAutoQualityNetworkChanged(transport)
+                }
+            }
+        }
+        qualityNetworkCallback = callback
+        manager.registerDefaultNetworkCallback(callback)
+        view?.postDelayed(networkTransportPollAction, NETWORK_TRANSPORT_POLL_MS)
+    }
+
+    protected fun unregisterAutoQualityNetworkCallback() {
+        view?.removeCallbacks(networkTransportPollAction)
+        qualityNetworkCallback?.let { callback ->
+            try {
+                qualityConnectivityManager?.unregisterNetworkCallback(callback)
+            } catch (_: Exception) {
+            }
+        }
+        qualityNetworkCallback = null
+        qualityConnectivityManager = null
+        activeNetworkTransport = null
+    }
+
+    protected open fun handleAutoQualityNetworkChanged(transport: NetworkTransport) {
+        val previousTransport = activeNetworkTransport
+        activeNetworkTransport = transport
+        if (previousTransport == null || previousTransport == transport) {
+            return
+        }
+        if (transport == NetworkTransport.OTHER) {
+            return
+        }
+        val preferredQuality = resolvePreferredQuality(transport == NetworkTransport.CELLULAR) ?: return
+        if (preferredQuality != viewModel.quality) {
+            runAutomaticQualityChange {
+                changeQuality(preferredQuality)
+            }
+            logAutomaticQualityChange(preferredQuality, transport)
+        }
+    }
+
+    protected fun runAutomaticQualityChange(block: () -> Unit) {
+        automaticQualityChangeInProgress = true
+        try {
+            block()
+        } finally {
+            automaticQualityChangeInProgress = false
+        }
+    }
+
+    protected fun logAutomaticQualityChange(qualityKey: String?, transport: NetworkTransport? = activeNetworkTransport) {
+        val qualityName = viewModel.qualities[qualityKey]?.first ?: qualityKey ?: return
+        val transportName = transport?.let { formatNetworkTransport(it) }
+        viewModel.qualityChangeFlow.tryEmit(
+            if (transportName != null) {
+                "$transportName -> $qualityName"
+            } else {
+                qualityName
+            }
+        )
+    }
+
+    protected fun formatNetworkTransport(transport: NetworkTransport): String? {
+        return when (transport) {
+            NetworkTransport.WIFI -> "Wi-Fi"
+            NetworkTransport.CELLULAR -> "mobile data"
+            NetworkTransport.OTHER -> null
+        }
+    }
+
     protected fun isActiveNetworkCellular(): Boolean {
+        return resolveActiveNetworkTransport() == NetworkTransport.CELLULAR
+    }
+
+    protected fun resolveActiveNetworkTransport(): NetworkTransport {
         val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-        return networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+        return networkCapabilities?.let { resolveNetworkTransport(it) } ?: NetworkTransport.OTHER
+    }
+
+    protected fun resolveNetworkTransport(networkCapabilities: NetworkCapabilities): NetworkTransport {
+        return when {
+            networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkTransport.WIFI
+            networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkTransport.CELLULAR
+            else -> NetworkTransport.OTHER
+        }
     }
 
     protected fun resolvePreferredQualityForCurrentNetwork(): String? {
@@ -2121,8 +2446,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 requireArguments().getString(KEY_CHANNEL_LOGIN),
                 prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                KickApiHelper.getGQLHeaders(requireContext(), true),
-                KickApiHelper.getHelixHeaders(requireContext()),
+                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                KickApiHelper.getKickPublicApiHeaders(requireContext()),
             )
             if (videoType == VIDEO) {
                 val videoId = requireArguments().getString(KEY_VIDEO_ID)
@@ -2133,7 +2458,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     viewModel.loadGamesList(
                         videoId,
                         prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        KickApiHelper.getGQLHeaders(requireContext()),
+                        KickApiHelper.getKickWebHeaders(requireContext()),
                         prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                     )
                 }
@@ -2157,8 +2482,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     !requireContext().tokenPrefs().getString(C.USER_ID, null).isNullOrBlank() &&
                                     com.github.andreyasadchy.xtra.util.AuthStateHelper.isKickLoggedIn(requireContext())),
                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    helixHeaders = KickApiHelper.getHelixHeaders(requireContext()),
-                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+                    kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext()),
+                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
                     enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                 )
             }
@@ -2193,7 +2518,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 } else {
                     viewModel.loadClip(
                         networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
                         id = requireArguments().getString(KEY_CLIP_ID),
                         enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                     )
@@ -2211,25 +2536,41 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
-    private fun loadStream() {
-        requireArguments().getString(KEY_RESOLVED_STREAM_URL)?.takeIf { it.isNotBlank() }?.let { resolvedUrl ->
-            startStream(resolvedUrl)
-            return
+    private fun loadStream(forceRefresh: Boolean = false, stalePlaybackUrl: String? = null) {
+        if (!forceRefresh) {
+            requireArguments().getString(KEY_RESOLVED_STREAM_URL)?.takeIf { it.isNotBlank() }?.let { resolvedUrl ->
+                startStream(resolvedUrl)
+                return
+            }
         }
         requireArguments().getString(KEY_CHANNEL_LOGIN)?.let { channelLogin ->
             val proxyUrl = prefs.getString(C.PLAYER_PROXY_URL, "")
-            if (viewModel.useCustomProxy && !proxyUrl.isNullOrBlank()) {
+            if (!forceRefresh && viewModel.useCustomProxy && !proxyUrl.isNullOrBlank()) {
+                DiagnosticLogger.w(
+                    "PlayerFragment",
+                    "Kick stream load: using custom proxy channel=$channelLogin"
+                )
                 startStream(proxyUrl.replace("\$channel", channelLogin))
             } else {
                 if (viewModel.useCustomProxy) {
+                    DiagnosticLogger.w(
+                        "PlayerFragment",
+                        "Kick stream load: disabling custom proxy for forceRefresh=$forceRefresh channel=$channelLogin"
+                    )
                     viewModel.useCustomProxy = false
+                }
+                if (forceRefresh) {
+                    DiagnosticLogger.w(
+                        "PlayerFragment",
+                        "Kick stream load: requesting resolved URL channel=$channelLogin staleUrlPresent=${!stalePlaybackUrl.isNullOrBlank()}"
+                    )
                 }
                 viewModel.loadStreamResult(
                     networkLibrary = prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
+                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
                     channelLogin = channelLogin,
                     randomDeviceId = prefs.getBoolean(C.TOKEN_RANDOM_DEVICEID, true),
-                    xDeviceId = prefs.getString(C.TOKEN_XDEVICEID, "twitch-web-wall-mason"),
+                    xDeviceId = prefs.getString(C.TOKEN_XDEVICEID, "kick-web-player"),
                     playerType = prefs.getString(C.TOKEN_PLAYERTYPE, "site"),
                     supportedCodecs = prefs.getString(C.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
                     proxyPlaybackAccessToken = prefs.getBoolean(C.PROXY_PLAYBACK_ACCESS_TOKEN, false),
@@ -2237,7 +2578,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     proxyPort = prefs.getString(C.PROXY_PORT, null)?.toIntOrNull(),
                     proxyUser = prefs.getString(C.PROXY_USER, null),
                     proxyPassword = prefs.getString(C.PROXY_PASSWORD, null),
-                    enableIntegrity = prefs.getBoolean(C.ENABLE_INTEGRITY, false)
+                    enableIntegrity = prefs.getBoolean(C.ENABLE_INTEGRITY, false),
+                    forceRefresh = forceRefresh,
+                    stalePlaybackUrl = stalePlaybackUrl
                 )
             }
         }
@@ -2296,7 +2639,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             viewModel.playbackPosition = playbackPosition
             viewModel.loadVideo(
                 networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
+                kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
                 videoId = requireArguments().getString(KEY_VIDEO_ID),
                 videoSource = requireArguments().getString(KEY_VIDEO_SOURCE),
                 channelId = requireArguments().getString(KEY_CHANNEL_ID),
@@ -2311,6 +2654,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         with(binding) {
+            resetVideoZoom(false)
             isPortrait = newConfig.orientation == Configuration.ORIENTATION_PORTRAIT
             if (isMaximized) {
                 enableBackground()
@@ -2335,6 +2679,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         wasInPictureInPictureMode = wasInPictureInPictureMode || isInPictureInPictureMode
         with(binding) {
             if (isInPictureInPictureMode) {
+                resetVideoZoom(false)
                 if (!isMaximized) {
                     isMaximized = true
                     requireActivity().onBackPressedDispatcher.addCallback(this@PlayerFragment, backPressedCallback)
@@ -2369,7 +2714,228 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     override fun onStop() {
         super.onStop()
+        unregisterAutoQualityNetworkCallback()
         binding.playerControls.root.removeCallbacks(controllerHideAction)
+    }
+
+    private fun isVideoZoomed() = videoZoomScale > MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_EPSILON
+
+    private fun restoreVideoResizeMode() {
+        _binding?.aspectRatioFrameLayout?.resizeMode = if (isPortrait) {
+            AspectRatioFrameLayout.RESIZE_MODE_FIT
+        } else {
+            resizeMode
+        }
+    }
+
+    private fun formatVideoZoomScale(scale: Float): String {
+        return String.format(Locale.US, "%.1fx", scale.coerceIn(MIN_VIDEO_ZOOM_SCALE, MAX_VIDEO_ZOOM_SCALE))
+    }
+
+    private fun applyVideoZoom() {
+        val binding = _binding ?: return
+        val zoomView = getVideoZoomView()
+        listOf(binding.aspectRatioFrameLayout, binding.playerSurface, binding.playerTexture).forEach { view ->
+            view.pivotX = 0f
+            view.pivotY = 0f
+            if (view == zoomView) {
+                view.scaleX = videoZoomScale
+                view.scaleY = videoZoomScale
+                view.translationX = videoZoomTranslationX
+                view.translationY = videoZoomTranslationY
+            } else {
+                view.scaleX = MIN_VIDEO_ZOOM_SCALE
+                view.scaleY = MIN_VIDEO_ZOOM_SCALE
+                view.translationX = 0f
+                view.translationY = 0f
+            }
+        }
+    }
+
+    private fun getScaledVideoTranslation(
+        focus: Float,
+        viewStart: Float,
+        currentTranslation: Float,
+        scaleChange: Float
+    ): Float {
+        return focus - viewStart - ((focus - viewStart - currentTranslation) * scaleChange)
+    }
+
+    private fun clampVideoZoomTranslation() {
+        val binding = _binding ?: return
+        val videoView = getVideoZoomView()
+        val videoWidth = videoView.width
+        val videoHeight = videoView.height
+        val viewportWidth = binding.playerLayout.width
+        val viewportHeight = binding.playerLayout.height
+        if (videoWidth <= 0 || videoHeight <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
+            videoZoomTranslationX = 0f
+            videoZoomTranslationY = 0f
+            return
+        }
+        videoZoomTranslationX = getClampedVideoTranslation(
+            translation = videoZoomTranslationX,
+            viewStart = getVideoSurfaceLeft(),
+            viewSize = videoWidth.toFloat(),
+            viewportSize = viewportWidth.toFloat()
+        )
+        videoZoomTranslationY = getClampedVideoTranslation(
+            translation = videoZoomTranslationY,
+            viewStart = getVideoSurfaceTop(),
+            viewSize = videoHeight.toFloat(),
+            viewportSize = viewportHeight.toFloat()
+        )
+    }
+
+    private fun getClampedVideoTranslation(
+        translation: Float,
+        viewStart: Float,
+        viewSize: Float,
+        viewportSize: Float
+    ): Float {
+        val scaledSize = viewSize * videoZoomScale
+        return if (scaledSize <= viewportSize) {
+            ((viewportSize - scaledSize) / 2f) - viewStart
+        } else {
+            translation.coerceIn(viewportSize - viewStart - scaledSize, -viewStart)
+        }
+    }
+
+    private fun getVideoSurfaceLeft(): Float {
+        val binding = _binding ?: return 0f
+        return binding.aspectRatioFrameLayout.left + getVideoZoomView().left.toFloat()
+    }
+
+    private fun getVideoSurfaceTop(): Float {
+        val binding = _binding ?: return 0f
+        return binding.aspectRatioFrameLayout.top + getVideoZoomView().top.toFloat()
+    }
+
+    private fun getVideoZoomView(): View {
+        val binding = _binding ?: return requireView()
+        return when {
+            binding.playerTexture.isVisible -> binding.playerTexture
+            binding.playerSurface.isVisible -> binding.playerSurface
+            else -> binding.aspectRatioFrameLayout
+        }
+    }
+
+    private fun snapVideoZoomToFill() {
+        videoZoomFillMode = true
+        binding.aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        videoZoomScale = MIN_VIDEO_ZOOM_SCALE
+        videoZoomTranslationX = 0f
+        videoZoomTranslationY = 0f
+        applyVideoZoom()
+        updateVideoZoomFillHint(false)
+        showVideoZoomIndicator(getString(R.string.zoomed_to_fill), true)
+    }
+
+    private fun resetVideoZoom(showIndicator: Boolean) {
+        videoZoomFillMode = false
+        videoZoomScale = MIN_VIDEO_ZOOM_SCALE
+        videoZoomTranslationX = 0f
+        videoZoomTranslationY = 0f
+        restoreVideoResizeMode()
+        applyVideoZoom()
+        updateVideoZoomFillHint(false)
+        videoZoomIndicatorAnimation?.cancel()
+        if (showIndicator) {
+            showVideoZoomIndicator(getString(R.string.original), true)
+        } else {
+            _binding?.zoomIndicator?.apply {
+                removeCallbacks(hideVideoZoomIndicatorAction)
+                alpha = 0f
+                visibility = View.GONE
+            }
+        }
+    }
+
+    private fun performVideoZoomFillHaptic() {
+        _binding?.dragView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    }
+
+    private fun updateVideoZoomFillHint(active: Boolean = isVideoZoomInFillHintZone()) {
+        val binding = _binding ?: return
+        if (active == videoZoomFillHintActive) {
+            return
+        }
+        videoZoomFillHintActive = active
+        if (active) {
+            performVideoZoomFillHaptic()
+        }
+        videoZoomFillHintAnimation?.cancel()
+        binding.zoomFillHint.animate().setListener(null)
+        binding.zoomFillHint.animate().cancel()
+        if (active) {
+            updateVideoZoomFillHintBounds()
+            binding.zoomFillHint.visibility = View.VISIBLE
+            binding.zoomFillHint.alpha = VIDEO_ZOOM_FILL_HINT_ALPHA
+        } else {
+            videoZoomFillHintAnimation = binding.zoomFillHint.animate()
+                .alpha(0f)
+                .setDuration(120L)
+                .setListener(
+                    object : AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(animation: Animator) {
+                            binding.zoomFillHint.visibility = View.GONE
+                            videoZoomFillHintAnimation = null
+                        }
+                    }
+                )
+        }
+    }
+
+    private fun updateVideoZoomFillHintBounds() {
+        val binding = _binding ?: return
+        val viewportWidth = binding.playerLayout.width
+        val viewportHeight = binding.playerLayout.height
+        val videoView = getVideoZoomView()
+        val videoLeft = getVideoSurfaceLeft()
+        val videoTop = getVideoSurfaceTop()
+        val videoRight = videoLeft + videoView.width
+        val videoBottom = videoTop + videoView.height
+        if (viewportWidth <= 0 || viewportHeight <= 0 || videoRight <= videoLeft || videoBottom <= videoTop) {
+            return
+        }
+        binding.zoomFillHint.setVideoBounds(videoLeft, videoTop, videoRight, videoBottom)
+    }
+
+    private fun isVideoZoomInFillHintZone(): Boolean {
+        return !videoZoomFillMode &&
+            videoZoomScale in (MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_EPSILON)..VIDEO_ZOOM_FILL_ZONE_MAX_SCALE
+    }
+
+    private val hideVideoZoomIndicatorAction = Runnable {
+        _binding?.zoomIndicator?.let { indicator ->
+            videoZoomIndicatorAnimation?.cancel()
+            videoZoomIndicatorAnimation = indicator.animate()
+                .alpha(0f)
+                .setDuration(180L)
+                .setListener(
+                    object : AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(animation: Animator) {
+                            indicator.visibility = View.GONE
+                            videoZoomIndicatorAnimation = null
+                        }
+                    }
+                )
+        }
+    }
+
+    private fun showVideoZoomIndicator(text: String, delayedHide: Boolean) {
+        val indicator = _binding?.zoomIndicator ?: return
+        indicator.removeCallbacks(hideVideoZoomIndicatorAction)
+        videoZoomIndicatorAnimation?.cancel()
+        videoZoomIndicatorAnimation = null
+        indicator.text = text
+        indicator.visibility = View.VISIBLE
+        indicator.animate().setListener(null)
+        indicator.animate().cancel()
+        indicator.alpha = 1f
+        if (delayedHide) {
+            indicator.postDelayed(hideVideoZoomIndicatorAction, VIDEO_ZOOM_INDICATOR_HIDE_DELAY_MS)
+        }
     }
 
     protected fun savePosition() {
@@ -2395,6 +2961,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     fun minimize() {
         with(binding) {
+            resetVideoZoom(false)
             isMaximized = false
             if (videoType == STREAM && chatFragment?.emoteMenuIsVisible() == true) {
                 chatFragment?.toggleBackPressedCallback(false)
@@ -2618,10 +3185,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             requireArguments().getString(KEY_CHANNEL_LOGIN)?.let { channelLogin ->
                                 viewModel.loadStreamResult(
                                     networkLibrary = prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
+                                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_STREAM, true)),
                                     channelLogin = channelLogin,
                                     randomDeviceId = prefs.getBoolean(C.TOKEN_RANDOM_DEVICEID, true),
-                                    xDeviceId = prefs.getString(C.TOKEN_XDEVICEID, "twitch-web-wall-mason"),
+                                    xDeviceId = prefs.getString(C.TOKEN_XDEVICEID, "kick-web-player"),
                                     playerType = prefs.getString(C.TOKEN_PLAYERTYPE, "site"),
                                     supportedCodecs = prefs.getString(C.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
                                     proxyPlaybackAccessToken = prefs.getBoolean(C.PROXY_PLAYBACK_ACCESS_TOKEN, false),
@@ -2629,7 +3196,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     proxyPort = prefs.getString(C.PROXY_PORT, null)?.toIntOrNull(),
                                     proxyUser = prefs.getString(C.PROXY_USER, null),
                                     proxyPassword = prefs.getString(C.PROXY_PASSWORD, null),
-                                    enableIntegrity = prefs.getBoolean(C.ENABLE_INTEGRITY, false)
+                                    enableIntegrity = prefs.getBoolean(C.ENABLE_INTEGRITY, false),
+                                    forceRefresh = true
                                 )
                             }
                             viewModel.isFollowingChannel(
@@ -2638,15 +3206,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 requireArguments().getString(KEY_CHANNEL_LOGIN),
                                 prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getGQLHeaders(requireContext(), true),
-                                KickApiHelper.getHelixHeaders(requireContext()),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
                             )
                         }
                         "refreshVideo" -> {
                             val videoId = requireArguments().getString(KEY_VIDEO_ID)
                             viewModel.loadVideo(
                                 networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                gqlHeaders = KickApiHelper.getGQLHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
+                                kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(C.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
                                 videoId = videoId,
                                 videoSource = requireArguments().getString(KEY_VIDEO_SOURCE),
                                 channelId = requireArguments().getString(KEY_CHANNEL_ID),
@@ -2661,8 +3229,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 requireArguments().getString(KEY_CHANNEL_LOGIN),
                                 prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getGQLHeaders(requireContext(), true),
-                                KickApiHelper.getHelixHeaders(requireContext()),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
                             )
                             if (!videoId.isNullOrBlank() &&
                                 !requireArguments().getString(KEY_VIDEO_SOURCE).equals(C.KICK, true) &&
@@ -2671,7 +3239,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 viewModel.loadGamesList(
                                     videoId,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getGQLHeaders(requireContext()),
+                                    KickApiHelper.getKickWebHeaders(requireContext()),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -2689,7 +3257,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             } else {
                                 viewModel.loadClip(
                                     networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+                                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
                                     id = requireArguments().getString(KEY_CLIP_ID),
                                     enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
@@ -2700,8 +3268,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 requireArguments().getString(KEY_CHANNEL_LOGIN),
                                 prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getGQLHeaders(requireContext(), true),
-                                KickApiHelper.getHelixHeaders(requireContext()),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
                             )
                         }
                         "follow" -> viewModel.saveFollowChannel(
@@ -2713,7 +3281,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             requireContext().prefs().getBoolean(C.LIVE_NOTIFICATIONS_ENABLED, false),
                             requireArguments().getString(KEY_STARTED_AT),
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getGQLHeaders(requireContext(), true),
+                            KickApiHelper.getKickWebHeaders(requireContext(), true),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                         "unfollow" -> viewModel.deleteFollowChannel(
@@ -2722,7 +3290,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             requireArguments().getString(KEY_CHANNEL_LOGIN),
                             prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getGQLHeaders(requireContext(), true),
+                            KickApiHelper.getKickWebHeaders(requireContext(), true),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                     }
@@ -2854,6 +3422,16 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         private const val REQUEST_CODE_SPEED = 1
         private const val REQUEST_CODE_AUDIO_ONLY = 2
         private const val REQUEST_CODE_PLAY_PAUSE = 3
+        private const val MIN_VIDEO_ZOOM_SCALE = 1f
+        private const val MAX_VIDEO_ZOOM_SCALE = 8f
+        private const val VIDEO_ZOOM_EPSILON = 0.01f
+        private const val VIDEO_ZOOM_SCALE_DEADZONE_RATIO = 0.025f
+        private const val VIDEO_ZOOM_RESET_TOLERANCE = 0.03f
+        private const val VIDEO_ZOOM_FILL_ZONE_MAX_SCALE = 1.4f
+        private const val VIDEO_ZOOM_TWO_FINGER_PAN_MULTIPLIER = 1.25f
+        private const val VIDEO_ZOOM_FILL_HINT_ALPHA = 0.4f
+        private const val VIDEO_ZOOM_INDICATOR_HIDE_DELAY_MS = 1500L
+        private const val NETWORK_TRANSPORT_POLL_MS = 2000L
 
         internal const val STREAM = "stream"
         internal const val VIDEO = "video"
@@ -2893,5 +3471,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         protected const val KEY_GAME_ID = "gameId"
         protected const val KEY_GAME_SLUG = "gameSlug"
         protected const val KEY_GAME_NAME = "gameName"
+    }
+
+    protected enum class NetworkTransport {
+        WIFI,
+        CELLULAR,
+        OTHER
     }
 }

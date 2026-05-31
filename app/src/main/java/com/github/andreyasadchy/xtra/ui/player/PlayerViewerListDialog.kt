@@ -79,7 +79,7 @@ class PlayerViewerListDialog : BottomSheetDialogFragment(), IntegrityDialog.Call
             viewModel.loadViewerList(
                 requireArguments().getString(LOGIN),
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                KickApiHelper.getGQLHeaders(requireContext()),
+                KickApiHelper.getKickWebHeaders(requireContext()),
                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             )
             viewLifecycleOwner.lifecycleScope.launch {
@@ -189,7 +189,7 @@ class PlayerViewerListDialog : BottomSheetDialogFragment(), IntegrityDialog.Call
                     viewModel.loadViewerList(
                         requireArguments().getString(LOGIN),
                         requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        KickApiHelper.getGQLHeaders(requireContext()),
+                        KickApiHelper.getKickWebHeaders(requireContext()),
                         requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                     )
                 }

@@ -9,8 +9,8 @@ import androidx.lifecycle.viewModelScope
 import com.github.andreyasadchy.xtra.model.ui.Game
 import com.github.andreyasadchy.xtra.model.ui.LocalFollowGame
 import com.github.andreyasadchy.xtra.model.ui.Tag
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowGameRepository
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
@@ -35,8 +35,8 @@ import kotlin.coroutines.suspendCoroutine
 
 @HiltViewModel
 class GamePagerViewModel @Inject constructor(
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val localFollowsGame: LocalFollowGameRepository,
     private val httpEngine: Lazy<HttpEngine>?,
     private val cronetEngine: Lazy<CronetEngine>?,
@@ -56,7 +56,7 @@ class GamePagerViewModel @Inject constructor(
     private val _game = MutableStateFlow<Game?>(null)
     val game: StateFlow<Game?> = _game
 
-    fun loadGame(networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadGame(networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (_game.value == null) {
             if (!args.gameSlug.isNullOrBlank() || !args.gameName.isNullOrBlank() || !args.boxArt.isNullOrBlank()) {
                 _game.value = Game(
@@ -69,9 +69,9 @@ class GamePagerViewModel @Inject constructor(
             viewModelScope.launch {
                 val queryId = args.gameId.takeIf { args.gameSlug.isNullOrBlank() }
                 _game.value = try {
-                    helixRepository.getGames(
+                    kickPublicApiRepository.getGames(
                         networkLibrary = networkLibrary,
-                        headers = helixHeaders,
+                        headers = kickPublicApiHeaders,
                         ids = queryId?.let { listOf(it) },
                         names = if (queryId.isNullOrBlank()) args.gameName?.let { listOf(it) } else null
                     ).data.firstOrNull()?.let {
@@ -88,7 +88,7 @@ class GamePagerViewModel @Inject constructor(
         }
     }
 
-    fun isFollowingGame(gameId: String?, gameSlug: String?, gameName: String?, setting: Int, networkLibrary: String?, gqlHeaders: Map<String, String>) {
+    fun isFollowingGame(gameId: String?, gameSlug: String?, gameName: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>) {
         if (_isFollowing.value == null) {
             viewModelScope.launch {
                 try {
@@ -100,7 +100,7 @@ class GamePagerViewModel @Inject constructor(
         }
     }
 
-    fun saveFollowGame(gameId: String?, gameSlug: String?, gameName: String?, gameBoxArt: String?, setting: Int, filesDir: String, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun saveFollowGame(gameId: String?, gameSlug: String?, gameName: String?, gameBoxArt: String?, setting: Int, filesDir: String, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
                 if (!gameId.isNullOrBlank()) {
@@ -108,12 +108,12 @@ class GamePagerViewModel @Inject constructor(
                     val path = filesDir + File.separator + "box_art" + File.separator + gameId
                     val remoteBoxArt = gameBoxArt?.takeIf { it.isNotBlank() } ?: try {
                         try {
-                            graphQLRepository.loadQueryGameBoxArt(networkLibrary, gqlHeaders, gameId).data!!.game?.boxArtURL
+                            kickGraphQLRepository.loadQueryGameBoxArt(networkLibrary, kickWebHeaders, gameId).data!!.game?.boxArtURL
                         } catch (e: Exception) {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                helixRepository.getGames(
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                kickPublicApiRepository.getGames(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     ids = listOf(gameId)
                                 ).data.firstOrNull()?.boxArtUrl
                             } else null
@@ -190,7 +190,7 @@ class GamePagerViewModel @Inject constructor(
         }
     }
 
-    fun deleteFollowGame(gameId: String?, setting: Int, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun deleteFollowGame(gameId: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
                 if (gameId != null) {
@@ -204,7 +204,7 @@ class GamePagerViewModel @Inject constructor(
         }
     }
 
-    fun updateLocalGame(filesDir: String, gameId: String?, gameName: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>) {
+    fun updateLocalGame(filesDir: String, gameId: String?, gameName: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         if (!updatedLocalGame) {
             updatedLocalGame = true
             if (!args.gameSlug.isNullOrBlank()) {
@@ -216,12 +216,12 @@ class GamePagerViewModel @Inject constructor(
                     val path = filesDir + File.separator + "box_art" + File.separator + gameId
                     val remoteBoxArt = try {
                         try {
-                            graphQLRepository.loadQueryGameBoxArt(networkLibrary, gqlHeaders, gameId).data!!.game?.boxArtURL
+                            kickGraphQLRepository.loadQueryGameBoxArt(networkLibrary, kickWebHeaders, gameId).data!!.game?.boxArtURL
                         } catch (e: Exception) {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                helixRepository.getGames(
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                kickPublicApiRepository.getGames(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     ids = listOf(gameId)
                                 ).data.firstOrNull()?.boxArtUrl
                             } else null

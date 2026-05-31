@@ -3,6 +3,7 @@ package com.github.andreyasadchy.xtra.ui.player
 import android.net.Uri
 import android.net.http.HttpEngine
 import android.os.Build
+import android.os.SystemClock
 import android.os.ext.SdkExtensions
 import androidx.annotation.OptIn
 import androidx.lifecycle.ViewModel
@@ -22,8 +23,8 @@ import com.github.andreyasadchy.xtra.player.lowlatency.CronetDataSource
 import com.github.andreyasadchy.xtra.player.lowlatency.HttpEngineDataSource
 import com.github.andreyasadchy.xtra.player.lowlatency.OkHttpDataSource
 import com.github.andreyasadchy.xtra.repository.BookmarksRepository
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.repository.NotificationUsersRepository
@@ -31,6 +32,7 @@ import com.github.andreyasadchy.xtra.repository.OfflineRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.repository.ShownNotificationsRepository
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getByteArrayCronetCallback
@@ -63,10 +65,12 @@ import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import kotlin.coroutines.suspendCoroutine
 
+private const val KICK_STREAM_REFRESH_RETRY_COOLDOWN_MS = 60_000L
+
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val localFollowsChannel: LocalFollowChannelRepository,
     private val shownNotificationsRepository: ShownNotificationsRepository,
@@ -98,10 +102,20 @@ class PlayerViewModel @Inject constructor(
     val isBookmarked = MutableStateFlow<Boolean?>(null)
     val gamesList = MutableStateFlow<List<Game>?>(null)
     var shouldRetry = true
+    private var lastKickStreamRefreshRetryAtMs = 0L
 
     val clipUrls = MutableStateFlow<Map<Pair<String, String?>, String>?>(null)
 
     val savedOfflineVideoPosition = MutableStateFlow<Long?>(null)
+
+    fun shouldRetryKickStreamWithFreshUrl(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastKickStreamRefreshRetryAtMs < KICK_STREAM_REFRESH_RETRY_COOLDOWN_MS) {
+            return false
+        }
+        lastKickStreamRefreshRetryAtMs = now
+        return true
+    }
 
     var qualities: Map<String, Pair<String, String?>> = emptyMap()
     var quality: String? = null
@@ -218,7 +232,7 @@ class PlayerViewModel @Inject constructor(
                 segment.title?.let { it.contains("Amazon") || it.contains("Adform") || it.contains("DCM") } == true ||
                         segment.programDateTime?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { segmentStartTime ->
                             playlist.dateRanges.find { dateRange ->
-                                (dateRange.id.startsWith("stitched-ad-") || dateRange.rangeClass == "twitch-stitched-ad" || dateRange.ad) &&
+                                (dateRange.id.startsWith("stitched-ad-") || dateRange.rangeClass?.contains("stitched-ad") == true || dateRange.ad) &&
                                         dateRange.endDate?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { endTime ->
                                             segmentStartTime < endTime
                                         } == true ||
@@ -294,20 +308,43 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun loadStreamResult(networkLibrary: String?, gqlHeaders: Map<String, String>, channelLogin: String, randomDeviceId: Boolean?, xDeviceId: String?, playerType: String?, supportedCodecs: String?, proxyPlaybackAccessToken: Boolean, proxyHost: String?, proxyPort: Int?, proxyUser: String?, proxyPassword: String?, enableIntegrity: Boolean) {
-        if (streamResult.value == null) {
+    fun loadStreamResult(networkLibrary: String?, kickWebHeaders: Map<String, String>, channelLogin: String, randomDeviceId: Boolean?, xDeviceId: String?, playerType: String?, supportedCodecs: String?, proxyPlaybackAccessToken: Boolean, proxyHost: String?, proxyPort: Int?, proxyUser: String?, proxyPassword: String?, enableIntegrity: Boolean, forceRefresh: Boolean = false, stalePlaybackUrl: String? = null) {
+        if (forceRefresh || streamResult.value == null) {
             viewModelScope.launch {
                 try {
-                    streamResult.value = kickRepository
-                        .getChannelLivestream(channelLogin)
+                    val livestreamPlaybackUrl = kickRepository
+                        .getChannelLivestream(channelLogin, forceRefresh = forceRefresh)
                         ?.playbackUrl
                         ?.takeIf { it.isNotBlank() }
-                        ?: kickRepository
-                            .getChannel(channelLogin)
+                    val playbackUrl = if (forceRefresh && livestreamPlaybackUrl != null && livestreamPlaybackUrl == stalePlaybackUrl) {
+                        kickRepository
+                            .getChannel(channelLogin, forceRefresh = forceRefresh)
                             .let { kickRepository.getPlayableUrl(it) }
-                        .takeIf { !it.isNullOrBlank() }
+                            ?.takeIf { it.isNotBlank() && it != stalePlaybackUrl }
+                            ?: livestreamPlaybackUrl
+                    } else {
+                        livestreamPlaybackUrl
+                    } ?: kickRepository
+                        .getChannel(channelLogin, forceRefresh = forceRefresh)
+                        .let { kickRepository.getPlayableUrl(it) }
+                        ?.takeIf { it.isNotBlank() }
                         ?: throw Exception("Kick playback URL unavailable")
+                    if (forceRefresh) {
+                        DiagnosticLogger.w(
+                            "PlayerViewModel",
+                            "Kick stream force refresh resolved channel=$channelLogin source=${if (playbackUrl == livestreamPlaybackUrl) "livestream" else "channel"} " +
+                                "${summarizePlaybackUrl(playbackUrl)} expired=${summarizePlaybackUrl(stalePlaybackUrl)} sameAsExpired=${playbackUrl == stalePlaybackUrl}"
+                        )
+                    }
+                    streamResult.value = playbackUrl
                 } catch (e: Exception) {
+                    if (forceRefresh) {
+                        DiagnosticLogger.e(
+                            "PlayerViewModel",
+                            "Kick stream force refresh failed channel=$channelLogin message=${e.message}",
+                            e
+                        )
+                    }
                     if (e.message == "failed integrity check" && integrity.value == null) {
                         integrity.value = "refreshStream"
                     }
@@ -316,13 +353,33 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun loadStream(channelId: String?, channelLogin: String?, viewerCount: Int?, loop: Boolean, networkLibrary: String?, helixHeaders: Map<String, String>, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    private fun summarizePlaybackUrl(url: String?): String {
+        if (url.isNullOrBlank()) {
+            return "url=missing"
+        }
+        return runCatching {
+            val uri = Uri.parse(url)
+            val query = uri.query
+            "urlHost=${uri.host ?: "unknown"} urlPath=${uri.path ?: "unknown"} " +
+                "queryPresent=${!query.isNullOrBlank()} queryHash=${query.shortHash()} urlHash=${url.shortHash()}"
+        }.getOrDefault("url=unparseable")
+    }
+
+    private fun String?.shortHash(): String {
+        return if (isNullOrBlank()) {
+            "none"
+        } else {
+            Integer.toHexString(hashCode())
+        }
+    }
+
+    fun loadStream(channelId: String?, channelLogin: String?, viewerCount: Int?, loop: Boolean, networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (loop) {
             streamJob?.cancel()
             streamJob = viewModelScope.launch {
                 while (isActive) {
                     try {
-                        updateStream(channelId, channelLogin, networkLibrary, helixHeaders, gqlHeaders, enableIntegrity)
+                        updateStream(channelId, channelLogin, networkLibrary, kickPublicApiHeaders, kickWebHeaders, enableIntegrity)
                         delay(300000L)
                     } catch (e: Exception) {
                         if (e.message == "failed integrity check" && integrity.value == null) {
@@ -335,7 +392,7 @@ class PlayerViewModel @Inject constructor(
         } else if (viewerCount == null) {
             viewModelScope.launch {
                 try {
-                    updateStream(channelId, channelLogin, networkLibrary, helixHeaders, gqlHeaders, enableIntegrity)
+                    updateStream(channelId, channelLogin, networkLibrary, kickPublicApiHeaders, kickWebHeaders, enableIntegrity)
                 } catch (e: Exception) {
                     if (e.message == "failed integrity check" && integrity.value == null) {
                         integrity.value = "stream"
@@ -345,7 +402,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private suspend fun updateStream(channelId: String?, channelLogin: String?, networkLibrary: String?, helixHeaders: Map<String, String>, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    private suspend fun updateStream(channelId: String?, channelLogin: String?, networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         stream.value = channelLogin?.let { login ->
             kickRepository.getChannel(login).let { kickRepository.toStream(it) }
         }
@@ -353,7 +410,7 @@ class PlayerViewModel @Inject constructor(
 
     fun loadVideo(
         networkLibrary: String?,
-        gqlHeaders: Map<String, String>,
+        kickWebHeaders: Map<String, String>,
         videoId: String?,
         videoSource: String?,
         channelId: String?,
@@ -405,15 +462,18 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    val resolutionChangeFlow = playerRepository.resolutionChangeFlow
+    val qualityChangeFlow = playerRepository.qualityChangeFlow
+
     suspend fun savePosition(id: Long, position: Long) {
         playerRepository.saveVideoPosition(VideoPosition(id, position))
     }
 
-    fun loadGamesList(videoId: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadGamesList(videoId: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (gamesList.value == null) {
             viewModelScope.launch {
                 try {
-                    val response = graphQLRepository.loadVideoGames(networkLibrary, gqlHeaders, videoId)
+                    val response = kickGraphQLRepository.loadVideoGames(networkLibrary, kickWebHeaders, videoId)
                     if (enableIntegrity && integrity.value == null) {
                         response.errors?.find { it.message == "failed integrity check" }?.let {
                             integrity.value = "refreshVideo"
@@ -444,7 +504,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun saveBookmark(filesDir: String, networkLibrary: String?, helixHeaders: Map<String, String>, gqlHeaders: Map<String, String>, videoId: String?, title: String?, uploadDate: String?, duration: String?, type: String?, animatedPreviewUrl: String?, channelId: String?, channelLogin: String?, channelName: String?, channelLogo: String?, thumbnail: String?, gameId: String?, gameSlug: String?, gameName: String?) {
+    fun saveBookmark(filesDir: String, networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, videoId: String?, title: String?, uploadDate: String?, duration: String?, type: String?, animatedPreviewUrl: String?, channelId: String?, channelLogin: String?, channelName: String?, channelLogo: String?, thumbnail: String?, gameId: String?, gameSlug: String?, gameName: String?) {
         viewModelScope.launch {
             val item = videoId?.let { bookmarksRepository.getBookmarkByVideoId(it) }
             if (item != null) {
@@ -566,7 +626,7 @@ class PlayerViewModel @Inject constructor(
                 }
                 val userTypes = channelId?.let {
                     try {
-                        val response = graphQLRepository.loadQueryUsersType(networkLibrary, gqlHeaders, listOf(channelId))
+                        val response = kickGraphQLRepository.loadQueryUsersType(networkLibrary, kickWebHeaders, listOf(channelId))
                         response.data!!.users?.firstOrNull()?.let {
                             User(
                                 channelId = it.id,
@@ -582,11 +642,11 @@ class PlayerViewModel @Inject constructor(
                             )
                         }
                     } catch (e: Exception) {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                             try {
-                                helixRepository.getUsers(
+                                kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     ids = listOf(channelId)
                                 ).data.firstOrNull()?.let {
                                     User(
@@ -629,11 +689,11 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun loadClip(networkLibrary: String?, gqlHeaders: Map<String, String>, id: String?, enableIntegrity: Boolean) {
+    fun loadClip(networkLibrary: String?, kickWebHeaders: Map<String, String>, id: String?, enableIntegrity: Boolean) {
         if (clipUrls.value == null) {
             viewModelScope.launch {
                 try {
-                    clipUrls.value = playerRepository.loadClipUrls(networkLibrary, gqlHeaders, id, enableIntegrity) ?: emptyMap()
+                    clipUrls.value = playerRepository.loadClipUrls(networkLibrary, kickWebHeaders, id, enableIntegrity) ?: emptyMap()
                 } catch (e: Exception) {
                     if (e.message == "failed integrity check" && integrity.value == null) {
                         integrity.value = "refreshClip"
@@ -659,7 +719,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun isFollowingChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>) {
+    fun isFollowingChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         if (_isFollowing.value == null) {
             viewModelScope.launch {
                 try {
@@ -673,7 +733,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun saveFollowChannel(userId: String?, channelId: String?, channelLogin: String?, channelName: String?, setting: Int, notificationsEnabled: Boolean, startedAt: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun saveFollowChannel(userId: String?, channelId: String?, channelLogin: String?, channelName: String?, setting: Int, notificationsEnabled: Boolean, startedAt: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
                 val followId = channelId ?: channelLogin
@@ -694,7 +754,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun deleteFollowChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun deleteFollowChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
                 val followId = channelId ?: channelLogin

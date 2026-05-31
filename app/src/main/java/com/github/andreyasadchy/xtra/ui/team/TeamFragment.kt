@@ -152,7 +152,7 @@ class TeamFragment : PagedListFragment(), Scrollable, IntegrityDialog.CallbackLi
         viewModel.loadTeamInfo(
             teamName = args.teamName,
             networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+            kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
             enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
         )
         viewLifecycleOwner.lifecycleScope.launch {
@@ -286,7 +286,7 @@ class TeamFragment : PagedListFragment(), Scrollable, IntegrityDialog.CallbackLi
         viewModel.loadTeamInfo(
             teamName = args.teamName,
             networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+            kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
             enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
         )
         pagingAdapter.retry()
@@ -299,7 +299,7 @@ class TeamFragment : PagedListFragment(), Scrollable, IntegrityDialog.CallbackLi
                     viewModel.loadTeamInfo(
                         teamName = args.teamName,
                         networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
+                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
                         enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                     )
                 }

@@ -12,8 +12,8 @@ import com.github.andreyasadchy.xtra.model.ui.LocalFollowChannel
 import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.model.ui.User
 import com.github.andreyasadchy.xtra.repository.BookmarksRepository
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.repository.NotificationUsersRepository
@@ -47,8 +47,8 @@ class ChannelPagerViewModel @Inject constructor(
     private val bookmarksRepository: BookmarksRepository,
     private val shownNotificationsRepository: ShownNotificationsRepository,
     private val notificationUsersRepository: NotificationUsersRepository,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val httpEngine: Lazy<HttpEngine>?,
     private val cronetEngine: Lazy<CronetEngine>?,
@@ -73,7 +73,7 @@ class ChannelPagerViewModel @Inject constructor(
     private val _user = MutableStateFlow<User?>(null)
     val user: StateFlow<User?> = _user
 
-    fun loadStream(networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadStream(networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (_stream.value == null) {
             viewModelScope.launch {
                 _stream.value = if (!args.channelLogin.isNullOrBlank()) {
@@ -112,7 +112,7 @@ class ChannelPagerViewModel @Inject constructor(
                     }
                 } else {
                     try {
-                        val response = graphQLRepository.loadQueryUserChannelPage(networkLibrary, gqlHeaders, args.channelId, if (args.channelId.isNullOrBlank()) args.channelLogin else null)
+                        val response = kickGraphQLRepository.loadQueryUserChannelPage(networkLibrary, kickWebHeaders, args.channelId, if (args.channelId.isNullOrBlank()) args.channelLogin else null)
                         if (enableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "refresh"
@@ -155,11 +155,11 @@ class ChannelPagerViewModel @Inject constructor(
                             )
                         }
                     } catch (_: Exception) {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                             try {
-                                helixRepository.getStreams(
+                                kickPublicApiRepository.getStreams(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     ids = args.channelId?.let { listOf(it) },
                                     logins = if (args.channelId.isNullOrBlank()) args.channelLogin?.let { listOf(it) } else null
                                 ).data.firstOrNull()?.let {
@@ -187,7 +187,7 @@ class ChannelPagerViewModel @Inject constructor(
         }
     }
 
-    fun loadUser(networkLibrary: String?, helixHeaders: Map<String, String>) {
+    fun loadUser(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>) {
         if (_user.value == null) {
             viewModelScope.launch {
                 _user.value = if (!args.channelLogin.isNullOrBlank()) {
@@ -198,11 +198,11 @@ class ChannelPagerViewModel @Inject constructor(
                         null
                     }
                 } else {
-                    if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                    if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                         try {
-                            helixRepository.getUsers(
+                            kickPublicApiRepository.getUsers(
                                 networkLibrary = networkLibrary,
-                                headers = helixHeaders,
+                                headers = kickPublicApiHeaders,
                                 ids = args.channelId?.let { listOf(it) },
                                 logins = if (args.channelId.isNullOrBlank()) args.channelLogin?.let { listOf(it) } else null
                             ).data.firstOrNull()?.let {
@@ -225,21 +225,21 @@ class ChannelPagerViewModel @Inject constructor(
         }
     }
 
-    fun retry(networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun retry(networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (_stream.value == null) {
-            loadStream(networkLibrary, gqlHeaders, helixHeaders, enableIntegrity)
+            loadStream(networkLibrary, kickWebHeaders, kickPublicApiHeaders, enableIntegrity)
         } else {
             if (_stream.value?.user == null && _user.value == null) {
-                loadUser(networkLibrary, helixHeaders)
+                loadUser(networkLibrary, kickPublicApiHeaders)
             }
         }
     }
 
-    fun enableNotifications(userId: String?, channelId: String, setting: Int, notificationsEnabled: Boolean, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun enableNotifications(userId: String?, channelId: String, setting: Int, notificationsEnabled: Boolean, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                if (setting == 0 && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && _isFollowing.value == true && userId != channelId) {
-                    val errorMessage = graphQLRepository.loadToggleNotificationsUser(networkLibrary, gqlHeaders, channelId, false).also { response ->
+                if (setting == 0 && !kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank() && _isFollowing.value == true && userId != channelId) {
+                    val errorMessage = kickGraphQLRepository.loadToggleNotificationsUser(networkLibrary, kickWebHeaders, channelId, false).also { response ->
                         if (enableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "enableNotifications"
@@ -274,11 +274,11 @@ class ChannelPagerViewModel @Inject constructor(
         }
     }
 
-    fun disableNotifications(userId: String?, channelId: String, setting: Int, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun disableNotifications(userId: String?, channelId: String, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                if (setting == 0 && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() && _isFollowing.value == true && userId != channelId) {
-                    val errorMessage = graphQLRepository.loadToggleNotificationsUser(networkLibrary, gqlHeaders, channelId, true).also { response ->
+                if (setting == 0 && !kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank() && _isFollowing.value == true && userId != channelId) {
+                    val errorMessage = kickGraphQLRepository.loadToggleNotificationsUser(networkLibrary, kickWebHeaders, channelId, true).also { response ->
                         if (enableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "disableNotifications"
@@ -303,13 +303,13 @@ class ChannelPagerViewModel @Inject constructor(
         }
     }
 
-    fun updateNotifications(networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>) {
+    fun updateNotifications(networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         viewModelScope.launch {
-            shownNotificationsRepository.getNewStreams(notificationUsersRepository, networkLibrary, gqlHeaders, graphQLRepository, helixHeaders, helixRepository)
+            shownNotificationsRepository.getNewStreams(notificationUsersRepository, networkLibrary, kickWebHeaders, kickGraphQLRepository, kickPublicApiHeaders, kickPublicApiRepository)
         }
     }
 
-    fun isFollowingChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>) {
+    fun isFollowingChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         if (_isFollowing.value == null) {
             viewModelScope.launch {
                 try {
@@ -325,7 +325,7 @@ class ChannelPagerViewModel @Inject constructor(
         }
     }
 
-    fun saveFollowChannel(userId: String?, channelId: String?, channelLogin: String?, channelName: String?, setting: Int, notificationsEnabled: Boolean, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun saveFollowChannel(userId: String?, channelId: String?, channelLogin: String?, channelName: String?, setting: Int, notificationsEnabled: Boolean, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
                 val followId = channelId ?: channelLogin
@@ -347,7 +347,7 @@ class ChannelPagerViewModel @Inject constructor(
         }
     }
 
-    fun deleteFollowChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun deleteFollowChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
                 val followId = channelId ?: channelLogin

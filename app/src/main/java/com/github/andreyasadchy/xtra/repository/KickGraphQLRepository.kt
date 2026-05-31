@@ -116,7 +116,7 @@ import javax.inject.Singleton
 import kotlin.coroutines.suspendCoroutine
 
 @Singleton
-class GraphQLRepository @Inject constructor(
+class KickGraphQLRepository @Inject constructor(
     private val httpEngine: Lazy<HttpEngine>?,
     private val cronetEngine: Lazy<CronetEngine>?,
     private val cronetExecutor: ExecutorService,

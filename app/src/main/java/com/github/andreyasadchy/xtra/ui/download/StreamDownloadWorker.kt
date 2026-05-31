@@ -26,12 +26,12 @@ import androidx.work.WorkerParameters
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.model.chat.CheerEmote
 import com.github.andreyasadchy.xtra.model.chat.Emote
-import com.github.andreyasadchy.xtra.model.chat.TwitchBadge
-import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
+import com.github.andreyasadchy.xtra.model.chat.ChatBadge
+import com.github.andreyasadchy.xtra.model.chat.ChatEmote
 import com.github.andreyasadchy.xtra.model.ui.OfflineVideo
 import com.github.andreyasadchy.xtra.model.ui.Stream
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.OfflineRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
@@ -102,10 +102,10 @@ class StreamDownloadWorker @AssistedInject constructor(
     var trustManager: X509TrustManager? = null
 
     @Inject
-    lateinit var graphQLRepository: GraphQLRepository
+    lateinit var kickGraphQLRepository: KickGraphQLRepository
 
     @Inject
-    lateinit var helixRepository: HelixRepository
+    lateinit var kickPublicApiRepository: KickPublicApiRepository
 
     @Inject
     lateinit var kickRepository: KickRepository
@@ -543,9 +543,9 @@ class StreamDownloadWorker @AssistedInject constructor(
                             delay(10000L)
                             val channelId = offlineVideo.channelId
                             val stream = try {
-                                graphQLRepository.loadQueryUsersStream(
+                                kickGraphQLRepository.loadQueryUsersStream(
                                     networkLibrary = networkLibrary,
-                                    headers = KickApiHelper.getGQLHeaders(context),
+                                    headers = KickApiHelper.getKickWebHeaders(context),
                                     ids = channelId?.let { listOf(it) },
                                     logins = if (channelId.isNullOrBlank()) listOf(channelLogin) else null,
                                 ).data!!.users?.firstOrNull()?.let {
@@ -566,12 +566,12 @@ class StreamDownloadWorker @AssistedInject constructor(
                                     )
                                 }
                             } catch (e: Exception) {
-                                val helixHeaders = KickApiHelper.getHelixHeaders(context)
-                                if (helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
+                                val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(context)
+                                if (kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) throw Exception()
                                 try {
-                                    helixRepository.getStreams(
+                                    kickPublicApiRepository.getStreams(
                                         networkLibrary = networkLibrary,
-                                        headers = helixHeaders,
+                                        headers = kickPublicApiHeaders,
                                         ids = channelId?.let { listOf(it) },
                                         logins = if (channelId.isNullOrBlank()) listOf(channelLogin) else null
                                     ).data.firstOrNull()?.let {
@@ -591,9 +591,9 @@ class StreamDownloadWorker @AssistedInject constructor(
                                     }
                                 } catch (e: Exception) {
                                     try {
-                                        val response = graphQLRepository.loadViewerCount(
+                                        val response = kickGraphQLRepository.loadViewerCount(
                                             networkLibrary,
-                                            KickApiHelper.getGQLHeaders(context),
+                                            KickApiHelper.getKickWebHeaders(context),
                                             channelLogin
                                         )
                                         response.data!!.user.stream?.let {
@@ -939,7 +939,7 @@ class StreamDownloadWorker @AssistedInject constructor(
         val isShared = path.toUri().scheme == ContentResolver.SCHEME_CONTENT
         val fileName = "${channelLogin}${offlineVideo.quality ?: ""}${downloadDate}_chat.json"
         val resumed = !offlineVideo.chatUrl.isNullOrBlank() && offlineVideo.chatBytes > 0L
-        val savedTwitchEmotes = mutableListOf<String>()
+        val savedChatEmotes = mutableListOf<String>()
         val savedBadges = mutableListOf<Pair<String, String>>()
         val savedEmotes = mutableListOf<String>()
         val fileUri = if (resumed) {
@@ -981,7 +981,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                                         when (reader.peek()) {
                                             JsonToken.NAME -> {
                                                 when (reader.nextName()) {
-                                                    "twitchEmotes" -> {
+                                                    "chatEmotes" -> {
                                                         reader.beginArray()
                                                         while (reader.hasNext()) {
                                                             reader.beginObject()
@@ -993,13 +993,13 @@ class StreamDownloadWorker @AssistedInject constructor(
                                                                 }
                                                             }
                                                             if (!id.isNullOrBlank()) {
-                                                                savedTwitchEmotes.add(id)
+                                                                savedChatEmotes.add(id)
                                                             }
                                                             reader.endObject()
                                                         }
                                                         reader.endArray()
                                                     }
-                                                    "twitchBadges" -> {
+                                                    "ChatBadges" -> {
                                                         reader.beginArray()
                                                         while (reader.hasNext()) {
                                                             reader.beginObject()
@@ -1093,22 +1093,22 @@ class StreamDownloadWorker @AssistedInject constructor(
         }
         val downloadEmotes = offlineVideo.downloadChatEmotes
         val networkLibrary = context.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-        val gqlHeaders = KickApiHelper.getGQLHeaders(context, true)
-        val helixHeaders = KickApiHelper.getHelixHeaders(context)
+        val kickWebHeaders = KickApiHelper.getKickWebHeaders(context, true)
+        val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(context)
         val emoteQuality = context.prefs().getString(C.CHAT_IMAGE_QUALITY, "4") ?: "4"
         val useWebp = context.prefs().getBoolean(C.CHAT_USE_WEBP, true)
         val channelId = offlineVideo.channelId
-        val badgeList = mutableListOf<TwitchBadge>().apply {
+        val badgeList = mutableListOf<ChatBadge>().apply {
             if (downloadEmotes) {
-                val channelBadges = try { playerRepository.loadChannelBadges(networkLibrary, helixHeaders, gqlHeaders, channelId, channelLogin, emoteQuality, false) } catch (e: Exception) { emptyList() }
+                val channelBadges = try { playerRepository.loadChannelBadges(networkLibrary, kickPublicApiHeaders, kickWebHeaders, channelId, channelLogin, emoteQuality, false) } catch (e: Exception) { emptyList() }
                 addAll(channelBadges)
-                val globalBadges = try { playerRepository.loadGlobalBadges(networkLibrary, helixHeaders, gqlHeaders, emoteQuality, false) } catch (e: Exception) { emptyList() }
+                val globalBadges = try { playerRepository.loadGlobalBadges(networkLibrary, kickPublicApiHeaders, kickWebHeaders, emoteQuality, false) } catch (e: Exception) { emptyList() }
                 addAll(globalBadges.filter { badge -> badge.setId !in channelBadges.map { it.setId } })
             }
         }
         val cheerEmoteList = if (downloadEmotes) {
             try {
-                playerRepository.loadCheerEmotes(networkLibrary, helixHeaders, gqlHeaders, channelId, channelLogin, animateGifs = true, enableIntegrity = false)
+                playerRepository.loadCheerEmotes(networkLibrary, kickPublicApiHeaders, kickWebHeaders, channelId, channelLogin, animateGifs = true, enableIntegrity = false)
             } catch (e: Exception) {
                 emptyList()
             }
@@ -1150,15 +1150,15 @@ class StreamDownloadWorker @AssistedInject constructor(
                 trustManager = trustManager,
                 listener = object : ChatReadWebSocket.Listener {
                     override suspend fun onChatMessage(message: String, userNotice: Boolean) {
-                        saveMessage(message, writer, downloadEmotes, networkLibrary, emoteQuality, savedTwitchEmotes, savedBadges, savedEmotes, badgeList, cheerEmoteList, emoteList)
+                        saveMessage(message, writer, downloadEmotes, networkLibrary, emoteQuality, savedChatEmotes, savedBadges, savedEmotes, badgeList, cheerEmoteList, emoteList)
                     }
 
                     override suspend fun onClearMessage(message: String) {
-                        saveMessage(message, writer, downloadEmotes, networkLibrary, emoteQuality, savedTwitchEmotes, savedBadges, savedEmotes, badgeList, cheerEmoteList, emoteList)
+                        saveMessage(message, writer, downloadEmotes, networkLibrary, emoteQuality, savedChatEmotes, savedBadges, savedEmotes, badgeList, cheerEmoteList, emoteList)
                     }
 
                     override suspend fun onClearChat(message: String) {
-                        saveMessage(message, writer, downloadEmotes, networkLibrary, emoteQuality, savedTwitchEmotes, savedBadges, savedEmotes, badgeList, cheerEmoteList, emoteList)
+                        saveMessage(message, writer, downloadEmotes, networkLibrary, emoteQuality, savedChatEmotes, savedBadges, savedEmotes, badgeList, cheerEmoteList, emoteList)
                     }
                 }
             )
@@ -1166,7 +1166,7 @@ class StreamDownloadWorker @AssistedInject constructor(
         }
     }
 
-    private fun saveMessage(message: String, writer: JsonWriter, downloadEmotes: Boolean, networkLibrary: String?, emoteQuality: String, savedTwitchEmotes: MutableList<String>, savedBadges: MutableList<Pair<String, String>>, savedEmotes: MutableList<String>, badgeList: List<TwitchBadge>, cheerEmoteList: List<CheerEmote>, emoteList: List<Emote>) {
+    private fun saveMessage(message: String, writer: JsonWriter, downloadEmotes: Boolean, networkLibrary: String?, emoteQuality: String, savedChatEmotes: MutableList<String>, savedBadges: MutableList<Pair<String, String>>, savedEmotes: MutableList<String>, badgeList: List<ChatBadge>, cheerEmoteList: List<CheerEmote>, emoteList: List<Emote>) {
         var position = chatPosition
         writer.name("liveComments".also { position += it.length + 4 })
         writer.beginArray().also { position += 1 }
@@ -1180,14 +1180,14 @@ class StreamDownloadWorker @AssistedInject constructor(
             }
             if (userNotice != null) {
                 val chatMessage = ChatUtils.parseChatMessage(message, userNotice)
-                val twitchEmotes = mutableListOf<TwitchEmote>()
-                val twitchBadges = mutableListOf<TwitchBadge>()
+                val chatEmotes = mutableListOf<ChatEmote>()
+                val ChatBadges = mutableListOf<ChatBadge>()
                 val cheerEmotes = mutableListOf<CheerEmote>()
                 val emotes = mutableListOf<Emote>()
                 chatMessage.emotes?.forEach {
-                    if (it.id != null && !savedTwitchEmotes.contains(it.id)) {
-                        savedTwitchEmotes.add(it.id)
-                        twitchEmotes.add(it)
+                    if (it.id != null && !savedChatEmotes.contains(it.id)) {
+                        savedChatEmotes.add(it.id)
+                        chatEmotes.add(it)
                     }
                 }
                 chatMessage.badges?.forEach {
@@ -1196,7 +1196,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                         savedBadges.add(pair)
                         val badge = badgeList.find { badge -> badge.setId == it.setId && badge.version == it.version }
                         if (badge != null) {
-                            twitchBadges.add(badge)
+                            ChatBadges.add(badge)
                         }
                     }
                 }
@@ -1221,11 +1221,11 @@ class StreamDownloadWorker @AssistedInject constructor(
                         }
                     }
                 }
-                if (twitchEmotes.isNotEmpty()) {
-                    writer.name("twitchEmotes".also { position += it.length + 4 })
+                if (chatEmotes.isNotEmpty()) {
+                    writer.name("chatEmotes".also { position += it.length + 4 })
                     writer.beginArray().also { position += 1 }
-                    val last = twitchEmotes.lastOrNull()
-                    twitchEmotes.forEach { emote ->
+                    val last = chatEmotes.lastOrNull()
+                    chatEmotes.forEach { emote ->
                         val url = when (emoteQuality) {
                             "4" -> emote.url4x ?: emote.url3x ?: emote.url2x ?: emote.url1x
                             "3" -> emote.url3x ?: emote.url2x ?: emote.url1x
@@ -1271,11 +1271,11 @@ class StreamDownloadWorker @AssistedInject constructor(
                     }
                     writer.endArray().also { position += 1 }
                 }
-                if (twitchBadges.isNotEmpty()) {
-                    writer.name("twitchBadges".also { position += it.length + 4 })
+                if (ChatBadges.isNotEmpty()) {
+                    writer.name("ChatBadges".also { position += it.length + 4 })
                     writer.beginArray().also { position += 1 }
-                    val last = twitchBadges.lastOrNull()
-                    twitchBadges.forEach { badge ->
+                    val last = ChatBadges.lastOrNull()
+                    ChatBadges.forEach { badge ->
                         val url = when (emoteQuality) {
                             "4" -> badge.url4x ?: badge.url3x ?: badge.url2x ?: badge.url1x
                             "3" -> badge.url3x ?: badge.url2x ?: badge.url1x
@@ -1451,7 +1451,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                     context,
                     offlineVideo.id,
                     Intent(context, MainActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                         action = MainActivity.INTENT_OPEN_DOWNLOADS_TAB
                     },
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT

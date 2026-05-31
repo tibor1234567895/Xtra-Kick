@@ -5,8 +5,8 @@ import androidx.paging.PagingState
 import com.github.andreyasadchy.xtra.graphql.type.Language
 import com.github.andreyasadchy.xtra.graphql.type.StreamSort
 import com.github.andreyasadchy.xtra.model.ui.Stream
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.util.C
 
@@ -16,10 +16,10 @@ class StreamsDataSource(
     private val gqlLanguages: List<String>?,
     private val gqlSort: String?,
     private val tags: List<String>?,
-    private val gqlHeaders: Map<String, String>,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixHeaders: Map<String, String>,
-    private val helixRepository: HelixRepository,
+    private val kickWebHeaders: Map<String, String>,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiHeaders: Map<String, String>,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
@@ -58,7 +58,7 @@ class StreamsDataSource(
     }
 
     private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val response = graphQLRepository.loadQueryTopStreams(networkLibrary, gqlHeaders, gqlQuerySort, tags, gqlQueryLanguages, params.loadSize, offset)
+        val response = kickGraphQLRepository.loadQueryTopStreams(networkLibrary, kickWebHeaders, gqlQuerySort, tags, gqlQueryLanguages, params.loadSize, offset)
         if (enableIntegrity) {
             response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
         }
@@ -95,7 +95,7 @@ class StreamsDataSource(
     }
 
     private suspend fun gqlLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val response = graphQLRepository.loadTopStreams(networkLibrary, gqlHeaders, gqlSort, tags, gqlLanguages, params.loadSize, offset)
+        val response = kickGraphQLRepository.loadTopStreams(networkLibrary, kickWebHeaders, gqlSort, tags, gqlLanguages, params.loadSize, offset)
         if (enableIntegrity) {
             response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
         }
@@ -132,16 +132,16 @@ class StreamsDataSource(
     }
 
     private suspend fun helixLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val response = helixRepository.getStreams(
+        val response = kickPublicApiRepository.getStreams(
             networkLibrary = networkLibrary,
-            headers = helixHeaders,
+            headers = kickPublicApiHeaders,
             limit = params.loadSize,
             offset = offset
         )
         val users = response.data.mapNotNull { it.channelId }.let {
-            helixRepository.getUsers(
+            kickPublicApiRepository.getUsers(
                 networkLibrary = networkLibrary,
-                headers = helixHeaders,
+                headers = kickPublicApiHeaders,
                 ids = it
             ).data
         }

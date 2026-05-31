@@ -174,6 +174,12 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = prefs()
+        logLaunchShape("onCreate", intent)
+        if (isDuplicateLauncherTask(intent)) {
+            DiagnosticLogger.w(TAG, "Finishing duplicate launcher task taskId=$taskId flags=${intent?.flags}")
+            finish()
+            return
+        }
         migrateSettings()
         if (tokenPrefs().getLong(C.UPDATE_LAST_CHECKED, 0) <= 0L) {
             tokenPrefs().edit {
@@ -527,14 +533,31 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
+        logLaunchShape("onNewIntent", intent)
         handleIntent(intent)
+    }
+
+    private fun isDuplicateLauncherTask(intent: Intent?): Boolean {
+        return !isTaskRoot &&
+            intent?.action == Intent.ACTION_MAIN &&
+            intent.hasCategory(Intent.CATEGORY_LAUNCHER)
+    }
+
+    private fun logLaunchShape(source: String, intent: Intent?) {
+        DiagnosticLogger.w(
+            TAG,
+            "$source taskId=$taskId isTaskRoot=$isTaskRoot action=${intent?.action} " +
+                "categories=${intent?.categories?.joinToString(",") ?: "-"} flags=${intent?.flags ?: 0} " +
+                "dataHost=${intent?.data?.host ?: "-"}"
+        )
     }
 
     private fun restartActivity() {
         finish()
         startActivity(
             Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             },
             ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle()
         )
@@ -570,8 +593,8 @@ class MainActivity : AppCompatActivity() {
                                     id,
                                     offset,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getGQLHeaders(this),
-                                    KickApiHelper.getHelixHeaders(this),
+                                    KickApiHelper.getKickWebHeaders(this),
+                                    KickApiHelper.getKickPublicApiHeaders(this),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -582,8 +605,8 @@ class MainActivity : AppCompatActivity() {
                                 viewModel.loadClip(
                                     id,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getGQLHeaders(this),
-                                    KickApiHelper.getHelixHeaders(this),
+                                    KickApiHelper.getKickWebHeaders(this),
+                                    KickApiHelper.getKickPublicApiHeaders(this),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -594,8 +617,8 @@ class MainActivity : AppCompatActivity() {
                                 viewModel.loadClip(
                                     id,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getHelixHeaders(this),
-                                    KickApiHelper.getGQLHeaders(this),
+                                    KickApiHelper.getKickPublicApiHeaders(this),
+                                    KickApiHelper.getKickWebHeaders(this),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -609,8 +632,8 @@ class MainActivity : AppCompatActivity() {
                                     gameSlug = slug,
                                     tag = tag?.let { Uri.decode(it) },
                                     networkLibrary = prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    gqlHeaders = KickApiHelper.getGQLHeaders(this),
-                                    helixHeaders = KickApiHelper.getHelixHeaders(this),
+                                    kickWebHeaders = KickApiHelper.getKickWebHeaders(this),
+                                    kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(this),
                                     enableIntegrity = prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -638,7 +661,7 @@ class MainActivity : AppCompatActivity() {
                                 viewModel.loadTag(
                                     tagId,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getGQLHeaders(this),
+                                    KickApiHelper.getKickWebHeaders(this),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -666,8 +689,8 @@ class MainActivity : AppCompatActivity() {
                                 viewModel.loadUser(
                                     login,
                                     prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getGQLHeaders(this),
-                                    KickApiHelper.getHelixHeaders(this),
+                                    KickApiHelper.getKickWebHeaders(this),
+                                    KickApiHelper.getKickPublicApiHeaders(this),
                                     prefs.getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }

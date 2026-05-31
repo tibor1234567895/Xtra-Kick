@@ -1,1 +1,1 @@
-pemutar dan peramban untuk Twitch
+﻿Kick streaming client

@@ -7,8 +7,8 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.github.andreyasadchy.xtra.model.ui.Tag
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.datasource.GamesDataSource
 import com.github.andreyasadchy.xtra.util.C
@@ -24,8 +24,8 @@ import javax.inject.Inject
 @HiltViewModel
 class GamesViewModel @Inject constructor(
     @ApplicationContext applicationContext: Context,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
 ) : ViewModel() {
 
@@ -42,18 +42,13 @@ class GamesViewModel @Inject constructor(
         ) {
             GamesDataSource(
                 tags = tags.ifEmpty { null }?.mapNotNull { it.id },
-                gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext),
-                graphQLRepository = graphQLRepository,
-                helixHeaders = KickApiHelper.getHelixHeaders(applicationContext),
-                helixRepository = helixRepository,
+                kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext),
+                kickGraphQLRepository = kickGraphQLRepository,
+                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext),
+                kickPublicApiRepository = kickPublicApiRepository,
                 kickRepository = kickRepository,
                 enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                apiPref = (applicationContext.prefs().getString(C.API_PREFS_GAMES, null) ?: C.DEFAULT_API_PREFS_GAMES).split(',').mapNotNull {
-                    val split = it.split(':')
-                    val key = split[0]
-                    val enabled = split[1] != "0"
-                    if (enabled) key else null
-                },
+                apiPref = listOf(C.KICK),
                 networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
             )
         }.flow

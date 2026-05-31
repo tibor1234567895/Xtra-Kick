@@ -7,7 +7,7 @@ import com.github.andreyasadchy.xtra.model.chat.Badge
 import com.github.andreyasadchy.xtra.model.chat.ChannelPointReward
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.RoomState
-import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
+import com.github.andreyasadchy.xtra.model.chat.ChatEmote
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import org.json.JSONObject
 
@@ -16,7 +16,7 @@ object EventSubUtils {
         val message = StringBuilder()
         val messageObj = json.optJSONObject("message")
         val messageText = if (messageObj?.isNull("text") == false) messageObj.optString("text").takeIf { it.isNotBlank() } else null
-        val emotesList = mutableListOf<TwitchEmote>()
+        val emotesList = mutableListOf<ChatEmote>()
         val fragments = messageObj?.optJSONArray("fragments")
         if (fragments != null) {
             for (i in 0 until fragments.length()) {
@@ -28,7 +28,7 @@ object EventSubUtils {
                         val emote = fragment?.optJSONObject("emote")
                         val id = if (emote?.isNull("id") == false) emote.optString("id").takeIf { it.isNotBlank() } else null
                         if (!id.isNullOrBlank()) {
-                            emotesList.add(TwitchEmote(
+                            emotesList.add(ChatEmote(
                                 id = id,
                                 begin = message.codePointCount(0, message.length),
                                 end = message.codePointCount(0, message.length) + fragmentText.lastIndex,
@@ -77,7 +77,7 @@ object EventSubUtils {
         val messageText = if (messageObj?.isNull("text") == false) messageObj.optString("text").takeIf { it.isNotBlank() } else null
         val systemMsg = if (!json.isNull("system_message")) json.optString("system_message").takeIf { it.isNotBlank() } else null
         return if (messageText != null) {
-            val emotesList = mutableListOf<TwitchEmote>()
+            val emotesList = mutableListOf<ChatEmote>()
             val fragments = messageObj?.optJSONArray("fragments")
             if (fragments != null) {
                 for (i in 0 until fragments.length()) {
@@ -89,7 +89,7 @@ object EventSubUtils {
                             val emote = fragment?.optJSONObject("emote")
                             val id = if (emote?.isNull("id") == false) emote.optString("id").takeIf { it.isNotBlank() } else null
                             if (!id.isNullOrBlank()) {
-                                emotesList.add(TwitchEmote(
+                                emotesList.add(ChatEmote(
                                     id = id,
                                     begin = message.codePointCount(0, message.length),
                                     end = message.codePointCount(0, message.length) + fragmentText.lastIndex,

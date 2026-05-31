@@ -5,8 +5,8 @@ import androidx.paging.PagingState
 import com.github.andreyasadchy.xtra.graphql.type.ClipsPeriod
 import com.github.andreyasadchy.xtra.graphql.type.Language
 import com.github.andreyasadchy.xtra.model.ui.Clip
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
@@ -22,10 +22,10 @@ class GameClipsDataSource(
     private val gqlPeriod: String?,
     private val startedAt: String?,
     private val endedAt: String?,
-    private val gqlHeaders: Map<String, String>,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixHeaders: Map<String, String>,
-    private val helixRepository: HelixRepository,
+    private val kickWebHeaders: Map<String, String>,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiHeaders: Map<String, String>,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
@@ -132,9 +132,9 @@ class GameClipsDataSource(
     }
 
     private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Clip> {
-        val response = graphQLRepository.loadQueryGameClips(
+        val response = kickGraphQLRepository.loadQueryGameClips(
             networkLibrary = networkLibrary,
-            headers = gqlHeaders,
+            headers = kickWebHeaders,
             id = gameId,
             slug = gameSlug.takeIf { gameId.isNullOrBlank() },
             name = gameName.takeIf { gameId.isNullOrBlank() && gameSlug.isNullOrBlank() },
@@ -189,9 +189,9 @@ class GameClipsDataSource(
     }
 
     private suspend fun gqlLoad(params: LoadParams<Int>): LoadResult<Int, Clip> {
-        val response = graphQLRepository.loadGameClips(
+        val response = kickGraphQLRepository.loadGameClips(
             networkLibrary = networkLibrary,
-            headers = gqlHeaders,
+            headers = kickWebHeaders,
             gameSlug = gameSlug,
             period = gqlPeriod,
             languages = gqlLanguages,
@@ -234,9 +234,9 @@ class GameClipsDataSource(
     }
 
     private suspend fun helixLoad(params: LoadParams<Int>): LoadResult<Int, Clip> {
-        val response = helixRepository.getClips(
+        val response = kickPublicApiRepository.getClips(
             networkLibrary = networkLibrary,
-            headers = helixHeaders,
+            headers = kickPublicApiHeaders,
             gameId = gameId,
             startedAt = startedAt,
             endedAt = endedAt,

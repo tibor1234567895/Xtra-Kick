@@ -71,8 +71,8 @@ class VideoSearchFragment : PagedListFragment(), Searchable {
                 requireContext().filesDir.path,
                 it,
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                KickApiHelper.getGQLHeaders(requireContext()),
-                KickApiHelper.getHelixHeaders(requireContext()),
+                KickApiHelper.getKickWebHeaders(requireContext()),
+                KickApiHelper.getKickPublicApiHeaders(requireContext()),
             )
         })
         setAdapter(binding.recyclerView, pagingAdapter)

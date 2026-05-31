@@ -15,6 +15,7 @@ import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.PinnedGift
 import com.github.andreyasadchy.xtra.model.chat.Poll
 import com.github.andreyasadchy.xtra.model.chat.Prediction
+import com.github.andreyasadchy.xtra.model.chat.Raid
 import com.github.andreyasadchy.xtra.model.chat.Reply
 import com.github.andreyasadchy.xtra.model.chat.RoomState
 import com.github.andreyasadchy.xtra.model.kick.KickCategory
@@ -288,6 +289,13 @@ class KickRepository @Inject constructor(
         val clearTargetUserName: String? = null,
     )
 
+    data class KickChannelMoveEvent(
+        val raid: Raid,
+        val message: String,
+        val rawEventName: String? = null,
+        val rawPayload: String? = null,
+    )
+
     private fun ChannelPointRewardsResult.merge(other: ChannelPointRewardsResult): ChannelPointRewardsResult {
         val mergedRewards = LinkedHashMap<String, ChannelPointReward>()
         rewards.forEach { reward ->
@@ -339,8 +347,8 @@ class KickRepository @Inject constructor(
         )
     }
 
-    suspend fun getHelixHeadersWithRefresh(networkLibrary: String?, forceRefresh: Boolean = false): Map<String, String> {
-        val headers = KickApiHelper.getHelixHeaders(context)
+    suspend fun getKickPublicApiHeadersWithRefresh(networkLibrary: String?, forceRefresh: Boolean = false): Map<String, String> {
+        val headers = KickApiHelper.getKickPublicApiHeaders(context)
         if (!forceRefresh && !headers[C.HEADER_TOKEN].isNullOrBlank()) {
             return headers
         }
@@ -388,7 +396,7 @@ class KickRepository @Inject constructor(
                     putLong(C.KICK_ACCESS_TOKEN_EXPIRES_AT, now + (refresh.expiresIn ?: 0L))
                     putString(C.KICK_TOKEN_TYPE, refresh.tokenType)
                 }
-                val refreshedHeaders = KickApiHelper.getHelixHeaders(context)
+                val refreshedHeaders = KickApiHelper.getKickPublicApiHeaders(context)
                 if (isKickAuthDebugEnabled()) {
                     val outcome = if (refreshedHeaders[C.HEADER_TOKEN].isNullOrBlank()) "missing_token_after_refresh" else "ok"
                     Log.i(tag, "Kick token refresh completed for helix headers outcome=$outcome")
@@ -396,6 +404,11 @@ class KickRepository @Inject constructor(
                 refreshedHeaders
             }
         } catch (e: Exception) {
+            if (KickAuthRequestException.isUnauthorized(e)) {
+                AuthStateHelper.markUnexpectedLogout(context)
+                AuthStateHelper.clearKickAuth(context)
+                AuthStateHelper.clearLegacyWebAuth(context)
+            }
             if (isKickAuthDebugEnabled()) {
                 Log.w(tag, "Kick token refresh failed for helix headers: ${e.message}")
             }
@@ -496,7 +509,7 @@ class KickRepository @Inject constructor(
     }
 
     suspend fun getFollowedChannelsWithStoredAuth(networkLibrary: String?): List<KickFollowedChannel> = withContext(Dispatchers.IO) {
-        val authHeader = getHelixHeadersWithRefresh(networkLibrary)[C.HEADER_TOKEN]
+        val authHeader = getKickPublicApiHeadersWithRefresh(networkLibrary)[C.HEADER_TOKEN]
             ?.takeIf { it.isNotBlank() }
             ?: throw IOException("missing kick auth token")
         val collected = LinkedHashMap<String, KickFollowedChannel>()
@@ -518,13 +531,16 @@ class KickRepository @Inject constructor(
     suspend fun getChannel(
         channelSlug: String,
         prefetchBadgeCatalog: Boolean = true,
+        forceRefresh: Boolean = false,
     ): KickChannelResponse {
         val normalizedKey = channelSlug.trim().lowercase(Locale.ROOT)
         val now = System.currentTimeMillis()
-        channelCache[normalizedKey]?.let { (cachedAt, cachedChannel) ->
-            if (now - cachedAt <= channelCacheTtlMs) {
-                activeKickChatScopeId = cachedChannel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() }
-                return cachedChannel
+        if (!forceRefresh) {
+            channelCache[normalizedKey]?.let { (cachedAt, cachedChannel) ->
+                if (now - cachedAt <= channelCacheTtlMs) {
+                    activeKickChatScopeId = cachedChannel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() }
+                    return cachedChannel
+                }
             }
         }
         val deferred = CompletableDeferred<KickChannelResponse>()
@@ -1227,12 +1243,74 @@ class KickRepository @Inject constructor(
                 val message = context.getString(R.string.kick_kicks_gifted_notice_without_recipient, senderName, amount)
                 KickRealtimeParsedEvent(chatMessage = createKickNoticeMessage(message, root.primitiveOrNull("created_at")))
             }
-            "app\\events\\streamhostevent", "app\\events\\streamhostedevent" -> {
+            "giftedsubscriptionsevent",
+            "app\\events\\giftedsubscriptionsevent",
+            "luckuserswhogotgiftsubscriptionsevent",
+            "luckyuserswhogotgiftsubscriptionsevent",
+            "app\\events\\luckyuserswhogotgiftsubscriptionsevent" -> {
+                val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
+                val gifterName = root.firstPrimitiveOrNull("gifter_username", "gifterUsername", "username") ?: return null
+                val giftedUsernames = root.arrayOrNull("gifted_usernames")
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }
+                    ?: root.arrayOrNull("usernames")
+                        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }
+                        .orEmpty()
+                val message = when (giftedUsernames.size) {
+                    0 -> context.getString(R.string.kick_gifted_sub, gifterName)
+                    1 -> context.getString(R.string.kick_gifted_sub_to, gifterName, giftedUsernames.first())
+                    else -> context.getString(R.string.kick_gifted_subs, gifterName, giftedUsernames.size)
+                }
+                KickRealtimeParsedEvent(chatMessage = createKickNoticeMessage(message, root.primitiveOrNull("created_at")))
+            }
+            "subscriptionevent",
+            "app\\events\\subscriptionevent" -> {
+                val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
+                val username = root.firstPrimitiveOrNull("username", "subscriber_username") ?: return null
+                val months = root.firstLongOrNull("months", "duration", "months_subscribed")?.toInt()
+                val message = if (months != null && months > 1) {
+                    context.getString(R.string.kick_subscribed_for_months_notice, username, months)
+                } else {
+                    context.getString(R.string.kick_subscribed_notice, username)
+                }
+                KickRealtimeParsedEvent(chatMessage = createKickNoticeMessage(message, root.primitiveOrNull("created_at")))
+            }
+            "streamerislive",
+            "app\\events\\streamerislive" -> {
+                val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
+                val livestream = root.objOrNull("livestream") ?: root
+                val title = livestream.firstPrimitiveOrNull("session_title", "title", "slug") ?: return null
+                KickRealtimeParsedEvent(
+                    chatMessage = createKickNoticeMessage(
+                        context.getString(R.string.kick_livestream_started_notice, title),
+                        livestream.primitiveOrNull("created_at") ?: root.primitiveOrNull("created_at")
+                    )
+                )
+            }
+            "stopstreambroadcast",
+            "app\\events\\stopstreambroadcast" -> {
+                val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
+                val livestream = root.objOrNull("livestream") ?: root
+                val title = livestream.firstPrimitiveOrNull("session_title", "title")
+                    ?: livestream.objOrNull("channel")?.firstPrimitiveOrNull("slug", "username", "id")
+                    ?: return null
+                KickRealtimeParsedEvent(
+                    chatMessage = createKickNoticeMessage(
+                        context.getString(R.string.kick_livestream_ended_notice, title),
+                        livestream.primitiveOrNull("created_at") ?: root.primitiveOrNull("created_at")
+                    )
+                )
+            }
+            "streamhostevent",
+            "streamhostedevent",
+            "app\\events\\streamhostevent",
+            "app\\events\\streamhostedevent" -> {
                 val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
                 val messageObject = root["message"] as? JsonObject
                 val userObject = root["user"] as? JsonObject
                 val hostUsername = root.primitiveOrNull("host_username")
+                    ?: root.primitiveOrNull("hostUsername")
                     ?: userObject?.primitiveOrNull("username")
+                    ?: userObject?.primitiveOrNull("channel_slug")
                     ?: return null
                 val viewerCount = root.firstLongOrNull("number_viewers", "numberOfViewers")
                     ?: messageObject?.firstLongOrNull("numberOfViewers", "number_viewers")
@@ -1250,6 +1328,89 @@ class KickRepository @Inject constructor(
             }
             else -> null
         }
+    }
+
+    fun parseKickChannelMoveEvent(eventName: String?, messageJson: String): KickChannelMoveEvent? {
+        val normalizedEvent = eventName?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (normalizedEvent !in setOf(
+                "chatmovetosupportedchannelevent",
+                "app\\events\\chatmovetosupportedchannelevent",
+            )
+        ) {
+            return null
+        }
+        val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
+        val channel = root.objOrNull("channel")
+        val hosted = root.objOrNull("hosted")
+            ?: channel?.objOrNull("hosted")
+            ?: root.objOrNull("target")
+            ?: root.objOrNull("destination")
+            ?: return null
+        val targetLogin = hosted.firstPrimitiveOrNull("slug", "channel_slug", "login")
+            ?: hosted.primitiveOrNull("username")?.lowercase(Locale.ROOT)
+            ?: root.firstPrimitiveOrNull("slug", "hosted_slug", "target_slug")
+        val targetName = hosted.firstPrimitiveOrNull("username", "name", "slug")
+            ?: targetLogin
+        val targetId = hosted.firstPrimitiveOrNull("id", "channel_id")
+            ?: channel?.firstPrimitiveOrNull("id", "channel_id")
+        if (targetLogin.isNullOrBlank() && targetId.isNullOrBlank()) {
+            return null
+        }
+        val viewerCount = hosted.firstLongOrNull("viewers_count", "viewer_count", "number_viewers", "numberOfViewers")
+            ?: root.firstLongOrNull("viewers_count", "viewer_count", "number_viewers", "numberOfViewers")
+        val countdownSeconds = root.firstLongOrNull(
+            "countdown_seconds",
+            "remaining_seconds",
+            "move_in_seconds",
+            "redirect_in_seconds",
+            "duration",
+            "remaining",
+        ) ?: hosted.firstLongOrNull(
+            "countdown_seconds",
+            "remaining_seconds",
+            "move_in_seconds",
+            "redirect_in_seconds",
+            "duration",
+            "remaining",
+        )
+        val profileImage = hosted.firstPrimitiveOrNull("profile_pic", "profile_picture", "profile_image")
+        val sourceSlug = channel?.firstPrimitiveOrNull("slug", "channel_slug")
+            ?: root.firstPrimitiveOrNull("source_slug", "from_slug", "channel_slug")
+        val message = buildString {
+            if (!sourceSlug.isNullOrBlank()) {
+                append(sourceSlug)
+                append(" moved viewers to ")
+            } else {
+                append("Moving viewers to ")
+            }
+            append(targetName ?: targetLogin ?: targetId)
+            viewerCount?.takeIf { it > 0 }?.let {
+                append(" with ")
+                append(it)
+                append(" viewers")
+            }
+        }
+        val parsedCountdownSeconds = countdownSeconds?.toInt()
+        val effectiveCountdownSeconds = when {
+            parsedCountdownSeconds == null -> 10
+            parsedCountdownSeconds > 0 -> parsedCountdownSeconds
+            else -> null
+        }
+        return KickChannelMoveEvent(
+            raid = Raid(
+                raidId = "kick_move:${targetId ?: targetLogin}:${root.primitiveOrNull("created_at") ?: messageJson.hashCode()}",
+                targetId = targetId,
+                targetLogin = targetLogin,
+                targetName = targetName,
+                targetProfileImage = profileImage,
+                viewerCount = viewerCount?.toInt(),
+                countdownSeconds = effectiveCountdownSeconds,
+                openStream = effectiveCountdownSeconds == null,
+            ),
+            message = message,
+            rawEventName = eventName,
+            rawPayload = messageJson,
+        )
     }
 
     fun parseKickRealtimeChannelPointsUpdate(eventName: String?, messageJson: String): KickRealtimeChannelPointsUpdate? {
@@ -2814,7 +2975,7 @@ class KickRepository @Inject constructor(
         val targetUser = extractKickTargetUser(message)
         val actorUser = extractKickModeratorUser(message)
         val rawContent = message.content ?: message.message ?: message.text ?: message.body ?: extractKickMessageContent(deletedMessageObject)
-        val extractedEmotes = mutableListOf<com.github.andreyasadchy.xtra.model.chat.TwitchEmote>()
+        val extractedEmotes = mutableListOf<com.github.andreyasadchy.xtra.model.chat.ChatEmote>()
         var content = rawContent
         if (content != null) {
             val sb = StringBuilder()
@@ -2828,7 +2989,7 @@ class KickRepository @Inject constructor(
                 
                 val emoteBegin = sb.codePointCount(0, sb.length)
                 val emoteEnd = emoteBegin + name.codePointCount(0, name.length) - 1
-                extractedEmotes.add(com.github.andreyasadchy.xtra.model.chat.TwitchEmote(
+                extractedEmotes.add(com.github.andreyasadchy.xtra.model.chat.ChatEmote(
                     id = id,
                     name = name,
                     url1x = "https://files.kick.com/emotes/$id/fullsize",
@@ -4104,7 +4265,7 @@ class KickRepository @Inject constructor(
     }
 
     private suspend fun requireKickAccessToken(networkLibrary: String?): String {
-        val headers = getHelixHeadersWithRefresh(networkLibrary)
+        val headers = getKickPublicApiHeadersWithRefresh(networkLibrary)
         return headers[C.HEADER_TOKEN]
             ?.removePrefix("Bearer ")
             ?.trim()

@@ -229,8 +229,8 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
             targetId = if (selectedUserId != targetId) targetId else null,
             targetLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
             networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            gqlHeaders = KickApiHelper.getGQLHeaders(requireContext()),
-            helixHeaders = KickApiHelper.getHelixHeaders(requireContext()),
+            kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
+            kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext()),
             enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             isKick = isKickPref
         )

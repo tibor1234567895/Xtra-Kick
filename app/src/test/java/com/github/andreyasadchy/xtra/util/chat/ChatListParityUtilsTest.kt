@@ -41,6 +41,22 @@ class ChatListParityUtilsTest {
     }
 
     @Test
+    fun appendAfterHeadRemovalUsesPostRemovalPosition() {
+        assertEquals(
+            99,
+            ChatListParityUtils.appendPositionAfterHeadRemoval(lastIndexAfterAppend = 99, removedCount = 1)
+        )
+    }
+
+    @Test
+    fun appendWithoutHeadRemovalUsesInsertedTailPosition() {
+        assertEquals(
+            100,
+            ChatListParityUtils.appendPositionAfterHeadRemoval(lastIndexAfterAppend = 100, removedCount = 0)
+        )
+    }
+
+    @Test
     fun replyPreviewAndReplyMessageShareVisualParity() {
         val messages = listOf(
             ChatMessage(

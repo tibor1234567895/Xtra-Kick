@@ -31,6 +31,7 @@ import kotlin.concurrent.schedule
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
 import kotlin.math.min
+import com.github.andreyasadchy.xtra.util.chat.WebSocketDisconnectUtils
 
 class WebSocket(
     private val url: String,
@@ -135,6 +136,8 @@ class WebSocket(
             listener.onDisconnect(this@WebSocket, line)
             if (line.startsWith("HTTP/1.1 429", true)) {
                 delayReconnect = true
+                return@withContext false
+            } else if (WebSocketDisconnectUtils.isTransientGatewayFailure(line)) {
                 return@withContext false
             } else {
                 return@withContext true

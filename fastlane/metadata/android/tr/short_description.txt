@@ -1,1 +1,1 @@
-bir Twitch oynatıcısı ve tarayıcısı
+﻿Kick streaming client

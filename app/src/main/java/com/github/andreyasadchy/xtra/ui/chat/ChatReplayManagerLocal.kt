@@ -20,6 +20,8 @@ class ChatReplayManagerLocal(
         private const val PRELOAD_WINDOW_MS = 300_000L
         private const val PRELOAD_MAX_AGE_MS = 90_000L
         private const val PRELOAD_MAX_MESSAGES = 200
+        private const val MIN_SYNC_WAIT_MS = 16L
+        private const val MAX_SYNC_WAIT_MS = 250L
     }
 
     private var messages: List<ChatMessage> = emptyList()
@@ -116,8 +118,7 @@ class ChatReplayManagerLocal(
                             currentPosition < messageOffset
                         }
                     ) {
-                        val speed = playbackSpeed?.takeIf { it > 0f } ?: 1f
-                        delay(max((messageOffset - currentPosition).div(speed).toLong(), 0))
+                        delay(nextSyncDelay(messageOffset - currentPosition))
                     }
                     if (!isActive) {
                         break
@@ -149,6 +150,13 @@ class ChatReplayManagerLocal(
                 list.remove(message)
             }
         }
+    }
+
+    private fun nextSyncDelay(positionDeltaMs: Long): Long {
+        val speed = getCurrentSpeed()?.takeIf { it > 0f } ?: playbackSpeed?.takeIf { it > 0f } ?: 1f
+        playbackSpeed = speed
+        return max(positionDeltaMs.div(speed).toLong(), MIN_SYNC_WAIT_MS)
+            .coerceAtMost(MAX_SYNC_WAIT_MS)
     }
 
     fun updatePosition(position: Long) {

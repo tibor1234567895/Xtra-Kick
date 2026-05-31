@@ -8,7 +8,7 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.github.andreyasadchy.xtra.model.ui.Team
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
 import com.github.andreyasadchy.xtra.repository.datasource.TeamMembersDataSource
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
@@ -23,7 +23,7 @@ import javax.inject.Inject
 @HiltViewModel
 class TeamViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
-    private val graphQLRepository: GraphQLRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -40,19 +40,19 @@ class TeamViewModel @Inject constructor(
     ) {
         TeamMembersDataSource(
             teamName = args.teamName,
-            gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext),
-            graphQLRepository = graphQLRepository,
+            kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext),
+            kickGraphQLRepository = kickGraphQLRepository,
             enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
             networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
         )
     }.flow.cachedIn(viewModelScope)
 
-    fun loadTeamInfo(teamName: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadTeamInfo(teamName: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (teamName != null && team.value == null && !isLoading) {
             isLoading = true
             viewModelScope.launch {
                 val response = try {
-                    val response = graphQLRepository.loadQueryTeam(networkLibrary, gqlHeaders, teamName)
+                    val response = kickGraphQLRepository.loadQueryTeam(networkLibrary, kickWebHeaders, teamName)
                     if (enableIntegrity && integrity.value == null) {
                         response.errors?.find { it.message == "failed integrity check" }?.let {
                             integrity.value = "refresh"

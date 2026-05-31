@@ -31,18 +31,19 @@ import com.github.andreyasadchy.xtra.model.chat.Reply
 import com.github.andreyasadchy.xtra.model.chat.RoomState
 import com.github.andreyasadchy.xtra.model.chat.StvBadge
 import com.github.andreyasadchy.xtra.model.chat.StvUser
-import com.github.andreyasadchy.xtra.model.chat.TwitchBadge
-import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
+import com.github.andreyasadchy.xtra.model.chat.ChatBadge
+import com.github.andreyasadchy.xtra.model.chat.ChatEmote
 import com.github.andreyasadchy.xtra.model.kick.KickMessage
 import com.github.andreyasadchy.xtra.model.kick.KickOfficialReward
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickAuthRequestException
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.MutedChatUsersRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
+import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.WebSocketRuntime
@@ -54,6 +55,7 @@ import com.github.andreyasadchy.xtra.util.chat.ChatWriteWebSocket
 import com.github.andreyasadchy.xtra.util.chat.EventSubUtils
 import com.github.andreyasadchy.xtra.util.chat.EventSubWebSocket
 import com.github.andreyasadchy.xtra.util.chat.HermesWebSocket
+import com.github.andreyasadchy.xtra.util.chat.KickChatSendErrorMapper
 import com.github.andreyasadchy.xtra.util.chat.KickPusherChatWebSocket
 import com.github.andreyasadchy.xtra.util.chat.PubSubUtils
 import com.github.andreyasadchy.xtra.util.chat.RecentMessageUtils
@@ -98,8 +100,8 @@ import kotlin.concurrent.scheduleAtFixedRate
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val mutedChatUsersRepository: MutedChatUsersRepository,
     private val playerRepository: PlayerRepository,
@@ -139,10 +141,11 @@ class ChatViewModel @Inject constructor(
     private var kickReplayFallbackUrl: String? = null
     private var kickReplayFallbackGetCurrentPosition: (() -> Long?)? = null
     private var kickReplaySessionKey: String? = null
-    private var kickReplaySessionStartPositionMs: Long? = null
+    private var kickReplayLastPlaybackPositionMs: Long? = null
     private var kickInitialRoomStateLoaded = false
     private var kickRealtimeLastDisconnectMessage: String? = null
     private var kickRealtimeLastDisconnectAtMs: Long = 0L
+    private var kickRealtimeReconnectAttempt = 0
     private var kickReplayMessageSources: List<String>? = null
     private var intentionalChatDisconnectUntilMs: Long = 0L
     private val kickReplayPreloadWindowMs = 1L * 60L * 1000L
@@ -153,8 +156,8 @@ class ChatViewModel @Inject constructor(
         6L * 60L * 60L * 1000L,
     )
     private val kickReplayPreloadMaxMessages = 30
-    private val kickReplayPollIntervalMs = 5_000L
-    private val kickReplayEmitIntervalMs = 750L
+    private val kickReplayPollIntervalMs = 1_000L
+    private val kickReplayEmitIntervalMs = 150L
     private val kickReplayEmitLeadMs = 500L
     private val kickReplyThreadHistoryWindowMs = 6L * 60L * 60L * 1000L
     private val kickRealtimeChatroomIdPrefix = "kick_realtime_chatroom_id"
@@ -177,10 +180,10 @@ class ChatViewModel @Inject constructor(
     val kickEmoteGroups = MutableStateFlow<List<KickRepository.KickEmoteGroup>>(emptyList())
     val userEmotes = mutableListOf<Emote>()
     private var loadedUserEmotes = false
-    val localTwitchEmotes = mutableListOf<TwitchEmote>()
+    val localChatEmotes = mutableListOf<ChatEmote>()
     val thirdPartyEmotes = mutableListOf<Emote>()
-    val globalBadges = mutableListOf<TwitchBadge>()
-    val channelBadges = mutableListOf<TwitchBadge>()
+    val globalBadges = mutableListOf<ChatBadge>()
+    val channelBadges = mutableListOf<ChatBadge>()
     val cheerEmotes = mutableListOf<CheerEmote>()
 
     val roomState = MutableStateFlow<RoomState?>(null)
@@ -327,6 +330,18 @@ class ChatViewModel @Inject constructor(
                 rebuildVisibleMessages()
             }
         }
+        viewModelScope.launch {
+            playerRepository.resolutionChangeFlow.collect { res ->
+                val newMsg = ContextCompat.getString(applicationContext, R.string.resolution_auto_changed).format(res)
+                onMessage(ChatMessage(systemMsg = newMsg))
+            }
+        }
+        viewModelScope.launch {
+            playerRepository.qualityChangeFlow.collect { message ->
+                val newMsg = ContextCompat.getString(applicationContext, R.string.quality_auto_changed).format(message)
+                onMessage(ChatMessage(systemMsg = newMsg))
+            }
+        }
     }
 
     private fun loadKickInitialRoomStateIfNeeded(channelId: String?, channelLogin: String?, forceRefresh: Boolean = false) {
@@ -465,8 +480,8 @@ class ChatViewModel @Inject constructor(
         val kickMode = isKickPreferred()
         currentKickEmoteChannelLogin = channelLogin?.trim()?.lowercase(Locale.ROOT)
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-        val helixHeaders = KickApiHelper.getHelixHeaders(applicationContext)
-        val gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext, true)
+        val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext)
+        val kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext, true)
         val emoteQuality = applicationContext.prefs().getString(C.CHAT_IMAGE_QUALITY, "4") ?: "4"
         val animateGifs = applicationContext.prefs().getBoolean(C.ANIMATED_EMOTES, true)
         val useWebp = applicationContext.prefs().getBoolean(C.CHAT_USE_WEBP, true)
@@ -538,7 +553,7 @@ class ChatViewModel @Inject constructor(
             } else {
                 viewModelScope.launch {
                     try {
-                        val badges = playerRepository.loadGlobalBadges(networkLibrary, helixHeaders, gqlHeaders, emoteQuality, enableIntegrity)
+                        val badges = playerRepository.loadGlobalBadges(networkLibrary, kickPublicApiHeaders, kickWebHeaders, emoteQuality, enableIntegrity)
                         if (badges.isNotEmpty()) {
                             savedGlobalBadges = badges
                             synchronized(globalBadges) {
@@ -634,7 +649,7 @@ class ChatViewModel @Inject constructor(
         if (!kickMode && (!channelId.isNullOrBlank() || !channelLogin.isNullOrBlank())) {
             viewModelScope.launch {
                 try {
-                    val badges = playerRepository.loadChannelBadges(networkLibrary, helixHeaders, gqlHeaders, channelId, channelLogin, emoteQuality, enableIntegrity)
+                    val badges = playerRepository.loadChannelBadges(networkLibrary, kickPublicApiHeaders, kickWebHeaders, channelId, channelLogin, emoteQuality, enableIntegrity)
                     if (badges.isNotEmpty()) {
                         synchronized(channelBadges) {
                             channelBadges.clear()
@@ -652,7 +667,7 @@ class ChatViewModel @Inject constructor(
             }
             viewModelScope.launch {
                 try {
-                    val emotes = playerRepository.loadCheerEmotes(networkLibrary, helixHeaders, gqlHeaders, channelId, channelLogin, animateGifs, enableIntegrity)
+                    val emotes = playerRepository.loadCheerEmotes(networkLibrary, kickPublicApiHeaders, kickWebHeaders, channelId, channelLogin, animateGifs, enableIntegrity)
                     if (emotes.isNotEmpty()) {
                         synchronized(cheerEmotes) {
                             cheerEmotes.clear()
@@ -872,16 +887,16 @@ class ChatViewModel @Inject constructor(
                 allEmotes.addAll(saved.filter { it.name !in allEmotes }.mapNotNull { it.name })
             }
         } else {
-            val helixHeaders = KickApiHelper.getHelixHeaders(applicationContext)
-            val gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext, true)
-            if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank() || !helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+            val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext)
+            val kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext, true)
+            if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank() || !kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                 viewModelScope.launch {
                     try {
                         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
                         val accountId = applicationContext.tokenPrefs().getString(C.USER_ID, null)
                         val animateGifs =  applicationContext.prefs().getBoolean(C.ANIMATED_EMOTES, true)
                         val enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false)
-                        val emotes = playerRepository.loadUserEmotes(networkLibrary, helixHeaders, gqlHeaders, channelId, accountId, animateGifs, enableIntegrity)
+                        val emotes = playerRepository.loadUserEmotes(networkLibrary, kickPublicApiHeaders, kickWebHeaders, channelId, accountId, animateGifs, enableIntegrity)
                         if (emotes.isNotEmpty()) {
                             val sorted = emotes.sortedByDescending { it.setId }
                             synchronized(userEmotes) {
@@ -1097,11 +1112,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun isKickPreferred(): Boolean {
-        val pref = applicationContext.prefs().getString(C.API_PREFS_STREAMS, null) ?: C.DEFAULT_API_PREFS_STREAMS
-        return pref.split(',').any { item ->
-            val split = item.split(':')
-            split.getOrNull(0) == C.KICK && split.getOrNull(1) != "0"
-        }
+        return true
     }
 
     private suspend fun resolveKickMessageSources(channelId: String, channelLogin: String): List<String> {
@@ -1217,7 +1228,7 @@ class ChatViewModel @Inject constructor(
 
     private suspend fun getKickAccessTokenForChatSend(forceRefresh: Boolean = false): String? {
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
-        val headers = kickRepository.getHelixHeadersWithRefresh(
+        val headers = kickRepository.getKickPublicApiHeadersWithRefresh(
             networkLibrary = networkLibrary,
             forceRefresh = forceRefresh,
         )
@@ -1441,7 +1452,7 @@ class ChatViewModel @Inject constructor(
         )
     }
 
-    private suspend fun emitDueKickReplayMessages(cutoffTimestampMs: Long): KickClipEmitStats {
+    private suspend fun emitDueKickReplayMessages(cutoffTimestampMs: Long, replayStartTimeMs: Long): KickClipEmitStats {
         if (kickReplayPendingMessages.isEmpty()) {
             return KickClipEmitStats(total = 0, emitted = 0, deduped = 0)
         }
@@ -1459,7 +1470,7 @@ class ChatViewModel @Inject constructor(
         if (due.isEmpty()) {
             return KickClipEmitStats(total = 0, emitted = 0, deduped = 0)
         }
-        return emitKickMessages(due)
+        return emitKickMessages(due, replayStartTimeMs)
     }
 
     private fun mapKickMessages(rawMessages: List<KickMessage>): List<ChatMessage> {
@@ -1752,7 +1763,7 @@ class ChatViewModel @Inject constructor(
         return filterKickThreadMessages(historyMessages, selectedMessage, threadParentId)
     }
 
-    private suspend fun emitKickMessages(messages: List<ChatMessage>): KickClipEmitStats {
+    private suspend fun emitKickMessages(messages: List<ChatMessage>, replayStartTimeMs: Long? = null): KickClipEmitStats {
         var emitted = 0
         var deduped = 0
         messages.forEach { message ->
@@ -1770,9 +1781,14 @@ class ChatViewModel @Inject constructor(
                 isNew
             }
             if (shouldEmit) {
-                buildReplyPreviewMessage(message)?.let { onMessage(it) }
-                onMessage(message)
-                addChatter(message.userName)
+                val displayMessage = if (replayStartTimeMs != null) {
+                    message.withRelativeReplayTimestamp(replayStartTimeMs)
+                } else {
+                    message
+                }
+                buildReplyPreviewMessage(displayMessage)?.let { onMessage(it) }
+                onMessage(displayMessage)
+                addChatter(displayMessage.userName)
                 emitted += 1
             } else {
                 deduped += 1
@@ -1782,6 +1798,32 @@ class ChatViewModel @Inject constructor(
             total = messages.size,
             emitted = emitted,
             deduped = deduped
+        )
+    }
+
+    private fun ChatMessage.withRelativeReplayTimestamp(replayStartTimeMs: Long): ChatMessage {
+        val relativeTimestamp = timestamp?.let { (it - replayStartTimeMs).coerceAtLeast(0L) }
+        return ChatMessage(
+            id = id,
+            userId = userId,
+            userLogin = userLogin,
+            userName = userName,
+            message = message,
+            color = color,
+            emotes = emotes,
+            badges = badges,
+            isAction = isAction,
+            isDeleted = isDeleted,
+            isFirst = isFirst,
+            bits = bits,
+            systemMsg = systemMsg,
+            msgId = msgId,
+            reward = reward,
+            reply = reply,
+            isReply = isReply,
+            replyParent = replyParent,
+            timestamp = relativeTimestamp,
+            fullMsg = fullMsg
         )
     }
 
@@ -1902,7 +1944,7 @@ class ChatViewModel @Inject constructor(
     ) {
         val currentPlaybackPositionMs = seekPosition ?: getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
         val sessionKey = "$channelId|$replayStartTimeMs"
-        val previousPlaybackPositionMs = kickReplaySessionStartPositionMs
+        val previousPlaybackPositionMs = kickReplayLastPlaybackPositionMs
         val largeSeek = previousPlaybackPositionMs != null &&
             kotlin.math.abs(currentPlaybackPositionMs - previousPlaybackPositionMs) > 20_000L
         val isNewSession = forceNewSession || largeSeek || kickReplaySessionKey != sessionKey
@@ -1911,10 +1953,11 @@ class ChatViewModel @Inject constructor(
                 "isNewSession=$isNewSession currentPositionMs=$currentPlaybackPositionMs previousPositionMs=$previousPlaybackPositionMs largeSeek=$largeSeek"
         }
         kickReplaySessionKey = sessionKey
-        kickReplaySessionStartPositionMs = currentPlaybackPositionMs
+        kickReplayLastPlaybackPositionMs = currentPlaybackPositionMs
         stopLiveChat()
         resetKickReplayPendingQueue()
         if (isNewSession) {
+            kickReplayMessageSources = null
             synchronized(kickMessageIds) {
                 kickMessageIds.clear()
             }
@@ -1965,7 +2008,7 @@ class ChatViewModel @Inject constructor(
                         debugSessionKey = sessionKey,
                         maxPages = 4
                     )
-                    val stats = emitKickMessages(preloadMessages)
+                    val stats = emitKickMessages(preloadMessages, effectiveReplayStartTimeMs)
                     logKickReplayChat(stage = "emit", sessionKey = sessionKey) {
                         "phase=preload startPositionMs=$initialPlaybackPositionMs playbackTs=$initialPlaybackTimestampMs " +
                             "${messageRangeSummary(preloadMessages)} total=${stats.total} emitted=${stats.emitted} deduped=${stats.deduped}"
@@ -1992,8 +2035,9 @@ class ChatViewModel @Inject constructor(
                 try {
                     val rawPosition = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
                     val position = rawPosition
+                    kickReplayLastPlaybackPositionMs = position
                     val playbackTimestampMs = effectiveReplayStartTimeMs + position
-                    val dueStats = emitDueKickReplayMessages(playbackTimestampMs + kickReplayEmitLeadMs)
+                    val dueStats = emitDueKickReplayMessages(playbackTimestampMs + kickReplayEmitLeadMs, effectiveReplayStartTimeMs)
                     if (dueStats.total > 0) {
                         logKickReplayChat(stage = "emit_due", sessionKey = sessionKey) {
                             "rawPositionMs=$rawPosition positionMs=$position playbackTs=$playbackTimestampMs total=${dueStats.total} emitted=${dueStats.emitted} deduped=${dueStats.deduped} pending=${kickReplayPendingMessages.size}"
@@ -2019,7 +2063,7 @@ class ChatViewModel @Inject constructor(
                                 "phase=timeline ${messageRangeSummary(timelineMessages)} total=${queueStats.total} queued=${queueStats.queued} alreadyEmitted=${queueStats.alreadyEmitted} alreadyQueued=${queueStats.alreadyQueued} pending=${kickReplayPendingMessages.size}"
                             }
                         }
-                        val immediateDueStats = emitDueKickReplayMessages(playbackTimestampMs + kickReplayEmitLeadMs)
+                        val immediateDueStats = emitDueKickReplayMessages(playbackTimestampMs + kickReplayEmitLeadMs, effectiveReplayStartTimeMs)
                         if (immediateDueStats.total > 0) {
                             logKickReplayChat(stage = "emit_due", sessionKey = sessionKey) {
                                 "phase=post_poll positionMs=$position playbackTs=$playbackTimestampMs total=${immediateDueStats.total} emitted=${immediateDueStats.emitted} deduped=${immediateDueStats.deduped} pending=${kickReplayPendingMessages.size}"
@@ -2083,7 +2127,7 @@ class ChatViewModel @Inject constructor(
             userName = deletedMessage?.userName,
             systemMsg = message,
             emotes = deletedMessage?.emotes?.map {
-                TwitchEmote(
+                ChatEmote(
                     id = it.id,
                     begin = it.begin + messageIndex,
                     end = it.end + messageIndex
@@ -2258,8 +2302,8 @@ class ChatViewModel @Inject constructor(
     fun startLiveChat(channelId: String?, channelLogin: String) {
         stopLiveChat()
         val kickMode = isKickPreferred()
-        val gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext, true)
-        val helixHeaders = KickApiHelper.getHelixHeaders(applicationContext)
+        val kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext, true)
+        val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext)
         val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
         val enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false)
         val accountId = if (kickMode) getKickAccountId() else applicationContext.tokenPrefs().getString(C.USER_ID, null)
@@ -2332,21 +2376,21 @@ class ChatViewModel @Inject constructor(
                         kickRepository.authorizeKickPusherPrivateChannel(socketId, privateChannelName)
                     },
                     trustManager = trustManager,
-                    listener = KickPusherChatListener(channelLogin, effectiveChannelId, nameDisplay, showUserNotice, showClearMsg, showClearChat, notifyKickPoints, showPolls, showPredictions),
+                    listener = KickPusherChatListener(channelLogin, effectiveChannelId, nameDisplay, showUserNotice, showClearMsg, showClearChat, notifyKickPoints, showPolls, showPredictions, debugKickRealtimeChat),
                     debugLogging = debugKickRealtimeChat
                 )
                 kickPusherChatWebSocket?.connect(this)?.join()
             }
-        } else if (applicationContext.prefs().getBoolean(C.DEBUG_EVENTSUB_CHAT, false) && !helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-            eventSub = EventSubWebSocket(trustManager, EventSubListener(helixHeaders, channelLogin, showUserNotice, showClearChat, usePubSub, networkLibrary, isLoggedIn, accountId, channelId))
+        } else if (applicationContext.prefs().getBoolean(C.DEBUG_EVENTSUB_CHAT, false) && !kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+            eventSub = EventSubWebSocket(trustManager, EventSubListener(kickPublicApiHeaders, channelLogin, showUserNotice, showClearChat, usePubSub, networkLibrary, isLoggedIn, accountId, channelId))
             chatReadJob = eventSub?.connect(viewModelScope)
         } else {
-            val gqlToken = gqlHeaders[C.HEADER_TOKEN]?.removePrefix("OAuth ")
-            val helixToken = helixHeaders[C.HEADER_TOKEN]?.removePrefix("Bearer ")
+            val gqlToken = kickWebHeaders[C.HEADER_TOKEN]?.removePrefix("OAuth ")
+            val helixToken = kickPublicApiHeaders[C.HEADER_TOKEN]?.removePrefix("Bearer ")
             if (applicationContext.prefs().getBoolean(C.CHAT_USE_WEBSOCKET, true)) {
                 chatReadWebSocket = ChatReadWebSocket(channelLogin, trustManager, ChatReadListener(channelLogin, nameDisplay, showUserNotice, showClearMsg, showClearChat, usePubSub, networkLibrary, isLoggedIn, accountId, channelId))
                 chatReadJob = chatReadWebSocket?.connect(viewModelScope)
-                if (isLoggedIn && (!gqlToken.isNullOrBlank() || !helixHeaders[C.HEADER_TOKEN].isNullOrBlank() && !useApiChatMessages)) {
+                if (isLoggedIn && (!gqlToken.isNullOrBlank() || !kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank() && !useApiChatMessages)) {
                     chatWriteWebSocket = ChatWriteWebSocket(
                         userLogin = accountLogin,
                         userToken = gqlToken?.takeIf { it.isNotBlank() } ?: helixToken,
@@ -2362,7 +2406,7 @@ class ChatViewModel @Inject constructor(
                 chatReadJob = viewModelScope.launch(Dispatchers.IO) {
                     chatReadIRC?.start()
                 }
-                if (isLoggedIn && (!gqlToken.isNullOrBlank() || !helixHeaders[C.HEADER_TOKEN].isNullOrBlank() && !useApiChatMessages)) {
+                if (isLoggedIn && (!gqlToken.isNullOrBlank() || !kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank() && !useApiChatMessages)) {
                     chatWriteIRC = ChatWriteIRC(
                         useSSL = useSSL,
                         userLogin = accountLogin,
@@ -2385,7 +2429,7 @@ class ChatViewModel @Inject constructor(
         val showRaids = applicationContext.prefs().getBoolean(C.CHAT_RAIDS_SHOW, true)
         fun connectHermes(userId: String?) {
             val subscriptionToken = when {
-                enableIntegrity -> gqlHeaders[C.HEADER_TOKEN]?.removePrefix("OAuth ")
+                enableIntegrity -> kickWebHeaders[C.HEADER_TOKEN]?.removePrefix("OAuth ")
                 kickMode -> kickAccessToken
                 else -> gqlWebToken
             }
@@ -2393,7 +2437,7 @@ class ChatViewModel @Inject constructor(
                 channelId = channelId ?: return,
                 userId = userId,
                 gqlClientId = if (enableIntegrity) {
-                    gqlHeaders[C.HEADER_CLIENT_ID]
+                    kickWebHeaders[C.HEADER_CLIENT_ID]
                 } else {
                     gqlWebClientId
                 },
@@ -2404,7 +2448,7 @@ class ChatViewModel @Inject constructor(
                 showPolls = showPolls,
                 showPredictions = showPredictions,
                 trustManager = trustManager,
-                listener = PubSubListener(channelLogin, collectPoints, notifyPoints, showRaids, showPolls, showPredictions, networkLibrary, gqlHeaders, isLoggedIn, userId, channelId, enableIntegrity, showWebSocketDebugInfo)
+                listener = PubSubListener(channelLogin, collectPoints, notifyPoints, showRaids, showPolls, showPredictions, networkLibrary, kickWebHeaders, isLoggedIn, userId, channelId, enableIntegrity, showWebSocketDebugInfo)
             )
             pubSubJob = hermesWebSocket?.connect(viewModelScope)
         }
@@ -2739,12 +2783,15 @@ class ChatViewModel @Inject constructor(
         private val notifyPoints: Boolean,
         private val showPolls: Boolean,
         private val showPredictions: Boolean,
+        private val debugLogging: Boolean,
     ) : KickPusherChatWebSocket.Listener {
         override suspend fun onConnect() {
+            kickRealtimeReconnectAttempt = 0
             onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_join).format(channelLogin)))
         }
 
-        override suspend fun onChatEvent(eventName: String, messageJson: String) {
+        override suspend fun onChatEvent(eventName: String, channelName: String?, messageJson: String) {
+            val normalizedEvent = eventName.trim().lowercase(Locale.ROOT)
             if (eventName.equals("App\\Events\\PollDeleteEvent", ignoreCase = true)) {
                 pollTimer?.cancel()
                 pollSecondsLeft.value = null
@@ -2781,6 +2828,42 @@ class ChatViewModel @Inject constructor(
                     applyPredictionUpdate(it)
                     return
                 }
+            }
+            if (normalizedEvent == "chatroomclearevent" || normalizedEvent == "app\\events\\chatroomclearevent") {
+                if (showClearChat) {
+                    clearChatMessages()
+                    emitKickMessages(
+                        listOf(
+                            ChatMessage(
+                                id = "kick_clear_chat:${messageJson.hashCode()}",
+                                systemMsg = ContextCompat.getString(applicationContext, R.string.chat_clear),
+                                msgId = "kick_moderation",
+                                fullMsg = messageJson,
+                            )
+                        )
+                    )
+                }
+                return
+            }
+            kickRepository.parseKickChannelMoveEvent(eventName, messageJson)?.let { moveEvent ->
+                if (showUserNotice) {
+                    emitKickMessages(
+                        listOf(
+                            ChatMessage(
+                                id = moveEvent.raid.raidId ?: "kick_move:${moveEvent.message.hashCode()}",
+                                systemMsg = moveEvent.message,
+                                msgId = "kick_usernotice",
+                                fullMsg = moveEvent.rawPayload,
+                            )
+                        )
+                    )
+                }
+                if (!moveEvent.raid.raidId.isNullOrBlank() && moveEvent.raid.raidId != usedRaidId) {
+                    usedRaidId = moveEvent.raid.raidId
+                    raidClosed = false
+                }
+                raid.value = moveEvent.raid
+                return
             }
             kickRepository.parsePinnedGiftUpdate(eventName, messageJson)?.let { update ->
                 if (update.cleared) {
@@ -2826,7 +2909,10 @@ class ChatViewModel @Inject constructor(
                 emitKickMessages(listOf(parsedChatMessage))
                 return
             }
-            val realtimeMessage = parseKickRealtimeMessage(eventName, messageJson) ?: return
+            val realtimeMessage = parseKickRealtimeMessage(eventName, messageJson) ?: run {
+                logUnsupportedKickRealtimeEvent(eventName, channelName, messageJson)
+                return
+            }
             val kickMessage = realtimeMessage.message
             val chatMessage = kickRepository.toChatMessage(kickMessage, realtimeMessage.eventName)
             if (kickRepository.isKickSingleMessageDelete(kickMessage, realtimeMessage.eventName)) {
@@ -2872,23 +2958,46 @@ class ChatViewModel @Inject constructor(
             emitKickMessages(listOf(chatMessage))
         }
 
+        private fun logUnsupportedKickRealtimeEvent(eventName: String, channelName: String?, messageJson: String) {
+            if (!debugLogging) return
+            DiagnosticLogger.w(
+                "KickRealtimeChat",
+                "unsupported event=$eventName channel=${channelName ?: "<none>"} payload=${messageJson.take(300)}"
+            )
+        }
+
         override suspend fun onDisconnect(message: String, fullMsg: String?) {
             if (shouldSuppressIntentionalChatDisconnect(message)) {
                 return
             }
             val isHostResolutionFailure = WebSocketDisconnectUtils.isHostResolutionFailure(message)
+            val isTransientGatewayFailure = WebSocketDisconnectUtils.isTransientGatewayFailure(message)
+            if (isTransientGatewayFailure) {
+                DiagnosticLogger.w(
+                    "KickRealtimeChat",
+                    "transient gateway disconnect channel=$channelLogin attempt=${kickRealtimeReconnectAttempt + 1} message=$message"
+                )
+            }
             val shouldEmitDisconnect = shouldEmitKickRealtimeDisconnect(message)
-            if (!isHostResolutionFailure && shouldEmitDisconnect) {
+            if (!isHostResolutionFailure && !isTransientGatewayFailure && shouldEmitDisconnect) {
                 onMessage(
                     ChatMessage(
                         systemMsg = ContextCompat.getString(applicationContext, R.string.chat_disconnect).format(channelLogin, message),
                         fullMsg = fullMsg
                     )
                 )
+            } else if (isTransientGatewayFailure && shouldEmitDisconnect) {
+                onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_reconnecting).format(channelLogin), fullMsg = fullMsg))
             }
             if (!channelLogin.isBlank() && autoReconnect && !isHostResolutionFailure) {
+                val delayMs = if (isTransientGatewayFailure) {
+                    kickRealtimeReconnectAttempt = (kickRealtimeReconnectAttempt + 1).coerceAtMost(5)
+                    1000L * kickRealtimeReconnectAttempt
+                } else {
+                    3000L
+                }
                 viewModelScope.launch {
-                    delay(3000)
+                    delay(delayMs)
                     if (chatReadJob?.isActive != true) {
                         startLiveChat(channelId, channelLogin)
                     }
@@ -3133,7 +3242,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private inner class EventSubListener(
-        private val helixHeaders: Map<String, String>,
+        private val kickPublicApiHeaders: Map<String, String>,
         private val channelLogin: String,
         private val showUserNotice: Boolean,
         private val showClearChat: Boolean,
@@ -3156,7 +3265,7 @@ class ChatViewModel @Inject constructor(
             ).forEach {
                 viewModelScope.launch {
                     try {
-                        helixRepository.createEventSubSubscription(networkLibrary, helixHeaders, accountId, channelId, it, sessionId)?.let {
+                        kickPublicApiRepository.createEventSubSubscription(networkLibrary, kickPublicApiHeaders, accountId, channelId, it, sessionId)?.let {
                             onMessage(ChatMessage(systemMsg = it))
                         }
                     } catch (e: Exception) {
@@ -3207,7 +3316,7 @@ class ChatViewModel @Inject constructor(
         private val showPolls: Boolean,
         private val showPredictions: Boolean,
         private val networkLibrary: String?,
-        private val gqlHeaders: Map<String, String>,
+        private val kickWebHeaders: Map<String, String>,
         private val isLoggedIn: Boolean,
         private val accountId: String?,
         private val channelId: String?,
@@ -3274,10 +3383,10 @@ class ChatViewModel @Inject constructor(
 
         override suspend fun onClaimAvailable() {
             if (collectPoints) {
-                if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                     viewModelScope.launch {
                         try {
-                            val response = graphQLRepository.loadChannelPointsContext(networkLibrary, gqlHeaders, channelLogin)
+                            val response = kickGraphQLRepository.loadChannelPointsContext(networkLibrary, kickWebHeaders, channelLogin)
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
                                     integrity.value = "refresh"
@@ -3285,7 +3394,7 @@ class ChatViewModel @Inject constructor(
                                 }
                             }
                             response.data?.community?.channel?.self?.communityPoints?.availableClaim?.id?.let { claimId ->
-                                val claimResponse = graphQLRepository.loadClaimPoints(networkLibrary, gqlHeaders, channelId, claimId)
+                                val claimResponse = kickGraphQLRepository.loadClaimPoints(networkLibrary, kickWebHeaders, channelId, claimId)
                                 if (enableIntegrity && integrity.value == null) {
                                     claimResponse.errors?.find { it.message == "failed integrity check" }?.let {
                                         integrity.value = "refresh"
@@ -3320,10 +3429,10 @@ class ChatViewModel @Inject constructor(
                     if (it.raidId != usedRaidId) {
                         usedRaidId = it.raidId
                         raidClosed = false
-                        if (collectPoints && !gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        if (collectPoints && !kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                             viewModelScope.launch {
                                 try {
-                                    val response = graphQLRepository.loadJoinRaid(networkLibrary, gqlHeaders, it.raidId)
+                                    val response = kickGraphQLRepository.loadJoinRaid(networkLibrary, kickWebHeaders, it.raidId)
                                     if (enableIntegrity && integrity.value == null) {
                                         response.errors?.find { it.message == "failed integrity check" }?.let {
                                             integrity.value = "refresh"
@@ -3682,15 +3791,15 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun loadEmoteSets(channelId: String?) {
-        val helixHeaders = KickApiHelper.getHelixHeaders(applicationContext)
-        if (!savedEmoteSets.isNullOrEmpty() && !helixHeaders[C.HEADER_CLIENT_ID].isNullOrBlank() && !helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+        val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext)
+        if (!savedEmoteSets.isNullOrEmpty() && !kickPublicApiHeaders[C.HEADER_CLIENT_ID].isNullOrBlank() && !kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
             viewModelScope.launch {
                 try {
                     val networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
                     val animateGifs =  applicationContext.prefs().getBoolean(C.ANIMATED_EMOTES, true)
-                    val emotes = mutableListOf<TwitchEmote>()
+                    val emotes = mutableListOf<ChatEmote>()
                     savedEmoteSets?.chunked(25)?.forEach { list ->
-                        playerRepository.loadEmotesFromSet(networkLibrary, helixHeaders, list, animateGifs).let { emotes.addAll(it) }
+                        playerRepository.loadEmotesFromSet(networkLibrary, kickPublicApiHeaders, list, animateGifs).let { emotes.addAll(it) }
                     }
                     if (emotes.isNotEmpty()) {
                         val sorted = emotes.sortedByDescending { it.setId }
@@ -3738,31 +3847,31 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun send(message: CharSequence, replyId: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiCommands: Boolean, useApiChatMessages: Boolean, enableIntegrity: Boolean) {
+    fun send(message: CharSequence, replyId: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiCommands: Boolean, useApiChatMessages: Boolean, enableIntegrity: Boolean) {
         if (replyId != null) {
-            sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity, replyId)
+            sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity, replyId)
         } else {
             if (useApiCommands) {
                 if (message.toString().startsWith("/")) {
                     try {
-                        sendCommand(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+                        sendCommand(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     } catch (e: Exception) {
 
                     }
                 } else {
-                    sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+                    sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                 }
             } else {
                 if (message.toString() == "/dc" || message.toString() == "/disconnect") {
                     disconnect()
                 } else {
-                    sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+                    sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                 }
             }
         }
     }
 
-    private fun sendMessage(message: CharSequence, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiChatMessages: Boolean, enableIntegrity: Boolean, replyId: String? = null) {
+    private fun sendMessage(message: CharSequence, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiChatMessages: Boolean, enableIntegrity: Boolean, replyId: String? = null) {
         try {
             viewModelScope.launch {
                 if (isKickPreferred()) {
@@ -3774,7 +3883,7 @@ class ChatViewModel @Inject constructor(
                         } else {
                             AuthStateHelper.markUnexpectedLogout(applicationContext)
                             AuthStateHelper.clearKickAuth(applicationContext)
-                            AuthStateHelper.clearLegacyTwitchAuth(applicationContext)
+                            AuthStateHelper.clearLegacyWebAuth(applicationContext)
                             onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, applicationContext.getString(R.string.token_expired))))
                         }
                         return@launch
@@ -3791,7 +3900,7 @@ class ChatViewModel @Inject constructor(
                                     if (!KickAuthRequestException.isBackendUnavailable(refreshError)) {
                                         AuthStateHelper.markUnexpectedLogout(applicationContext)
                                         AuthStateHelper.clearKickAuth(applicationContext)
-                                        AuthStateHelper.clearLegacyTwitchAuth(applicationContext)
+                                        AuthStateHelper.clearLegacyWebAuth(applicationContext)
                                     }
                                     null
                                 }
@@ -3799,13 +3908,13 @@ class ChatViewModel @Inject constructor(
                                     runCatching {
                                         kickRepository.sendChatMessage(retryToken, broadcasterId, message.toString(), replyId)
                                     }.onFailure { retryError ->
-                                        onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, retryError.message)))
+                                        onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, formatKickChatSendError(retryError))))
                                     }
                                 } else {
                                     onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, applicationContext.getString(R.string.token_expired))))
                                 }
                             } else {
-                                onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, initialError.message)))
+                                onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, formatKickChatSendError(initialError))))
                             }
                         }
                     } else {
@@ -3819,8 +3928,8 @@ class ChatViewModel @Inject constructor(
                     return@launch
                 }
                 if (useApiChatMessages) {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        graphQLRepository.sendMessage(networkLibrary, gqlHeaders, channelId, message.toString(), replyId).also { response ->
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        kickGraphQLRepository.sendMessage(networkLibrary, kickWebHeaders, channelId, message.toString(), replyId).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
                                     integrity.value = "refresh"
@@ -3829,8 +3938,8 @@ class ChatViewModel @Inject constructor(
                             }
                         }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                     } else {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            helixRepository.sendMessage(networkLibrary, helixHeaders, accountId, channelId, message.toString(), replyId)
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickPublicApiRepository.sendMessage(networkLibrary, kickPublicApiHeaders, accountId, channelId, message.toString(), replyId)
                         } else null
                     }?.let {
                         onMessage(ChatMessage(systemMsg = it))
@@ -3856,7 +3965,37 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun sendCommand(message: CharSequence, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiChatMessages: Boolean, enableIntegrity: Boolean) {
+    private fun formatKickChatSendError(error: Throwable): String {
+        return when (KickChatSendErrorMapper.classify(error.message, roomState.value)) {
+            KickChatSendErrorMapper.Reason.TOKEN_EXPIRED -> applicationContext.getString(R.string.token_expired)
+            KickChatSendErrorMapper.Reason.FOLLOWERS_ONLY -> {
+                val followersDuration = roomState.value?.followers?.takeIf { it != "-1" && it != "0" }
+                if (followersDuration != null) {
+                    applicationContext.getString(
+                        R.string.kick_chat_send_followers_for,
+                        KickApiHelper.getDurationFromSeconds(applicationContext, followersDuration)
+                    )
+                } else {
+                    applicationContext.getString(R.string.kick_chat_send_followers_only)
+                }
+            }
+            KickChatSendErrorMapper.Reason.SUBSCRIBERS_ONLY -> applicationContext.getString(R.string.irc_notice_msg_subsonly)
+            KickChatSendErrorMapper.Reason.EMOTES_ONLY -> applicationContext.getString(R.string.irc_notice_msg_emoteonly)
+            KickChatSendErrorMapper.Reason.SLOW_MODE -> applicationContext.getString(
+                R.string.irc_notice_msg_slowmode,
+                roomState.value?.slow?.takeIf { it != "0" } ?: "0"
+            )
+            KickChatSendErrorMapper.Reason.BOT_PROTECTION -> applicationContext.getString(R.string.kick_chat_send_bot_protection)
+            KickChatSendErrorMapper.Reason.RATE_LIMITED -> applicationContext.getString(R.string.irc_notice_msg_ratelimit)
+            KickChatSendErrorMapper.Reason.FORBIDDEN -> applicationContext.getString(R.string.kick_chat_send_forbidden)
+            KickChatSendErrorMapper.Reason.GENERIC -> error.message
+                ?.takeUnless { it.contains('{') || it.contains("Kick request failed", ignoreCase = true) }
+                ?.take(180)
+                ?: applicationContext.getString(R.string.kick_chat_send_forbidden)
+        }
+    }
+
+    private fun sendCommand(message: CharSequence, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiChatMessages: Boolean, enableIntegrity: Boolean) {
         val command = message.toString().substringBefore(" ")
         val kickMode = isKickPreferred()
         when {
@@ -3864,8 +4003,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ", limit = 2)
                 if (splits.size >= 2) {
                     viewModelScope.launch {
-                        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            graphQLRepository.sendAnnouncement(networkLibrary, gqlHeaders, channelId, splits[1], splits[0].substringAfter("/announce", "").ifBlank { null }).also { response ->
+                        if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickGraphQLRepository.sendAnnouncement(networkLibrary, kickWebHeaders, channelId, splits[1], splits[0].substringAfter("/announce", "").ifBlank { null }).also { response ->
                                 if (enableIntegrity && integrity.value == null) {
                                     response.errors?.find { it.message == "failed integrity check" }?.let {
                                         integrity.value = "refresh"
@@ -3874,8 +4013,8 @@ class ChatViewModel @Inject constructor(
                                 }
                             }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                         } else {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                helixRepository.sendAnnouncement(networkLibrary, helixHeaders, channelId, accountId, splits[1], splits[0].substringAfter("/announce", "").ifBlank { null })
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                kickPublicApiRepository.sendAnnouncement(networkLibrary, kickPublicApiHeaders, channelId, accountId, splits[1], splits[0].substringAfter("/announce", "").ifBlank { null })
                             } else null
                         }?.let {
                             onMessage(ChatMessage(systemMsg = it))
@@ -3887,8 +4026,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ", limit = 3)
                 if (splits.size >= 2) {
                     viewModelScope.launch {
-                        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            graphQLRepository.banUser(networkLibrary, gqlHeaders, channelId, splits[1],
+                        if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickGraphQLRepository.banUser(networkLibrary, kickWebHeaders, channelId, splits[1],
                                 reason = if (splits.size >= 3) splits[2] else null
                             ).also { response ->
                                 if (enableIntegrity && integrity.value == null) {
@@ -3899,10 +4038,10 @@ class ChatViewModel @Inject constructor(
                                 }
                             }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                         } else {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                val targetId = helixRepository.getUsers(
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                val targetId = kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     logins = listOf(splits[1])
                                 ).data.firstOrNull()?.channelId
                                 val broadcasterUserId = channelId?.toLongOrNull()
@@ -3916,7 +4055,7 @@ class ChatViewModel @Inject constructor(
                                     )
                                     null
                                 } else {
-                                    helixRepository.banUser(networkLibrary, helixHeaders, channelId, accountId, targetId,
+                                    kickPublicApiRepository.banUser(networkLibrary, kickPublicApiHeaders, channelId, accountId, targetId,
                                         reason = if (splits.size >= 3) splits[2] else null
                                     )
                                 }
@@ -3931,8 +4070,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ")
                 if (splits.size >= 2) {
                     viewModelScope.launch {
-                        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            graphQLRepository.unbanUser(networkLibrary, gqlHeaders, channelId, splits[1]).also { response ->
+                        if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickGraphQLRepository.unbanUser(networkLibrary, kickWebHeaders, channelId, splits[1]).also { response ->
                                 if (enableIntegrity && integrity.value == null) {
                                     response.errors?.find { it.message == "failed integrity check" }?.let {
                                         integrity.value = "refresh"
@@ -3941,10 +4080,10 @@ class ChatViewModel @Inject constructor(
                                 }
                             }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                         } else {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                val targetId = helixRepository.getUsers(
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                val targetId = kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     logins = listOf(splits[1])
                                 ).data.firstOrNull()?.channelId
                                 val broadcasterUserId = channelId?.toLongOrNull()
@@ -3957,7 +4096,7 @@ class ChatViewModel @Inject constructor(
                                     )
                                     null
                                 } else {
-                                    helixRepository.unbanUser(networkLibrary, helixHeaders, channelId, accountId, targetId)
+                                    kickPublicApiRepository.unbanUser(networkLibrary, kickPublicApiHeaders, channelId, accountId, targetId)
                                 }
                             } else null
                         }?.let {
@@ -3967,15 +4106,15 @@ class ChatViewModel @Inject constructor(
                 }
             }
             command.equals("/clear", true) -> {
-                if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                     viewModelScope.launch {
-                        helixRepository.deleteMessages(networkLibrary, helixHeaders, channelId, accountId)?.let {
+                        kickPublicApiRepository.deleteMessages(networkLibrary, kickPublicApiHeaders, channelId, accountId)?.let {
                             onMessage(ChatMessage(systemMsg = it))
                         }
                     }
                 } else {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
@@ -3983,8 +4122,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ")
                 viewModelScope.launch {
                     if (splits.size >= 2) {
-                        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            graphQLRepository.updateChatColor(networkLibrary, gqlHeaders, splits[1]).also { response ->
+                        if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickGraphQLRepository.updateChatColor(networkLibrary, kickWebHeaders, splits[1]).also { response ->
                                 if (enableIntegrity && integrity.value == null) {
                                     response.errors?.find { it.message == "failed integrity check" }?.let {
                                         integrity.value = "refresh"
@@ -3993,13 +4132,13 @@ class ChatViewModel @Inject constructor(
                                 }
                             }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                         } else {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                helixRepository.updateChatColor(networkLibrary, helixHeaders, accountId, splits[1])
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                kickPublicApiRepository.updateChatColor(networkLibrary, kickPublicApiHeaders, accountId, splits[1])
                             } else null
                         }
                     } else {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            helixRepository.getChatColor(networkLibrary, helixHeaders, accountId)
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickPublicApiRepository.getChatColor(networkLibrary, kickPublicApiHeaders, accountId)
                         } else null
                     }?.let {
                         onMessage(ChatMessage(systemMsg = it))
@@ -4007,23 +4146,23 @@ class ChatViewModel @Inject constructor(
                 }
             }
             command.equals("/commercial", true) -> {
-                if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                     val splits = message.split(" ")
                     if (splits.size >= 2) {
                         viewModelScope.launch {
-                            helixRepository.startCommercial(networkLibrary, helixHeaders, channelId, splits[1])?.let {
+                            kickPublicApiRepository.startCommercial(networkLibrary, kickPublicApiHeaders, channelId, splits[1])?.let {
                                 onMessage(ChatMessage(systemMsg = it))
                             }
                         }
                     }
                 } else {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
             command.equals("/delete", true) -> {
-                if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                     val splits = message.split(" ")
                     if (splits.size >= 2) {
                         viewModelScope.launch {
@@ -4031,7 +4170,7 @@ class ChatViewModel @Inject constructor(
                                 kickRepository.deleteOfficialChatMessage(networkLibrary, splits[1])
                                 null
                             } else {
-                                helixRepository.deleteMessages(networkLibrary, helixHeaders, channelId, accountId, splits[1])
+                                kickPublicApiRepository.deleteMessages(networkLibrary, kickPublicApiHeaders, channelId, accountId, splits[1])
                             }
                             response?.let {
                                 onMessage(ChatMessage(systemMsg = it))
@@ -4039,16 +4178,16 @@ class ChatViewModel @Inject constructor(
                         }
                     }
                 } else {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
             command.equals("/disconnect", true) -> disconnect()
             command.equals("/emoteonly", true) -> {
                 viewModelScope.launch {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        graphQLRepository.updateChatSettings(networkLibrary, gqlHeaders, channelId, emote = true).also { response ->
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        kickGraphQLRepository.updateChatSettings(networkLibrary, kickWebHeaders, channelId, emote = true).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
                                     integrity.value = "refresh"
@@ -4057,8 +4196,8 @@ class ChatViewModel @Inject constructor(
                             }
                         }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                     } else {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            helixRepository.updateChatSettings(networkLibrary, helixHeaders, channelId, accountId, emote = true)
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, emote = true)
                         } else null
                     }?.let {
                         onMessage(ChatMessage(systemMsg = it))
@@ -4067,8 +4206,8 @@ class ChatViewModel @Inject constructor(
             }
             command.equals("/emoteonlyoff", true) -> {
                 viewModelScope.launch {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        graphQLRepository.updateChatSettings(networkLibrary, gqlHeaders, channelId, emote = false).also { response ->
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        kickGraphQLRepository.updateChatSettings(networkLibrary, kickWebHeaders, channelId, emote = false).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
                                     integrity.value = "refresh"
@@ -4077,8 +4216,8 @@ class ChatViewModel @Inject constructor(
                             }
                         }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                     } else {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            helixRepository.updateChatSettings(networkLibrary, helixHeaders, channelId, accountId, emote = false)
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, emote = false)
                         } else null
                     }?.let {
                         onMessage(ChatMessage(systemMsg = it))
@@ -4089,8 +4228,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ")
                 val duration = if (splits.size >= 2) splits[1].toIntOrNull() else null
                 viewModelScope.launch {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        graphQLRepository.setFollowersOnlyMode(networkLibrary, gqlHeaders, channelId, duration ?: 0).also { response ->
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        kickGraphQLRepository.setFollowersOnlyMode(networkLibrary, kickWebHeaders, channelId, duration ?: 0).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
                                     integrity.value = "refresh"
@@ -4099,8 +4238,8 @@ class ChatViewModel @Inject constructor(
                             }
                         }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                     } else {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            helixRepository.updateChatSettings(networkLibrary, helixHeaders, channelId, accountId,
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId,
                                 followers = true,
                                 followersDuration = duration
                             )
@@ -4112,8 +4251,8 @@ class ChatViewModel @Inject constructor(
             }
             command.equals("/followersoff", true) -> {
                 viewModelScope.launch {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        graphQLRepository.setFollowersOnlyMode(networkLibrary, gqlHeaders, channelId, -1).also { response ->
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        kickGraphQLRepository.setFollowersOnlyMode(networkLibrary, kickWebHeaders, channelId, -1).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
                                     integrity.value = "refresh"
@@ -4122,8 +4261,8 @@ class ChatViewModel @Inject constructor(
                             }
                         }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                     } else {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            helixRepository.updateChatSettings(networkLibrary, helixHeaders, channelId, accountId, followers = false)
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, followers = false)
                         } else null
                     }?.let {
                         onMessage(ChatMessage(systemMsg = it))
@@ -4133,8 +4272,8 @@ class ChatViewModel @Inject constructor(
             command.equals("/marker", true) -> {
                 val splits = message.split(" ", limit = 2)
                 viewModelScope.launch {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        graphQLRepository.createStreamMarker(networkLibrary, gqlHeaders, channelLogin).also { response ->
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        kickGraphQLRepository.createStreamMarker(networkLibrary, kickWebHeaders, channelLogin).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
                                     integrity.value = "refresh"
@@ -4143,8 +4282,8 @@ class ChatViewModel @Inject constructor(
                             }
                         }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                     } else {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            helixRepository.createStreamMarker(networkLibrary, helixHeaders, channelId, if (splits.size >= 2) splits[1] else null)
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickPublicApiRepository.createStreamMarker(networkLibrary, kickPublicApiHeaders, channelId, if (splits.size >= 2) splits[1] else null)
                         } else null
                     }?.let {
                         onMessage(ChatMessage(systemMsg = it))
@@ -4155,8 +4294,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ")
                 if (splits.size >= 2) {
                     viewModelScope.launch {
-                        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            graphQLRepository.addModerator(networkLibrary, gqlHeaders, channelId, splits[1]).also { response ->
+                        if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickGraphQLRepository.addModerator(networkLibrary, kickWebHeaders, channelId, splits[1]).also { response ->
                                 if (enableIntegrity && integrity.value == null) {
                                     response.errors?.find { it.message == "failed integrity check" }?.let {
                                         integrity.value = "refresh"
@@ -4165,13 +4304,13 @@ class ChatViewModel @Inject constructor(
                                 }
                             }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                         } else {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                val targetId = helixRepository.getUsers(
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                val targetId = kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     logins = listOf(splits[1])
                                 ).data.firstOrNull()?.channelId
-                                helixRepository.addModerator(networkLibrary, helixHeaders, channelId, targetId)
+                                kickPublicApiRepository.addModerator(networkLibrary, kickPublicApiHeaders, channelId, targetId)
                             } else null
                         }?.let {
                             onMessage(ChatMessage(systemMsg = it))
@@ -4183,8 +4322,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ")
                 if (splits.size >= 2) {
                     viewModelScope.launch {
-                        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            graphQLRepository.removeModerator(networkLibrary, gqlHeaders, channelId, splits[1]).also { response ->
+                        if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickGraphQLRepository.removeModerator(networkLibrary, kickWebHeaders, channelId, splits[1]).also { response ->
                                 if (enableIntegrity && integrity.value == null) {
                                     response.errors?.find { it.message == "failed integrity check" }?.let {
                                         integrity.value = "refresh"
@@ -4193,13 +4332,13 @@ class ChatViewModel @Inject constructor(
                                 }
                             }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                         } else {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                val targetId = helixRepository.getUsers(
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                val targetId = kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     logins = listOf(splits[1])
                                 ).data.firstOrNull()?.channelId
-                                helixRepository.removeModerator(networkLibrary, helixHeaders, channelId, targetId)
+                                kickPublicApiRepository.removeModerator(networkLibrary, kickPublicApiHeaders, channelId, targetId)
                             } else null
                         }?.let {
                             onMessage(ChatMessage(systemMsg = it))
@@ -4209,7 +4348,7 @@ class ChatViewModel @Inject constructor(
             }
             command.equals("/mods", true) -> {
                 viewModelScope.launch {
-                    graphQLRepository.getModerators(networkLibrary, gqlHeaders, channelLogin).also { response ->
+                    kickGraphQLRepository.getModerators(networkLibrary, kickWebHeaders, channelLogin).also { response ->
                         if (enableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "refresh"
@@ -4225,9 +4364,9 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ")
                 if (splits.size >= 2) {
                     viewModelScope.launch {
-                        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                             val targetId = try {
-                                graphQLRepository.loadQueryUser(networkLibrary, gqlHeaders, login = splits[1]).also { response ->
+                                kickGraphQLRepository.loadQueryUser(networkLibrary, kickWebHeaders, login = splits[1]).also { response ->
                                     if (enableIntegrity && integrity.value == null) {
                                         response.errors?.find { it.message == "failed integrity check" }?.let {
                                             integrity.value = "refresh"
@@ -4236,13 +4375,13 @@ class ChatViewModel @Inject constructor(
                                     }
                                 }.data!!.user?.id
                             } catch (e: Exception) {
-                                helixRepository.getUsers(
+                                kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     logins = listOf(splits[1])
                                 ).data.firstOrNull()?.channelId
                             }
-                            graphQLRepository.startRaid(networkLibrary, gqlHeaders, channelId, targetId).also { response ->
+                            kickGraphQLRepository.startRaid(networkLibrary, kickWebHeaders, channelId, targetId).also { response ->
                                 if (enableIntegrity && integrity.value == null) {
                                     response.errors?.find { it.message == "failed integrity check" }?.let {
                                         integrity.value = "refresh"
@@ -4251,13 +4390,13 @@ class ChatViewModel @Inject constructor(
                                 }
                             }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                         } else {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                val targetId = helixRepository.getUsers(
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                val targetId = kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     logins = listOf(splits[1])
                                 ).data.firstOrNull()?.channelId
-                                helixRepository.startRaid(networkLibrary, helixHeaders, channelId, targetId)
+                                kickPublicApiRepository.startRaid(networkLibrary, kickPublicApiHeaders, channelId, targetId)
                             } else null
                         }?.let {
                             onMessage(ChatMessage(systemMsg = it))
@@ -4267,8 +4406,8 @@ class ChatViewModel @Inject constructor(
             }
             command.equals("/unraid", true) -> {
                 viewModelScope.launch {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        graphQLRepository.cancelRaid(networkLibrary, gqlHeaders, channelId).also { response ->
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        kickGraphQLRepository.cancelRaid(networkLibrary, kickWebHeaders, channelId).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
                                     integrity.value = "refresh"
@@ -4277,8 +4416,8 @@ class ChatViewModel @Inject constructor(
                             }
                         }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                     } else {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            helixRepository.cancelRaid(networkLibrary, helixHeaders, channelId)
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickPublicApiRepository.cancelRaid(networkLibrary, kickPublicApiHeaders, channelId)
                         } else null
                     }?.let {
                         onMessage(ChatMessage(systemMsg = it))
@@ -4289,8 +4428,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ")
                 val duration = if (splits.size >= 2) splits[1].toIntOrNull() else null
                 viewModelScope.launch {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        graphQLRepository.setSlowMode(networkLibrary, gqlHeaders, channelId, duration ?: 30).also { response ->
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        kickGraphQLRepository.setSlowMode(networkLibrary, kickWebHeaders, channelId, duration ?: 30).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
                                     integrity.value = "refresh"
@@ -4299,8 +4438,8 @@ class ChatViewModel @Inject constructor(
                             }
                         }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                     } else {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            helixRepository.updateChatSettings(networkLibrary, helixHeaders, channelId, accountId,
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId,
                                 slow = true,
                                 slowDuration = duration
                             )
@@ -4312,8 +4451,8 @@ class ChatViewModel @Inject constructor(
             }
             command.equals("/slowoff", true) -> {
                 viewModelScope.launch {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        graphQLRepository.setSlowMode(networkLibrary, gqlHeaders, channelId, 0).also { response ->
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        kickGraphQLRepository.setSlowMode(networkLibrary, kickWebHeaders, channelId, 0).also { response ->
                             if (enableIntegrity && integrity.value == null) {
                                 response.errors?.find { it.message == "failed integrity check" }?.let {
                                     integrity.value = "refresh"
@@ -4322,8 +4461,8 @@ class ChatViewModel @Inject constructor(
                             }
                         }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                     } else {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            helixRepository.updateChatSettings(networkLibrary, helixHeaders, channelId, accountId, slow = false)
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, slow = false)
                         } else null
                     }?.let {
                         onMessage(ChatMessage(systemMsg = it))
@@ -4331,28 +4470,28 @@ class ChatViewModel @Inject constructor(
                 }
             }
             command.equals("/subscribers", true) -> {
-                if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                     viewModelScope.launch {
-                        helixRepository.updateChatSettings(networkLibrary, helixHeaders, channelId, accountId, subs = true)?.let {
+                        kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, subs = true)?.let {
                             onMessage(ChatMessage(systemMsg = it))
                         }
                     }
                 } else {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
             command.equals("/subscribersoff", true) -> {
-                if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                     viewModelScope.launch {
-                        helixRepository.updateChatSettings(networkLibrary, helixHeaders, channelId, accountId, subs = false)?.let {
+                        kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, subs = false)?.let {
                             onMessage(ChatMessage(systemMsg = it))
                         }
                     }
                 } else {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
@@ -4360,8 +4499,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ", limit = 4)
                 if (splits.size >= 2) {
                     viewModelScope.launch {
-                        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            graphQLRepository.banUser(networkLibrary, gqlHeaders, channelId, splits[1],
+                        if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickGraphQLRepository.banUser(networkLibrary, kickWebHeaders, channelId, splits[1],
                                 duration = if (splits.size >= 3) splits[2] else "10m",
                                 reason = if (splits.size >= 4) splits[3] else null
                             ).also { response ->
@@ -4373,10 +4512,10 @@ class ChatViewModel @Inject constructor(
                                 }
                             }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                         } else {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                val targetId = helixRepository.getUsers(
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                val targetId = kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     logins = listOf(splits[1])
                                 ).data.firstOrNull()?.channelId
                                 val broadcasterUserId = channelId?.toLongOrNull()
@@ -4391,7 +4530,7 @@ class ChatViewModel @Inject constructor(
                                     )
                                     null
                                 } else {
-                                    helixRepository.banUser(networkLibrary, helixHeaders, channelId, accountId, targetId,
+                                    kickPublicApiRepository.banUser(networkLibrary, kickPublicApiHeaders, channelId, accountId, targetId,
                                         duration = if (splits.size >= 3) splits[2] else "600",
                                         reason = if (splits.size >= 4) splits[3] else null
                                     )
@@ -4407,8 +4546,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ")
                 if (splits.size >= 2) {
                     viewModelScope.launch {
-                        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            graphQLRepository.unbanUser(networkLibrary, gqlHeaders, channelId, splits[1]).also { response ->
+                        if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickGraphQLRepository.unbanUser(networkLibrary, kickWebHeaders, channelId, splits[1]).also { response ->
                                 if (enableIntegrity && integrity.value == null) {
                                     response.errors?.find { it.message == "failed integrity check" }?.let {
                                         integrity.value = "refresh"
@@ -4417,10 +4556,10 @@ class ChatViewModel @Inject constructor(
                                 }
                             }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                         } else {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                val targetId = helixRepository.getUsers(
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                val targetId = kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     logins = listOf(splits[1])
                                 ).data.firstOrNull()?.channelId
                                 val broadcasterUserId = channelId?.toLongOrNull()
@@ -4433,7 +4572,7 @@ class ChatViewModel @Inject constructor(
                                     )
                                     null
                                 } else {
-                                    helixRepository.unbanUser(networkLibrary, helixHeaders, channelId, accountId, targetId)
+                                    kickPublicApiRepository.unbanUser(networkLibrary, kickPublicApiHeaders, channelId, accountId, targetId)
                                 }
                             } else null
                         }?.let {
@@ -4443,28 +4582,28 @@ class ChatViewModel @Inject constructor(
                 }
             }
             command.equals("/uniquechat", true) -> {
-                if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                     viewModelScope.launch {
-                        helixRepository.updateChatSettings(networkLibrary, helixHeaders, channelId, accountId, unique = true)?.let {
+                        kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, unique = true)?.let {
                             onMessage(ChatMessage(systemMsg = it))
                         }
                     }
                 } else {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
             command.equals("/uniquechatoff", true) -> {
-                if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                     viewModelScope.launch {
-                        helixRepository.updateChatSettings(networkLibrary, helixHeaders, channelId, accountId, unique = false)?.let {
+                        kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, unique = false)?.let {
                             onMessage(ChatMessage(systemMsg = it))
                         }
                     }
                 } else {
-                    if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+                    if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     }
                 }
             }
@@ -4472,8 +4611,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ")
                 if (splits.size >= 2) {
                     viewModelScope.launch {
-                        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            graphQLRepository.addVip(networkLibrary, gqlHeaders, channelId, splits[1]).also { response ->
+                        if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickGraphQLRepository.addVip(networkLibrary, kickWebHeaders, channelId, splits[1]).also { response ->
                                 if (enableIntegrity && integrity.value == null) {
                                     response.errors?.find { it.message == "failed integrity check" }?.let {
                                         integrity.value = "refresh"
@@ -4482,13 +4621,13 @@ class ChatViewModel @Inject constructor(
                                 }
                             }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                         } else {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                val targetId = helixRepository.getUsers(
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                val targetId = kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     logins = listOf(splits[1])
                                 ).data.firstOrNull()?.channelId
-                                helixRepository.addVip(networkLibrary, helixHeaders, channelId, targetId)
+                                kickPublicApiRepository.addVip(networkLibrary, kickPublicApiHeaders, channelId, targetId)
                             } else null
                         }?.let {
                             onMessage(ChatMessage(systemMsg = it))
@@ -4500,8 +4639,8 @@ class ChatViewModel @Inject constructor(
                 val splits = message.split(" ")
                 if (splits.size >= 2) {
                     viewModelScope.launch {
-                        if (!gqlHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                            graphQLRepository.removeVip(networkLibrary, gqlHeaders, channelId, splits[1]).also { response ->
+                        if (!kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                            kickGraphQLRepository.removeVip(networkLibrary, kickWebHeaders, channelId, splits[1]).also { response ->
                                 if (enableIntegrity && integrity.value == null) {
                                     response.errors?.find { it.message == "failed integrity check" }?.let {
                                         integrity.value = "refresh"
@@ -4510,13 +4649,13 @@ class ChatViewModel @Inject constructor(
                                 }
                             }.takeIf { !it.errors.isNullOrEmpty() }?.toString()
                         } else {
-                            if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                                val targetId = helixRepository.getUsers(
+                            if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                                val targetId = kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     logins = listOf(splits[1])
                                 ).data.firstOrNull()?.channelId
-                                helixRepository.removeVip(networkLibrary, helixHeaders, channelId, targetId)
+                                kickPublicApiRepository.removeVip(networkLibrary, kickPublicApiHeaders, channelId, targetId)
                             } else null
                         }?.let {
                             onMessage(ChatMessage(systemMsg = it))
@@ -4526,7 +4665,7 @@ class ChatViewModel @Inject constructor(
             }
             command.equals("/vips", true) -> {
                 viewModelScope.launch {
-                    graphQLRepository.getVips(networkLibrary, gqlHeaders, channelLogin).also { response ->
+                    kickGraphQLRepository.getVips(networkLibrary, kickWebHeaders, channelLogin).also { response ->
                         if (enableIntegrity && integrity.value == null) {
                             response.errors?.find { it.message == "failed integrity check" }?.let {
                                 integrity.value = "refresh"
@@ -4539,23 +4678,23 @@ class ChatViewModel @Inject constructor(
                 }
             }
             command.equals("/w", true) -> {
-                if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                     val splits = message.split(" ", limit = 3)
                     if (splits.size >= 3) {
                         viewModelScope.launch {
-                            val targetId = helixRepository.getUsers(
+                            val targetId = kickPublicApiRepository.getUsers(
                                 networkLibrary = networkLibrary,
-                                headers = helixHeaders,
+                                headers = kickPublicApiHeaders,
                                 logins = listOf(splits[1])
                             ).data.firstOrNull()?.channelId
-                            helixRepository.sendWhisper(networkLibrary, helixHeaders, accountId, targetId, splits[2])?.let {
+                            kickPublicApiRepository.sendWhisper(networkLibrary, kickPublicApiHeaders, accountId, targetId, splits[2])?.let {
                                 onMessage(ChatMessage(systemMsg = it))
                             }
                         }
                     }
                 }
             }
-            else -> sendMessage(message, networkLibrary, gqlHeaders, helixHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+            else -> sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
         }
     }
 
@@ -4582,7 +4721,7 @@ class ChatViewModel @Inject constructor(
             kickReplayFallbackStartTimeMs = null
             kickReplayFallbackGetCurrentPosition = null
             kickReplaySessionKey = null
-            kickReplaySessionStartPositionMs = null
+            kickReplayLastPlaybackPositionMs = null
             chatReplayManagerLocal = ChatReplayManagerLocal(
                 getCurrentPosition = getCurrentPosition,
                 getCurrentSpeed = getCurrentSpeed,
@@ -4626,12 +4765,12 @@ class ChatViewModel @Inject constructor(
             kickReplayFallbackUrl = null
             kickReplayFallbackGetCurrentPosition = null
             kickReplaySessionKey = null
-            kickReplaySessionStartPositionMs = null
+            kickReplayLastPlaybackPositionMs = null
             if (!videoId.isNullOrBlank()) {
                 chatReplayManager = ChatReplayManager(
                     networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                    gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext, true),
-                    graphQLRepository = graphQLRepository,
+                    kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext, true),
+                    kickGraphQLRepository = kickGraphQLRepository,
                     json = json,
                     enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                     videoId = videoId,
@@ -4690,6 +4829,7 @@ class ChatViewModel @Inject constructor(
             }
             kickChatJob?.cancel()
             kickChatJob = null
+            kickReplayMessageSources = null
             resetKickReplayPendingQueue()
         } else {
             chatReplayManager?.stop() ?: chatReplayManagerLocal?.stop()
@@ -4794,8 +4934,8 @@ class ChatViewModel @Inject constructor(
                 val messages = mutableListOf<ChatMessage>()
                 var startTimeMs = fallbackStartTimeSeconds?.times(1000L) ?: 0L
                 var fileStartTimeFound = false
-                val twitchEmotes = mutableListOf<TwitchEmote>()
-                val twitchBadges = mutableListOf<TwitchBadge>()
+                val chatEmotes = mutableListOf<ChatEmote>()
+                val ChatBadges = mutableListOf<ChatBadge>()
                 val cheerEmotesList = mutableListOf<CheerEmote>()
                 val emotes = mutableListOf<Emote>()
                 if (url.toUri().scheme == ContentResolver.SCHEME_CONTENT) {
@@ -4863,7 +5003,7 @@ class ChatViewModel @Inject constructor(
                                                             var userLogin: String? = null
                                                             var userName: String? = null
                                                             var color: String? = null
-                                                            val emotesList = mutableListOf<TwitchEmote>()
+                                                            val emotesList = mutableListOf<ChatEmote>()
                                                             val badgesList = mutableListOf<Badge>()
                                                             while (reader.hasNext()) {
                                                                 when (reader.nextName().also { position += it.length + 3 }) {
@@ -4922,7 +5062,7 @@ class ChatViewModel @Inject constructor(
                                                                                             }
                                                                                         }
                                                                                         if (fragmentText != null && !emoteId.isNullOrBlank()) {
-                                                                                            emotesList.add(TwitchEmote(
+                                                                                            emotesList.add(ChatEmote(
                                                                                                 id = emoteId,
                                                                                                 begin = message.codePointCount(0, message.length),
                                                                                                 end = message.codePointCount(0, message.length) + fragmentText.lastIndex
@@ -5009,7 +5149,7 @@ class ChatViewModel @Inject constructor(
                                                         }
                                                         reader.endArray().also { position += 1 }
                                                     }
-                                                    "twitchEmotes" -> {
+                                                    "chatEmotes" -> {
                                                         reader.beginArray().also { position += 1 }
                                                         while (reader.hasNext()) {
                                                             reader.beginObject().also { position += 1 }
@@ -5031,7 +5171,7 @@ class ChatViewModel @Inject constructor(
                                                                 }
                                                             }
                                                             if (!id.isNullOrBlank() && data != null) {
-                                                                twitchEmotes.add(TwitchEmote(
+                                                                chatEmotes.add(ChatEmote(
                                                                     id = id,
                                                                     localData = data
                                                                 ))
@@ -5043,7 +5183,7 @@ class ChatViewModel @Inject constructor(
                                                         }
                                                         reader.endArray().also { position += 1 }
                                                     }
-                                                    "twitchBadges" -> {
+                                                    "ChatBadges" -> {
                                                         reader.beginArray().also { position += 1 }
                                                         while (reader.hasNext()) {
                                                             reader.beginObject().also { position += 1 }
@@ -5067,7 +5207,7 @@ class ChatViewModel @Inject constructor(
                                                                 }
                                                             }
                                                             if (!setId.isNullOrBlank() && !version.isNullOrBlank() && data != null) {
-                                                                twitchBadges.add(TwitchBadge(
+                                                                ChatBadges.add(ChatBadge(
                                                                     setId = setId,
                                                                     version = version,
                                                                     localData = data
@@ -5185,13 +5325,13 @@ class ChatViewModel @Inject constructor(
                         // Partial local chat files are common during interrupted downloads; keep the messages parsed so far.
                     }
                 }
-                synchronized(localTwitchEmotes) {
-                    localTwitchEmotes.clear()
-                    localTwitchEmotes.addAll(twitchEmotes)
+                synchronized(localChatEmotes) {
+                    localChatEmotes.clear()
+                    localChatEmotes.addAll(chatEmotes)
                 }
                 synchronized(channelBadges) {
                     channelBadges.clear()
-                    channelBadges.addAll(twitchBadges)
+                    channelBadges.addAll(ChatBadges)
                 }
                 synchronized(cheerEmotes) {
                     cheerEmotes.clear()
@@ -5279,8 +5419,8 @@ class ChatViewModel @Inject constructor(
     companion object {
         private val KICK_INLINE_EMOTE_REGEX = Regex("\\[emote:(\\d+):([^\\]]+)]")
         private var savedEmoteSets: List<String>? = null
-        private var savedUserEmotes: List<TwitchEmote>? = null
-        private var savedGlobalBadges: List<TwitchBadge>? = null
+        private var savedUserEmotes: List<ChatEmote>? = null
+        private var savedGlobalBadges: List<ChatBadge>? = null
         private var savedGlobalStvEmotes: List<Emote>? = null
     }
 }

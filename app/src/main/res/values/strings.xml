@@ -170,8 +170,8 @@
     <string name="player_channel">Show channel name</string>
     <string name="player_pause">Show pause button on livestreams</string>
     <string name="token_random_deviceid">Random device ID</string>
-    <string name="api_helix_client_id">Helix client ID</string>
-    <string name="api_gql_client_id">GQL client ID</string>
+    <string name="api_helix_client_id">Legacy API client ID</string>
+    <string name="api_gql_client_id">Kick web client ID</string>
     <string name="api_kick_client_id" translatable="false">Kick client ID</string>
     <string name="api_kick_client_secret" translatable="false">Kick client secret</string>
     <string name="playback_speed">Playback speed</string>
@@ -195,6 +195,8 @@
     <string name="chat_mode_emote_only">Emote only</string>
     <string name="chat_mode_unique">Unique chat</string>
     <string name="chat_join">Connected to %s</string>
+    <string name="resolution_auto_changed">Resolution auto-changed to %s</string>
+    <string name="quality_auto_changed">Auto quality: %s</string>
     <string name="copy_clip">Copy to clipboard</string>
     <string name="chat_clear">Chat has been cleared by a moderator.</string>
     <string name="chat_timeout">%1$s has been timed out for %2$s.</string>
@@ -260,7 +262,12 @@
     <string name="copy_fullmsg">Copy full message</string>
     <string name="show_copy_fullmsg">Copy full IRC messages</string>
     <string name="chat_disconnect">Disconnecting from %1$s - %2$s</string>
+    <string name="chat_reconnecting">Reconnecting to %s</string>
     <string name="chat_send_msg_error">Error sending message - %s</string>
+    <string name="kick_chat_send_followers_only">This room is in followers-only mode. Follow the channel before chatting.</string>
+    <string name="kick_chat_send_followers_for">This room is in followers-only mode. Follow for %s before chatting.</string>
+    <string name="kick_chat_send_bot_protection">Kick rejected the message because bot protection is active.</string>
+    <string name="kick_chat_send_forbidden">Message rejected by Kick.</string>
     <string name="irc_notice_already_banned">%s is already banned in this channel.</string>
     <string name="irc_notice_already_emote_only_off">This room is not in emote-only mode.</string>
     <string name="irc_notice_already_emote_only_on">This room is already in emote-only mode.</string>
@@ -443,8 +450,8 @@
     <string name="timestamp_format_6">h:mm:ss am/pm</string>
     <string name="timestamp_format_7">hh:mm:ss am/pm</string>
     <string name="api_login">Get token for selected APIs</string>
-    <string name="api_helix_redirect">Helix redirect URL</string>
-    <string name="api_gql_redirect">GQL redirect URL</string>
+    <string name="api_helix_redirect">Legacy API redirect URL</string>
+    <string name="api_gql_redirect">Kick web redirect URL</string>
     <string name="api_kick_redirect" translatable="false">Kick redirect URL</string>
     <string name="api_kick_scopes" translatable="false">Kick scopes</string>
     <string name="kick_developer_tools" translatable="false">Kick developer tools</string>
@@ -610,6 +617,8 @@
     <string name="points_collect">Collect channel points automatically</string>
     <string name="connect_chat">Connect to chat</string>
     <string name="raid_text">Raiding %1$s with %2$d viewers</string>
+    <string name="raid_join">Join</string>
+    <string name="raid_stay">Stay</string>
     <string name="show_raids">Show raids</string>
     <string name="auto_switch_raids">Switch stream on raid automatically</string>
     <string name="search_streams">Search tags</string>
@@ -617,8 +626,8 @@
     <string name="api_current_login">Current login</string>
     <string name="api_user_id">Account ID</string>
     <string name="api_user_login">Account login</string>
-    <string name="api_helix_token">Helix token</string>
-    <string name="api_gql_token">GQL token</string>
+    <string name="api_helix_token">Legacy API token</string>
+    <string name="api_gql_token">Kick web token</string>
     <string name="api_kick_access_token" translatable="false">Kick access token</string>
     <string name="api_kick_refresh_token" translatable="false">Kick refresh token</string>
     <string name="api_validate_tokens">Validate tokens on startup</string>
@@ -657,7 +666,7 @@
     <string name="show_title">Show title</string>
     <string name="show_category">Show category</string>
     <string name="get_all_headers">Get all headers</string>
-    <string name="gql_headers">GQL headers</string>
+    <string name="gql_headers">Kick web headers</string>
     <string name="use_integrity">Use integrity token</string>
     <string name="use_audio_focus">Pause when other apps play audio</string>
     <string name="handle_audio_becoming_noisy">Pause when headphones are disconnected</string>
@@ -776,9 +785,9 @@
     <string name="channel_follower_emote">%s follower emote</string>
     <string name="bits_reward_emote">%d bits reward</string>
     <string name="show_name_paints">Show 7TV name paints</string>
-    <string name="api_helix">Helix</string>
-    <string name="api_gql">GQL</string>
-    <string name="api_gql_persisted_query">GQL persisted query</string>
+    <string name="api_helix">Legacy API</string>
+    <string name="api_gql">Kick web API</string>
+    <string name="api_gql_persisted_query">Kick web persisted query</string>
     <string name="api_kick" translatable="false">Kick</string>
     <string name="kick_not_implemented_action" translatable="false">This account action is not implemented for Kick yet.</string>
     <string name="kick_oauth_not_configured" translatable="false">Kick login is not configured. Set KICK_CLIENT_ID and KICK_OAUTH_BACKEND_BASE_URL in build config.</string>
@@ -835,6 +844,8 @@
     <string name="player_menu_settings">Player menu settings</string>
     <string name="chapters">Chapters</string>
     <string name="seek_to_live">Seek to live</string>
+    <string name="zoomed_to_fill">Zoomed to fill</string>
+    <string name="original">Original</string>
     <string name="audio_compressor">Audio compressor</string>
     <string name="subtitles">Subtitles</string>
     <string name="chat_input_toggle">Chat input toggle</string>
@@ -845,8 +856,8 @@
     <string name="video_player_type">Video player type</string>
     <string name="supported_codecs">Supported codecs</string>
     <string name="hide_during_ads">Hide player during ads</string>
-    <string name="include_gql_token_stream">Include GQL token in stream requests</string>
-    <string name="include_gql_token_video">Include GQL token in video requests</string>
+    <string name="include_gql_token_stream">Include Kick web token in stream requests</string>
+    <string name="include_gql_token_video">Include Kick web token in video requests</string>
     <string name="min_buffer">Minimum buffer</string>
     <string name="min_buffer_summary">Minimum buffer in milliseconds</string>
     <string name="player_latency_profile">Live latency profile</string>
@@ -879,7 +890,7 @@
     <string name="use_webp_images">Use WebP images</string>
     <string name="use_background_audio">Play audio in the background</string>
     <string name="avoid_rounded_corners">Avoid rounded screen corners</string>
-    <string name="api_web_gql_token">Web GQL token</string>
+    <string name="api_web_gql_token">Kick web token</string>
     <string name="chat_size_modifier">Size modifier</string>
     <string name="chat_emote_size">Emote size</string>
     <string name="chat_badge_size">Badge size</string>

@@ -151,7 +151,7 @@ class GameMediaFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                                             args.gameId,
                                             setting,
                                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                            KickApiHelper.getGQLHeaders(requireContext(), true),
+                                            KickApiHelper.getKickWebHeaders(requireContext(), true),
                                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                         )
                                     }
@@ -165,8 +165,8 @@ class GameMediaFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                                     setting,
                                     requireContext().filesDir.path,
                                     requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getGQLHeaders(requireContext(), true),
-                                    KickApiHelper.getHelixHeaders(requireContext()),
+                                    KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                    KickApiHelper.getKickPublicApiHeaders(requireContext()),
                                     requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                                 )
                             }
@@ -328,8 +328,8 @@ class GameMediaFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
     override fun initialize() {
         viewModel.loadGame(
             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            KickApiHelper.getGQLHeaders(requireContext()),
-            KickApiHelper.getHelixHeaders(requireContext()),
+            KickApiHelper.getKickWebHeaders(requireContext()),
+            KickApiHelper.getKickPublicApiHeaders(requireContext()),
             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
         )
         viewLifecycleOwner.lifecycleScope.launch {
@@ -349,7 +349,7 @@ class GameMediaFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                 args.gameName,
                 setting,
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                KickApiHelper.getGQLHeaders(requireContext(), true),
+                KickApiHelper.getKickWebHeaders(requireContext(), true),
             )
         }
         if (args.updateLocal) {
@@ -358,8 +358,8 @@ class GameMediaFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                 args.gameId,
                 args.gameName,
                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                KickApiHelper.getGQLHeaders(requireContext()),
-                KickApiHelper.getHelixHeaders(requireContext()),
+                KickApiHelper.getKickWebHeaders(requireContext()),
+                KickApiHelper.getKickPublicApiHeaders(requireContext()),
             )
         }
     }
@@ -498,8 +498,8 @@ class GameMediaFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
     override fun onNetworkRestored() {
         viewModel.loadGame(
             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-            KickApiHelper.getGQLHeaders(requireContext()),
-            KickApiHelper.getHelixHeaders(requireContext()),
+            KickApiHelper.getKickWebHeaders(requireContext()),
+            KickApiHelper.getKickPublicApiHeaders(requireContext()),
             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
         )
     }
@@ -512,8 +512,8 @@ class GameMediaFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                         "refresh" -> {
                             viewModel.loadGame(
                                 requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getGQLHeaders(requireContext()),
-                                KickApiHelper.getHelixHeaders(requireContext()),
+                                KickApiHelper.getKickWebHeaders(requireContext()),
+                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
                                 requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                             )
                             val setting = requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0
@@ -524,7 +524,7 @@ class GameMediaFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                                     args.gameName,
                                     setting,
                                     requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getGQLHeaders(requireContext(), true),
+                                    KickApiHelper.getKickWebHeaders(requireContext(), true),
                                 )
                             }
                         }
@@ -536,15 +536,15 @@ class GameMediaFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                             requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                             requireContext().filesDir.path,
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getGQLHeaders(requireContext(), true),
-                            KickApiHelper.getHelixHeaders(requireContext()),
+                            KickApiHelper.getKickWebHeaders(requireContext(), true),
+                            KickApiHelper.getKickPublicApiHeaders(requireContext()),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                         "unfollow" -> viewModel.deleteFollowGame(
                             args.gameId,
                             requireContext().prefs().getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                             requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getGQLHeaders(requireContext(), true),
+                            KickApiHelper.getKickWebHeaders(requireContext(), true),
                             requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                         )
                     }

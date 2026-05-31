@@ -17,8 +17,8 @@ import com.github.andreyasadchy.xtra.model.ui.SortChannel
 import com.github.andreyasadchy.xtra.model.ui.User
 import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.repository.BookmarksRepository
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.repository.SortChannelRepository
@@ -55,8 +55,8 @@ class ChannelVideosViewModel @Inject constructor(
     private val sortChannelRepository: SortChannelRepository,
     playerRepository: PlayerRepository,
     private val bookmarksRepository: BookmarksRepository,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixRepository: HelixRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val httpEngine: Lazy<HttpEngine>?,
     private val cronetEngine: Lazy<CronetEngine>?,
@@ -132,18 +132,13 @@ class ChannelVideosViewModel @Inject constructor(
                     VideosSortDialog.SORT_VIEWS -> "views"
                     else -> "time"
                 },
-                gqlHeaders = KickApiHelper.getGQLHeaders(applicationContext),
-                graphQLRepository = graphQLRepository,
-                helixHeaders = KickApiHelper.getHelixHeaders(applicationContext),
-                helixRepository = helixRepository,
+                kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext),
+                kickGraphQLRepository = kickGraphQLRepository,
+                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext),
+                kickPublicApiRepository = kickPublicApiRepository,
                 kickRepository = kickRepository,
                 enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                apiPref = (applicationContext.prefs().getString(C.API_PREFS_CHANNEL_VIDEOS, null) ?: C.DEFAULT_API_PREFS_CHANNEL_VIDEOS).split(',').mapNotNull {
-                    val split = it.split(':')
-                    val key = split[0]
-                    val enabled = split[1] != "0"
-                    if (enabled) key else null
-                },
+                apiPref = listOf(C.KICK),
                 networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
             )
         }.flow
@@ -171,7 +166,7 @@ class ChannelVideosViewModel @Inject constructor(
         val type: String?,
     )
 
-    fun saveBookmark(filesDir: String, video: Video, networkLibrary: String?, gqlHeaders: Map<String, String>, helixHeaders: Map<String, String>) {
+    fun saveBookmark(filesDir: String, video: Video, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         viewModelScope.launch {
             val item = video.id?.let { bookmarksRepository.getBookmarkByVideoId(it) }
             if (item != null) {
@@ -293,7 +288,7 @@ class ChannelVideosViewModel @Inject constructor(
                 }
                 val userTypes = video.channelId?.let {
                     try {
-                        val response = graphQLRepository.loadQueryUsersType(networkLibrary, gqlHeaders, listOf(it))
+                        val response = kickGraphQLRepository.loadQueryUsersType(networkLibrary, kickWebHeaders, listOf(it))
                         response.data!!.users?.firstOrNull()?.let {
                             User(
                                 channelId = it.id,
@@ -309,11 +304,11 @@ class ChannelVideosViewModel @Inject constructor(
                             )
                         }
                     } catch (e: Exception) {
-                        if (!helixHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                        if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
                             try {
-                                helixRepository.getUsers(
+                                kickPublicApiRepository.getUsers(
                                     networkLibrary = networkLibrary,
-                                    headers = helixHeaders,
+                                    headers = kickPublicApiHeaders,
                                     ids = listOf(it)
                                 ).data.firstOrNull()?.let {
                                     User(

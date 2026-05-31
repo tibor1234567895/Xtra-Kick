@@ -45,7 +45,7 @@ import javax.inject.Singleton
 import kotlin.coroutines.suspendCoroutine
 
 @Singleton
-class HelixRepository @Inject constructor(
+class KickPublicApiRepository @Inject constructor(
     private val httpEngine: Lazy<HttpEngine>?,
     private val cronetEngine: Lazy<CronetEngine>?,
     private val cronetExecutor: ExecutorService,

@@ -2,9 +2,9 @@ package com.github.andreyasadchy.xtra.ui.chat
 
 import com.github.andreyasadchy.xtra.model.chat.Badge
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
-import com.github.andreyasadchy.xtra.model.chat.TwitchEmote
+import com.github.andreyasadchy.xtra.model.chat.ChatEmote
 import com.github.andreyasadchy.xtra.model.chat.VideoChatMessage
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -16,8 +16,8 @@ import kotlin.math.max
 
 class ChatReplayManager(
     private val networkLibrary: String?,
-    private val gqlHeaders: Map<String, String>,
-    private val graphQLRepository: GraphQLRepository,
+    private val kickWebHeaders: Map<String, String>,
+    private val kickGraphQLRepository: KickGraphQLRepository,
     private val json: Json,
     private val enableIntegrity: Boolean,
     private val videoId: String,
@@ -31,6 +31,8 @@ class ChatReplayManager(
         private const val LARGE_SEEK_THRESHOLD_MS = 20_000L
         private const val PRELOAD_WINDOW_MS = 180_000L
         private const val PRELOAD_MAX_MESSAGES = 200
+        private const val MIN_SYNC_WAIT_MS = 16L
+        private const val MAX_SYNC_WAIT_MS = 250L
 
         private fun shouldInsertFragmentSpace(builder: StringBuilder, fragmentText: String, currentIsEmote: Boolean, previousWasEmote: Boolean): Boolean {
             if (builder.isEmpty() || fragmentText.isEmpty()) return false
@@ -78,9 +80,9 @@ class ChatReplayManager(
         loadJob = coroutineScope.launch(Dispatchers.IO) {
             try {
                 val response = if (position != null) {
-                    graphQLRepository.loadVideoMessages(networkLibrary, gqlHeaders, videoId, offset = position.div(1000).toInt())
+                    kickGraphQLRepository.loadVideoMessages(networkLibrary, kickWebHeaders, videoId, offset = position.div(1000).toInt())
                 } else {
-                    graphQLRepository.loadVideoMessages(networkLibrary, gqlHeaders, videoId, cursor = cursor)
+                    kickGraphQLRepository.loadVideoMessages(networkLibrary, kickWebHeaders, videoId, cursor = cursor)
                 }
                 if (enableIntegrity) {
                     response.errors?.find { it.message == "failed integrity check" }?.let {
@@ -102,7 +104,7 @@ class ChatReplayManager(
                                         chatMessage.append(' ')
                                     }
                                     fragment.emote?.emoteID?.let { id ->
-                                        TwitchEmote(
+                                        ChatEmote(
                                             id = id,
                                             begin = chatMessage.codePointCount(0, chatMessage.length),
                                             end = chatMessage.codePointCount(0, chatMessage.length) + text.lastIndex
@@ -182,6 +184,7 @@ class ChatReplayManager(
             emotes = emotes,
             badges = badges,
             bits = 0,
+            timestamp = offsetSeconds?.times(1000L),
             fullMsg = fullMsg
         )
     }
@@ -200,7 +203,7 @@ class ChatReplayManager(
                             currentPosition < messageOffset
                         }
                     ) {
-                        delay(max((messageOffset - currentPosition).div(playbackSpeed ?: 1f).toLong(), 0))
+                        delay(nextSyncDelay(messageOffset - currentPosition))
                     }
                     if (!isActive) {
                         break
@@ -213,6 +216,13 @@ class ChatReplayManager(
                 list.remove(message)
             }
         }
+    }
+
+    private fun nextSyncDelay(positionDeltaMs: Long): Long {
+        val speed = getCurrentSpeed()?.takeIf { it > 0f } ?: playbackSpeed?.takeIf { it > 0f } ?: 1f
+        playbackSpeed = speed
+        return max(positionDeltaMs.div(speed).toLong(), MIN_SYNC_WAIT_MS)
+            .coerceAtMost(MAX_SYNC_WAIT_MS)
     }
 
     fun updatePosition(position: Long) {

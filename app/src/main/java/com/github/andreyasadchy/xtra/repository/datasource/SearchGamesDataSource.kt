@@ -4,18 +4,18 @@ import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.github.andreyasadchy.xtra.model.ui.Game
 import com.github.andreyasadchy.xtra.model.ui.Tag
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.KickWebsiteSearchMapper
 import com.github.andreyasadchy.xtra.util.C
 
 class SearchGamesDataSource(
     private val query: String,
-    private val gqlHeaders: Map<String, String>,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixHeaders: Map<String, String>,
-    private val helixRepository: HelixRepository,
+    private val kickWebHeaders: Map<String, String>,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiHeaders: Map<String, String>,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
@@ -72,7 +72,7 @@ class SearchGamesDataSource(
     }
 
     private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Game> {
-        val response = graphQLRepository.loadQuerySearchGames(networkLibrary, gqlHeaders, query, params.loadSize, offset)
+        val response = kickGraphQLRepository.loadQuerySearchGames(networkLibrary, kickWebHeaders, query, params.loadSize, offset)
         if (enableIntegrity) {
             response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
         }
@@ -107,7 +107,7 @@ class SearchGamesDataSource(
     }
 
     private suspend fun gqlLoad(params: LoadParams<Int>): LoadResult<Int, Game> {
-        val response = graphQLRepository.loadSearchGames(networkLibrary, gqlHeaders, query, offset)
+        val response = kickGraphQLRepository.loadSearchGames(networkLibrary, kickWebHeaders, query, offset)
         if (enableIntegrity) {
             response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
         }
@@ -140,9 +140,9 @@ class SearchGamesDataSource(
     }
 
     private suspend fun helixLoad(params: LoadParams<Int>): LoadResult<Int, Game> {
-        val response = helixRepository.getSearchGames(
+        val response = kickPublicApiRepository.getSearchGames(
             networkLibrary = networkLibrary,
-            headers = helixHeaders,
+            headers = kickPublicApiHeaders,
             query = query,
             limit = params.loadSize,
             offset = offset,

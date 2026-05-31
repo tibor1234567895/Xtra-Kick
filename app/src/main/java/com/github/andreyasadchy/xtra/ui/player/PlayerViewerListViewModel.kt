@@ -3,7 +3,7 @@ package com.github.andreyasadchy.xtra.ui.player
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.github.andreyasadchy.xtra.model.ui.ChannelViewerList
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,7 +12,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class PlayerViewerListViewModel @Inject constructor(
-    private val graphQLRepository: GraphQLRepository,
+    private val kickGraphQLRepository: KickGraphQLRepository,
 ) : ViewModel() {
 
     val integrity = MutableStateFlow<String?>(null)
@@ -21,12 +21,12 @@ class PlayerViewerListViewModel @Inject constructor(
     val viewerList: StateFlow<ChannelViewerList?> = _viewerList
     private var isLoading = false
 
-    fun loadViewerList(channelLogin: String?, networkLibrary: String?, gqlHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadViewerList(channelLogin: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (_viewerList.value == null && !isLoading) {
             isLoading = true
             viewModelScope.launch {
                 try {
-                    val response = graphQLRepository.loadChannelViewerList(networkLibrary, gqlHeaders, channelLogin)
+                    val response = kickGraphQLRepository.loadChannelViewerList(networkLibrary, kickWebHeaders, channelLogin)
                     if (enableIntegrity && integrity.value == null) {
                         response.errors?.find { it.message == "failed integrity check" }?.let {
                             integrity.value = "refresh"

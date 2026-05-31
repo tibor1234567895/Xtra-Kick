@@ -1,6 +1,6 @@
 package com.github.andreyasadchy.xtra.model.chat
 
-class TwitchEmote(
+class ChatEmote(
     val id: String? = null,
     val name: String? = null,
     val localData: Pair<Long, Int>? = null,

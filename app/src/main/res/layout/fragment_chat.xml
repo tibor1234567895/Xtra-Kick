@@ -478,10 +478,29 @@
             android:focusable="false"
             android:textAppearance="?attr/textAppearanceTitleMedium"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toStartOf="@id/raidClose"
+            app:layout_constraintEnd_toStartOf="@id/raidAction"
             app:layout_constraintStart_toEndOf="@id/raidImage"
             app:layout_constraintTop_toTopOf="parent"
             tools:text="@string/raid_text" />
+
+        <TextView
+            android:id="@+id/raidAction"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginEnd="4dp"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:minWidth="48dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:text="@string/raid_join"
+            android:textAllCaps="true"
+            android:textAppearance="?attr/textAppearanceLabelLarge"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/raidClose"
+            app:layout_constraintTop_toTopOf="parent" />
 
         <ImageView
             android:id="@+id/raidClose"

@@ -4,8 +4,8 @@ import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.github.andreyasadchy.xtra.graphql.type.ClipsPeriod
 import com.github.andreyasadchy.xtra.model.ui.Clip
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
@@ -18,10 +18,10 @@ class ChannelClipsDataSource(
     private val gqlPeriod: String?,
     private val startedAt: String?,
     private val endedAt: String?,
-    private val gqlHeaders: Map<String, String>,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixHeaders: Map<String, String>,
-    private val helixRepository: HelixRepository,
+    private val kickWebHeaders: Map<String, String>,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiHeaders: Map<String, String>,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
@@ -104,7 +104,7 @@ class ChannelClipsDataSource(
     }
 
     private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Clip> {
-        val response = graphQLRepository.loadQueryUserClips(networkLibrary, gqlHeaders, channelId, channelLogin.takeIf { channelId.isNullOrBlank() }, gqlQueryPeriod, params.loadSize, offset)
+        val response = kickGraphQLRepository.loadQueryUserClips(networkLibrary, kickWebHeaders, channelId, channelLogin.takeIf { channelId.isNullOrBlank() }, gqlQueryPeriod, params.loadSize, offset)
         if (enableIntegrity) {
             response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
         }
@@ -148,7 +148,7 @@ class ChannelClipsDataSource(
     }
 
     private suspend fun gqlLoad(params: LoadParams<Int>): LoadResult<Int, Clip> {
-        val response = graphQLRepository.loadChannelClips(networkLibrary, gqlHeaders, channelLogin, gqlPeriod, params.loadSize, offset)
+        val response = kickGraphQLRepository.loadChannelClips(networkLibrary, kickWebHeaders, channelLogin, gqlPeriod, params.loadSize, offset)
         if (enableIntegrity) {
             response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
         }
@@ -185,9 +185,9 @@ class ChannelClipsDataSource(
     }
 
     private suspend fun helixLoad(params: LoadParams<Int>): LoadResult<Int, Clip> {
-        val response = helixRepository.getClips(
+        val response = kickPublicApiRepository.getClips(
             networkLibrary = networkLibrary,
-            headers = helixHeaders,
+            headers = kickPublicApiHeaders,
             channelId = channelId,
             startedAt = startedAt,
             endedAt = endedAt,
@@ -195,9 +195,9 @@ class ChannelClipsDataSource(
             offset = offset,
         )
         val games = response.data.mapNotNull { it.gameId }.let {
-            helixRepository.getGames(
+            kickPublicApiRepository.getGames(
                 networkLibrary = networkLibrary,
-                headers = helixHeaders,
+                headers = kickPublicApiHeaders,
                 ids = it,
             ).data
         }

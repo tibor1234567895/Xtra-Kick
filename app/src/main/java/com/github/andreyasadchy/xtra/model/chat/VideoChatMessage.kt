@@ -8,7 +8,7 @@ class VideoChatMessage(
     val userName: String?,
     val message: String?,
     val color: String?,
-    val emotes: List<TwitchEmote>?,
+    val emotes: List<ChatEmote>?,
     val badges: List<Badge>?,
     val fullMsg: String?,
 )

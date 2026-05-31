@@ -90,7 +90,7 @@ object AuthStateHelper {
         }
     }
 
-    fun clearLegacyTwitchAuth(context: Context) {
+    fun clearLegacyWebAuth(context: Context) {
         context.tokenPrefs().edit {
             remove(C.TOKEN)
             remove(C.GQL_HEADERS)

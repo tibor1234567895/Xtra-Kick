@@ -5,8 +5,8 @@ import androidx.paging.PagingState
 import com.github.andreyasadchy.xtra.graphql.type.BroadcastType
 import com.github.andreyasadchy.xtra.graphql.type.VideoSort
 import com.github.andreyasadchy.xtra.model.ui.Video
-import com.github.andreyasadchy.xtra.repository.GraphQLRepository
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
@@ -21,10 +21,10 @@ class ChannelVideosDataSource(
     private val helixPeriod: String,
     private val helixBroadcastTypes: String,
     private val helixSort: String,
-    private val gqlHeaders: Map<String, String>,
-    private val graphQLRepository: GraphQLRepository,
-    private val helixHeaders: Map<String, String>,
-    private val helixRepository: HelixRepository,
+    private val kickWebHeaders: Map<String, String>,
+    private val kickGraphQLRepository: KickGraphQLRepository,
+    private val kickPublicApiHeaders: Map<String, String>,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
@@ -127,7 +127,7 @@ class ChannelVideosDataSource(
     }
 
     private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
-        val response = graphQLRepository.loadQueryUserVideos(networkLibrary, gqlHeaders, channelId, channelLogin.takeIf { channelId.isNullOrBlank() }, gqlQuerySort, gqlQueryType?.let { listOf(it) }, params.loadSize, offset)
+        val response = kickGraphQLRepository.loadQueryUserVideos(networkLibrary, kickWebHeaders, channelId, channelLogin.takeIf { channelId.isNullOrBlank() }, gqlQuerySort, gqlQueryType?.let { listOf(it) }, params.loadSize, offset)
         if (enableIntegrity) {
             response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
         }
@@ -166,7 +166,7 @@ class ChannelVideosDataSource(
     }
 
     private suspend fun gqlLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
-        val response = graphQLRepository.loadChannelVideos(networkLibrary, gqlHeaders, channelLogin, gqlType, gqlSort, params.loadSize, offset)
+        val response = kickGraphQLRepository.loadChannelVideos(networkLibrary, kickWebHeaders, channelLogin, gqlType, gqlSort, params.loadSize, offset)
         if (enableIntegrity) {
             response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
         }
@@ -204,9 +204,9 @@ class ChannelVideosDataSource(
     }
 
     private suspend fun helixLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
-        val response = helixRepository.getVideos(
+        val response = kickPublicApiRepository.getVideos(
             networkLibrary = networkLibrary,
-            headers = helixHeaders,
+            headers = kickPublicApiHeaders,
             channelId = channelId,
             period = helixPeriod,
             broadcastType = helixBroadcastTypes,

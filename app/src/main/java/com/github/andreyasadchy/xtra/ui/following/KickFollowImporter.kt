@@ -3,7 +3,7 @@ package com.github.andreyasadchy.xtra.ui.following
 import android.content.Context
 import android.util.Log
 import com.github.andreyasadchy.xtra.BuildConfig
-import com.github.andreyasadchy.xtra.repository.HelixRepository
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
 import com.github.andreyasadchy.xtra.util.C
@@ -88,7 +88,7 @@ internal object KickFollowImportPayloadParser {
 class KickFollowImporter @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val localFollowsChannel: LocalFollowChannelRepository,
-    private val helixRepository: HelixRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
 ) {
 
@@ -188,14 +188,14 @@ class KickFollowImporter @Inject constructor(
         if (normalizedLogins.isEmpty()) {
             return
         }
-        val headers = KickApiHelper.getHelixHeaders(context)
+        val headers = KickApiHelper.getKickPublicApiHeaders(context)
         if (headers[C.HEADER_TOKEN].isNullOrBlank()) {
             debugLogI("skip imported follow id enrichment: missing auth token")
             return
         }
         val networkLibrary = context.prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
         normalizedLogins.chunked(100).forEach { chunk ->
-            val response = helixRepository.getUsers(
+            val response = kickPublicApiRepository.getUsers(
                 networkLibrary = networkLibrary,
                 headers = headers,
                 logins = chunk,

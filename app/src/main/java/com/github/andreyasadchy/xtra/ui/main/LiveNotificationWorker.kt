@@ -73,7 +73,7 @@ class LiveNotificationWorker @AssistedInject constructor(
                             context,
                             it.channelId.hashCode(),
                             Intent(context, MainActivity::class.java).apply {
-                                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                                 action = MainActivity.INTENT_LIVE_NOTIFICATION
                                 putExtra(MainActivity.KEY_VIDEO, it)
                             },
