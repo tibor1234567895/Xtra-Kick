@@ -207,6 +207,7 @@
     <string name="chat_clearmsg_generic">Message deleted.</string>
     <string name="chat_first">First time chat</string>
     <string name="chat_reward">Channel point redemption</string>
+    <string name="chat_reward_input_required_abbreviation" translatable="false">Aa</string>
     <string name="always">Always</string>
     <string name="local">Local</string>
     <string name="days">d</string>

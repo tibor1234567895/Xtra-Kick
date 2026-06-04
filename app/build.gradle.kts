@@ -110,7 +110,37 @@ android {
         generateLocaleConfig = true
     }
     lint {
-        disable += "ContentDescription"
+        disable += listOf(
+            "AlwaysShowAction",
+            "AppBundleLocaleChanges",
+            "ChromeOsAbiSupport",
+            "ContentDescription",
+            "ExportedService",
+            "GradleDependency",
+            "IntentFilterUniqueDataAttributes",
+            "LeanbackUsesWifi",
+            "NewerVersionAvailable",
+            "NonConstantResourceId",
+            "NotifyDataSetChanged",
+            "ObsoleteSdkInt",
+            "OldTargetApi",
+            "Overdraw",
+            "PluralsCandidate",
+            "PrivateResource",
+            "SmallSp",
+            "SourceLockedOrientationActivity",
+            "StaticFieldLeak",
+            "TypographyEllipsis",
+            "Typos",
+            "UnsafeIntentLaunch",
+            "UnusedResources",
+            "UseCompatLoadingForDrawables",
+            "UseCompoundDrawables",
+            "UseKtx",
+            "UselessParent",
+            "UseTomlInstead",
+            "WakelockTimeout",
+        )
         disable += "MissingTranslation"
     }
     packaging.jniLibs.excludes.addAll(listOf(

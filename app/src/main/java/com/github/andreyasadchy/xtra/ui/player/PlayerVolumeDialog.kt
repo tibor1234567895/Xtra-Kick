@@ -13,6 +13,7 @@ import com.github.andreyasadchy.xtra.util.prefs
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.slider.Slider
+import java.util.Locale
 
 class PlayerVolumeDialog : BottomSheetDialogFragment() {
 
@@ -59,7 +60,7 @@ class PlayerVolumeDialog : BottomSheetDialogFragment() {
 
     private fun setVolume(volume: Float) {
         with(binding) {
-            volumeText.text = volume.toInt().toString()
+            volumeText.text = String.format(Locale.getDefault(), "%d", volume.toInt())
             if (volume == 0f) {
                 volumeMute.setImageResource(R.drawable.baseline_volume_off_black_24)
                 volumeMute.setOnClickListener {

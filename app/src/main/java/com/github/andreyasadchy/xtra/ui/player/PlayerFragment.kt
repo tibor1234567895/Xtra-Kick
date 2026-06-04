@@ -817,9 +817,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     controllerTapDetector.onTouchEvent(event)
                 }
                 playPause.setOnClickListener { playPause() }
-                rewind.text = ((prefs.getString(C.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000) / 1000).toString()
+                rewind.text = String.format(Locale.getDefault(), "%d", (prefs.getString(C.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000) / 1000)
                 rewind.setOnClickListener { rewind() }
-                fastForward.text = ((prefs.getString(C.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000) / 1000).toString()
+                fastForward.text = String.format(Locale.getDefault(), "%d", (prefs.getString(C.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000) / 1000)
                 fastForward.setOnClickListener { fastForward() }
                 progressBar.addListener(
                     object : TimeBar.OnScrubListener {

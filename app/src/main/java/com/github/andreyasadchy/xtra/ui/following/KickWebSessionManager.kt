@@ -76,7 +76,7 @@ class KickWebSessionManager @Inject constructor(
         return hasSession
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     fun configureImportWebView(webView: WebView) {
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
@@ -117,6 +117,9 @@ class KickWebSessionManager @Inject constructor(
         webView.setOnTouchListener { view, event ->
             if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_UP) {
                 view.requestFocusFromTouch()
+            }
+            if (event.action == MotionEvent.ACTION_UP) {
+                view.performClick()
             }
             false
         }

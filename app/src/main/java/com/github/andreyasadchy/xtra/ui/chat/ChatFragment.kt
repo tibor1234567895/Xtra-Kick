@@ -978,7 +978,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
                 if (reward.isUserInputRequired == true) {
                     addView(TextView(context).apply {
-                        text = "Aa"
+                        setText(R.string.chat_reward_input_required_abbreviation)
                         setTypeface(typeface, Typeface.BOLD)
                         setTextColor(Color.WHITE)
                         textSize = 10f
