@@ -22,30 +22,30 @@ class ChatAdapterUtilsTest {
             message = "thanks",
             reply = Reply(
                 threadParentId = "parent-1",
-                userLogin = "Tibor",
-                userName = "Tibor",
+                userLogin = "currentuser",
+                userName = "CurrentUser",
                 message = "hello"
             )
         )
 
-        assertTrue(ChatAdapterUtils.isMessageHighlightedForLoggedInUser(chatMessage, "tibor"))
+        assertTrue(ChatAdapterUtils.isMessageHighlightedForLoggedInUser(chatMessage, "currentuser"))
     }
 
     @Test
     fun doesNotHighlightUsersOwnReply() {
         val chatMessage = ChatMessage(
-            userLogin = "tibor",
-            userName = "Tibor",
+            userLogin = "currentuser",
+            userName = "CurrentUser",
             message = "self reply",
             reply = Reply(
                 threadParentId = "parent-1",
-                userLogin = "tibor",
-                userName = "Tibor",
+                userLogin = "currentuser",
+                userName = "CurrentUser",
                 message = "hello"
             )
         )
 
-        assertFalse(ChatAdapterUtils.isMessageHighlightedForLoggedInUser(chatMessage, "tibor"))
+        assertFalse(ChatAdapterUtils.isMessageHighlightedForLoggedInUser(chatMessage, "currentuser"))
     }
 
     @Test
@@ -54,13 +54,13 @@ class ChatAdapterUtilsTest {
             isReply = true,
             reply = Reply(
                 threadParentId = "parent-1",
-                userLogin = "tibor",
-                userName = "Tibor",
+                userLogin = "currentuser",
+                userName = "CurrentUser",
                 message = "hello"
             )
         )
 
-        assertFalse(ChatAdapterUtils.isMessageHighlightedForLoggedInUser(previewRow, "tibor"))
+        assertFalse(ChatAdapterUtils.isMessageHighlightedForLoggedInUser(previewRow, "currentuser"))
     }
 
     @Test

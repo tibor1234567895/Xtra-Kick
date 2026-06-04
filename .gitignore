@@ -70,6 +70,11 @@ fastlane/readme.md
 .env.*
 !.env.example
 
+# Local agent instructions/metadata
+/AGENTS.md
+/AGENTS.override.md
+/.codex
+
 # Ignore exported chat/history files and local dumps
 106813460160p1777924348280_chat.json
 1068134601080p601777913902557_chat.json
