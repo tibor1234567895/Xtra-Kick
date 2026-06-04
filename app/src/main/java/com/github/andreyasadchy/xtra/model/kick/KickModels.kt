@@ -327,6 +327,8 @@ class KickMessageSender(
 class KickMessageIdentity(
     val color: String? = null,
     val badges: List<KickMessageBadge>? = null,
+    @SerialName("badges_v2")
+    val badgesV2: List<KickMessageBadge>? = null,
 )
 
 @Serializable
@@ -342,6 +344,8 @@ class KickMessageBadge(
     val level: Int? = null,
     val tier: Int? = null,
     val version: Int? = null,
+    val selected: Boolean? = null,
+    val metadata: JsonElement? = null,
     val active: Boolean? = null,
     @SerialName("badge_image")
     val badgeImage: JsonElement? = null,

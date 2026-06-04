@@ -52,38 +52,38 @@ class ChatAdapter(
     private val stvBadges: List<StvBadge>,
     private val personalEmoteSets: Map<String, List<Emote>>,
     private val stvUsers: List<StvUser>,
-    private val enableTimestamps: Boolean,
-    private val timestampFormat: String?,
-    private val firstMsgVisibility: Int,
+    private var enableTimestamps: Boolean,
+    private var timestampFormat: String?,
+    private var firstMsgVisibility: Int,
     private val firstChatMsg: String,
     private val redeemedChatMsg: String,
     private val redeemedNoMsg: String,
     private val rewardChatMsg: String,
     private val replyMessage: String,
-    private val useRandomColors: Boolean,
-    private val useReadableColors: Boolean,
+    private var useRandomColors: Boolean,
+    private var useReadableColors: Boolean,
     private val isLightTheme: Boolean,
     private val nameDisplay: String?,
-    private val useBoldNames: Boolean,
-    private val showNamePaints: Boolean,
-    private val showStvBadges: Boolean,
-    private val showKickBadges: Boolean,
-    private val showPersonalEmotes: Boolean,
-    private val enableAlternatingLineShadows: Boolean,
-    private val alternatingLineShadowStrength: Int,
-    private val showSystemMessageEmotes: Boolean,
+    private var useBoldNames: Boolean,
+    private var showNamePaints: Boolean,
+    private var showStvBadges: Boolean,
+    private var showKickBadges: Boolean,
+    private var showPersonalEmotes: Boolean,
+    private var enableAlternatingLineShadows: Boolean,
+    private var alternatingLineShadowStrength: Int,
+    private var showSystemMessageEmotes: Boolean,
     private val chatUrl: String?,
     private val getEmoteBytes: ((String, Pair<Long, Int>) -> ByteArray?)?,
     private val fragment: Fragment,
     private val backgroundColor: Int,
     private val dialogBackgroundColor: Int,
-    private val imageLibrary: String?,
-    private val messageTextSize: Float,
-    private val emoteSize: Int,
-    private val badgeSize: Int,
-    private val emoteQuality: String,
-    private val animateGifs: Boolean,
-    private val enableOverlayEmotes: Boolean,
+    private var imageLibrary: String?,
+    private var messageTextSize: Float,
+    private var emoteSize: Int,
+    private var badgeSize: Int,
+    private var emoteQuality: String,
+    private var animateGifs: Boolean,
+    private var enableOverlayEmotes: Boolean,
     private val channelId: String?,
     private val loggedInUser: String?,
     private val messageClickListener: ((String?, ChatMessage?) -> Unit)?,
@@ -105,30 +105,63 @@ class ChatAdapter(
     private val savedLocalEmotes = mutableMapOf<String, ByteArray>()
     private val expandedReplyPreviewKeys = mutableSetOf<String>()
     private var renderGeneration = 0L
-    private val renderConfigSignature = listOf(
-        enableTimestamps,
-        timestampFormat,
-        firstMsgVisibility,
-        firstChatMsg,
-        redeemedChatMsg,
-        redeemedNoMsg,
-        rewardChatMsg,
-        replyMessage,
-        useRandomColors,
-        useReadableColors,
-        isLightTheme,
-        nameDisplay,
-        useBoldNames,
-        showNamePaints,
-        showStvBadges,
-        showKickBadges,
-        showPersonalEmotes,
-        showSystemMessageEmotes,
-        chatUrl,
-        loggedInUser,
-        true,
-        false
-    ).joinToString("|").hashCode().toLong()
+
+    data class LiveSettings(
+        val enableTimestamps: Boolean,
+        val timestampFormat: String?,
+        val firstMsgVisibility: Int,
+        val useRandomColors: Boolean,
+        val useReadableColors: Boolean,
+        val useBoldNames: Boolean,
+        val showNamePaints: Boolean,
+        val showStvBadges: Boolean,
+        val showKickBadges: Boolean,
+        val showPersonalEmotes: Boolean,
+        val enableAlternatingLineShadows: Boolean,
+        val alternatingLineShadowStrength: Int,
+        val showSystemMessageEmotes: Boolean,
+        val imageLibrary: String?,
+        val messageTextSize: Float,
+        val emoteSize: Int,
+        val badgeSize: Int,
+        val emoteQuality: String,
+        val animateGifs: Boolean,
+        val enableOverlayEmotes: Boolean,
+    )
+
+    private fun renderConfigSignature(): Long {
+        return listOf(
+            enableTimestamps,
+            timestampFormat,
+            firstMsgVisibility,
+            firstChatMsg,
+            redeemedChatMsg,
+            redeemedNoMsg,
+            rewardChatMsg,
+            replyMessage,
+            useRandomColors,
+            useReadableColors,
+            isLightTheme,
+            nameDisplay,
+            useBoldNames,
+            showNamePaints,
+            showStvBadges,
+            showKickBadges,
+            showPersonalEmotes,
+            showSystemMessageEmotes,
+            chatUrl,
+            loggedInUser,
+            imageLibrary,
+            messageTextSize,
+            emoteSize,
+            badgeSize,
+            emoteQuality,
+            animateGifs,
+            enableOverlayEmotes,
+            enableAlternatingLineShadows,
+            alternatingLineShadowStrength
+        ).joinToString("|").hashCode().toLong()
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         return ViewHolder(LayoutInflater.from(parent.context).inflate(R.layout.chat_list_item, parent, false))
@@ -153,7 +186,56 @@ class ChatAdapter(
         }
     }
 
-    private fun renderSignature(): Long = renderConfigSignature * 31L + renderGeneration
+    fun updateLiveSettings(settings: LiveSettings): Boolean {
+        if (
+            enableTimestamps == settings.enableTimestamps &&
+            timestampFormat == settings.timestampFormat &&
+            firstMsgVisibility == settings.firstMsgVisibility &&
+            useRandomColors == settings.useRandomColors &&
+            useReadableColors == settings.useReadableColors &&
+            useBoldNames == settings.useBoldNames &&
+            showNamePaints == settings.showNamePaints &&
+            showStvBadges == settings.showStvBadges &&
+            showKickBadges == settings.showKickBadges &&
+            showPersonalEmotes == settings.showPersonalEmotes &&
+            enableAlternatingLineShadows == settings.enableAlternatingLineShadows &&
+            alternatingLineShadowStrength == settings.alternatingLineShadowStrength &&
+            showSystemMessageEmotes == settings.showSystemMessageEmotes &&
+            imageLibrary == settings.imageLibrary &&
+            messageTextSize == settings.messageTextSize &&
+            emoteSize == settings.emoteSize &&
+            badgeSize == settings.badgeSize &&
+            emoteQuality == settings.emoteQuality &&
+            animateGifs == settings.animateGifs &&
+            enableOverlayEmotes == settings.enableOverlayEmotes
+        ) {
+            return false
+        }
+        enableTimestamps = settings.enableTimestamps
+        timestampFormat = settings.timestampFormat
+        firstMsgVisibility = settings.firstMsgVisibility
+        useRandomColors = settings.useRandomColors
+        useReadableColors = settings.useReadableColors
+        useBoldNames = settings.useBoldNames
+        showNamePaints = settings.showNamePaints
+        showStvBadges = settings.showStvBadges
+        showKickBadges = settings.showKickBadges
+        showPersonalEmotes = settings.showPersonalEmotes
+        enableAlternatingLineShadows = settings.enableAlternatingLineShadows
+        alternatingLineShadowStrength = settings.alternatingLineShadowStrength
+        showSystemMessageEmotes = settings.showSystemMessageEmotes
+        imageLibrary = settings.imageLibrary
+        messageTextSize = settings.messageTextSize
+        emoteSize = settings.emoteSize
+        badgeSize = settings.badgeSize
+        emoteQuality = settings.emoteQuality
+        animateGifs = settings.animateGifs
+        enableOverlayEmotes = settings.enableOverlayEmotes
+        invalidateFormatting()
+        return true
+    }
+
+    private fun renderSignature(): Long = renderConfigSignature() * 31L + renderGeneration
 
     private fun messageBindKey(chatMessage: ChatMessage, position: Int): String {
         return listOfNotNull(

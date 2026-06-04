@@ -3005,7 +3005,7 @@ class KickRepository @Inject constructor(
             sb.append(content.substring(lastIndex))
             content = sb.toString()
         }
-        val identityBadges = message.sender?.identity?.badges.orEmpty()
+        val identityBadges = selectedKickIdentityBadges(message.sender?.identity)
         val syntheticBadges = syntheticKickBadgesFromSender(message.sender)
         val allBadges = mergeKickMessageBadges(
             existingBadges = identityBadges,
@@ -3214,20 +3214,11 @@ class KickRepository @Inject constructor(
     }
 
     private fun resolveKickBadgeType(badge: KickMessageBadge): String? {
-        return badge.type?.trim()?.takeIf { it.isNotBlank() }
-            ?: badge.badgeType?.trim()?.takeIf { it.isNotBlank() }
-            ?: badge.name?.trim()?.takeIf { it.isNotBlank() }
-            ?: badge.slug?.trim()?.takeIf { it.isNotBlank() }
-            ?: badge.text?.trim()?.takeIf { it.isNotBlank() }
+        return kickMessageBadgeType(badge)
     }
 
     private fun resolveKickBadgeVersion(badge: KickMessageBadge): String {
-        val parsedFromText = badge.text
-            ?.let { Regex("""(\d{1,3})""").find(it) }
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.toIntOrNull()
-        return (badge.count ?: badge.months ?: badge.level ?: badge.tier ?: badge.version ?: parsedFromText ?: 1).toString()
+        return kickMessageBadgeVersion(badge)
     }
 
     private fun syntheticKickBadgesFromSender(
@@ -3568,9 +3559,9 @@ class KickRepository @Inject constructor(
         }
         channelBadges.forEach { badge ->
             val type = badge.type?.trim()?.takeIf { it.isNotBlank() }
-                ?: badge.badgeType?.trim()?.takeIf { it.isNotBlank() }
                 ?: badge.name?.trim()?.takeIf { it.isNotBlank() }
                 ?: badge.slug?.trim()?.takeIf { it.isNotBlank() }
+                ?: badge.badgeType?.trim()?.takeIf { it.isNotBlank() }
                 ?: badge.text?.trim()?.takeIf { it.isNotBlank() }
                 ?: if (badge.months != null) "subscriber" else return@forEach
             val version = (badge.count ?: badge.months ?: badge.level ?: badge.tier ?: badge.version ?: 1).toString()
@@ -3945,7 +3936,7 @@ class KickRepository @Inject constructor(
                     val pathHasBadge = path.any { it.contains("badge") }
                     val objectHasBadgeKeys = element.keys.any { it.contains("badge", true) }
                     if (pathHasBadge || objectHasBadgeKeys) {
-                        val type = stringValue(element, listOf("type", "badge_type", "name", "slug", "text"))
+                        val type = stringValue(element, listOf("type", "name", "slug", "badge_type", "text"))
                             ?: inferKickBadgeTypeFromJsonPath(path)
                         val version = (intValue(element, listOf("count", "months", "level", "tier", "version")) ?: 1).toString()
                         val imageUrl = stringValue(element, listOf("badge_image_url", "badge_url", "image_url", "icon_url", "url", "src"))

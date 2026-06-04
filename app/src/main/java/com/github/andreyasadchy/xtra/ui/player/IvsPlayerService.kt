@@ -160,7 +160,10 @@ class IvsPlayerService : Service() {
                 override fun onQualityChanged(quality: com.amazonaws.ivs.player.Quality) = Unit
             }
         )
+        val rewindMs = prefs().getString(C.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000
+        val fastForwardMs = prefs().getString(C.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000
         session = MediaSession(this, TAG).apply {
+            setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
             setCallback(
                 object : MediaSession.Callback() {
                     override fun onPlay() {
@@ -185,6 +188,22 @@ class IvsPlayerService : Service() {
 
                     override fun onSeekTo(pos: Long) {
                         player?.seekTo(pos)
+                    }
+
+                    override fun onSkipToNext() {
+                        player?.let { it.seekTo(it.position + fastForwardMs) }
+                    }
+
+                    override fun onSkipToPrevious() {
+                        player?.let { it.seekTo((it.position - rewindMs).coerceAtLeast(0L)) }
+                    }
+
+                    override fun onFastForward() {
+                        onSkipToNext()
+                    }
+
+                    override fun onRewind() {
+                        onSkipToPrevious()
                     }
                 }
             )
@@ -305,6 +324,10 @@ class IvsPlayerService : Service() {
                         PlaybackState.ACTION_STOP or
                             PlaybackState.ACTION_PLAY or
                             PlaybackState.ACTION_PAUSE or
+                            PlaybackState.ACTION_SKIP_TO_NEXT or
+                            PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+                            PlaybackState.ACTION_FAST_FORWARD or
+                            PlaybackState.ACTION_REWIND or
                             PlaybackState.ACTION_PLAY_PAUSE or
                             (if (!live) PlaybackState.ACTION_SEEK_TO else 0L)
                     )

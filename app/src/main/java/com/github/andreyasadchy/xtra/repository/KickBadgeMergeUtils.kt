@@ -24,11 +24,5 @@ internal fun mergeKickMessageBadges(
 }
 
 internal fun kickMessageBadgeSpecificity(badge: KickMessageBadge): Int {
-    return badge.count
-        ?: badge.months
-        ?: badge.level
-        ?: badge.tier
-        ?: badge.version
-        ?: Regex("""(\d{1,3})""").find(badge.text.orEmpty())?.groupValues?.getOrNull(1)?.toIntOrNull()
-        ?: 1
+    return kickMessageBadgeSpecificityValue(badge)
 }

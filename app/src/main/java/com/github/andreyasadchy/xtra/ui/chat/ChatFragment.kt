@@ -1,6 +1,7 @@
 package com.github.andreyasadchy.xtra.ui.chat
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
@@ -161,6 +162,11 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private var rebuildingChannelPointsDialog = false
     private var scrollToBottomQueued = false
     private var pendingScrollToBottomPosition: Int? = null
+    private val chatPreferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key in LIVE_CHAT_RENDER_SETTING_KEYS) {
+            refreshLiveChatRenderSettings()
+        }
+    }
 
     private var autoCompleteAdapter: AutoCompleteAdapter<Any>? = null
     private var emoteSectionAdapter: EmoteSectionAdapter? = null
@@ -2317,6 +2323,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        requireContext().prefs().registerOnSharedPreferenceChangeListener(chatPreferenceChangeListener)
         viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.integrity.collectLatest {
@@ -2344,7 +2351,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 val kickReplayFallback = args.getBoolean(KEY_KICK_REPLAY_FALLBACK)
                 if (isLive || (args.getString(KEY_VIDEO_ID) != null && args.getInt(KEY_START_TIME) != -1) || chatUrl != null || kickReplayFallback) {
                     val enableMessaging = isLive && isLoggedIn
-                    val sizeModifier = (requireContext().prefs().getInt(C.CHAT_SIZE_MODIFIER, 100).toFloat() / 100f)
+                    val liveSettings = createLiveChatRenderSettings()
                     adapter = ChatAdapter(
                         messages = viewModel.chatMessages,
                         localChatEmotes = viewModel.localChatEmotes,
@@ -2356,31 +2363,28 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         stvBadges = viewModel.stvBadges,
                         personalEmoteSets = viewModel.personalEmoteSets,
                         stvUsers = viewModel.stvUsers,
-                        enableTimestamps = requireContext().prefs().getBoolean(C.CHAT_TIMESTAMPS, false),
-                        timestampFormat = requireContext().prefs().getString(C.CHAT_TIMESTAMP_FORMAT, "0"),
-                        firstMsgVisibility = requireContext().prefs().getString(C.CHAT_FIRSTMSG_VISIBILITY, "0")?.toIntOrNull() ?: 0,
+                        enableTimestamps = liveSettings.enableTimestamps,
+                        timestampFormat = liveSettings.timestampFormat,
+                        firstMsgVisibility = liveSettings.firstMsgVisibility,
                         firstChatMsg = getString(R.string.chat_first),
                         redeemedChatMsg = getString(R.string.redeemed),
                         redeemedNoMsg = getString(R.string.user_redeemed),
                         rewardChatMsg = getString(R.string.chat_reward),
                         replyMessage = getString(R.string.replying_to_message),
-                        useRandomColors = requireContext().prefs().getBoolean(C.CHAT_RANDOMCOLOR, true),
-                        useReadableColors = requireContext().prefs().getBoolean(C.CHAT_THEME_ADAPTED_USERNAME_COLOR, true),
+                        useRandomColors = liveSettings.useRandomColors,
+                        useReadableColors = liveSettings.useReadableColors,
                         isLightTheme = requireContext().obtainStyledAttributes(intArrayOf(androidx.appcompat.R.attr.isLightTheme)).use {
                             it.getBoolean(0, false)
                         },
                         nameDisplay = requireContext().prefs().getString(C.UI_NAME_DISPLAY, "1"),
-                        useBoldNames = requireContext().prefs().getBoolean(C.CHAT_BOLDNAMES, false),
-                        showNamePaints = requireContext().prefs().getBoolean(C.CHAT_SHOW_PAINTS, true),
-                        showStvBadges = requireContext().prefs().getBoolean(C.CHAT_SHOW_STV_BADGES, true),
-                        showKickBadges = requireContext().prefs().getBoolean(C.CHAT_SHOW_KICK_BADGES, true),
-                        showPersonalEmotes = requireContext().prefs().getBoolean(C.CHAT_SHOW_PERSONAL_EMOTES, true),
-                        enableAlternatingLineShadows = requireContext().prefs().getBoolean(C.CHAT_ALTERNATING_LINE_SHADOW, true),
-                        alternatingLineShadowStrength = requireContext().prefs().getInt(
-                            C.CHAT_ALTERNATING_LINE_SHADOW_STRENGTH,
-                            ChatBackgroundUtils.DEFAULT_ALTERNATING_LINE_SHADOW_STRENGTH
-                        ),
-                        showSystemMessageEmotes = requireContext().prefs().getBoolean(C.CHAT_SYSTEM_MESSAGE_EMOTES, true),
+                        useBoldNames = liveSettings.useBoldNames,
+                        showNamePaints = liveSettings.showNamePaints,
+                        showStvBadges = liveSettings.showStvBadges,
+                        showKickBadges = liveSettings.showKickBadges,
+                        showPersonalEmotes = liveSettings.showPersonalEmotes,
+                        enableAlternatingLineShadows = liveSettings.enableAlternatingLineShadows,
+                        alternatingLineShadowStrength = liveSettings.alternatingLineShadowStrength,
+                        showSystemMessageEmotes = liveSettings.showSystemMessageEmotes,
                         chatUrl = chatUrl,
                         getEmoteBytes = viewModel::getEmoteBytes,
                         fragment = this@ChatFragment,
@@ -2393,13 +2397,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 com.google.android.material.R.attr.colorSurface
                             }
                         ),
-                        imageLibrary = requireContext().prefs().getString(C.CHAT_IMAGE_LIBRARY, "0"),
-                        messageTextSize = (requireContext().prefs().getString(C.CHAT_TEXT_SIZE, "14")?.toFloatOrNull() ?: 14f) * sizeModifier,
-                        emoteSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, (requireContext().prefs().getString(C.CHAT_EMOTE_SIZE, "29.5")?.toFloatOrNull() ?: 29.5f) * sizeModifier, resources.displayMetrics).toInt(),
-                        badgeSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, (requireContext().prefs().getString(C.CHAT_BADGE_SIZE, "18.5")?.toFloatOrNull() ?: 18.5f) * sizeModifier, resources.displayMetrics).toInt(),
-                        emoteQuality = requireContext().prefs().getString(C.CHAT_IMAGE_QUALITY, "4") ?: "4",
-                        animateGifs = requireContext().prefs().getBoolean(C.ANIMATED_EMOTES, true),
-                        enableOverlayEmotes = requireContext().prefs().getBoolean(C.CHAT_ZEROWIDTH, true),
+                        imageLibrary = liveSettings.imageLibrary,
+                        messageTextSize = liveSettings.messageTextSize,
+                        emoteSize = liveSettings.emoteSize,
+                        badgeSize = liveSettings.badgeSize,
+                        emoteQuality = liveSettings.emoteQuality,
+                        animateGifs = liveSettings.animateGifs,
+                        enableOverlayEmotes = liveSettings.enableOverlayEmotes,
                         channelId = channelId,
                         loggedInUser = if (enableMessaging) accountLogin else null,
                         messageClickListener = { channelId, tappedMessage ->
@@ -3441,6 +3445,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     override fun onDestroyView() {
         super.onDestroyView()
+        requireContext().prefs().unregisterOnSharedPreferenceChangeListener(chatPreferenceChangeListener)
         raidCountdownTimer?.cancel()
         raidCountdownTimer = null
         channelPointsDialog?.dismiss()
@@ -3449,6 +3454,55 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         emoteSectionAdapter = null
         resetPinnedGiftUiState()
         _binding = null
+    }
+
+    private fun refreshLiveChatRenderSettings() {
+        val adapter = adapter ?: return
+        val changed = adapter.updateLiveSettings(createLiveChatRenderSettings())
+        if (changed) {
+            val size = adapter.itemCount
+            if (size > 0) {
+                adapter.notifyItemRangeChanged(0, size, ChatAdapter.PAYLOAD_REFORMAT)
+            }
+        }
+    }
+
+    private fun createLiveChatRenderSettings(): ChatAdapter.LiveSettings {
+        val prefs = requireContext().prefs()
+        val sizeModifier = prefs.getInt(C.CHAT_SIZE_MODIFIER, 100).toFloat() / 100f
+        return ChatAdapter.LiveSettings(
+            enableTimestamps = prefs.getBoolean(C.CHAT_TIMESTAMPS, false),
+            timestampFormat = prefs.getString(C.CHAT_TIMESTAMP_FORMAT, "0"),
+            firstMsgVisibility = prefs.getString(C.CHAT_FIRSTMSG_VISIBILITY, "0")?.toIntOrNull() ?: 0,
+            useRandomColors = prefs.getBoolean(C.CHAT_RANDOMCOLOR, true),
+            useReadableColors = prefs.getBoolean(C.CHAT_THEME_ADAPTED_USERNAME_COLOR, true),
+            useBoldNames = prefs.getBoolean(C.CHAT_BOLDNAMES, false),
+            showNamePaints = prefs.getBoolean(C.CHAT_SHOW_PAINTS, true),
+            showStvBadges = prefs.getBoolean(C.CHAT_SHOW_STV_BADGES, true),
+            showKickBadges = prefs.getBoolean(C.CHAT_SHOW_KICK_BADGES, true),
+            showPersonalEmotes = prefs.getBoolean(C.CHAT_SHOW_PERSONAL_EMOTES, true),
+            enableAlternatingLineShadows = prefs.getBoolean(C.CHAT_ALTERNATING_LINE_SHADOW, true),
+            alternatingLineShadowStrength = prefs.getInt(
+                C.CHAT_ALTERNATING_LINE_SHADOW_STRENGTH,
+                ChatBackgroundUtils.DEFAULT_ALTERNATING_LINE_SHADOW_STRENGTH
+            ),
+            showSystemMessageEmotes = prefs.getBoolean(C.CHAT_SYSTEM_MESSAGE_EMOTES, true),
+            imageLibrary = prefs.getString(C.CHAT_IMAGE_LIBRARY, "0"),
+            messageTextSize = (prefs.getString(C.CHAT_TEXT_SIZE, "14")?.toFloatOrNull() ?: 14f) * sizeModifier,
+            emoteSize = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                (prefs.getString(C.CHAT_EMOTE_SIZE, "29.5")?.toFloatOrNull() ?: 29.5f) * sizeModifier,
+                resources.displayMetrics
+            ).toInt(),
+            badgeSize = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                (prefs.getString(C.CHAT_BADGE_SIZE, "18.5")?.toFloatOrNull() ?: 18.5f) * sizeModifier,
+                resources.displayMetrics
+            ).toInt(),
+            emoteQuality = prefs.getString(C.CHAT_IMAGE_QUALITY, "4") ?: "4",
+            animateGifs = prefs.getBoolean(C.ANIMATED_EMOTES, true),
+            enableOverlayEmotes = prefs.getBoolean(C.CHAT_ZEROWIDTH, true),
+        )
     }
 
     override fun onDestroy() {
@@ -3510,6 +3564,29 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         private const val KEY_KICK_REPLAY_URL = "kickReplayUrl"
         private const val KEY_SOURCE = "source"
         private val pinnedInlineEmoteRegex = Regex("\\[emote:(\\d+):([^\\]]+)]")
+        private val LIVE_CHAT_RENDER_SETTING_KEYS = setOf(
+            C.CHAT_TIMESTAMPS,
+            C.CHAT_TIMESTAMP_FORMAT,
+            C.CHAT_FIRSTMSG_VISIBILITY,
+            C.CHAT_RANDOMCOLOR,
+            C.CHAT_THEME_ADAPTED_USERNAME_COLOR,
+            C.CHAT_BOLDNAMES,
+            C.CHAT_SHOW_PAINTS,
+            C.CHAT_SHOW_STV_BADGES,
+            C.CHAT_SHOW_KICK_BADGES,
+            C.CHAT_SHOW_PERSONAL_EMOTES,
+            C.CHAT_ALTERNATING_LINE_SHADOW,
+            C.CHAT_ALTERNATING_LINE_SHADOW_STRENGTH,
+            C.CHAT_SYSTEM_MESSAGE_EMOTES,
+            C.CHAT_IMAGE_LIBRARY,
+            C.CHAT_IMAGE_QUALITY,
+            C.CHAT_SIZE_MODIFIER,
+            C.CHAT_TEXT_SIZE,
+            C.CHAT_EMOTE_SIZE,
+            C.CHAT_BADGE_SIZE,
+            C.ANIMATED_EMOTES,
+            C.CHAT_ZEROWIDTH,
+        )
 
         fun newInstance(channelId: String?, channelLogin: String?, channelName: String?, streamId: String?, source: String? = null): ChatFragment {
             return ChatFragment().apply {

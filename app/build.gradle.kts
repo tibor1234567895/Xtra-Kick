@@ -49,6 +49,9 @@ android {
     val localDebugKeyAlias = projectPropertyOrDefault("LOCAL_DEBUG_KEY_ALIAS")
     val localDebugKeyPassword = projectPropertyOrDefault("LOCAL_DEBUG_KEY_PASSWORD")
     val localDebugKeystoreFile = file(localDebugKeystorePath)
+    val normalDebugPackage = (project.findProperty("NORMAL_DEBUG_PACKAGE") as String?)
+        ?.toBooleanStrictOrNull()
+        ?: false
 
     if (localDebugKeystoreFile.exists() &&
         localDebugStorePassword.isNotEmpty() &&
@@ -81,8 +84,10 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".test"
-            versionNameSuffix = "-TEST"
+            if (!normalDebugPackage) {
+                applicationIdSuffix = ".test"
+                versionNameSuffix = "-TEST"
+            }
             buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
         }

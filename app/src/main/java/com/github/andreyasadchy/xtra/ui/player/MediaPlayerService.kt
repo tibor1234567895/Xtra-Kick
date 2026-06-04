@@ -152,6 +152,7 @@ class MediaPlayerService : Service() {
         val fastForwardMs = prefs().getString(C.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000
         val session = MediaSession(this, "MediaPlayerService")
         this.session = session
+        session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
         session.setCallback(
             object : MediaSession.Callback() {
                 override fun onPrepare() = player.prepareAsync()
@@ -296,6 +297,8 @@ class MediaPlayerService : Service() {
                         (PlaybackState.ACTION_STOP
                                 or PlaybackState.ACTION_PAUSE
                                 or PlaybackState.ACTION_PLAY
+                                or PlaybackState.ACTION_SKIP_TO_NEXT
+                                or PlaybackState.ACTION_SKIP_TO_PREVIOUS
                                 or PlaybackState.ACTION_REWIND
                                 or PlaybackState.ACTION_FAST_FORWARD
                                 or PlaybackState.ACTION_SET_RATING
