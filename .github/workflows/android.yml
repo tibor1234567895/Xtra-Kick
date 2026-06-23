@@ -12,7 +12,7 @@ jobs:
       ORG_GRADLE_PROJECT_KICK_OAUTH_BACKEND_BASE_URL: ${{ secrets.KICK_OAUTH_BACKEND_BASE_URL }}
     steps:
     - name: Checkout sources
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         fetch-depth: 0
         filter: blob:none
