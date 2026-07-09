@@ -312,7 +312,7 @@ class PlaybackService : MediaSessionService() {
                                     "START_STREAM received channel=$channelName disableVideo=$disableVideo " +
                                         "backgroundHandoffMode=$backgroundHandoffMode uriPresent=${!uri.isNullOrBlank()}"
                                 )
-                                DiagnosticLogger.w(
+                                DiagnosticLogger.i(
                                     TAG,
                                     "START_STREAM service received channel=$channelName disableVideo=$disableVideo " +
                                         "background=$background backgroundHandoffMode=$backgroundHandoffMode " +
@@ -434,13 +434,17 @@ class PlaybackService : MediaSessionService() {
                                 session.player.prepare()
                                 session.player.playWhenReady = true
                                 Handler(Looper.getMainLooper()).postDelayed({
-                                    DiagnosticLogger.w(
-                                        TAG,
+                                    val errorName = session.player.playerError?.errorCodeName
+                                    val followupMessage =
                                         "START_STREAM service followup channel=$channelName ${summarizePlaybackUri(uri)} " +
                                             "state=${playbackStateName(session.player.playbackState)} " +
                                             "playWhenReady=${session.player.playWhenReady} isPlaying=${session.player.isPlaying} " +
-                                            "error=${session.player.playerError?.errorCodeName}"
-                                    )
+                                            "error=$errorName"
+                                    if (errorName != null) {
+                                        DiagnosticLogger.w(TAG, followupMessage)
+                                    } else {
+                                        DiagnosticLogger.i(TAG, followupMessage)
+                                    }
                                 }, 5000L)
                                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                             }

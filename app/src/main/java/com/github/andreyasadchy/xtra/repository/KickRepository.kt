@@ -2735,6 +2735,108 @@ class KickRepository @Inject constructor(
         }
     }
 
+    /**
+     * Resolve a Kick clip by slug/id from Kick web APIs (not Twitch GQL).
+     */
+    suspend fun getClip(clipIdOrSlug: String): Clip? = withContext(Dispatchers.IO) {
+        val id = clipIdOrSlug.trim().takeIf { it.isNotBlank() } ?: return@withContext null
+        val encoded = urlEncode(id)
+        val candidates = listOf(
+            "https://kick.com/api/v2/clips/$encoded",
+            "https://kick.com/api/v1/clips/$encoded",
+        )
+        for (url in candidates) {
+            val root = runCatching { json.parseToJsonElement(getRaw(url, isKickWeb = true)) }.getOrNull() ?: continue
+            parseClips(roots = listOf(root), limit = 1).firstOrNull()?.let { return@withContext it }
+            val obj = root as? JsonObject ?: continue
+            val data = obj.objOrNull("data") ?: obj.objOrNull("clip") ?: obj
+            val clipUrl = data.primitiveOrNull("video_url")
+                ?: data.primitiveOrNull("clip_url")
+                ?: data.objOrNull("video")?.primitiveOrNull("url")
+            if (!clipUrl.isNullOrBlank() || !data.primitiveOrNull("id").isNullOrBlank() || !data.primitiveOrNull("slug").isNullOrBlank()) {
+                return@withContext Clip(
+                    id = data.primitiveOrNull("slug") ?: data.primitiveOrNull("id") ?: id,
+                    channelId = data.primitiveOrNull("channel_id")
+                        ?: data.objOrNull("channel")?.primitiveOrNull("id"),
+                    channelLogin = data.primitiveOrNull("channel_slug")
+                        ?: data.objOrNull("channel")?.primitiveOrNull("slug"),
+                    channelName = data.objOrNull("channel")?.objOrNull("user")?.primitiveOrNull("username")
+                        ?: data.objOrNull("channel")?.primitiveOrNull("name"),
+                    clipUrl = clipUrl,
+                    videoId = data.primitiveOrNull("video_id") ?: data.objOrNull("video")?.primitiveOrNull("id"),
+                    title = data.primitiveOrNull("title"),
+                    viewCount = data.intOrNull("views") ?: data.intOrNull("view_count"),
+                    uploadDate = normalizeDate(data.primitiveOrNull("created_at") ?: data.primitiveOrNull("published_at")),
+                    duration = data.intOrNull("duration")?.toDouble() ?: data.intOrNull("duration_seconds")?.toDouble(),
+                    thumbnailUrl = extractImageUrl(data.objOrNull("thumbnail"))
+                        ?: data.primitiveOrNull("thumbnail_url"),
+                    profileImageUrl = data.objOrNull("channel")?.objOrNull("user")?.primitiveOrNull("profile_pic")
+                        ?: data.objOrNull("channel")?.objOrNull("user")?.primitiveOrNull("profile_picture"),
+                )
+            }
+        }
+        null
+    }
+
+    /**
+     * Resolve a Kick clip playback URL by slug/id from Kick web APIs.
+     * Does not use Twitch GQL persisted queries.
+     */
+    suspend fun getClipPlaybackUrl(clipIdOrSlug: String): String? = withContext(Dispatchers.IO) {
+        getClip(clipIdOrSlug)?.clipUrl?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Resolve a Kick VOD/video by id from Kick web APIs (not Twitch GQL).
+     */
+    suspend fun getVideoById(videoId: String): Video? = withContext(Dispatchers.IO) {
+        val id = videoId.trim().takeIf { it.isNotBlank() } ?: return@withContext null
+        val encoded = urlEncode(id)
+        val candidates = listOf(
+            "https://kick.com/api/v1/video/$encoded",
+            "https://kick.com/api/v2/video/$encoded",
+            "https://kick.com/api/v1/videos/$encoded",
+            "https://kick.com/api/v2/videos/$encoded",
+        )
+        for (url in candidates) {
+            val root = runCatching { json.parseToJsonElement(getRaw(url, isKickWeb = true)) }.getOrNull() ?: continue
+            parseVideos(
+                roots = listOf(root),
+                channelId = null,
+                channelLogin = null,
+                channelName = null,
+                channelLogo = null,
+                limit = 1,
+            ).firstOrNull()?.let { return@withContext it }
+            val obj = (root as? JsonObject)?.objOrNull("data") ?: root as? JsonObject ?: continue
+            val resolvedId = obj.primitiveOrNull("id") ?: obj.primitiveOrNull("video_id") ?: id
+            val channel = obj.objOrNull("channel")
+            val user = channel?.objOrNull("user") ?: obj.objOrNull("user")
+            return@withContext Video(
+                id = resolvedId,
+                source = C.KICK,
+                url = extractKickVideoUrl(obj),
+                channelId = channel?.primitiveOrNull("id") ?: obj.primitiveOrNull("channel_id"),
+                channelLogin = channel?.primitiveOrNull("slug") ?: user?.primitiveOrNull("username")?.lowercase(Locale.ROOT),
+                channelName = user?.primitiveOrNull("username") ?: channel?.primitiveOrNull("name"),
+                title = obj.primitiveOrNull("session_title") ?: obj.primitiveOrNull("title"),
+                uploadDate = normalizeDate(obj.primitiveOrNull("created_at") ?: obj.primitiveOrNull("start_time")),
+                thumbnailUrl = extractImageUrl(obj.objOrNull("thumbnail"))
+                    ?: obj.primitiveOrNull("thumbnail_url")
+                    ?: obj.primitiveOrNull("preview_thumbnail_url"),
+                viewCount = obj.intOrNull("views") ?: obj.intOrNull("view_count"),
+                type = "ARCHIVE",
+                duration = normalizeVideoDurationSeconds(
+                    obj.firstLongOrNull("duration_seconds", "length_seconds")
+                        ?: obj.firstLongOrNull("duration")
+                ),
+                profileImageUrl = user?.primitiveOrNull("profile_pic")
+                    ?: user?.primitiveOrNull("profile_picture"),
+            )
+        }
+        null
+    }
+
     suspend fun getClipPlaylistStartTimeMs(clipUrl: String): Long? = withContext(Dispatchers.IO) {
         val normalizedUrl = clipUrl.trim()
         if (normalizedUrl.isBlank()) return@withContext null

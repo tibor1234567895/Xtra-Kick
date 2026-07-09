@@ -40,6 +40,20 @@ object DiagnosticLogger {
         lastResumedActivity = resumedActivity
     }
 
+    /**
+     * Logcat-only informational trace. Does not write to the diagnostic export file.
+     * Use for high-volume operational noise that is useful while debugging but not
+     * "important errors and warnings" for export review.
+     */
+    fun i(tag: String?, message: String, throwable: Throwable? = null) {
+        val safeTag = tag ?: "Xtra"
+        if (throwable != null) {
+            Log.i(safeTag, message, throwable)
+        } else {
+            Log.i(safeTag, message)
+        }
+    }
+
     fun w(tag: String?, message: String, throwable: Throwable? = null) {
         val safeTag = tag ?: "Xtra"
         Log.w(safeTag, message, throwable)

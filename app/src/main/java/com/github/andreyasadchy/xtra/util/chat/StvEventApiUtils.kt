@@ -243,7 +243,7 @@ object StvEventApiUtils {
             var userId: String? = null
             val connections = user.optJSONArray("connections")
             if (connections != null) {
-                userId = findConnectionId(connections, "KICK") ?: findConnectionId(connections, "TWITCH")
+                userId = findConnectionId(connections, "KICK")
             }
             if (userId != null) {
                 when (kind) {

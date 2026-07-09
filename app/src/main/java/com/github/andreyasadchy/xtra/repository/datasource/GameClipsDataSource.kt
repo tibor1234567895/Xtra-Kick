@@ -51,7 +51,7 @@ class GameClipsDataSource(
         } else {
             val apisToTry = when {
                 !gameSlug.isNullOrBlank() || !gameName.isNullOrBlank() -> listOf(C.KICK)
-                !gameId.isNullOrBlank() -> listOf(C.HELIX)
+                !gameId.isNullOrBlank() -> listOf(C.KICK, C.HELIX)
                 else -> apiPref.filter { it == C.GQL || it == C.GQL_PERSISTED_QUERY || it == C.HELIX }
                     .ifEmpty { listOf(C.GQL, C.GQL_PERSISTED_QUERY, C.HELIX) }
             }

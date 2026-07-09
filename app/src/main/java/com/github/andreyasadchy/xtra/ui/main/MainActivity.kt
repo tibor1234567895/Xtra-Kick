@@ -545,7 +545,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun logLaunchShape(source: String, intent: Intent?) {
-        DiagnosticLogger.w(
+        // Lifecycle shape is useful in logcat while debugging launch tasks, but is not an
+        // "important warning" for diagnostic file export (it dominated prior exports).
+        DiagnosticLogger.i(
             TAG,
             "$source taskId=$taskId isTaskRoot=$isTaskRoot action=${intent?.action} " +
                 "categories=${intent?.categories?.joinToString(",") ?: "-"} flags=${intent?.flags ?: 0} " +
@@ -1145,10 +1147,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
         if (version < 4) {
+            // Stop seeding Twitch client IDs into GQL prefs. Clear known Twitch defaults when no token.
             prefs.edit {
-                if (prefs().getString(C.GQL_CLIENT_ID2, "kd1unb4b3q4t58fwlpcbzcbnm76a8fp") == "kd1unb4b3q4t58fwlpcbzcbnm76a8fp" && prefs().getString(C.GQL_TOKEN2, null).isNullOrBlank()) {
-                    putString(C.GQL_CLIENT_ID2, "ue6666qo983tsx6so1t0vnawi233wa")
-                    putString(C.GQL_REDIRECT2, "https://kick.com/settings/connections")
+                val knownTwitchClientIds = setOf(
+                    "kd1unb4b3q4t58fwlpcbzcbnm76a8fp",
+                    "ue6666qo983tsx6so1t0vnawi233wa",
+                )
+                val currentClientId = prefs().getString(C.GQL_CLIENT_ID2, null)
+                if (currentClientId in knownTwitchClientIds && prefs().getString(C.GQL_TOKEN2, null).isNullOrBlank()) {
+                    remove(C.GQL_CLIENT_ID2)
                 }
             }
         }

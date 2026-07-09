@@ -1,6 +1,5 @@
 package com.github.andreyasadchy.xtra.repository
 
-import android.net.Uri
 import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
@@ -50,7 +49,6 @@ import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.suspendCoroutine
-import kotlin.math.roundToInt
 
 @Singleton
 class PlayerRepository @Inject constructor(
@@ -59,6 +57,7 @@ class PlayerRepository @Inject constructor(
     private val cronetExecutor: ExecutorService,
     private val okHttpClient: OkHttpClient,
     private val json: Json,
+    private val kickRepository: KickRepository,
     private val kickGraphQLRepository: KickGraphQLRepository,
     private val kickPublicApiRepository: KickPublicApiRepository,
     private val recentEmotes: RecentEmotesDao,
@@ -106,56 +105,12 @@ class PlayerRepository @Inject constructor(
     }
 
     suspend fun loadClipUrls(networkLibrary: String?, kickWebHeaders: Map<String, String>, clipId: String?, enableIntegrity: Boolean): Map<Pair<String, String?>, String>? = withContext(Dispatchers.IO) {
-        try {
-            val response = kickGraphQLRepository.loadClipUrls(networkLibrary, kickWebHeaders, clipId)
-            if (enableIntegrity) {
-                response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
-            }
-            val accessToken = response.data?.clip?.playbackAccessToken
-            response.data!!.clip.assets.let { assets ->
-                (assets.find { it.portraitMetadata?.portraitClipLayout.isNullOrBlank() } ?: assets.firstOrNull())?.videoQualities?.mapIndexedNotNull { index, quality ->
-                    if (quality.sourceURL.isNotBlank()) {
-                        val name = if (!quality.quality.isNullOrBlank()) {
-                            val frameRate = quality.frameRate?.roundToInt() ?: 0
-                            if (frameRate < 60) {
-                                "${quality.quality}p"
-                            } else {
-                                "${quality.quality}p${frameRate}"
-                            }
-                        } else {
-                            index.toString()
-                        }
-                        val url = "${quality.sourceURL}?sig=${Uri.encode(accessToken?.signature)}&token=${Uri.encode(accessToken?.value)}"
-                        Pair(name, quality.codecs) to url
-                    } else null
-                }?.toMap()
-            }
-        } catch (e: Exception) {
-            if (e.message == "failed integrity check") throw e
-            val response = kickGraphQLRepository.loadQueryClipUrls(networkLibrary, kickWebHeaders, clipId!!)
-            if (enableIntegrity) {
-                response.errors?.find { it.message == "failed integrity check" }?.let { throw Exception(it.message) }
-            }
-            val accessToken = response.data?.clip?.playbackAccessToken
-            response.data?.clip?.assets?.let { assets ->
-                (assets.find { it?.portraitMetadata?.portraitClipLayout.isNullOrBlank() } ?: assets.firstOrNull())?.videoQualities?.mapIndexedNotNull { index, quality ->
-                    if (!quality?.sourceURL.isNullOrBlank()) {
-                        val name = if (!quality.quality.isNullOrBlank()) {
-                            val frameRate = quality.frameRate?.roundToInt() ?: 0
-                            if (frameRate < 60) {
-                                "${quality.quality}p"
-                            } else {
-                                "${quality.quality}p${frameRate}"
-                            }
-                        } else {
-                            index.toString()
-                        }
-                        val url = "${quality.sourceURL}?sig=${Uri.encode(accessToken?.signature)}&token=${Uri.encode(accessToken?.value)}"
-                        Pair(name, quality.codecs) to url
-                    } else null
-                }?.toMap()
-            }
+        val id = clipId?.takeIf { it.isNotBlank() } ?: return@withContext null
+        // Resolve clip playback from Kick web APIs only (do not post Twitch GQL persisted queries).
+        kickRepository.getClipPlaybackUrl(id)?.let { playbackUrl ->
+            return@withContext mapOf(Pair("source", null as String?) to playbackUrl)
         }
+        null
     }
 
     suspend fun sendMinuteWatched(networkLibrary: String?, userId: String?, streamId: String?, channelId: String?, channelLogin: String?) = withContext(Dispatchers.IO) {

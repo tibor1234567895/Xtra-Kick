@@ -29,7 +29,8 @@ object ChatBackgroundUtils {
         position: Int,
     ): Int {
         val highlightedColor = overlayColor?.let { ColorUtils.compositeColors(it, surfaceColor) } ?: surfaceColor
-        if (!alternatingLineShadowEnabled || position % 2 == 0) {
+        // Use floor-mod so stable parity slots that go negative while prepending history stay correct.
+        if (!alternatingLineShadowEnabled || position.mod(2) == 0) {
             return highlightedColor
         }
         val strengthFraction = alternatingLineShadowStrength.coerceIn(0, MAX_ALTERNATING_LINE_SHADOW_STRENGTH).toFloat() / MAX_ALTERNATING_LINE_SHADOW_STRENGTH.toFloat()

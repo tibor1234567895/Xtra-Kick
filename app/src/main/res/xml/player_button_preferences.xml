@@ -16,7 +16,7 @@
         app:singleLineTitle="false" />
 
     <SwitchPreferenceCompat
-        android:defaultValue="false"
+        android:defaultValue="true"
         android:key="player_follow"
         android:title="@string/follow"
         android:icon="@drawable/baseline_favorite_border_black_24"

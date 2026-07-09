@@ -85,10 +85,11 @@ class MessageClickedViewModel @Inject constructor(
             isLoadingUser = true
             val existingFollow = localFollowChannelRepository.getFollow(currentChannelId, currentChannelLogin)
             val mutedUser = mutedChatUsersRepository.getMutedUser(currentChannelId, currentChannelLogin, currentChannelName)
+            val canFollowChannel = canFollowCurrentChannel(kickWebHeaders)
             uiState.value = uiState.value.copy(
                 isLoadingUser = true,
                 isFollowing = existingFollow != null,
-                canFollow = !currentChannelId.isNullOrBlank() && !kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank(),
+                canFollow = canFollowChannel,
                 isMuted = mutedUser != null,
             )
 
@@ -108,10 +109,18 @@ class MessageClickedViewModel @Inject constructor(
                 user = response,
                 isLoadingUser = false,
                 isFollowing = remoteFollowing ?: (existingFollow != null),
-                canFollow = !currentChannelId.isNullOrBlank() && !kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank(),
+                canFollow = canFollowChannel,
                 isMuted = currentMutedUser != null,
             )
             isLoadingUser = false
+        }
+    }
+
+    private fun canFollowCurrentChannel(kickWebHeaders: Map<String, String>): Boolean {
+        return if (currentIsKick) {
+            !currentChannelId.isNullOrBlank() || !currentChannelLogin.isNullOrBlank()
+        } else {
+            !currentChannelId.isNullOrBlank() && !kickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()
         }
     }
 
@@ -201,6 +210,9 @@ class MessageClickedViewModel @Inject constructor(
     }
 
     private suspend fun loadFollowingState(): Boolean? {
+        if (currentIsKick) {
+            return localFollowChannelRepository.getFollow(currentChannelId, currentChannelLogin) != null
+        }
         val userId = currentChannelId ?: return null
         if (currentKickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) return null
         return try {
@@ -223,47 +235,31 @@ class MessageClickedViewModel @Inject constructor(
     }
 
     fun toggleFollow(displayName: String?) {
-        val userId = currentChannelId ?: return
+        val userId = currentChannelId
         val channelLogin = currentChannelLogin
+        if (currentIsKick) {
+            if (userId.isNullOrBlank() && channelLogin.isNullOrBlank()) return
+        } else if (userId.isNullOrBlank()) {
+            return
+        }
         viewModelScope.launch {
-            if (currentKickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                _events.emit("Follow requires a signed-in Kick account.")
+            if (!currentIsKick && currentKickWebHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
+                _events.emit("Follow requires a signed-in account.")
                 return@launch
             }
             val isFollowing = uiState.value.isFollowing
             uiState.value = uiState.value.copy(isFollowActionInProgress = true)
             try {
-                val errorMessage = if (isFollowing) {
-                    kickGraphQLRepository.loadUnfollowUser(currentNetworkLibrary, currentKickWebHeaders, userId).also { response ->
-                        if (currentEnableIntegrity && integrity.value == null) {
-                            response.errors?.find { it.message == "failed integrity check" }?.let {
-                                integrity.value = "refresh"
-                                uiState.value = uiState.value.copy(isFollowActionInProgress = false)
-                                return@launch
-                            }
-                        }
-                    }.errors?.firstOrNull()?.message
-                } else {
-                    kickGraphQLRepository.loadFollowUser(currentNetworkLibrary, currentKickWebHeaders, userId).also { response ->
-                        if (currentEnableIntegrity && integrity.value == null) {
-                            response.errors?.find { it.message == "failed integrity check" }?.let {
-                                integrity.value = "refresh"
-                                uiState.value = uiState.value.copy(isFollowActionInProgress = false)
-                                return@launch
-                            }
-                        }
-                    }.errors?.firstOrNull()?.message
-                }
-                if (!errorMessage.isNullOrBlank()) {
-                    _events.emit(errorMessage)
-                } else {
+                if (currentIsKick) {
+                    // Kick follows are local-only; do not call Twitch GQL FollowButton ops.
+                    val followUserId = userId ?: channelLogin.orEmpty()
                     if (isFollowing) {
                         localFollowChannelRepository.removeLocalFollow(userId, channelLogin)
                         _events.emit("Unfollowed ${displayName ?: currentChannelName ?: channelLogin ?: "channel"}")
                     } else {
                         localFollowChannelRepository.saveFollow(
                             LocalFollowChannel(
-                                userId = userId,
+                                userId = followUserId,
                                 userLogin = channelLogin,
                                 userName = currentChannelName ?: displayName,
                                 channelLogo = currentChannelLogo,
@@ -272,6 +268,47 @@ class MessageClickedViewModel @Inject constructor(
                         _events.emit("You're now following ${displayName ?: currentChannelName ?: channelLogin ?: "channel"}")
                     }
                     uiState.value = uiState.value.copy(isFollowing = !isFollowing)
+                } else {
+                    val errorMessage = if (isFollowing) {
+                        kickGraphQLRepository.loadUnfollowUser(currentNetworkLibrary, currentKickWebHeaders, userId).also { response ->
+                            if (currentEnableIntegrity && integrity.value == null) {
+                                response.errors?.find { it.message == "failed integrity check" }?.let {
+                                    integrity.value = "refresh"
+                                    uiState.value = uiState.value.copy(isFollowActionInProgress = false)
+                                    return@launch
+                                }
+                            }
+                        }.errors?.firstOrNull()?.message
+                    } else {
+                        kickGraphQLRepository.loadFollowUser(currentNetworkLibrary, currentKickWebHeaders, userId).also { response ->
+                            if (currentEnableIntegrity && integrity.value == null) {
+                                response.errors?.find { it.message == "failed integrity check" }?.let {
+                                    integrity.value = "refresh"
+                                    uiState.value = uiState.value.copy(isFollowActionInProgress = false)
+                                    return@launch
+                                }
+                            }
+                        }.errors?.firstOrNull()?.message
+                    }
+                    if (!errorMessage.isNullOrBlank()) {
+                        _events.emit(errorMessage)
+                    } else {
+                        if (isFollowing) {
+                            localFollowChannelRepository.removeLocalFollow(userId, channelLogin)
+                            _events.emit("Unfollowed ${displayName ?: currentChannelName ?: channelLogin ?: "channel"}")
+                        } else {
+                            localFollowChannelRepository.saveFollow(
+                                LocalFollowChannel(
+                                    userId = userId!!,
+                                    userLogin = channelLogin,
+                                    userName = currentChannelName ?: displayName,
+                                    channelLogo = currentChannelLogo,
+                                )
+                            )
+                            _events.emit("You're now following ${displayName ?: currentChannelName ?: channelLogin ?: "channel"}")
+                        }
+                        uiState.value = uiState.value.copy(isFollowing = !isFollowing)
+                    }
                 }
             } catch (e: Exception) {
                 _events.emit(e.message ?: "Unable to update follow state.")

@@ -320,23 +320,26 @@ object KickApiHelper {
 
     fun getKickWebHeaders(context: Context, includeToken: Boolean = false): Map<String, String> {
         return mutableMapOf<String, String>().apply {
+            // Legacy integrity headers only when explicitly enabled AND present.
+            // Never fall back to Twitch client IDs for Kick requests.
+            var usedIntegrityHeaders = false
             if (context.prefs().getBoolean(C.ENABLE_INTEGRITY, false)) {
                 context.tokenPrefs().getString(C.GQL_HEADERS, null)?.let {
                     try {
                         val json = JSONObject(it)
-                        json.keys().forEach { key ->
-                            put(key, json.optString(key))
+                        if (json.length() > 0) {
+                            json.keys().forEach { key ->
+                                put(key, json.optString(key))
+                            }
+                            usedIntegrityHeaders = isNotEmpty()
                         }
-                    } catch (e: Exception) {
-
+                    } catch (_: Exception) {
                     }
                 }
-            } else {
-                (KickOAuthConfig.getClientId(context)
-                    ?: context.prefs().getString(C.GQL_CLIENT_ID2, "kd1unb4b3q4t58fwlpcbzcbnm76a8fp"))?.let {
-                    if (it.isNotBlank()) {
-                        put(C.HEADER_CLIENT_ID, it)
-                    }
+            }
+            if (!usedIntegrityHeaders) {
+                KickOAuthConfig.getClientId(context)?.takeIf { it.isNotBlank() }?.let {
+                    put(C.HEADER_CLIENT_ID, it)
                 }
                 put("Accept", "application/json, text/plain, */*")
                 put("Origin", "https://kick.com")
@@ -352,11 +355,8 @@ object KickApiHelper {
 
     fun getKickPublicApiHeaders(context: Context): Map<String, String> {
         return mutableMapOf<String, String>().apply {
-            (KickOAuthConfig.getClientId(context)
-                ?: context.prefs().getString(C.HELIX_CLIENT_ID, "ilfexgv3nnljz3isbm257gzwrzr7bi"))?.let {
-                if (it.isNotBlank()) {
-                    put(C.HEADER_CLIENT_ID, it)
-                }
+            KickOAuthConfig.getClientId(context)?.takeIf { it.isNotBlank() }?.let {
+                put(C.HEADER_CLIENT_ID, it)
             }
             put("Accept", "application/json, text/plain, */*")
             put("Origin", "https://kick.com")

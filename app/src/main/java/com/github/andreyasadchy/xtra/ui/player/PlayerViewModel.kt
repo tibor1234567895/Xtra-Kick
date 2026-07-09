@@ -330,7 +330,8 @@ class PlayerViewModel @Inject constructor(
                         ?.takeIf { it.isNotBlank() }
                         ?: throw Exception("Kick playback URL unavailable")
                     if (forceRefresh) {
-                        DiagnosticLogger.w(
+                        // Successful URL resolution is routine recovery noise; keep failures as ERROR.
+                        DiagnosticLogger.i(
                             "PlayerViewModel",
                             "Kick stream force refresh resolved channel=$channelLogin source=${if (playbackUrl == livestreamPlaybackUrl) "livestream" else "channel"} " +
                                 "${summarizePlaybackUrl(playbackUrl)} expired=${summarizePlaybackUrl(stalePlaybackUrl)} sameAsExpired=${playbackUrl == stalePlaybackUrl}"

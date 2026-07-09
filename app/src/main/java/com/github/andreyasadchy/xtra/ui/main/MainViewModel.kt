@@ -30,9 +30,9 @@ import com.github.andreyasadchy.xtra.model.ui.Tag
 import com.github.andreyasadchy.xtra.model.ui.User
 import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.repository.AuthRepository
-import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
-import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickAuthRequestException
+import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
+import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.OfflineRepository
 import com.github.andreyasadchy.xtra.repository.PlayerRepository
 import com.github.andreyasadchy.xtra.ui.download.StreamDownloadWorker
@@ -81,8 +81,8 @@ import kotlin.math.max
 @HiltViewModel
 class MainViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
-    private val kickGraphQLRepository: KickGraphQLRepository,
     private val kickPublicApiRepository: KickPublicApiRepository,
+    private val kickRepository: KickRepository,
     private val playerRepository: PlayerRepository,
     private val offlineRepository: OfflineRepository,
     private val authRepository: AuthRepository,
@@ -164,41 +164,21 @@ class MainViewModel @Inject constructor(
     fun loadVideo(videoId: String?, offset: Long?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (video.value == null) {
             viewModelScope.launch {
-                val item = try {
-                    val response = kickGraphQLRepository.loadQueryVideo(networkLibrary, kickWebHeaders, videoId)
-                    if (enableIntegrity && integrity.value == null) {
-                        response.errors?.find { it.message == "failed integrity check" }?.let {
-                            integrity.value = "refresh"
-                            return@launch
-                        }
-                    }
-                    response.data!!.let { item ->
-                        item.video?.let {
-                            Video(
-                                id = videoId,
-                                channelId = it.owner?.id,
-                                channelLogin = it.owner?.login,
-                                channelName = it.owner?.displayName,
-                                type = it.broadcastType?.toString(),
-                                title = it.title,
-                                uploadDate = it.createdAt?.toString(),
-                                duration = it.lengthSeconds?.toString(),
-                                thumbnailUrl = it.previewThumbnailURL,
-                                profileImageUrl = it.owner?.profileImageURL,
-                                animatedPreviewURL = it.animatedPreviewURL,
-                            )
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        try {
+                val id = videoId?.takeIf { it.isNotBlank() }
+                val item = if (id == null) {
+                    null
+                } else {
+                    // Prefer Kick web / public APIs — never Twitch GQL for deep links.
+                    runCatching { kickRepository.getVideoById(id) }.getOrNull()
+                        ?: runCatching {
                             kickPublicApiRepository.getVideos(
                                 networkLibrary = networkLibrary,
                                 headers = kickPublicApiHeaders,
-                                ids = videoId?.let { listOf(it) }
+                                ids = listOf(id),
                             ).data.firstOrNull()?.let {
                                 Video(
                                     id = it.id,
+                                    source = C.KICK,
                                     channelId = it.channelId,
                                     channelLogin = it.channelLogin,
                                     channelName = it.channelName,
@@ -209,10 +189,7 @@ class MainViewModel @Inject constructor(
                                     thumbnailUrl = it.thumbnailUrl,
                                 )
                             }
-                        } catch (e: Exception) {
-                            null
-                        }
-                    } else null
+                        }.getOrNull()
                 }
                 video.value = item to offset
             }
@@ -226,43 +203,16 @@ class MainViewModel @Inject constructor(
     fun loadClip(clipId: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (clip.value == null) {
             viewModelScope.launch {
-                clip.value = try {
-                    val user = try {
-                        kickGraphQLRepository.loadClipData(networkLibrary, kickWebHeaders, clipId).data?.clip
-                    } catch (e: Exception) {
-                        null
-                    }
-                    val clip = kickGraphQLRepository.loadClipVideo(networkLibrary, kickWebHeaders, clipId).also { response ->
-                        if (enableIntegrity && integrity.value == null) {
-                            response.errors?.find { it.message == "failed integrity check" }?.let {
-                                integrity.value = "refresh"
-                                return@launch
-                            }
-                        }
-                    }.data?.clip
-                    Clip(
-                        id = clipId,
-                        channelId = user?.broadcaster?.id,
-                        channelLogin = user?.broadcaster?.login,
-                        channelName = user?.broadcaster?.displayName,
-                        profileImageUrl = user?.broadcaster?.profileImageURL,
-                        videoId = clip?.video?.id,
-                        duration = clip?.durationSeconds,
-                        vodOffset = (clip?.videoOffsetSeconds ?: user?.videoOffsetSeconds).let {
-                            if (it != null && clip?.durationSeconds != null) {
-                                max(it - clip.durationSeconds.toInt(), 0)
-                            } else {
-                                it
-                            }
-                        }
-                    )
-                } catch (e: Exception) {
-                    if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        try {
+                val id = clipId?.takeIf { it.isNotBlank() }
+                clip.value = if (id == null) {
+                    null
+                } else {
+                    runCatching { kickRepository.getClip(id) }.getOrNull()
+                        ?: runCatching {
                             kickPublicApiRepository.getClips(
                                 networkLibrary = networkLibrary,
                                 headers = kickPublicApiHeaders,
-                                ids = clipId?.let { listOf(it) }
+                                ids = listOf(id),
                             ).data.firstOrNull()?.let {
                                 Clip(
                                     id = it.id,
@@ -282,10 +232,8 @@ class MainViewModel @Inject constructor(
                                     thumbnailUrl = it.thumbnailUrl,
                                 )
                             }
-                        } catch (e: Exception) {
-                            null
-                        }
-                    } else null
+                        }.getOrNull()
+                        ?: Clip(id = id)
                 }
             }
         }
@@ -294,29 +242,25 @@ class MainViewModel @Inject constructor(
     fun loadUser(login: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (user.value == null) {
             viewModelScope.launch {
-                user.value = try {
-                    val response = kickGraphQLRepository.loadQueryUser(networkLibrary, kickWebHeaders, login = login)
-                    if (enableIntegrity && integrity.value == null) {
-                        response.errors?.find { it.message == "failed integrity check" }?.let {
-                            integrity.value = "refresh"
-                            return@launch
+                val slug = login?.trim()?.takeIf { it.isNotBlank() }
+                user.value = if (slug == null) {
+                    null
+                } else {
+                    runCatching {
+                        kickRepository.getChannel(slug).let { channel ->
+                            User(
+                                channelId = channel.id?.toString(),
+                                channelLogin = channel.slug,
+                                channelName = channel.user?.username,
+                                profileImageUrl = channel.user?.profileImage,
+                            )
                         }
-                    }
-                    response.data!!.user?.let {
-                        User(
-                            channelId = it.id,
-                            channelLogin = it.login,
-                            channelName = it.displayName,
-                            profileImageUrl = it.profileImageURL
-                        )
-                    }
-                } catch (e: Exception) {
-                    if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()) {
-                        try {
+                    }.getOrNull()
+                        ?: runCatching {
                             kickPublicApiRepository.getUsers(
                                 networkLibrary = networkLibrary,
                                 headers = kickPublicApiHeaders,
-                                logins = login?.let { listOf(it) }
+                                logins = listOf(slug),
                             ).data.firstOrNull()?.let {
                                 User(
                                     channelId = it.channelId,
@@ -328,10 +272,8 @@ class MainViewModel @Inject constructor(
                                     createdAt = it.createdAt,
                                 )
                             }
-                        } catch (e: Exception) {
-                            null
-                        }
-                    } else null
+                        }.getOrNull()
+                        ?: User(channelLogin = slug, channelName = slug)
                 }
             }
         }
@@ -340,87 +282,60 @@ class MainViewModel @Inject constructor(
     fun loadGame(gameSlug: String? = null, gameName: String? = null, tag: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (game.value == null) {
             viewModelScope.launch {
-                game.value = try {
-                    val response = kickGraphQLRepository.loadQueryGame(
-                        networkLibrary = networkLibrary,
-                        headers = kickWebHeaders,
-                        slug = gameSlug,
-                        name = gameName.takeIf { gameSlug.isNullOrBlank() },
-                    )
-                    if (enableIntegrity && integrity.value == null) {
-                        response.errors?.find { it.message == "failed integrity check" }?.let {
-                            integrity.value = "refresh"
-                            return@launch
-                        }
-                    }
-                    response.data!!.game?.let {
-                        Game(
-                            gameId = it.id,
-                            gameSlug = it.slug,
-                            gameName = it.displayName,
-                            boxArtUrl = it.boxArtURL,
-                        )
-                    }
-                } catch (e: Exception) {
-                    if (!kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank() && !gameName.isNullOrBlank()) {
-                        try {
-                            kickPublicApiRepository.getGames(
-                                networkLibrary = networkLibrary,
-                                headers = kickPublicApiHeaders,
-                                names = listOf(gameName)
-                            ).data.firstOrNull()?.let {
+                val slug = gameSlug?.trim()?.takeIf { it.isNotBlank() }
+                val name = gameName?.trim()?.takeIf { it.isNotBlank() }
+                val resolved = when {
+                    !slug.isNullOrBlank() -> runCatching {
+                        kickRepository.getSubcategories(page = 1, limit = 100).data
+                            .firstOrNull { it.slug.equals(slug, true) || it.name.equals(slug, true) }
+                            ?.let {
                                 Game(
-                                    gameId = it.id,
+                                    gameId = it.id?.toString(),
+                                    gameSlug = it.slug,
                                     gameName = it.name,
-                                    boxArtUrl = it.boxArtUrl,
+                                    boxArtUrl = it.banner?.imageUrl,
                                 )
                             }
-                        } catch (e: Exception) {
-                            null
+                    }.getOrNull()
+                    !name.isNullOrBlank() -> runCatching {
+                        kickPublicApiRepository.getGames(
+                            networkLibrary = networkLibrary,
+                            headers = kickPublicApiHeaders,
+                            names = listOf(name),
+                        ).data.firstOrNull()?.let {
+                            Game(
+                                gameId = it.id,
+                                gameName = it.name,
+                                boxArtUrl = it.boxArtUrl,
+                            )
                         }
-                    } else null
-                } to tag
+                    }.getOrNull()
+                        ?: runCatching {
+                            kickRepository.getSubcategories(page = 1, limit = 100).data
+                                .firstOrNull { it.name.equals(name, true) }
+                                ?.let {
+                                    Game(
+                                        gameId = it.id?.toString(),
+                                        gameSlug = it.slug,
+                                        gameName = it.name,
+                                        boxArtUrl = it.banner?.imageUrl,
+                                    )
+                                }
+                        }.getOrNull()
+                    else -> null
+                } ?: Game(
+                    gameSlug = slug,
+                    gameName = name ?: slug,
+                )
+                game.value = resolved to tag
             }
         }
     }
 
     fun loadTag(tagId: String, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         if (tag.value == null) {
-            viewModelScope.launch {
-                tag.value = try {
-                    val response = kickGraphQLRepository.loadQueryTag(networkLibrary, kickWebHeaders, tagId)
-                    if (enableIntegrity && integrity.value == null) {
-                        response.errors?.find { it.message == "failed integrity check" }?.let {
-                            integrity.value = "refresh"
-                            return@launch
-                        }
-                    }
-                    response.data!!.contentTag?.let {
-                        Tag(
-                            id = tagId,
-                            name = it.localizedName,
-                        )
-                    }
-                } catch (e: Exception) {
-                    try {
-                        val response = kickGraphQLRepository.loadTag(networkLibrary, kickWebHeaders, tagId)
-                        if (enableIntegrity && integrity.value == null) {
-                            response.errors?.find { it.message == "failed integrity check" }?.let {
-                                integrity.value = "refresh"
-                                return@launch
-                            }
-                        }
-                        response.data!!.contentTag.let {
-                            Tag(
-                                id = tagId,
-                                name = it.localizedName,
-                            )
-                        }
-                    } catch (e: Exception) {
-                        null
-                    }
-                }
-            }
+            // Kick freeform tags have no Twitch GQL contentTag API; keep id as display name.
+            tag.value = Tag(id = tagId, name = tagId)
         }
     }
 

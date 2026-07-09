@@ -9,8 +9,8 @@ class DiagnosticCoilLogger(
     override fun log(tag: String, level: Logger.Level, message: String?, throwable: Throwable?) {
         val text = message ?: throwable?.message ?: return
         when (level) {
-            Logger.Level.Warn -> DiagnosticLogger.w(tag, text, throwable)
-            Logger.Level.Error -> DiagnosticLogger.e(tag, text, throwable)
+            // Image CDN blips are expected network noise; keep them out of ERROR exports.
+            Logger.Level.Warn, Logger.Level.Error -> DiagnosticLogger.w(tag, text, throwable)
             else -> {}
         }
     }

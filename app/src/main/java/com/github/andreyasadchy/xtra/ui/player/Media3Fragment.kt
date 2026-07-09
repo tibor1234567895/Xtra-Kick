@@ -626,7 +626,7 @@ class Media3Fragment : PlayerFragment() {
         pendingInitialLiveSync = true
         val urlHash = url.shortHash()
         playerDebugLog("Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(latencyConfig)}")
-        DiagnosticLogger.w(
+        DiagnosticLogger.i(
             TAG,
             "START_STREAM command sending channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)} " +
                 "urlPresent=${!url.isNullOrBlank()} urlHash=$urlHash latency=${LiveLatencySettings.describe(latencyConfig)}"
@@ -644,7 +644,7 @@ class Media3Fragment : PlayerFragment() {
         commandResult?.addListener({
             runCatching { commandResult.get() }
                 .onSuccess {
-                    DiagnosticLogger.w(
+                    DiagnosticLogger.i(
                         TAG,
                         "START_STREAM command result channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)} " +
                             "result=${it.resultCode} urlHash=$urlHash"
@@ -657,13 +657,17 @@ class Media3Fragment : PlayerFragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             delay(5000L)
             val controller = player
-            DiagnosticLogger.w(
-                TAG,
+            val errorName = controller?.playerError?.errorCodeName
+            val followupMessage =
                 "START_STREAM followup channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)} urlHash=$urlHash " +
                     "state=${controller?.playbackState?.let(::playbackStateName) ?: "missing"} " +
                     "playWhenReady=${controller?.playWhenReady} isPlaying=${controller?.isPlaying} " +
-                    "error=${controller?.playerError?.errorCodeName}"
-            )
+                    "error=$errorName"
+            if (errorName != null) {
+                DiagnosticLogger.w(TAG, followupMessage)
+            } else {
+                DiagnosticLogger.i(TAG, followupMessage)
+            }
         }
     }
 

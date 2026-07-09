@@ -2323,7 +2323,9 @@ class ChatViewModel @Inject constructor(
             Log.d("WebSocketRuntime", "connect chat snapshot=${WebSocketRuntime.snapshot()}")
         }
         val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(C.DEBUG_KICK_REALTIME_CHAT, false)
-        val gqlWebClientId = applicationContext.prefs().getString(C.GQL_CLIENT_ID_WEB, "kimne78kx3ncx6brgo4mv6wki5h1ko")
+        // Kick OAuth client id only — never default to legacy Twitch web client ids.
+        val gqlWebClientId = KickOAuthConfig.getClientId(applicationContext)
+            ?: applicationContext.prefs().getString(C.KICK_CLIENT_ID, null)
         if (kickMode) {
             seedKickMessageIdsFromCurrentMessages()
             viewModelScope.launch {
@@ -2424,13 +2426,12 @@ class ChatViewModel @Inject constructor(
         val collectPoints = applicationContext.prefs().getBoolean(C.CHAT_POINTS_COLLECT, true)
         val throttleBackgroundActivity = applicationContext.prefs().getBoolean(C.CHAT_THROTTLE_BACKGROUND, true)
         val gqlWebToken = applicationContext.tokenPrefs().getString(C.GQL_TOKEN_WEB, null)
-        val kickAccessToken = applicationContext.tokenPrefs().getString(C.KICK_ACCESS_TOKEN, null)
         val notifyPoints = applicationContext.prefs().getBoolean(C.CHAT_POINTS_NOTIFY, true)
         val showRaids = applicationContext.prefs().getBoolean(C.CHAT_RAIDS_SHOW, true)
         fun connectHermes(userId: String?) {
+            // Hermes speaks Twitch PubSub. Kept only for non-Kick experimental paths.
             val subscriptionToken = when {
                 enableIntegrity -> kickWebHeaders[C.HEADER_TOKEN]?.removePrefix("OAuth ")
-                kickMode -> kickAccessToken
                 else -> gqlWebToken
             }
             hermesWebSocket = HermesWebSocket(
@@ -2452,28 +2453,12 @@ class ChatViewModel @Inject constructor(
             )
             pubSubJob = hermesWebSocket?.connect(viewModelScope)
         }
+        // Kick live chat/events use Pusher. Do not open Hermes on Kick paths.
         if (!kickMode && usePubSub && !channelId.isNullOrBlank() && (accountId.isNullOrBlank() || !collectPoints || !gqlWebToken.isNullOrBlank() || enableIntegrity)) {
             connectHermes(accountId)
         }
-        if (kickMode && isLoggedIn && !channelLogin.isNullOrBlank()) {
-            val liveChannelLogin = channelLogin
-            if (usePubSub && !channelId.isNullOrBlank()) {
-                connectHermes(accountId)
-            }
-            if (accountId.isNullOrBlank()) {
-                viewModelScope.launch {
-                    val identity = runCatching { kickRepository.ensureKickCurrentUserIdentity() }.getOrNull()
-                    val liveChannelId = channelId
-                    if (!identity?.id.isNullOrBlank() && !liveChannelId.isNullOrBlank()) {
-                        hermesWebSocket?.disconnect(pubSubJob)
-                        connectHermes(identity.id)
-                    }
-                }
-            }
-        } else {
-            updateChannelPointsBalance(null)
-            updateChannelPointRewards(emptyList(), false)
-        }
+        updateChannelPointsBalance(null)
+        updateChannelPointRewards(emptyList(), false)
         val showNamePaints = applicationContext.prefs().getBoolean(C.CHAT_SHOW_PAINTS, true)
         val showStvBadges = applicationContext.prefs().getBoolean(C.CHAT_SHOW_STV_BADGES, true)
         val showPersonalEmotes = applicationContext.prefs().getBoolean(C.CHAT_SHOW_PERSONAL_EMOTES, true)
@@ -3996,8 +3981,436 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun sendCommand(message: CharSequence, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiChatMessages: Boolean, enableIntegrity: Boolean) {
+        if (isKickPreferred()) {
+            sendKickCommand(message, networkLibrary, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+            return
+        }
+        sendLegacyCommand(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+    }
+
+    /**
+     * Kick slash commands: use Kick official/public APIs only (never Twitch GQL).
+     */
+    private fun sendKickCommand(
+        message: CharSequence,
+        networkLibrary: String?,
+        kickPublicApiHeaders: Map<String, String>,
+        accountId: String?,
+        channelId: String?,
+        channelLogin: String?,
+        useApiChatMessages: Boolean,
+        enableIntegrity: Boolean,
+    ) {
         val command = message.toString().substringBefore(" ")
-        val kickMode = isKickPreferred()
+        val hasPublicToken = !kickPublicApiHeaders[C.HEADER_TOKEN].isNullOrBlank()
+        val kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext, true)
+        fun missingAuth() {
+            viewModelScope.launch {
+                onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, applicationContext.getString(R.string.token_expired))))
+            }
+        }
+        suspend fun emitError(error: Throwable) {
+            onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, error.message ?: error.toString())))
+        }
+        suspend fun emitInfo(text: String?) {
+            if (!text.isNullOrBlank()) {
+                onMessage(ChatMessage(systemMsg = text))
+            }
+        }
+        suspend fun resolveTargetUserId(login: String): String? {
+            return runCatching {
+                kickPublicApiRepository.getUsers(
+                    networkLibrary = networkLibrary,
+                    headers = kickPublicApiHeaders,
+                    logins = listOf(login),
+                ).data.firstOrNull()?.channelId
+            }.getOrNull()
+                ?: runCatching {
+                    kickRepository.getChannel(login).id?.toString()
+                        ?: kickRepository.getChannel(login).user?.id?.toString()
+                }.getOrNull()
+        }
+        when {
+            command.startsWith("/announce", true) -> {
+                val splits = message.split(" ", limit = 2)
+                if (splits.size >= 2 && hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.sendAnnouncement(
+                                networkLibrary, kickPublicApiHeaders, channelId, accountId, splits[1],
+                                splits[0].substringAfter("/announce", "").ifBlank { null },
+                            )
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else if (splits.size >= 2) {
+                    missingAuth()
+                }
+            }
+            command.equals("/ban", true) -> {
+                val splits = message.split(" ", limit = 3)
+                if (splits.size >= 2) {
+                    viewModelScope.launch {
+                        runCatching {
+                            val targetId = resolveTargetUserId(splits[1])
+                            val broadcasterUserId = channelId?.toLongOrNull()
+                            val targetUserId = targetId?.toLongOrNull()
+                            if (broadcasterUserId != null && targetUserId != null) {
+                                kickRepository.banOfficialUser(
+                                    networkLibrary = networkLibrary,
+                                    broadcasterUserId = broadcasterUserId,
+                                    targetUserId = targetUserId,
+                                    reason = if (splits.size >= 3) splits[2] else null,
+                                )
+                                null
+                            } else if (hasPublicToken) {
+                                kickPublicApiRepository.banUser(
+                                    networkLibrary, kickPublicApiHeaders, channelId, accountId, targetId,
+                                    reason = if (splits.size >= 3) splits[2] else null,
+                                )
+                            } else {
+                                throw IllegalStateException(applicationContext.getString(R.string.token_expired))
+                            }
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                }
+            }
+            command.equals("/unban", true) || command.equals("/untimeout", true) -> {
+                val splits = message.split(" ")
+                if (splits.size >= 2) {
+                    viewModelScope.launch {
+                        runCatching {
+                            val targetId = resolveTargetUserId(splits[1])
+                            val broadcasterUserId = channelId?.toLongOrNull()
+                            val targetUserId = targetId?.toLongOrNull()
+                            if (broadcasterUserId != null && targetUserId != null) {
+                                kickRepository.unbanOfficialUser(
+                                    networkLibrary = networkLibrary,
+                                    broadcasterUserId = broadcasterUserId,
+                                    targetUserId = targetUserId,
+                                )
+                                null
+                            } else if (hasPublicToken) {
+                                kickPublicApiRepository.unbanUser(networkLibrary, kickPublicApiHeaders, channelId, accountId, targetId)
+                            } else {
+                                throw IllegalStateException(applicationContext.getString(R.string.token_expired))
+                            }
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                }
+            }
+            command.equals("/timeout", true) -> {
+                val splits = message.split(" ", limit = 4)
+                if (splits.size >= 2) {
+                    viewModelScope.launch {
+                        runCatching {
+                            val targetId = resolveTargetUserId(splits[1])
+                            val broadcasterUserId = channelId?.toLongOrNull()
+                            val targetUserId = targetId?.toLongOrNull()
+                            val durationSeconds = if (splits.size >= 3) {
+                                splits[2].toIntOrNull()
+                                    ?: KickApiHelper.getDuration(splits[2])?.toInt()
+                                    ?: 600
+                            } else {
+                                600
+                            }
+                            if (broadcasterUserId != null && targetUserId != null) {
+                                kickRepository.banOfficialUser(
+                                    networkLibrary = networkLibrary,
+                                    broadcasterUserId = broadcasterUserId,
+                                    targetUserId = targetUserId,
+                                    durationSeconds = durationSeconds,
+                                    reason = if (splits.size >= 4) splits[3] else null,
+                                )
+                                null
+                            } else if (hasPublicToken) {
+                                kickPublicApiRepository.banUser(
+                                    networkLibrary, kickPublicApiHeaders, channelId, accountId, targetId,
+                                    duration = durationSeconds.toString(),
+                                    reason = if (splits.size >= 4) splits[3] else null,
+                                )
+                            } else {
+                                throw IllegalStateException(applicationContext.getString(R.string.token_expired))
+                            }
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                }
+            }
+            command.equals("/clear", true) -> {
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.deleteMessages(networkLibrary, kickPublicApiHeaders, channelId, accountId)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else {
+                    missingAuth()
+                }
+            }
+            command.equals("/delete", true) -> {
+                val splits = message.split(" ")
+                if (splits.size >= 2) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickRepository.deleteOfficialChatMessage(networkLibrary, splits[1])
+                            null
+                        }.onSuccess { emitInfo(it) }.onFailure { error ->
+                            if (hasPublicToken) {
+                                runCatching {
+                                    kickPublicApiRepository.deleteMessages(networkLibrary, kickPublicApiHeaders, channelId, accountId, splits[1])
+                                }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                            } else {
+                                emitError(error)
+                            }
+                        }
+                    }
+                }
+            }
+            command.equals("/color", true) -> {
+                val splits = message.split(" ")
+                if (!hasPublicToken) {
+                    missingAuth()
+                } else {
+                    viewModelScope.launch {
+                        runCatching {
+                            if (splits.size >= 2) {
+                                kickPublicApiRepository.updateChatColor(networkLibrary, kickPublicApiHeaders, accountId, splits[1])
+                            } else {
+                                kickPublicApiRepository.getChatColor(networkLibrary, kickPublicApiHeaders, accountId)
+                            }
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                }
+            }
+            command.equals("/commercial", true) -> {
+                val splits = message.split(" ")
+                if (splits.size >= 2 && hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.startCommercial(networkLibrary, kickPublicApiHeaders, channelId, splits[1])
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else if (splits.size >= 2) {
+                    missingAuth()
+                }
+            }
+            command.equals("/disconnect", true) -> disconnect()
+            command.equals("/emoteonly", true) -> {
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, emote = true)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/emoteonlyoff", true) -> {
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, emote = false)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/followers", true) -> {
+                val splits = message.split(" ")
+                val duration = if (splits.size >= 2) splits[1].toIntOrNull() else null
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.updateChatSettings(
+                                networkLibrary, kickPublicApiHeaders, channelId, accountId,
+                                followers = true, followersDuration = duration,
+                            )
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/followersoff", true) -> {
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, followers = false)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/marker", true) -> {
+                val splits = message.split(" ", limit = 2)
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.createStreamMarker(
+                                networkLibrary, kickPublicApiHeaders, channelId,
+                                if (splits.size >= 2) splits[1] else null,
+                            )
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/mod", true) -> {
+                val splits = message.split(" ")
+                if (splits.size >= 2 && hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            val targetId = resolveTargetUserId(splits[1])
+                            kickPublicApiRepository.addModerator(networkLibrary, kickPublicApiHeaders, channelId, targetId)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else if (splits.size >= 2) {
+                    missingAuth()
+                }
+            }
+            command.equals("/unmod", true) -> {
+                val splits = message.split(" ")
+                if (splits.size >= 2 && hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            val targetId = resolveTargetUserId(splits[1])
+                            kickPublicApiRepository.removeModerator(networkLibrary, kickPublicApiHeaders, channelId, targetId)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else if (splits.size >= 2) {
+                    missingAuth()
+                }
+            }
+            command.equals("/mods", true) -> {
+                viewModelScope.launch {
+                    onMessage(ChatMessage(systemMsg = "Listing moderators is not available via Kick API in this build."))
+                }
+            }
+            command.equals("/raid", true) -> {
+                val splits = message.split(" ")
+                if (splits.size >= 2 && hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            val targetId = resolveTargetUserId(splits[1])
+                            kickPublicApiRepository.startRaid(networkLibrary, kickPublicApiHeaders, channelId, targetId)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else if (splits.size >= 2) {
+                    missingAuth()
+                }
+            }
+            command.equals("/unraid", true) -> {
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.cancelRaid(networkLibrary, kickPublicApiHeaders, channelId)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/slow", true) -> {
+                val splits = message.split(" ")
+                val duration = if (splits.size >= 2) splits[1].toIntOrNull() else null
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.updateChatSettings(
+                                networkLibrary, kickPublicApiHeaders, channelId, accountId,
+                                slow = true, slowDuration = duration,
+                            )
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/slowoff", true) -> {
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, slow = false)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/subscribers", true) -> {
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, subs = true)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/subscribersoff", true) -> {
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, subs = false)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/uniquechat", true) -> {
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, unique = true)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/uniquechatoff", true) -> {
+                if (hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, unique = false)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else missingAuth()
+            }
+            command.equals("/vip", true) -> {
+                val splits = message.split(" ")
+                if (splits.size >= 2 && hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            val targetId = resolveTargetUserId(splits[1])
+                            kickPublicApiRepository.addVip(networkLibrary, kickPublicApiHeaders, channelId, targetId)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else if (splits.size >= 2) {
+                    missingAuth()
+                }
+            }
+            command.equals("/unvip", true) -> {
+                val splits = message.split(" ")
+                if (splits.size >= 2 && hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            val targetId = resolveTargetUserId(splits[1])
+                            kickPublicApiRepository.removeVip(networkLibrary, kickPublicApiHeaders, channelId, targetId)
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else if (splits.size >= 2) {
+                    missingAuth()
+                }
+            }
+            command.equals("/vips", true) -> {
+                viewModelScope.launch {
+                    onMessage(ChatMessage(systemMsg = "Listing VIPs is not available via Kick API in this build."))
+                }
+            }
+            command.equals("/w", true) -> {
+                val splits = message.split(" ", limit = 3)
+                if (splits.size >= 3 && hasPublicToken) {
+                    viewModelScope.launch {
+                        runCatching {
+                            val targetId = resolveTargetUserId(splits[1])
+                            kickPublicApiRepository.sendWhisper(networkLibrary, kickPublicApiHeaders, accountId, targetId, splits[2])
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
+                    }
+                } else if (splits.size >= 3) {
+                    missingAuth()
+                }
+            }
+            else -> sendMessage(message, networkLibrary, kickWebHeaders, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
+        }
+    }
+
+    private fun sendLegacyCommand(message: CharSequence, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiChatMessages: Boolean, enableIntegrity: Boolean) {
+        val command = message.toString().substringBefore(" ")
+        val kickMode = false
         when {
             command.startsWith("/announce", true) -> {
                 val splits = message.split(" ", limit = 2)

@@ -95,12 +95,14 @@ import com.google.android.material.color.MaterialColors
 import com.google.android.material.timepicker.MaterialTimePicker
 import com.google.android.material.timepicker.TimeFormat
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 @OptIn(UnstableApi::class)
 @AndroidEntryPoint
@@ -118,6 +120,16 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private var isKeyboardShown = false
     private var resizeMode = 0
     private var chatWidthLandscape = 0
+    /** 0 = fully closed, 1 = fully open. Scrubbed interactively in landscape fullscreen. */
+    private var chatOpenProgress = 0f
+    private var chatDragActive = false
+    private var chatDragCandidate = false
+    private var chatDragStartX = 0f
+    private var chatDragStartY = 0f
+    private var chatDragStartProgress = 0f
+    private var chatProgressAnimator: ValueAnimator? = null
+    /** Delayed orientation unlock after in-app minimize; cancelled if user maximizes again first. */
+    private var unlockOrientationJob: Job? = null
 
     private var activePointerId = -1
     private var lastX = 0f
@@ -295,6 +307,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             }
             isChatOpen = prefs.getBoolean(C.KEY_CHAT_OPENED, true) && !prefs.getBoolean(C.CHAT_DISABLE, false)
             chatWidthLandscape = prefs.getInt(C.LANDSCAPE_CHAT_WIDTH, 0)
+            chatOpenProgress = if (isChatOpen) 1f else 0f
             resizeMode = prefs.getInt(C.ASPECT_RATIO_LANDSCAPE, AspectRatioFrameLayout.RESIZE_MODE_FIT)
             aspectRatioFrameLayout.setAspectRatio(16f / 9f)
             initLayout()
@@ -305,24 +318,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             val longPressTimeout = ViewConfiguration.getLongPressTimeout()
             val moveFreely = prefs.getBoolean(C.PLAYER_MOVE_FREELY, false)
             val doubleTap = prefs.getBoolean(C.PLAYER_DOUBLETAP, true) && !prefs.getBoolean(C.CHAT_DISABLE, false)
-            val swipeChatDetector = GestureDetector(
-                requireContext(),
-                object : GestureDetector.SimpleOnGestureListener() {
-                    override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                        if (!isPortrait && isMaximized && !prefs.getBoolean(C.CHAT_DISABLE, false) &&
-                            kotlin.math.abs(velocityX) > kotlin.math.abs(velocityY) * 1.5f) {
-                            if (velocityX < -600f && !chatLayout.isVisible) {
-                                showChat()
-                                return true
-                            } else if (velocityX > 600f && chatLayout.isVisible) {
-                                hideChat()
-                                return true
-                            }
-                        }
-                        return false
-                    }
-                }
-            )
+            val chatFlingVelocity = 600f
 
             val controllerTapDetector = GestureDetector(
                 requireContext(),
@@ -474,17 +470,104 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
             )
 
+            fun canInteractiveChatDrag(): Boolean {
+                return !isPortrait &&
+                    isMaximized &&
+                    !prefs.getBoolean(C.CHAT_DISABLE, false) &&
+                    chatWidthLandscape > 0
+            }
+
+            fun beginChatDragIfNeeded(event: MotionEvent, pointerIndex: Int): Boolean {
+                if (!chatDragCandidate || chatDragActive || !canInteractiveChatDrag()) {
+                    return false
+                }
+                // Use raw/screen coords so resizing/translating the player mid-drag can't
+                // feed back into the pointer position and cause jitter.
+                val rawX = event.rawX
+                val rawY = event.rawY
+                val dx = rawX - chatDragStartX
+                val dy = rawY - chatDragStartY
+                if (abs(dx) <= touchSlop && abs(dy) <= touchSlop) {
+                    return false
+                }
+                // Prefer horizontal intent so vertical minimize still works.
+                if (abs(dx) < abs(dy) * 1.2f) {
+                    chatDragCandidate = false
+                    return false
+                }
+                chatDragActive = true
+                chatDragCandidate = false
+                isTap = false
+                chatProgressAnimator?.cancel()
+                chatDragStartProgress = chatOpenProgress
+                chatDragStartX = rawX
+                velocityTracker?.clear()
+                if (velocityTracker == null) {
+                    velocityTracker = VelocityTracker.obtain()
+                }
+                velocityTracker?.addMovement(event)
+                // Don't leave the controller half-pressed when we steal the gesture.
+                if (playerControls.root.isVisible) {
+                    val cancel = MotionEvent.obtain(
+                        event.downTime,
+                        event.eventTime,
+                        MotionEvent.ACTION_CANCEL,
+                        event.x,
+                        event.y,
+                        event.metaState
+                    )
+                    playerControls.root.dispatchTouchEvent(cancel)
+                    cancel.recycle()
+                }
+                // One layout pass to prepare, then scrub with transforms only.
+                prepareChatDragLayout()
+                applyChatOpenProgress(chatOpenProgress, finalize = false)
+                return true
+            }
+
+            fun updateChatDrag(event: MotionEvent, pointerIndex: Int) {
+                val dx = event.rawX - chatDragStartX
+                // Drag left (negative dx) opens; drag right closes.
+                val progress = chatDragStartProgress - (dx / chatWidthLandscape.toFloat())
+                applyChatOpenProgress(progress, finalize = false)
+                velocityTracker?.addMovement(event)
+            }
+
+            fun endChatDrag(event: MotionEvent) {
+                velocityTracker?.addMovement(event)
+                velocityTracker?.computeCurrentVelocity(1000)
+                val velocityX = velocityTracker?.xVelocity ?: 0f
+                velocityTracker?.recycle()
+                velocityTracker = null
+                val shouldOpen = when {
+                    velocityX < -chatFlingVelocity -> true
+                    velocityX > chatFlingVelocity -> false
+                    else -> chatOpenProgress >= 0.5f
+                }
+                settleChatOpen(shouldOpen, animate = true)
+                chatDragActive = false
+                chatDragCandidate = false
+            }
+
             fun downAction(event: MotionEvent) {
                 moveAnimation?.cancel()
+                chatProgressAnimator?.cancel()
                 isTap = true
                 tapEventTime = event.eventTime
                 if (isMaximized) {
+                    chatDragActive = false
+                    chatDragCandidate = canInteractiveChatDrag()
+                    chatDragStartX = event.rawX
+                    chatDragStartY = event.rawY
+                    chatDragStartProgress = chatOpenProgress
                     if (playerControls.root.isVisible) {
                         playerControls.root.dispatchTouchEvent(event)
                     } else {
                         controllerTapDetector.onTouchEvent(event)
                     }
                 } else {
+                    chatDragActive = false
+                    chatDragCandidate = false
                     velocityTracker?.clear()
                     if (velocityTracker == null) {
                         velocityTracker = VelocityTracker.obtain()
@@ -506,6 +589,20 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
             fun upAction(event: MotionEvent) {
                 if (isMaximized) {
+                    if (chatDragActive) {
+                        endChatDrag(event)
+                        // Keep player docked; chat scrub owns this gesture.
+                        if (slidingLayout.translationY !in touchSlopRange) {
+                            moveAnimation = slidingLayout.animate().apply {
+                                translationX(0f)
+                                translationY(0f)
+                                setDuration(200L)
+                                start()
+                            }
+                        }
+                        return
+                    }
+                    chatDragCandidate = false
                     if (playerControls.progressBar.isPressed) {
                         playerControls.root.dispatchTouchEvent(event)
                     } else {
@@ -620,6 +717,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             dragView.setOnTouchListener { _, event ->
                 if (!isAnimating) {
                     if (event.pointerCount > 1 || videoZoomGestureActive) {
+                        if (chatDragActive) {
+                            // Multi-touch cancels interactive chat scrub mid-gesture.
+                            endChatDrag(event)
+                        }
+                        chatDragCandidate = false
                         zoomDetector.onTouchEvent(event)
                         isTap = false
                         activePointerId = -1
@@ -647,7 +749,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 }
                             } else {
                                 downAction(event)
-                                if (isMaximized) swipeChatDetector.onTouchEvent(event)
                             }
                         }
                         MotionEvent.ACTION_POINTER_DOWN -> {
@@ -689,30 +790,42 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     }
                                 }
                             } else if (isMaximized) {
-                                swipeChatDetector.onTouchEvent(event)
-                                playerControls.root.dispatchTouchEvent(event)
-                                if (!playerControls.progressBar.isPressed && !statusBarSwipe && activePointerId != -1) {
-                                    val pointerIndex = event.findPointerIndex(activePointerId)
-                                    if (pointerIndex != -1) {
-                                        val y = event.getY(pointerIndex)
-                                        val translationY = y - lastY
-                                        if (slidingLayout.translationY + translationY < 0) {
-                                            slidingLayout.translationY = 0f
-                                            lastY = y
-                                        } else {
-                                            slidingLayout.translationY += translationY
-                                            lastY = y - translationY
-                                        }
-                                        if (slidingLayout.translationY < touchSlop) {
-                                            if (!backgroundVisible) {
-                                                enableBackground()
+                                val pointerIndex = if (activePointerId != -1) {
+                                    event.findPointerIndex(activePointerId)
+                                } else {
+                                    -1
+                                }
+                                if (pointerIndex != -1) {
+                                    if (!chatDragActive) {
+                                        beginChatDragIfNeeded(event, pointerIndex)
+                                    }
+                                    if (chatDragActive) {
+                                        updateChatDrag(event, pointerIndex)
+                                    } else {
+                                        playerControls.root.dispatchTouchEvent(event)
+                                        if (!playerControls.progressBar.isPressed && !statusBarSwipe) {
+                                            val y = event.getY(pointerIndex)
+                                            val translationY = y - lastY
+                                            if (slidingLayout.translationY + translationY < 0) {
+                                                slidingLayout.translationY = 0f
+                                                lastY = y
+                                            } else {
+                                                slidingLayout.translationY += translationY
+                                                lastY = y - translationY
                                             }
-                                        } else {
-                                            if (backgroundVisible) {
-                                                disableBackground()
+                                            if (slidingLayout.translationY < touchSlop) {
+                                                if (!backgroundVisible) {
+                                                    enableBackground()
+                                                }
+                                            } else {
+                                                if (backgroundVisible) {
+                                                    disableBackground()
+                                                }
                                             }
                                         }
                                     }
+                                } else {
+                                    playerControls.root.dispatchTouchEvent(event)
                                 }
                             } else {
                                 if (activePointerId != -1) {
@@ -778,8 +891,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 }
                                 activePointerId = -1
                             } else {
-                                if (isMaximized) swipeChatDetector.onTouchEvent(event)
                                 upAction(event)
+                                activePointerId = -1
                             }
                         }
                     }
@@ -1262,7 +1375,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         download.setOnClickListener { showDownloadDialog() }
                     }
                     val setting = prefs.getString(C.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0
-                    if (prefs.getBoolean(C.PLAYER_FOLLOW, false) && (setting == 0 || setting == 1)) {
+                    if (prefs.getBoolean(C.PLAYER_FOLLOW, true) && (setting == 0 || setting == 1)) {
                         follow.visibility = View.VISIBLE
                         follow.setOnClickListener {
                             viewModel.isFollowing.value?.let {
@@ -1396,6 +1509,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             if (isPortrait) {
                 requireActivity().window.decorView.setOnSystemUiVisibilityChangeListener(null)
                 showStatusBar()
+                chatProgressAnimator?.cancel()
+                playerLayout.translationX = 0f
+                chatLayout.translationX = 0f
                 playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
                     width = ViewGroup.LayoutParams.MATCH_PARENT
                     height = ViewGroup.LayoutParams.MATCH_PARENT
@@ -1456,29 +1572,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
                 if (isMaximized) {
                     hideStatusBar()
-                    val chatWidth = if (isChatOpen) chatWidthLandscape else 0
-                    playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
-                        width = ViewGroup.LayoutParams.MATCH_PARENT
-                        height = ViewGroup.LayoutParams.MATCH_PARENT
-                        marginEnd = chatWidth
-                    }
-                    chatLayout.updateLayoutParams<FrameLayout.LayoutParams> {
-                        width = chatWidthLandscape
-                        height = ViewGroup.LayoutParams.MATCH_PARENT
-                        gravity = Gravity.END
-                    }
-                    if (isChatOpen) {
-                        chatLayout.visibility = View.VISIBLE
-                        if (requireView().findViewById<Button>(R.id.btnDown)?.isVisible == false) {
-                            requireView().findViewById<RecyclerView>(R.id.recyclerView)?.let { recyclerView ->
-                                recyclerView.adapter?.itemCount?.let { recyclerView.scrollToPosition(it - 1) }
-                            }
-                        }
-                    } else {
-                        chatLayout.visibility = View.GONE
-                    }
+                    // After rotate while maximized (e.g. leave portrait PiP restore into landscape),
+                    // always rebuild landscape chat from the user preference — not the temporary
+                    // hideChatLayout() state used while minimized.
+                    restoreLandscapeChatIfNeeded(animate = false)
                 } else {
                     showStatusBar()
+                    chatProgressAnimator?.cancel()
+                    playerLayout.translationX = 0f
+                    chatLayout.translationX = 0f
                     playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
                         width = ViewGroup.LayoutParams.MATCH_PARENT
                         height = ViewGroup.LayoutParams.MATCH_PARENT
@@ -1634,29 +1736,104 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     fun hideChat() {
-        isChatOpen = false
-        hideChatLayout(animate = true)
-        if (prefs.getBoolean(C.PLAYER_CHATTOGGLE, true)) {
-            binding.playerControls.toggleChat.apply {
-                visibility = View.VISIBLE
+        settleChatOpen(open = false, animate = true)
+    }
+
+    fun showChat() {
+        settleChatOpen(open = true, animate = true)
+    }
+
+    private fun hideChatLayout(animate: Boolean = false) {
+        // Visual-only hide (minimize / system PiP). Does not change isChatOpen / prefs.
+        if (animate) {
+            animateChatOpenProgressTo(0f)
+        } else {
+            applyChatOpenProgress(0f, finalize = true)
+        }
+    }
+
+    private fun showChatLayout(animate: Boolean = false) {
+        ensureChatWidthLandscape()
+        if (animate) {
+            animateChatOpenProgressTo(1f)
+        } else {
+            applyChatOpenProgress(1f, finalize = true)
+        }
+    }
+
+    private fun settleChatOpen(open: Boolean, animate: Boolean) {
+        isChatOpen = open
+        prefs.edit { putBoolean(C.KEY_CHAT_OPENED, open) }
+        updateChatToggleButton(open)
+        if (animate) {
+            animateChatOpenProgressTo(if (open) 1f else 0f)
+        } else {
+            applyChatOpenProgress(if (open) 1f else 0f, finalize = true)
+        }
+        if (open) {
+            scrollChatToBottomIfFollowing()
+        }
+    }
+
+    /** User preference for landscape chat (not the temporary hide used by minimize/PiP). */
+    private fun refreshChatOpenFromPrefs() {
+        isChatOpen = prefs.getBoolean(C.KEY_CHAT_OPENED, true) && !prefs.getBoolean(C.CHAT_DISABLE, false)
+    }
+
+    private fun ensureChatWidthLandscape() {
+        if (chatWidthLandscape > 0) {
+            return
+        }
+        chatWidthLandscape = prefs.getInt(C.LANDSCAPE_CHAT_WIDTH, 0)
+        if (chatWidthLandscape <= 0) {
+            val metrics = resources.displayMetrics
+            val longest = max(metrics.widthPixels, metrics.heightPixels)
+            chatWidthLandscape = (longest * 0.30f).toInt()
+        }
+    }
+
+    /**
+     * Restores landscape chat after in-app minimize or system PiP.
+     * Minimize only hides chat visually; user preference stays in [isChatOpen] / prefs.
+     */
+    private fun restoreLandscapeChatIfNeeded(animate: Boolean = false) {
+        if (!isAdded || _binding == null || isPortrait || prefs.getBoolean(C.CHAT_DISABLE, false)) {
+            return
+        }
+        refreshChatOpenFromPrefs()
+        ensureChatWidthLandscape()
+        updateChatToggleButton(isChatOpen)
+        if (isChatOpen) {
+            showChatLayout(animate = animate)
+            scrollChatToBottomIfFollowing()
+        } else {
+            hideChatLayout(animate = false)
+        }
+    }
+
+    private fun updateChatToggleButton(open: Boolean) {
+        if (!prefs.getBoolean(C.PLAYER_CHATTOGGLE, true) || prefs.getBoolean(C.CHAT_DISABLE, false)) {
+            return
+        }
+        if (!isAdded || _binding == null || isPortrait) {
+            return
+        }
+        binding.playerControls.toggleChat.apply {
+            visibility = View.VISIBLE
+            if (open) {
+                setImageResource(R.drawable.baseline_speaker_notes_off_black_24)
+                setOnClickListener { hideChat() }
+            } else {
                 setImageResource(R.drawable.baseline_speaker_notes_black_24)
                 setOnClickListener { showChat() }
             }
         }
-        prefs.edit { putBoolean(C.KEY_CHAT_OPENED, false) }
     }
 
-    fun showChat() {
-        isChatOpen = true
-        showChatLayout(animate = true)
-        if (prefs.getBoolean(C.PLAYER_CHATTOGGLE, true)) {
-            binding.playerControls.toggleChat.apply {
-                visibility = View.VISIBLE
-                setImageResource(R.drawable.baseline_speaker_notes_off_black_24)
-                setOnClickListener { hideChat() }
-            }
+    private fun scrollChatToBottomIfFollowing() {
+        if (!isAdded || view == null) {
+            return
         }
-        prefs.edit { putBoolean(C.KEY_CHAT_OPENED, true) }
         if (requireView().findViewById<Button>(R.id.btnDown)?.isVisible == false) {
             requireView().findViewById<RecyclerView>(R.id.recyclerView)?.let { recyclerView ->
                 recyclerView.adapter?.itemCount?.let { recyclerView.scrollToPosition(it - 1) }
@@ -1664,89 +1841,137 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
-    private fun hideChatLayout(animate: Boolean = false) {
+    /**
+     * Ensures chat has the correct landscape size/gravity once. Player stays left-anchored
+     * (never translated); open amount uses marginEnd + chat translation like the original animation.
+     */
+    private fun prepareChatDragLayout() {
+        if (_binding == null || chatWidthLandscape <= 0) {
+            return
+        }
+        val width = chatWidthLandscape
         with(binding) {
-            if (animate && chatWidthLandscape > 0 && chatLayout.isVisible) {
-                ValueAnimator.ofFloat(0f, chatWidthLandscape.toFloat()).apply {
-                    duration = 250L
-                    interpolator = AccelerateInterpolator()
-                    addUpdateListener { va ->
-                        val v = va.animatedValue as Float
-                        chatLayout.translationX = v
-                        playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
-                            marginEnd = (chatWidthLandscape - v).toInt()
-                        }
-                    }
-                    addListener(object : AnimatorListenerAdapter() {
-                        override fun onAnimationEnd(animation: Animator) {
-                            (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-                                .hideSoftInputFromWindow(chatLayout.windowToken, 0)
-                            chatLayout.clearFocus()
-                            chatLayout.translationX = 0f
-                            chatLayout.visibility = View.GONE
-                            playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
-                                width = ViewGroup.LayoutParams.MATCH_PARENT
-                                height = ViewGroup.LayoutParams.MATCH_PARENT
-                                marginEnd = 0
-                            }
-                        }
-                    })
-                    start()
-                }
-            } else {
-                playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
-                    width = ViewGroup.LayoutParams.MATCH_PARENT
+            // Never leave a leftover translation from the bad transform-only path.
+            playerLayout.translationX = 0f
+            val chatLp = chatLayout.layoutParams as? FrameLayout.LayoutParams
+            if (chatLp == null ||
+                chatLp.width != width ||
+                chatLp.height != ViewGroup.LayoutParams.MATCH_PARENT ||
+                chatLp.gravity != Gravity.END
+            ) {
+                chatLayout.updateLayoutParams<FrameLayout.LayoutParams> {
+                    this.width = width
                     height = ViewGroup.LayoutParams.MATCH_PARENT
-                    marginEnd = 0
+                    gravity = Gravity.END
                 }
-                (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-                    .hideSoftInputFromWindow(chatLayout.windowToken, 0)
-                chatLayout.clearFocus()
-                chatLayout.visibility = View.GONE
+            }
+            if (chatLayout.visibility != View.VISIBLE) {
+                chatLayout.visibility = View.VISIBLE
             }
         }
     }
 
-    private fun showChatLayout(animate: Boolean = false) {
+    /**
+     * Landscape chat open progress: 0 = closed, 1 = fully open.
+     *
+     * Matches original visual model:
+     * - player stays left-aligned and shrinks from the right via marginEnd
+     * - chat slides in from the right via translationX
+     *
+     * Finger tracking uses rawX (screen space) so resizing the player does not feed back
+     * into the drag coordinate system.
+     */
+    private fun applyChatOpenProgress(progress: Float, finalize: Boolean) {
+        if (_binding == null) {
+            return
+        }
+        val width = chatWidthLandscape
+        if (width <= 0) {
+            chatOpenProgress = if (isChatOpen) 1f else 0f
+            return
+        }
+        val p = progress.coerceIn(0f, 1f)
+        chatOpenProgress = p
+        val margin = (width * p).roundToInt().coerceIn(0, width)
+        val chatTranslation = (width - margin).toFloat()
+
         with(binding) {
-            chatLayout.updateLayoutParams<FrameLayout.LayoutParams> {
-                width = chatWidthLandscape
-                height = ViewGroup.LayoutParams.MATCH_PARENT
-                gravity = Gravity.END
-            }
-            if (animate && chatWidthLandscape > 0) {
-                chatLayout.translationX = chatWidthLandscape.toFloat()
-                chatLayout.visibility = View.VISIBLE
-                ValueAnimator.ofFloat(chatWidthLandscape.toFloat(), 0f).apply {
-                    duration = 250L
-                    interpolator = DecelerateInterpolator()
-                    addUpdateListener { va ->
-                        val v = va.animatedValue as Float
-                        chatLayout.translationX = v
-                        playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
-                            marginEnd = (chatWidthLandscape - v).toInt()
-                        }
+            // Always clear any player translation (regression guard).
+            playerLayout.translationX = 0f
+
+            if (p <= 0f && finalize) {
+                (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                    .hideSoftInputFromWindow(chatLayout.windowToken, 0)
+                chatLayout.clearFocus()
+                chatLayout.translationX = 0f
+                chatLayout.visibility = View.GONE
+                val playerLp = playerLayout.layoutParams as? FrameLayout.LayoutParams
+                if (playerLp == null ||
+                    playerLp.width != ViewGroup.LayoutParams.MATCH_PARENT ||
+                    playerLp.marginEnd != 0
+                ) {
+                    playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
+                        this.width = ViewGroup.LayoutParams.MATCH_PARENT
+                        height = ViewGroup.LayoutParams.MATCH_PARENT
+                        marginEnd = 0
                     }
-                    addListener(object : AnimatorListenerAdapter() {
-                        override fun onAnimationEnd(animation: Animator) {
-                            chatLayout.translationX = 0f
-                            playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
-                                width = ViewGroup.LayoutParams.MATCH_PARENT
-                                height = ViewGroup.LayoutParams.MATCH_PARENT
-                                marginEnd = chatWidthLandscape
-                            }
-                        }
-                    })
-                    start()
                 }
-            } else {
-                playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
-                    width = ViewGroup.LayoutParams.MATCH_PARENT
-                    height = ViewGroup.LayoutParams.MATCH_PARENT
-                    marginEnd = chatWidthLandscape
-                }
-                chatLayout.visibility = View.VISIBLE
+                return
             }
+
+            prepareChatDragLayout()
+            chatLayout.translationX = chatTranslation
+            chatLayout.visibility = View.VISIBLE
+
+            val playerLp = playerLayout.layoutParams as? FrameLayout.LayoutParams
+            if (playerLp == null ||
+                playerLp.width != ViewGroup.LayoutParams.MATCH_PARENT ||
+                playerLp.marginEnd != margin
+            ) {
+                playerLayout.updateLayoutParams<FrameLayout.LayoutParams> {
+                    this.width = ViewGroup.LayoutParams.MATCH_PARENT
+                    height = ViewGroup.LayoutParams.MATCH_PARENT
+                    marginEnd = margin
+                }
+            }
+        }
+    }
+
+    private fun animateChatOpenProgressTo(target: Float) {
+        if (_binding == null) {
+            return
+        }
+        val clampedTarget = target.coerceIn(0f, 1f)
+        chatProgressAnimator?.cancel()
+        if (chatWidthLandscape <= 0 || isPortrait) {
+            applyChatOpenProgress(clampedTarget, finalize = true)
+            return
+        }
+        val start = chatOpenProgress
+        if (abs(start - clampedTarget) < 0.001f) {
+            applyChatOpenProgress(clampedTarget, finalize = true)
+            return
+        }
+        applyChatOpenProgress(start, finalize = false)
+
+        val durationMs = (220f * abs(clampedTarget - start)).toLong().coerceIn(120L, 250L)
+        chatProgressAnimator = ValueAnimator.ofFloat(start, clampedTarget).apply {
+            duration = durationMs
+            interpolator = if (clampedTarget >= start) DecelerateInterpolator() else AccelerateInterpolator()
+            addUpdateListener { va ->
+                applyChatOpenProgress(va.animatedValue as Float, finalize = false)
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    chatProgressAnimator = null
+                    applyChatOpenProgress(clampedTarget, finalize = true)
+                }
+
+                override fun onAnimationCancel(animation: Animator) {
+                    chatProgressAnimator = null
+                }
+            })
+            start()
         }
     }
 
@@ -1898,17 +2123,24 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
         requireArguments().putString(KEY_RESOLVED_STREAM_URL, null)
         viewModel.streamResult.value = null
-        DiagnosticLogger.w(
-            "PlayerFragment",
+        // Keep real recovery signals (IVS/HTTP/403) as warnings; idle refresh is routine.
+        val logAsWarning = reason.contains("error", ignoreCase = true) ||
+            reason.contains("403", ignoreCase = true) ||
+            reason.contains("http", ignoreCase = true)
+        val refreshMessage =
             "Kick stream $reason: forcing fresh playback URL channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)} " +
                 "hadStaleUrl=${!stalePlaybackUrl.isNullOrBlank()} customProxy=${viewModel.useCustomProxy}"
-        )
+        if (logAsWarning) {
+            DiagnosticLogger.w("PlayerFragment", refreshMessage)
+        } else {
+            DiagnosticLogger.i("PlayerFragment", refreshMessage)
+        }
         viewLifecycleOwner.lifecycleScope.launch {
             if (delayMs > 0L) {
                 delay(delayMs)
             }
             try {
-                DiagnosticLogger.w(
+                DiagnosticLogger.i(
                     "PlayerFragment",
                     "Kick stream $reason: loading fresh URL channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)}"
                 )
@@ -2560,7 +2792,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     viewModel.useCustomProxy = false
                 }
                 if (forceRefresh) {
-                    DiagnosticLogger.w(
+                    DiagnosticLogger.i(
                         "PlayerFragment",
                         "Kick stream load: requesting resolved URL channel=$channelLogin staleUrlPresent=${!stalePlaybackUrl.isNullOrBlank()}"
                     )
@@ -2708,12 +2940,18 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 (chatFragment?.childFragmentManager?.findFragmentByTag("imageDialog") as? BottomSheetDialogFragment)?.dismiss()
             } else {
                 useController = true
+                // System PiP hides chat while active; restore the user's landscape preference on exit.
+                if (isMaximized && !isPortrait) {
+                    restoreLandscapeChatIfNeeded(animate = false)
+                }
             }
         }
     }
 
     override fun onStop() {
         super.onStop()
+        unlockOrientationJob?.cancel()
+        unlockOrientationJob = null
         unregisterAutoQualityNetworkCallback()
         binding.playerControls.root.removeCallbacks(controllerHideAction)
     }
@@ -3016,14 +3254,22 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
             } else {
                 showStatusBar()
+                // Hide chat only for the mini-player chrome. Keep isChatOpen / KEY_CHAT_OPENED intact
+                // so maximize can restore the user's landscape chat preference.
                 hideChatLayout()
                 slidingLayout.doOnPreDraw {
                     animate()
                 }
                 val activity = requireActivity()
-                activity.lifecycleScope.launch {
+                unlockOrientationJob?.cancel()
+                unlockOrientationJob = activity.lifecycleScope.launch {
                     delay(500L)
-                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    // Skip if the user already maximized again — unlocking orientation mid-restore
+                    // was collapsing landscape chat via configuration/layout races.
+                    if (!isMaximized && isAdded) {
+                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
+                    unlockOrientationJob = null
                 }
             }
         }
@@ -3031,6 +3277,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     fun maximize() {
         with(binding) {
+            unlockOrientationJob?.cancel()
+            unlockOrientationJob = null
             isMaximized = true
             requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backPressedCallback)
             if (videoType == STREAM && chatFragment?.emoteMenuIsVisible() == true) {
@@ -3045,9 +3293,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 chatLayout.visibility = View.VISIBLE
             } else {
                 hideStatusBar()
-                if (isChatOpen) {
-                    showChatLayout()
-                }
+                restoreLandscapeChatIfNeeded(animate = false)
             }
             slidingLayout.animate().apply {
                 translationX(0f)
@@ -3066,6 +3312,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             setListener(null)
                             if (view != null) {
                                 enableBackground()
+                                // Re-apply after the mini-player scale animation so chat width/margins
+                                // match the restored full-size landscape layout.
+                                if (!isPortrait && isMaximized) {
+                                    restoreLandscapeChatIfNeeded(animate = false)
+                                }
                             }
                             activePointerId = -1
                         }
