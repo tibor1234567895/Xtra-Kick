@@ -117,6 +117,7 @@ class MainViewModel @Inject constructor(
     val isNetworkAvailable = MutableStateFlow<Boolean?>(null)
 
     var isPlayerOpened = false
+    var isMultiPovOpened = false
 
     var sleepTimer: Timer? = null
     var sleepTimerEndTime = 0L

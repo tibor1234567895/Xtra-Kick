@@ -77,6 +77,9 @@ import com.github.andreyasadchy.xtra.ui.common.Scrollable
 import com.github.andreyasadchy.xtra.ui.game.GameMediaFragmentDirections
 import com.github.andreyasadchy.xtra.ui.game.GamePagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.games.GamesFragmentDirections
+import com.github.andreyasadchy.xtra.ui.multipov.MultiPovFragment
+import com.github.andreyasadchy.xtra.ui.multipov.MultiPovSessionStore
+import com.github.andreyasadchy.xtra.ui.multipov.multiPovKey
 import com.github.andreyasadchy.xtra.ui.player.ExoPlayerFragment
 import com.github.andreyasadchy.xtra.ui.player.IvsPlayerFragment
 import com.github.andreyasadchy.xtra.ui.player.KickLivePlayback
@@ -129,6 +132,8 @@ class MainActivity : AppCompatActivity() {
     private val viewModel: MainViewModel by viewModels()
     private lateinit var navController: NavController
     var playerFragment: PlayerFragment? = null
+        private set
+    var multiPovFragment: MultiPovFragment? = null
         private set
     private var launchingSettings = false
     private var pendingBackgroundStreamHandoff: BackgroundStreamHandoff? = null
@@ -570,11 +575,14 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
-            prefs.getBoolean(C.PLAYER_PICTURE_IN_PICTURE, true) &&
-            playerFragment?.canEnterPictureInPicture() == true
+            prefs.getBoolean(C.PLAYER_PICTURE_IN_PICTURE, true)
         ) {
             try {
-                enterPictureInPictureMode(PictureInPictureParams.Builder().build())
+                if (multiPovFragment?.canEnterPictureInPicture() == true) {
+                    multiPovFragment?.enterFocusedPip()
+                } else if (playerFragment?.canEnterPictureInPicture() == true) {
+                    enterPictureInPictureMode(PictureInPictureParams.Builder().build())
+                }
             } catch (e: IllegalStateException) {
                 //device doesn't support PIP
             }
@@ -743,13 +751,17 @@ class MainActivity : AppCompatActivity() {
                     startOfflineVideo(it)
                 }
             }
-            INTENT_OPEN_PLAYER -> playerFragment?.maximize() //TODO if was closed need to reopen
+            INTENT_OPEN_PLAYER -> {
+                multiPovFragment?.maximize()
+                playerFragment?.maximize() //TODO if was closed need to reopen
+            }
         }
     }
 
 //Navigation listeners
 
     fun startStream(stream: Stream, resolvedUrl: String? = null, forceStandardLiveEngine: Boolean = false) {
+        closeMultiPovInternal()
         val effectiveResolvedUrl = when {
             !resolvedUrl.isNullOrBlank() -> resolvedUrl
             stream.source == C.KICK -> null
@@ -769,6 +781,95 @@ class MainActivity : AppCompatActivity() {
             }
         }
         startPlayer(fragment)
+    }
+
+    fun startMultiPov(
+        streams: List<Stream>,
+        resolvedUrls: Map<String, String> = emptyMap(),
+        focusedKey: String? = null,
+    ) {
+        if (isFinishing || isDestroyed) return
+        if (!prefs.getBoolean(C.MULTIPOV_ENABLED, true)) {
+            streams.firstOrNull()?.let { stream ->
+                startStream(stream, resolvedUrls[stream.multiPovKey()])
+            }
+            return
+        }
+        if (streams.isEmpty()) return
+        playerFragment?.close()
+        playerFragment = null
+        closeMultiPovInternal()
+        val fragment = MultiPovFragment.newInstance(
+            streams = streams,
+            resolvedUrls = resolvedUrls,
+            focusedKey = focusedKey,
+        )
+        multiPovFragment = fragment
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.playerContainer, fragment)
+            .commit()
+        viewModel.isPlayerOpened = true
+        viewModel.isMultiPovOpened = true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
+        }
+    }
+
+    fun addToMultiPov(stream: Stream, resolvedUrl: String? = null): Boolean {
+        val existing = multiPovFragment
+            ?: supportFragmentManager.findFragmentById(R.id.playerContainer) as? MultiPovFragment
+        if (existing != null) {
+            multiPovFragment = existing
+            return existing.addStream(stream, resolvedUrl)
+        }
+        val key = stream.multiPovKey()
+        val urls = buildMap {
+            if (!resolvedUrl.isNullOrBlank()) put(key, resolvedUrl)
+            else stream.playbackUrl?.takeIf { it.isNotBlank() }?.let { put(key, it) }
+        }
+        startMultiPov(listOf(stream), urls)
+        return true
+    }
+
+    fun expandMultiPovFocus(stream: Stream, resolvedUrl: String?) {
+        closeMultiPovInternal()
+        startStream(stream, resolvedUrl)
+    }
+
+    fun closeMultiPov() {
+        closeMultiPovInternal()
+        viewModel.isPlayerOpened = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
+        }
+    }
+
+    fun resumeMultiPovSession(): Boolean {
+        if (!prefs.getBoolean(C.MULTIPOV_ENABLED, true)) return false
+        val session = MultiPovSessionStore.load(prefs) ?: return false
+        val streams = session.toStreams()
+        if (streams.isEmpty()) return false
+        prefs.edit {
+            if (session.streamQuality.isNotBlank()) {
+                putString(C.MULTIPOV_QUALITY, session.streamQuality)
+                putString(C.MULTIPOV_SECONDARY_QUALITY, session.streamQuality)
+            }
+            putBoolean(C.MULTIPOV_BANDWIDTH_SAVING, session.bandwidthSaving)
+        }
+        startMultiPov(streams = streams, focusedKey = session.focusedKey)
+        return true
+    }
+
+    private fun closeMultiPovInternal() {
+        val fragment = multiPovFragment
+            ?: supportFragmentManager.findFragmentById(R.id.playerContainer) as? MultiPovFragment
+        if (fragment != null) {
+            supportFragmentManager.beginTransaction()
+                .remove(fragment)
+                .commitAllowingStateLoss()
+        }
+        multiPovFragment = null
+        viewModel.isMultiPovOpened = false
     }
 
     fun launchSettings() {
@@ -835,6 +936,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun startVideo(video: Video, offset: Long?, ignoreSavedPosition: Boolean = false) {
+        closeMultiPovInternal()
         val fragment = when (prefs.getString(C.PLAYER, "ExoPlayer")) {
             "MediaPlayer" -> MediaPlayerFragment.newInstance(video, offset, ignoreSavedPosition)
             else -> {
@@ -849,6 +951,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun startClip(clip: Clip) {
+        closeMultiPovInternal()
         val fragment = when (prefs.getString(C.PLAYER, "ExoPlayer")) {
             "MediaPlayer" -> MediaPlayerFragment.newInstance(clip)
             else -> {
@@ -863,6 +966,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun startOfflineVideo(video: OfflineVideo) {
+        closeMultiPovInternal()
         val fragment = when (prefs.getString(C.PLAYER, "ExoPlayer")) {
             "MediaPlayer" -> MediaPlayerFragment.newInstance(video)
             else -> {
@@ -912,12 +1016,14 @@ class MainActivity : AppCompatActivity() {
         logPlayerShell(
             "startPlayer fragment=${fragment.javaClass.simpleName} replacing=${playerFragment?.javaClass?.simpleName}"
         )
+        closeMultiPovInternal()
         playerFragment?.close()
         playerFragment = fragment
         supportFragmentManager.beginTransaction()
             .replace(R.id.playerContainer, fragment)
             .commit()
         viewModel.isPlayerOpened = true
+        viewModel.isMultiPovOpened = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             prefs.getBoolean(C.PLAYER_PICTURE_IN_PICTURE, true)
@@ -927,12 +1033,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun closePlayer() {
-        supportFragmentManager.beginTransaction()
-            .setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
-            .remove(supportFragmentManager.findFragmentById(R.id.playerContainer)!!)
-            .commit()
+        val containerFragment = supportFragmentManager.findFragmentById(R.id.playerContainer)
+        if (containerFragment != null) {
+            supportFragmentManager.beginTransaction()
+                .setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
+                .remove(containerFragment)
+                .commit()
+        }
         playerFragment = null
+        multiPovFragment = null
         viewModel.isPlayerOpened = false
+        viewModel.isMultiPovOpened = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
         }
@@ -941,6 +1052,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun restorePlayerFragment() {
+        if (multiPovFragment == null) {
+            multiPovFragment =
+                supportFragmentManager.findFragmentById(R.id.playerContainer) as? MultiPovFragment
+            if (multiPovFragment != null) {
+                viewModel.isMultiPovOpened = true
+                viewModel.isPlayerOpened = true
+                logPlayerShell("restorePlayerFragment found MultiPovFragment")
+            }
+        }
         if (playerFragment == null) {
             playerFragment = supportFragmentManager.findFragmentById(R.id.playerContainer) as? PlayerFragment
             logPlayerShell("restorePlayerFragment found=${playerFragment?.javaClass?.simpleName}")

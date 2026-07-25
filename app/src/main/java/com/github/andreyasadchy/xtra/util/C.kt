@@ -330,4 +330,21 @@ object C {
     const val ENABLE_INTEGRITY = "enable_integrity"
     const val USE_WEBVIEW_INTEGRITY = "use_webview_integrity"
     const val GET_ALL_GQL_HEADERS = "get_all_gql_headers"
+    const val MULTIPOV_ENABLED = "multipov_enabled"
+    const val MULTIPOV_MAX_STREAMS = "multipov_max_streams"
+    const val MULTIPOV_SECONDARY_QUALITY = "multipov_secondary_quality"
+    /** Quality for all MultiPOV streams (replaces secondary-only meaning). */
+    const val MULTIPOV_QUALITY = "multipov_quality"
+    const val MULTIPOV_BANDWIDTH_SAVING = "multipov_bandwidth_saving"
+    const val MULTIPOV_PAUSE_INACTIVE_ON_BACKGROUND = "multipov_pause_inactive_on_background"
+    const val MULTIPOV_LAYOUT = "multipov_layout"
+    const val MULTIPOV_AUDIO_CROSSFADE = "multipov_audio_crossfade"
+    const val MULTIPOV_ADAPTIVE_QUALITY = "multipov_adaptive_quality"
+    const val MULTIPOV_PIP_FOCUSED = "multipov_pip_focused"
+    const val MULTIPOV_MAX_STREAMS_DEFAULT = 8
+    const val MULTIPOV_LAYOUT_EQUAL = "equal"
+    /** Legacy preference value — treated as [MULTIPOV_LAYOUT_PRIMARY_TOP]. */
+    const val MULTIPOV_LAYOUT_PRIMARY = "primary_larger"
+    const val MULTIPOV_LAYOUT_PRIMARY_TOP = "primary_top"
+    const val MULTIPOV_LAYOUT_PRIMARY_LEFT = "primary_left"
 }

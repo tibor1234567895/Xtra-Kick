@@ -411,4 +411,32 @@
         <item>followed</item>
         <item>disabled</item>
     </string-array>
+
+    <string-array name="multipovQualityEntries">
+        <item>@string/multipov_quality_360</item>
+        <item>@string/multipov_quality_480</item>
+        <item>@string/multipov_quality_720</item>
+        <item>@string/multipov_quality_1080</item>
+        <item>@string/multipov_quality_source</item>
+    </string-array>
+
+    <string-array name="multipovQualityValues">
+        <item>360p</item>
+        <item>480p</item>
+        <item>720p</item>
+        <item>1080p</item>
+        <item>source</item>
+    </string-array>
+
+    <string-array name="multipovLayoutEntries">
+        <item>@string/multipov_layout_equal</item>
+        <item>@string/multipov_layout_primary_top</item>
+        <item>@string/multipov_layout_primary_left</item>
+    </string-array>
+
+    <string-array name="multipovLayoutValues">
+        <item>equal</item>
+        <item>primary_top</item>
+        <item>primary_left</item>
+    </string-array>
 </resources>
