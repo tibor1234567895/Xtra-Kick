@@ -6,9 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import android.text.format.DateUtils
 import android.util.Log
 import android.view.View
@@ -120,7 +118,6 @@ class Media3Fragment : PlayerFragment() {
 
     override fun onStart() {
         super.onStart()
-        registerAutoQualityNetworkCallback()
         controllerFuture = MediaController.Builder(
             requireContext(),
             SessionToken(
@@ -1076,9 +1073,7 @@ class Media3Fragment : PlayerFragment() {
                             }
                         }
                     }
-                    val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-                    val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-                    val cellular = networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+                    val cellular = networkMonitor.isCellular
                     if (!automaticQualityChangeInProgress && ((!cellular && prefs.getString(C.PLAYER_DEFAULTQUALITY, "saved") == "saved") || (cellular && prefs.getString(C.PLAYER_DEFAULT_CELLULAR_QUALITY, "saved") == "saved"))) {
                         prefs.edit { putString(C.PLAYER_QUALITY, quality.key) }
                     }

@@ -17,9 +17,6 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.Icon
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -94,7 +91,9 @@ import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.timepicker.MaterialTimePicker
 import com.google.android.material.timepicker.TimeFormat
+import com.github.andreyasadchy.xtra.util.NetworkMonitor
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -107,6 +106,9 @@ import kotlin.math.roundToInt
 @OptIn(UnstableApi::class)
 @AndroidEntryPoint
 abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment.OnSortOptionChanged, IntegrityDialog.CallbackListener {
+
+    @Inject
+    lateinit var networkMonitor: NetworkMonitor
 
     private var _binding: FragmentPlayerBinding? = null
     protected val binding get() = _binding!!
@@ -168,19 +170,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private var videoZoomFillMode = false
     private var videoZoomFillHintAnimation: ViewPropertyAnimator? = null
     private var videoZoomIndicatorAnimation: ViewPropertyAnimator? = null
-    private var qualityConnectivityManager: ConnectivityManager? = null
-    private var qualityNetworkCallback: ConnectivityManager.NetworkCallback? = null
-    protected var activeNetworkTransport: NetworkTransport? = null
+    protected var previousNetworkType: NetworkMonitor.NetworkType? = null
     protected var automaticQualityChangeInProgress = false
-    private val networkTransportPollAction = object : Runnable {
-        override fun run() {
-            if (view == null || qualityNetworkCallback == null) {
-                return
-            }
-            handleAutoQualityNetworkChanged(resolveActiveNetworkTransport())
-            view?.postDelayed(this, NETWORK_TRANSPORT_POLL_MS)
-        }
-    }
 
     protected lateinit var prefs: SharedPreferences
 
@@ -1501,6 +1492,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 chatFragment = fragment
             }
         }
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                networkMonitor.networkType.collect { type ->
+                    onNetworkTypeChanged(type)
+                }
+            }
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -2172,6 +2170,22 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
+    fun openMultiPov() {
+        if (videoType != STREAM) return
+        val stream = getCurrentStream()
+        val resolvedUrl = requireArguments().getString(KEY_RESOLVED_STREAM_URL)
+        val key = (stream.channelId ?: stream.channelLogin ?: stream.id ?: stream.channelName.orEmpty()).lowercase()
+        val urls = buildMap {
+            resolvedUrl?.takeIf { it.isNotBlank() }?.let { put(key, it) }
+                ?: stream.playbackUrl?.takeIf { it.isNotBlank() }?.let { put(key, it) }
+        }
+        (activity as? MainActivity)?.startMultiPov(
+            streams = listOf(stream),
+            resolvedUrls = urls,
+            focusedKey = key,
+        )
+    }
+
     fun showVodGames() {
         viewModel.gamesList.value?.let {
             PlayerGamesDialog.newInstance(it).show(childFragmentManager, "closeOnPip")
@@ -2209,68 +2223,23 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         viewModel.quality = resolvePreferredQualityForCurrentNetwork()
     }
 
-    protected fun registerAutoQualityNetworkCallback() {
-        if (qualityNetworkCallback != null) {
-            return
-        }
-        val manager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        qualityConnectivityManager = manager
-        activeNetworkTransport = resolveActiveNetworkTransport()
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                val networkCapabilities = qualityConnectivityManager?.getNetworkCapabilities(network) ?: return
-                handleNetworkCapabilities(network, networkCapabilities)
-            }
-
-            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                handleNetworkCapabilities(network, networkCapabilities)
-            }
-
-            private fun handleNetworkCapabilities(network: Network, networkCapabilities: NetworkCapabilities) {
-                if (qualityConnectivityManager?.activeNetwork != network ||
-                    !networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-                ) {
-                    return
-                }
-                val transport = resolveNetworkTransport(networkCapabilities)
-                view?.post {
-                    handleAutoQualityNetworkChanged(transport)
-                }
-            }
-        }
-        qualityNetworkCallback = callback
-        manager.registerDefaultNetworkCallback(callback)
-        view?.postDelayed(networkTransportPollAction, NETWORK_TRANSPORT_POLL_MS)
+    protected open fun onNetworkTypeChanged(type: NetworkMonitor.NetworkType) {
+        handleDefaultNetworkTypeChanged(type)
     }
 
-    protected fun unregisterAutoQualityNetworkCallback() {
-        view?.removeCallbacks(networkTransportPollAction)
-        qualityNetworkCallback?.let { callback ->
-            try {
-                qualityConnectivityManager?.unregisterNetworkCallback(callback)
-            } catch (_: Exception) {
-            }
-        }
-        qualityNetworkCallback = null
-        qualityConnectivityManager = null
-        activeNetworkTransport = null
-    }
-
-    protected open fun handleAutoQualityNetworkChanged(transport: NetworkTransport) {
-        val previousTransport = activeNetworkTransport
-        activeNetworkTransport = transport
-        if (previousTransport == null || previousTransport == transport) {
-            return
-        }
-        if (transport == NetworkTransport.OTHER) {
-            return
-        }
-        val preferredQuality = resolvePreferredQuality(transport == NetworkTransport.CELLULAR) ?: return
+    private fun handleDefaultNetworkTypeChanged(type: NetworkMonitor.NetworkType) {
+        val previous = previousNetworkType
+        previousNetworkType = type
+        if (previous == null || previous == type) return
+        if (type == NetworkMonitor.NetworkType.OTHER || type == NetworkMonitor.NetworkType.NONE || type == NetworkMonitor.NetworkType.UNKNOWN) return
+        if (previous == NetworkMonitor.NetworkType.OTHER || previous == NetworkMonitor.NetworkType.NONE || previous == NetworkMonitor.NetworkType.UNKNOWN) return
+        val isCellular = type == NetworkMonitor.NetworkType.CELLULAR
+        val preferredQuality = resolvePreferredQuality(isCellular) ?: return
         if (preferredQuality != viewModel.quality) {
             runAutomaticQualityChange {
                 changeQuality(preferredQuality)
             }
-            logAutomaticQualityChange(preferredQuality, transport)
+            logAutomaticQualityChange(preferredQuality, type)
         }
     }
 
@@ -2283,46 +2252,24 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
-    protected fun logAutomaticQualityChange(qualityKey: String?, transport: NetworkTransport? = activeNetworkTransport) {
+    protected fun logAutomaticQualityChange(qualityKey: String?, type: NetworkMonitor.NetworkType? = null) {
         val qualityName = viewModel.qualities[qualityKey]?.first ?: qualityKey ?: return
-        val transportName = transport?.let { formatNetworkTransport(it) }
+        val typeName = type?.let { networkMonitor.formatNetworkType(it) }
         viewModel.qualityChangeFlow.tryEmit(
-            if (transportName != null) {
-                "$transportName -> $qualityName"
+            if (typeName != null) {
+                "$typeName -> $qualityName"
             } else {
                 qualityName
             }
         )
     }
 
-    protected fun formatNetworkTransport(transport: NetworkTransport): String? {
-        return when (transport) {
-            NetworkTransport.WIFI -> "Wi-Fi"
-            NetworkTransport.CELLULAR -> "mobile data"
-            NetworkTransport.OTHER -> null
-        }
-    }
-
     protected fun isActiveNetworkCellular(): Boolean {
-        return resolveActiveNetworkTransport() == NetworkTransport.CELLULAR
-    }
-
-    protected fun resolveActiveNetworkTransport(): NetworkTransport {
-        val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-        return networkCapabilities?.let { resolveNetworkTransport(it) } ?: NetworkTransport.OTHER
-    }
-
-    protected fun resolveNetworkTransport(networkCapabilities: NetworkCapabilities): NetworkTransport {
-        return when {
-            networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkTransport.WIFI
-            networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkTransport.CELLULAR
-            else -> NetworkTransport.OTHER
-        }
+        return networkMonitor.isCellular
     }
 
     protected fun resolvePreferredQualityForCurrentNetwork(): String? {
-        return resolvePreferredQuality(isActiveNetworkCellular())
+        return resolvePreferredQuality(networkMonitor.isCellular)
             ?: viewModel.qualities.entries.firstOrNull()?.key
     }
 
@@ -2952,7 +2899,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         super.onStop()
         unlockOrientationJob?.cancel()
         unlockOrientationJob = null
-        unregisterAutoQualityNetworkCallback()
+
         binding.playerControls.root.removeCallbacks(controllerHideAction)
     }
 
@@ -3682,8 +3629,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         private const val VIDEO_ZOOM_TWO_FINGER_PAN_MULTIPLIER = 1.25f
         private const val VIDEO_ZOOM_FILL_HINT_ALPHA = 0.4f
         private const val VIDEO_ZOOM_INDICATOR_HIDE_DELAY_MS = 1500L
-        private const val NETWORK_TRANSPORT_POLL_MS = 2000L
-
         internal const val STREAM = "stream"
         internal const val VIDEO = "video"
         internal const val CLIP = "clip"
@@ -3724,9 +3669,4 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         protected const val KEY_GAME_NAME = "gameName"
     }
 
-    protected enum class NetworkTransport {
-        WIFI,
-        CELLULAR,
-        OTHER
-    }
 }

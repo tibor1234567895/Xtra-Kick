@@ -8,9 +8,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
 import android.text.format.DateUtils
 import android.util.Log
 import android.view.View
@@ -116,7 +114,6 @@ class ExoPlayerFragment : PlayerFragment() {
 
     override fun onStart() {
         super.onStart()
-        registerAutoQualityNetworkCallback()
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
                 if (view != null) {
@@ -1076,9 +1073,7 @@ class ExoPlayerFragment : PlayerFragment() {
                             }
                         }
                     }
-                    val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-                    val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-                    val cellular = networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+                    val cellular = networkMonitor.isCellular
                     if (!automaticQualityChangeInProgress && ((!cellular && prefs.getString(C.PLAYER_DEFAULTQUALITY, "saved") == "saved") || (cellular && prefs.getString(C.PLAYER_DEFAULT_CELLULAR_QUALITY, "saved") == "saved"))) {
                         prefs.edit { putString(C.PLAYER_QUALITY, quality.key) }
                     }

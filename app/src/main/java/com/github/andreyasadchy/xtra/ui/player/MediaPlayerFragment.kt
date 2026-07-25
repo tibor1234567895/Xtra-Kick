@@ -10,7 +10,6 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
 import android.text.format.DateUtils
 import android.util.Base64
 import android.util.Log
@@ -52,7 +51,6 @@ class MediaPlayerFragment : PlayerFragment() {
 
     override fun onStart() {
         super.onStart()
-        registerAutoQualityNetworkCallback()
         val callback = object : SurfaceHolder.Callback {
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
 
@@ -771,9 +769,7 @@ class MediaPlayerFragment : PlayerFragment() {
                         binding.playerSurface.visibility = View.VISIBLE
                     }
                 }
-                val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-                val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-                val cellular = networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+                val cellular = networkMonitor.isCellular
                 if (!automaticQualityChangeInProgress && ((!cellular && prefs.getString(C.PLAYER_DEFAULTQUALITY, "saved") == "saved") || (cellular && prefs.getString(C.PLAYER_DEFAULT_CELLULAR_QUALITY, "saved") == "saved"))) {
                     prefs.edit { putString(C.PLAYER_QUALITY, quality.key) }
                 }

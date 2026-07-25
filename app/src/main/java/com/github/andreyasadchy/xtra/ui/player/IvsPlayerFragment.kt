@@ -4,14 +4,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
-import android.os.PowerManager
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.View
@@ -30,6 +25,7 @@ import com.github.andreyasadchy.xtra.model.ui.Stream
 import com.github.andreyasadchy.xtra.ui.main.MainActivity
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.DiagnosticLogger
+import com.github.andreyasadchy.xtra.util.NetworkMonitor
 
 @OptIn(UnstableApi::class)
 class IvsPlayerFragment : PlayerFragment() {
@@ -46,13 +42,9 @@ class IvsPlayerFragment : PlayerFragment() {
     private var currentUrl: String? = null
     private var recoveryInProgress = false
     private var resumeOnStart = false
-    private var connectivityManager: ConnectivityManager? = null
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private var activeNetworkIsCellular: Boolean? = null
-    private val mainHandler = Handler(Looper.getMainLooper())
     private var backgroundAudioTransitionRequested = false
     private var pendingAutomaticQualityLog: String? = null
-    private var pendingAutomaticQualityTransport: NetworkTransport? = null
+    private var pendingAutomaticQualityTransport: NetworkMonitor.NetworkType? = null
 
     private fun playerDebugLog(message: String) {
         if (BuildConfig.DEBUG && prefs.getBoolean(C.DEBUG_PLAYER_BUFFER_LOGS, false)) {
@@ -68,7 +60,6 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun onStart() {
         super.onStart()
-        registerAutoQualityNetworkCallback()
         val callback = object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 surfaceCreated = true
@@ -189,7 +180,6 @@ class IvsPlayerFragment : PlayerFragment() {
             serviceConnection = null
             surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
             surfaceHolderCallback = null
-            unregisterAutoQualityNetworkCallback()
             fallbackToStandardPlayerAfterServiceStartDenied()
             return
         }
@@ -403,76 +393,16 @@ class IvsPlayerFragment : PlayerFragment() {
         setQualityText()
     }
 
-    private fun registerNetworkCallback() {
-        if (networkCallback != null || videoType != STREAM) {
-            return
-        }
-        val manager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        connectivityManager = manager
-        activeNetworkIsCellular = isActiveNetworkCellular()
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: android.net.Network) {
-                val networkCapabilities = connectivityManager?.getNetworkCapabilities(network) ?: return
-                handleNetworkCapabilities(network, networkCapabilities)
-            }
-
-            override fun onCapabilitiesChanged(network: android.net.Network, networkCapabilities: NetworkCapabilities) {
-                handleNetworkCapabilities(network, networkCapabilities)
-            }
-
-            private fun handleNetworkCapabilities(network: android.net.Network, networkCapabilities: NetworkCapabilities) {
-                val isActiveNetwork = connectivityManager?.activeNetwork == network
-                if (!isActiveNetwork || !networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
-                    return
-                }
-                val isCellular = networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
-                mainHandler.post {
-                    handleNetworkTransportChanged(isCellular)
-                }
-            }
-        }
-        networkCallback = callback
-        manager.registerDefaultNetworkCallback(callback)
-    }
-
-    private fun unregisterNetworkCallback() {
-        networkCallback?.let { callback ->
-            try {
-                connectivityManager?.unregisterNetworkCallback(callback)
-            } catch (_: Exception) {
-            }
-        }
-        networkCallback = null
-        connectivityManager = null
-    }
-
-    private fun handleNetworkTransportChanged(isCellular: Boolean) {
-        val previousTransport = activeNetworkIsCellular
-        activeNetworkIsCellular = isCellular
-        if (previousTransport == null || previousTransport == isCellular || videoType != STREAM) {
-            return
-        }
-        val preferredQuality = resolvePreferredQuality(isCellular) ?: return
+    override fun onNetworkTypeChanged(type: NetworkMonitor.NetworkType) {
+        val previous = previousNetworkType
+        previousNetworkType = type
+        if (previous == null || previous == type || videoType != STREAM) return
+        if (type == NetworkMonitor.NetworkType.OTHER || type == NetworkMonitor.NetworkType.NONE || type == NetworkMonitor.NetworkType.UNKNOWN) return
+        if (previous == NetworkMonitor.NetworkType.OTHER || previous == NetworkMonitor.NetworkType.NONE || previous == NetworkMonitor.NetworkType.UNKNOWN) return
+        val preferredQuality = resolvePreferredQuality(type == NetworkMonitor.NetworkType.CELLULAR) ?: return
         if (preferredQuality != viewModel.quality) {
             pendingAutomaticQualityLog = preferredQuality
-            pendingAutomaticQualityTransport = if (isCellular) NetworkTransport.CELLULAR else NetworkTransport.WIFI
-            changeQuality(preferredQuality)
-        }
-    }
-
-    override fun handleAutoQualityNetworkChanged(transport: NetworkTransport) {
-        val previousTransport = activeNetworkTransport
-        activeNetworkTransport = transport
-        if (previousTransport == null || previousTransport == transport || videoType != STREAM) {
-            return
-        }
-        if (transport == NetworkTransport.OTHER) {
-            return
-        }
-        val preferredQuality = resolvePreferredQuality(transport == NetworkTransport.CELLULAR) ?: return
-        if (preferredQuality != viewModel.quality) {
-            pendingAutomaticQualityLog = preferredQuality
-            pendingAutomaticQualityTransport = transport
+            pendingAutomaticQualityTransport = type
             runAutomaticQualityChange {
                 changeQuality(preferredQuality)
             }
@@ -483,10 +413,7 @@ class IvsPlayerFragment : PlayerFragment() {
         if (automaticQualityChangeInProgress) {
             return
         }
-        val connectivityManager = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-        val cellular = networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
-        val defaultQualityPref = if (cellular) C.PLAYER_DEFAULT_CELLULAR_QUALITY else C.PLAYER_DEFAULTQUALITY
+        val defaultQualityPref = if (networkMonitor.isCellular) C.PLAYER_DEFAULT_CELLULAR_QUALITY else C.PLAYER_DEFAULTQUALITY
         if (prefs.getString(defaultQualityPref, "saved") == "saved") {
             prefs.edit { putString(C.PLAYER_QUALITY, selectedQuality) }
         }
@@ -529,7 +456,6 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun close() {
         binding.playerControls.root.removeCallbacks(updateProgressAction)
-        unregisterAutoQualityNetworkCallback()
         val service = playbackService
         val ivsPlayer = service?.player
         playerListener?.let { ivsPlayer?.removeListener(it) }
@@ -555,7 +481,6 @@ class IvsPlayerFragment : PlayerFragment() {
             return
         }
         binding.playerControls.root.removeCallbacks(updateProgressAction)
-        unregisterAutoQualityNetworkCallback()
         val ivsPlayer = player
         val shouldKeepPlaying = ivsPlayer?.let { shouldContinueIvsInBackground(it) } ?: false
         playerDebugLog(
