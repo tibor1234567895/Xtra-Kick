@@ -693,8 +693,13 @@ class PlaybackService : MediaSessionService() {
                                 )))
                             }
                             GET_ERROR_CODE -> {
+                                // HLS wraps chunk failures two or three levels deep, so only
+                                // inspecting the direct cause returned null here — the caller
+                                // read 0 and blind-restarted with the same expired URL instead
+                                // of refreshing it on 403 or reporting stream-end on 404. The
+                                // chain walker below was already present, used only for logging.
                                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                    RESULT to (session.player.playerError?.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode,
+                                    RESULT to session.player.playerError?.let { httpResponseCode(it) },
                                 )))
                             }
                             GET_MEDIA_PLAYLIST -> {

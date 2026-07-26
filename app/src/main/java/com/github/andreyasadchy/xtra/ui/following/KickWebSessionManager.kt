@@ -11,7 +11,6 @@ import android.view.ViewGroup
 import android.webkit.WebSettings
 import android.webkit.WebView
 import com.github.andreyasadchy.xtra.BuildConfig
-import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.prefs
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -33,30 +32,6 @@ class KickWebSessionManager @Inject constructor(
         if (isDebugLoggingEnabled()) {
             Log.i(logTag, message)
         }
-    }
-
-    private fun debugLogW(message: String) {
-        if (isDebugLoggingEnabled()) {
-            Log.w(logTag, message)
-        }
-    }
-
-    fun seedKickAuthCookie(): Boolean {
-        val token = AuthStateHelper.getKickBearerToken(context)
-            ?.removePrefix("Bearer ")
-            ?.takeIf { it.isNotBlank() }
-            ?: run {
-                debugLogW("seedKickAuthCookie: no stored Kick token")
-                return false
-            }
-        debugLogI("seedKickAuthCookie: seeding auth-token/session_token cookies")
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setCookie("https://kick.com", "auth-token=$token; Path=/; Secure")
-        CookieManager.getInstance().setCookie("https://kick.com", "session_token=$token; Path=/; Secure")
-        CookieManager.getInstance().flush()
-        val seeded = CookieManager.getInstance().getCookie("https://kick.com")
-        debugLogI("seedKickAuthCookie: cookieHeaderPresent=${!seeded.isNullOrBlank()}")
-        return true
     }
 
     fun getKickCookieHeader(): String? {

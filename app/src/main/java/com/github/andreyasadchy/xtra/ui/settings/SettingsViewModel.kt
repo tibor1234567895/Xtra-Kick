@@ -85,6 +85,79 @@ class SettingsViewModel @Inject constructor(
 
     val updateUrl = MutableSharedFlow<String?>()
 
+    /** Result of scanning app storage for download files with no matching library entry. */
+    data class LeftoverFiles(val count: Int, val bytes: Long) {
+        val isEmpty get() = count == 0
+    }
+
+    val leftoverScan = MutableSharedFlow<LeftoverFiles>()
+    val leftoverRestored = MutableSharedFlow<Int>()
+    val leftoverDeleted = MutableSharedFlow<Long>()
+
+    /**
+     * Files under app storage are unreachable by file managers on Android 11+, so a download
+     * removed with "keep files" leaves data the user can neither see nor delete. These three
+     * functions make that state visible, recoverable and removable.
+     *
+     * "Leftover" means a top-level entry in `.downloads` that no OfflineVideo references —
+     * matching the same traversal [importDownloads] uses to restore them.
+     */
+    private suspend fun leftoverEntries(): List<File> {
+        val orphans = mutableListOf<File>()
+        applicationContext.getExternalFilesDirs(".downloads").forEach { storage ->
+            val files = storage?.absolutePath?.let { File(it).listFiles() } ?: return@forEach
+            val referencedChatUrls = files.filter { !it.name.endsWith(".json") }
+                .flatMap { entry ->
+                    when {
+                        entry.isDirectory -> entry.listFiles()?.filter { it.name.endsWith(".m3u8") }?.map { it.path }.orEmpty()
+                        else -> listOf(entry.path)
+                    }
+                }
+                .mapNotNull { offlineRepository.getVideoByUrl(it)?.chatUrl }
+                .toSet()
+            files.forEach { entry ->
+                when {
+                    entry.name.endsWith(".json") -> {
+                        if (entry.path !in referencedChatUrls) orphans.add(entry)
+                    }
+                    entry.isDirectory -> {
+                        val playlists = entry.listFiles()?.filter { it.name.endsWith(".m3u8") }.orEmpty()
+                        if (playlists.isNotEmpty() && playlists.all { offlineRepository.getVideoByUrl(it.path) == null }) {
+                            orphans.add(entry)
+                        }
+                    }
+                    entry.isFile && (entry.name.endsWith(".mp4") || entry.name.endsWith(".ts")) -> {
+                        if (offlineRepository.getVideoByUrl(entry.path) == null) orphans.add(entry)
+                    }
+                }
+            }
+        }
+        return orphans
+    }
+
+    private fun File.sizeRecursive(): Long =
+        if (isDirectory) walkBottomUp().filter { it.isFile }.sumOf { it.length() } else length()
+
+    fun scanLeftoverFiles() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val orphans = runCatching { leftoverEntries() }.getOrDefault(emptyList())
+            leftoverScan.emit(LeftoverFiles(orphans.size, orphans.sumOf { it.sizeRecursive() }))
+        }
+    }
+
+    fun deleteLeftoverFiles() {
+        viewModelScope.launch(Dispatchers.IO) {
+            var freed = 0L
+            runCatching {
+                leftoverEntries().forEach { entry ->
+                    val size = entry.sizeRecursive()
+                    if (entry.deleteRecursively()) freed += size
+                }
+            }
+            leftoverDeleted.emit(freed)
+        }
+    }
+
     fun deletePositions() {
         viewModelScope.launch {
             playerRepository.deleteVideoPositions()
@@ -100,6 +173,7 @@ class SettingsViewModel @Inject constructor(
 
     fun importDownloads() {
         viewModelScope.launch(Dispatchers.IO) {
+            var restored = 0
             val chatFiles = mutableMapOf<String, String>()
             applicationContext.getExternalFilesDirs(".downloads").forEach { storage ->
                 storage?.absolutePath?.let { directory ->
@@ -172,7 +246,9 @@ class SettingsViewModel @Inject constructor(
 
                                                 }
                                             }
-                                            offlineRepository.saveVideo(
+                                            restored++
+                                            restored++
+                                    offlineRepository.saveVideo(
                                                 OfflineVideo(
                                                     url = playlistFile.path,
                                                     name = if (!title.isNullOrBlank()) title else Uri.decode(file.name),
@@ -250,7 +326,10 @@ class SettingsViewModel @Inject constructor(
                                             channelId = if (!channelId.isNullOrBlank()) channelId else null,
                                             channelLogin = if (!channelLogin.isNullOrBlank()) channelLogin else null,
                                             channelName = if (!channelName.isNullOrBlank()) channelName else null,
-                                            thumbnail = file.path,
+                                            thumbnail = id?.takeIf { it.isNotBlank() }
+                                                ?.let { File(applicationContext.filesDir, "thumbnails${File.separator}$it") }
+                                                ?.takeIf { it.exists() }?.path
+                                                ?: file.path,
                                             gameId = if (!gameId.isNullOrBlank()) gameId else null,
                                             gameSlug = if (!gameSlug.isNullOrBlank()) gameSlug else null,
                                             gameName = if (!gameName.isNullOrBlank()) gameName else null,
@@ -268,6 +347,7 @@ class SettingsViewModel @Inject constructor(
                     }
                 }
             }
+            leftoverRestored.emit(restored)
         }
     }
 
@@ -454,7 +534,10 @@ class SettingsViewModel @Inject constructor(
     fun toggleNotifications(enabled: Boolean, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         viewModelScope.launch(Dispatchers.IO) {
             if (enabled) {
-                shownNotificationsRepository.getNewStreams(notificationUsersRepository, networkLibrary, kickWebHeaders, kickGraphQLRepository, kickPublicApiHeaders, kickPublicApiRepository)
+                val newStreams = shownNotificationsRepository.getNewStreams(notificationUsersRepository, networkLibrary, kickWebHeaders, kickGraphQLRepository, kickPublicApiHeaders, kickPublicApiRepository)
+                if (newStreams.isNotEmpty()) {
+                    shownNotificationsRepository.showLiveNotifications(applicationContext, newStreams)
+                }
                 WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
                     "live_notifications",
                     ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,

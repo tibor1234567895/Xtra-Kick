@@ -520,7 +520,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                             if (isShared) {
                                 context.contentResolver.openOutputStream(fileUri.toUri(), "wa")!!
                             } else {
-                                FileOutputStream(fileUri)
+                                FileOutputStream(fileUri, true)
                             }.use { outputStream ->
                                 response.body.byteStream().use { inputStream ->
                                     inputStream.copyTo(outputStream)
@@ -1460,7 +1460,7 @@ class StreamDownloadWorker @AssistedInject constructor(
             addAction(android.R.drawable.ic_delete, ContextCompat.getString(context, R.string.stop), WorkManager.getInstance(context).createCancelPendingIntent(id))
         }.build()
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            ForegroundInfo(offlineVideo.id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            ForegroundInfo(offlineVideo.id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             ForegroundInfo(offlineVideo.id, notification)
         }

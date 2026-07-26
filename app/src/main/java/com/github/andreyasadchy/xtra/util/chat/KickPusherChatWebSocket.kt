@@ -81,13 +81,19 @@ class KickPusherChatWebSocket(
                     }
                 )
             }
-            Log.i(tag, "subscribe channel=$channelName")
+            if (debugLogging) {
+                Log.i(tag, "subscribe channel=$channelName")
+            }
             webSocket?.write(payload.toString())
         }
         privateChannelNames.forEach { channelName ->
             val auth = socketId?.let { authorizePrivateChannel?.invoke(channelName, it) }
             if (auth.isNullOrBlank()) {
-                Log.w(tag, "private subscribe skipped channel=$channelName hasSocketId=${!socketId.isNullOrBlank()}")
+                // Private channel names embed the account id (private-userfeed.<id>), so this
+                // is gated too.
+                if (debugLogging) {
+                    Log.w(tag, "private subscribe skipped channel=$channelName hasSocketId=${!socketId.isNullOrBlank()}")
+                }
                 return@forEach
             }
             val payload = JSONObject().apply {
@@ -100,7 +106,9 @@ class KickPusherChatWebSocket(
                     }
                 )
             }
-            Log.i(tag, "subscribe private channel=$channelName")
+            if (debugLogging) {
+                Log.i(tag, "subscribe private channel=$channelName")
+            }
             webSocket?.write(payload.toString())
         }
     }
@@ -129,17 +137,24 @@ class KickPusherChatWebSocket(
                     is String -> rawData
                     else -> null
                 }
-                Log.i(
-                    tag,
-                    "pusher_message event=${event.ifBlank { "<blank>" }} channel=${channel.ifBlank { "<none>" }} payload=${payload?.take(300) ?: "<none>"}",
-                )
+                // Never log the payload: it carries the text of every chat message the user
+                // reads. Even gated behind debugLogging that is more than this needs, so only
+                // the event name and a length are recorded.
+                if (debugLogging) {
+                    Log.i(
+                        tag,
+                        "pusher_message event=${event.ifBlank { "<blank>" }} channel=${channel.ifBlank { "<none>" }} payloadLength=${payload?.length ?: 0}",
+                    )
+                }
                 when (event) {
                     "pusher:connection_established" -> {
                         val dataObj = parseJsonOrNull(root.opt("data"))
                         subscribe(dataObj?.optString("socket_id"))
                     }
                     "pusher_internal:subscription_succeeded" -> {
-                        Log.i(tag, "subscription_succeeded channel=${root.optString("channel")}")
+                        if (debugLogging) {
+                            Log.i(tag, "subscription_succeeded channel=${root.optString("channel")}")
+                        }
                         if (!hasEmittedConnect) {
                             hasEmittedConnect = true
                             listener.onConnect()
@@ -158,7 +173,9 @@ class KickPusherChatWebSocket(
                     else -> {
                         if (!event.startsWith("pusher:") && !event.startsWith("pusher_internal:")) {
                             payload?.takeIf { it.isNotBlank() }?.let {
-                                Log.i(tag, "chat_event event=$event channel=${root.optString("channel")}")
+                                if (debugLogging) {
+                                    Log.i(tag, "chat_event event=$event channel=${root.optString("channel")}")
+                                }
                                 listener.onChatEvent(event, channel.takeIf { value -> value.isNotBlank() }, it)
                             }
                         } else if (debugLogging && event.isNotBlank()) {

@@ -1,6 +1,7 @@
 package com.github.andreyasadchy.xtra.util
 
 import android.app.ActivityManager
+import android.app.Application
 import android.content.Context
 import android.os.Build
 import android.os.Debug
@@ -22,8 +23,12 @@ object DiagnosticLogger {
     private const val LEVEL_ERROR = "error"
     private const val LEVEL_WARNING = "warning"
 
+    // Typed as Application, not Context: this object is a singleton, so holding an Activity
+    // or Service context here would be a genuine leak. The narrower type makes "only ever the
+    // process-lifetime context" a compile-time guarantee instead of a convention, and clears
+    // the StaticFieldLeak warning honestly rather than by suppression.
     @Volatile
-    private var context: Context? = null
+    private var context: Application? = null
 
     @Volatile
     private var lastResumedActivity: String? = null
@@ -31,8 +36,8 @@ object DiagnosticLogger {
     @Volatile
     private var isAppInForeground: Boolean = false
 
-    fun init(context: Context) {
-        this.context = context.applicationContext
+    fun init(application: Application) {
+        this.context = application
     }
 
     fun updateAppState(isForeground: Boolean, resumedActivity: String? = lastResumedActivity) {

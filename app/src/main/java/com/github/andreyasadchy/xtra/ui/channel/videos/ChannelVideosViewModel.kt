@@ -89,30 +89,6 @@ class ChannelVideosViewModel @Inject constructor(
             ChannelVideosDataSource(
                 channelId = args.channelId,
                 channelLogin = args.channelLogin,
-                gqlQueryType = when (selectedType) {
-                    VideosSortDialog.VIDEO_TYPE_ALL -> null
-                    VideosSortDialog.VIDEO_TYPE_ARCHIVE -> BroadcastType.ARCHIVE
-                    VideosSortDialog.VIDEO_TYPE_HIGHLIGHT -> BroadcastType.HIGHLIGHT
-                    VideosSortDialog.VIDEO_TYPE_UPLOAD -> BroadcastType.UPLOAD
-                    else -> null
-                },
-                gqlQuerySort = when (selectedSort) {
-                    VideosSortDialog.SORT_TIME -> VideoSort.TIME
-                    VideosSortDialog.SORT_VIEWS -> VideoSort.VIEWS
-                    else -> VideoSort.TIME
-                },
-                gqlType = when (selectedType) {
-                    VideosSortDialog.VIDEO_TYPE_ALL -> null
-                    VideosSortDialog.VIDEO_TYPE_ARCHIVE -> "ARCHIVE"
-                    VideosSortDialog.VIDEO_TYPE_HIGHLIGHT -> "HIGHLIGHT"
-                    VideosSortDialog.VIDEO_TYPE_UPLOAD -> "UPLOAD"
-                    else -> null
-                },
-                gqlSort = when (selectedSort) {
-                    VideosSortDialog.SORT_TIME -> "TIME"
-                    VideosSortDialog.SORT_VIEWS -> "VIEWS"
-                    else -> "TIME"
-                },
                 helixPeriod = when (selectedPeriod) {
                     VideosSortDialog.PERIOD_DAY -> "day"
                     VideosSortDialog.PERIOD_WEEK -> "week"
@@ -132,14 +108,7 @@ class ChannelVideosViewModel @Inject constructor(
                     VideosSortDialog.SORT_VIEWS -> "views"
                     else -> "time"
                 },
-                kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext),
-                kickGraphQLRepository = kickGraphQLRepository,
-                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext),
-                kickPublicApiRepository = kickPublicApiRepository,
                 kickRepository = kickRepository,
-                enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                apiPref = listOf(C.KICK),
-                networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
             )
         }.flow
     }.cachedIn(viewModelScope)

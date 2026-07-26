@@ -5,11 +5,53 @@ on:
     branches: [ master ]
 
 jobs:
+  # Tests and lint. Deliberately not a dependency of `build` yet: 4 of the 138 unit tests
+  # fail on the current tree — all ChatBackgroundUtilsTest/KickFeatureParsingUtilsTest cases
+  # that need android.graphics.Color, which does not exist on the JVM. Add Robolectric, then
+  # drop continue-on-error here and add `needs: check` to `build`.
+  #
+  # Lint is clean apart from 6 known warnings, none of which fail the build:
+  #   2x UnsafeIntentLaunch  - false positive; MainActivity's EXTRA_INTENT is sanitized by
+  #                            isSystemInstallerIntent(). The detector honours neither
+  #                            method- nor class-level @SuppressLint. See the comment there.
+  #   2x SetTextI18n         - MultiPovFragment shows format-only text ("2/4", "~1.3s").
+  #   1x RtlSymmetry         - fragment_multipov.xml paddingEnd without paddingStart.
+  #   1x AndroidGradlePluginVersion - upgrade advisory.
+  check:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest
+      - name: Lint
+        run: ./gradlew lintDebug
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: check-reports
+          path: |
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+
   build:
     runs-on: ubuntu-latest
     env:
       ORG_GRADLE_PROJECT_KICK_CLIENT_ID: ${{ secrets.KICK_CLIENT_ID }}
       ORG_GRADLE_PROJECT_KICK_OAUTH_BACKEND_BASE_URL: ${{ secrets.KICK_OAUTH_BACKEND_BASE_URL }}
+      ORG_GRADLE_PROJECT_RELEASE_KEYSTORE_FILE: ${{ github.workspace }}/app/release-keystore.jks
+      ORG_GRADLE_PROJECT_RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+      ORG_GRADLE_PROJECT_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+      ORG_GRADLE_PROJECT_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
     steps:
     - name: Checkout sources
       uses: actions/checkout@v7
@@ -23,8 +65,19 @@ jobs:
         distribution: 'temurin'
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v5
+
+    # Required: without it the release signing config is absent and the build fails by
+    # design, rather than silently falling back to the debug key as it used to.
+    - name: Decode release keystore
+      run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > app/release-keystore.jks
+
     - name: Build with Gradle
       run: ./gradlew assembleRelease
+
+    - name: Verify release signature
+      run: |
+        APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -r | head -1)
+        "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/*.apk
 
     - name: Upload a Build Artifact
       uses: actions/upload-artifact@v6

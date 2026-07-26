@@ -33,6 +33,12 @@
         app:singleLineTitle="false" />
 
     <Preference
+        android:key="nav_multipov_settings"
+        android:title="@string/multipov_settings"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <Preference
         android:key="nav_player_button_settings"
         android:title="@string/player_buttons"
         app:iconSpaceReserved="false"

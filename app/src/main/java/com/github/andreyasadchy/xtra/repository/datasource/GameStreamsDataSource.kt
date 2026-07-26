@@ -15,18 +15,11 @@ class GameStreamsDataSource(
     private val gameSlug: String?,
     private val gameName: String?,
     private val gqlQueryLanguages: List<Language>?,
-    private val gqlQuerySort: StreamSort?,
     private val gqlLanguages: List<String>?,
     private val gqlSort: String?,
     private val tags: List<String>?,
-    private val kickWebHeaders: Map<String, String>,
-    private val kickGraphQLRepository: KickGraphQLRepository,
-    private val kickPublicApiHeaders: Map<String, String>,
-    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
-    private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
-    private val networkLibrary: String?,
 ) : PagingSource<Int, Stream>() {
     private var api: String? = null
     private var offset: String? = null
@@ -58,134 +51,6 @@ class GameStreamsDataSource(
             C.KICK -> if (tags.isNullOrEmpty() && gqlQueryLanguages.isNullOrEmpty() && gqlLanguages.isNullOrEmpty()) kickLoad(params) else throw Exception()
             else -> throw Exception()
         }
-    }
-
-    private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val response = kickGraphQLRepository.loadQueryGameStreams(
-            networkLibrary = networkLibrary,
-            headers = kickWebHeaders,
-            id = gameId,
-            slug = gameSlug.takeIf { gameId.isNullOrBlank() },
-            name = gameName.takeIf { gameId.isNullOrBlank() && gameSlug.isNullOrBlank() },
-            sort = gqlQuerySort,
-            tags = tags,
-            languages = gqlQueryLanguages,
-            first = params.loadSize,
-            after = offset
-        )
-        if (enableIntegrity) {
-            response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-        }
-        val data = response.data!!.game!!.streams!!
-        val items = data.edges!!
-        val list = items.mapNotNull { item ->
-            item?.node?.let {
-                Stream(
-                    id = it.id,
-                    channelId = it.broadcaster?.id,
-                    channelLogin = it.broadcaster?.login,
-                    channelName = it.broadcaster?.displayName,
-                    gameId = gameId,
-                    gameSlug = gameSlug,
-                    gameName = gameName,
-                    title = it.broadcaster?.broadcastSettings?.title,
-                    viewerCount = it.viewersCount,
-                    startedAt = it.createdAt?.toString(),
-                    thumbnailUrl = it.previewImageURL,
-                    profileImageUrl = it.broadcaster?.profileImageURL,
-                    tags = it.freeformTags?.mapNotNull { tag -> tag.name }
-                )
-            }
-        }
-        offset = items.lastOrNull()?.cursor?.toString()
-        val nextPage = data.pageInfo?.hasNextPage != false
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank() && nextPage) {
-                (params.key ?: 1) + 1
-            } else null
-        )
-    }
-
-    private suspend fun gqlLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val response = kickGraphQLRepository.loadGameStreams(networkLibrary, kickWebHeaders, gameSlug, gqlSort, tags, gqlLanguages, params.loadSize, offset)
-        if (enableIntegrity) {
-            response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-        }
-        val data = response.data!!.game.streams
-        val items = data.edges
-        val list = items.map { item ->
-            item.node.let {
-                Stream(
-                    id = it.id,
-                    channelId = it.broadcaster?.id,
-                    channelLogin = it.broadcaster?.login,
-                    channelName = it.broadcaster?.displayName,
-                    gameId = gameId,
-                    gameSlug = gameSlug,
-                    gameName = gameName,
-                    title = it.title,
-                    viewerCount = it.viewersCount,
-                    startedAt = it.createdAt,
-                    thumbnailUrl = it.previewImageURL,
-                    profileImageUrl = it.broadcaster?.profileImageURL,
-                    tags = it.freeformTags?.mapNotNull { tag -> tag.name }
-                )
-            }
-        }
-        offset = items.lastOrNull()?.cursor
-        val nextPage = data.pageInfo?.hasNextPage != false
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank() && nextPage) {
-                (params.key ?: 1) + 1
-            } else null
-        )
-    }
-
-    private suspend fun helixLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val response = kickPublicApiRepository.getStreams(
-            networkLibrary = networkLibrary,
-            headers = kickPublicApiHeaders,
-            gameId = gameId,
-            limit = params.loadSize,
-            offset = offset,
-        )
-        val users = response.data.mapNotNull { it.channelId }.let {
-            kickPublicApiRepository.getUsers(
-                networkLibrary = networkLibrary,
-                headers = kickPublicApiHeaders,
-                ids = it,
-            ).data
-        }
-        val list = response.data.map {
-            Stream(
-                id = it.id,
-                channelId = it.channelId,
-                channelLogin = it.channelLogin,
-                channelName = it.channelName,
-                gameId = gameId,
-                gameName = gameName,
-                title = it.title,
-                viewerCount = it.viewerCount,
-                startedAt = it.startedAt,
-                thumbnailUrl = it.thumbnailUrl,
-                profileImageUrl = it.channelId?.let { id ->
-                    users.find { user -> user.channelId == id }?.profileImageUrl
-                },
-                tags = it.tags
-            )
-        }
-        offset = response.pagination?.cursor
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank()) {
-                (params.key ?: 1) + 1
-            } else null
-        )
     }
 
     private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {

@@ -14,7 +14,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
@@ -32,7 +32,6 @@
         android:supportsRtl="true"
         android:theme="@style/DarkTheme"
         tools:ignore="UnusedAttribute">
-        <profileable android:shell="true" />
         <activity
             android:name=".ui.main.MainActivity"
             android:launchMode="singleTask"
@@ -52,14 +51,14 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize">
-            <intent-filter>
+            <!-- No autoVerify: App Links verification requires serving assetlinks.json from
+                 the host, which is impossible for localhost/127.0.0.1. Interception is already
+                 prevented by PKCE (S256, verifier never leaves the device) plus state
+                 validation, so a stolen authorization code cannot be exchanged. -->
+            <intent-filter tools:ignore="AppLinkWarning">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="xtra"
-                    android:host="kick-auth"
-                    android:pathPrefix="/callback" />
                 <data
                     android:scheme="https"
                     android:host="localhost"
@@ -71,28 +70,24 @@
             </intent-filter>
         </activity>
         <service
-            android:name=".ui.player.ExoPlayerService"
-            android:foregroundServiceType="mediaPlayback"
-            android:stopWithTask="true" />
-
-        <service
             android:name=".ui.player.IvsPlayerService"
             android:foregroundServiceType="mediaPlayback"
             android:stopWithTask="true" />
 
-        <service
-            android:name=".ui.player.MediaPlayerService"
-            android:foregroundServiceType="mediaPlayback"
-            android:stopWithTask="true" />
-
+        <!-- exported without a permission is required by media3: system media controllers
+             (notification, Bluetooth, lockscreen) must be able to bind. Connections are gated
+             by MediaSession.Callback.onConnect, not by a manifest permission. -->
         <service
             android:name=".ui.player.PlaybackService"
             android:foregroundServiceType="mediaPlayback"
             android:stopWithTask="true"
-            android:exported="true">
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <!-- No MediaBrowserService action: PlaybackService is a MediaSessionService, which
+                 has no browse tree. Advertising it made Android Auto / Wear clients bind and
+                 then fail on onGetRoot. -->
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
-                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
 
@@ -105,9 +100,12 @@
                 android:value="true" />
         </service>
 
+        <!-- Downloads are dataSync, not specialUse. specialUse additionally requires a
+             PROPERTY_SPECIAL_USE_FGS_SUBTYPE declaration plus a Play review justification
+             at targetSdk 34+, which this manifest never declared. -->
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
-            android:foregroundServiceType="specialUse"
+            android:foregroundServiceType="dataSync"
             tools:node="merge" />
 
 

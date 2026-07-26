@@ -53,6 +53,34 @@ android {
         ?.toBooleanStrictOrNull()
         ?: false
 
+    val releaseKeystorePath = projectPropertyOrDefault("RELEASE_KEYSTORE_FILE", "${project.projectDir}/release-keystore.jks")
+    val releaseStorePassword = projectPropertyOrDefault("RELEASE_STORE_PASSWORD")
+    val releaseKeyAlias = projectPropertyOrDefault("RELEASE_KEY_ALIAS")
+    val releaseKeyPassword = projectPropertyOrDefault("RELEASE_KEY_PASSWORD")
+    val releaseKeystoreFile = file(releaseKeystorePath)
+    // Escape hatch for local development only. CI must never set this.
+    val allowUnsignedRelease = projectPropertyOrDefault("ALLOW_UNSIGNED_RELEASE").toBooleanStrictOrNull() ?: false
+
+    // Only hard-fail when a release artifact was actually asked for; a missing release keystore
+    // must not block debug builds or IDE sync.
+    val releaseTaskRequested = gradle.startParameter.taskNames.any {
+        it.contains("Release", ignoreCase = false) || it.endsWith("release", ignoreCase = true)
+    }
+
+    val releaseSigningConfigured = releaseKeystoreFile.exists() &&
+        releaseStorePassword.isNotEmpty() &&
+        releaseKeyAlias.isNotEmpty() &&
+        releaseKeyPassword.isNotEmpty()
+
+    if (releaseSigningConfigured) {
+        signingConfigs.create("release").apply {
+            storeFile = releaseKeystoreFile
+            storePassword = releaseStorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
+        }
+    }
+
     if (localDebugKeystoreFile.exists() &&
         localDebugStorePassword.isNotEmpty() &&
         localDebugKeyAlias.isNotEmpty() &&
@@ -70,7 +98,9 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.github.andreyasadchy.xtrakick"
+        // Deliberately differs from the pre-rotation id: the old signing key was published,
+        // so a new id prevents a build signed with the leaked key from posing as an update.
+        applicationId = "com.github.tibor1234567895.xtrakick"
         minSdk = 26
         targetSdk = 36
         versionCode = 121
@@ -95,9 +125,18 @@ android {
             isShrinkResources = true
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Keep current behavior by using the default debug signing config unless a dedicated
-            // release signing setup is introduced via local/CI Gradle properties.
-            signingConfig = signingConfigs.getByName("debug")
+            // Never fall back to the debug keystore here. Signing release builds with a key that
+            // ships in the repo lets anyone build an APK Android accepts as an in-place update
+            // over an installed copy, inheriting its stored OAuth tokens.
+            signingConfig = if (releaseSigningConfigured) signingConfigs.getByName("release") else null
+            if (!releaseSigningConfigured && !allowUnsignedRelease && releaseTaskRequested) {
+                throw GradleException(
+                    "Release signing is not configured. Set RELEASE_KEYSTORE_FILE, " +
+                        "RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS and RELEASE_KEY_PASSWORD " +
+                        "(env vars, Xtra/.env, or -P properties), or pass " +
+                        "-PALLOW_UNSIGNED_RELEASE=true to build an unsigned release locally."
+                )
+            }
             buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
         }
@@ -115,7 +154,6 @@ android {
             "AppBundleLocaleChanges",
             "ChromeOsAbiSupport",
             "ContentDescription",
-            "ExportedService",
             "GradleDependency",
             "IntentFilterUniqueDataAttributes",
             "LeanbackUsesWifi",
@@ -129,17 +167,13 @@ android {
             "PrivateResource",
             "SmallSp",
             "SourceLockedOrientationActivity",
-            "StaticFieldLeak",
             "TypographyEllipsis",
             "Typos",
-            "UnsafeIntentLaunch",
-            "UnusedResources",
             "UseCompatLoadingForDrawables",
             "UseCompoundDrawables",
             "UseKtx",
             "UselessParent",
             "UseTomlInstead",
-            "WakelockTimeout",
         )
         disable += "MissingTranslation"
     }
@@ -220,14 +254,5 @@ apollo {
     @Suppress("ApolloEndpointNotConfigured")
     service("service") {
         packageName.set("com.github.andreyasadchy.xtra.graphql")
-    }
-}
-
-// Delete large build log files from ~/.gradle/daemon/X.X/daemon-XXX.out.log
-// Source: https://discuss.gradle.org/t/gradle-daemon-produces-a-lot-of-logs/9905
-File("${project.gradle.gradleUserHomeDir.absolutePath}/daemon/${project.gradle.gradleVersion}").listFiles()?.forEach {
-    if (it.name.endsWith(".out.log")) {
-        // println("Deleting gradle log file: $it") // Optional debug output
-        it.delete()
     }
 }

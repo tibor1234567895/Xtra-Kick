@@ -6,7 +6,6 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
 import android.os.Bundle
 import android.os.CountDownTimer
 import android.text.InputType
@@ -55,7 +54,6 @@ import androidx.core.text.util.LinkifyCompat
 import androidx.core.widget.addTextChangedListener
 import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
-import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -2926,27 +2924,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
-                            viewModel.playbackMessage.collectLatest {
-                                if (it != null) {
-                                    if (it.live != null) {
-                                        (parentFragment as? PlayerFragment)?.updateLiveStatus(it.live, it.serverTime, channelLogin)
-                                    }
-                                    (parentFragment as? PlayerFragment)?.updateViewerCount(it.viewers)
-                                }
-                            }
-                        }
-                    }
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        repeatOnLifecycle(Lifecycle.State.STARTED) {
-                            viewModel.streamInfo.collectLatest {
-                                if (it != null) {
-                                    (parentFragment as? PlayerFragment)?.updateStreamInfo(it.title, it.gameId, null, it.gameName)
-                                }
-                            }
-                        }
-                    }
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.newMessage.collect { result ->
                                 val message = result.first
                                 val lastIndex = result.second
@@ -2954,15 +2931,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 adapter?.let { adapter ->
                                     if (removeCount > 0) {
                                         adapter.notifyItemRangeRemoved(0, removeCount)
-                                        val remainingCount = synchronized(viewModel.chatMessages) {
-                                            viewModel.chatMessages.size
-                                        }
-                                        ChatListParityUtils.rebindRangeAfterHeadRemoval(
-                                            removedCount = removeCount,
-                                            totalCountAfterRemoval = remainingCount
-                                        )?.let {
-                                            adapter.notifyItemRangeChanged(it.start, it.count, ChatAdapter.PAYLOAD_REFORMAT)
-                                        }
                                     }
                                     val appendPosition = ChatListParityUtils.appendPositionAfterHeadRemoval(lastIndex, removeCount)
                                     adapter.notifyItemInserted(appendPosition)
@@ -2982,15 +2950,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 val lastIndex = result.second
                                 adapter?.let { adapter ->
                                     adapter.notifyItemRangeInserted(0, messages.size)
-                                    val totalCount = synchronized(viewModel.chatMessages) {
-                                        viewModel.chatMessages.size
-                                    }
-                                    ChatListParityUtils.rebindRangeAfterPrepend(
-                                        insertedCount = messages.size,
-                                        totalCountAfterInsert = totalCount
-                                    )?.let {
-                                        adapter.notifyItemRangeChanged(it.start, it.count, ChatAdapter.PAYLOAD_REFORMAT)
-                                    }
                                     if (!isChatTouched && binding.btnDown.isGone) {
                                         scrollChatToBottom(lastIndex)
                                     }

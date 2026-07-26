@@ -10,8 +10,6 @@ import com.github.andreyasadchy.xtra.graphql.type.Language
 import com.github.andreyasadchy.xtra.graphql.type.StreamSort
 import com.github.andreyasadchy.xtra.model.ui.SavedFilter
 import com.github.andreyasadchy.xtra.model.ui.SortGame
-import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
-import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.SavedFiltersRepository
 import com.github.andreyasadchy.xtra.repository.SortGameRepository
@@ -32,8 +30,6 @@ class TopStreamsViewModel @Inject constructor(
     @ApplicationContext applicationContext: Context,
     private val sortGameRepository: SortGameRepository,
     private val savedFiltersRepository: SavedFiltersRepository,
-    private val kickGraphQLRepository: KickGraphQLRepository,
-    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
 ) : ViewModel() {
 
@@ -58,31 +54,14 @@ class TopStreamsViewModel @Inject constructor(
             }
         ) {
             StreamsDataSource(
-                gqlQueryLanguages = languages.ifEmpty { null }?.mapNotNull { language ->
-                    Language.entries.find { it.rawValue == language }
-                },
-                gqlQuerySort = when (sort) {
-                    StreamsSortDialog.Companion.SORT_VIEWERS -> StreamSort.VIEWER_COUNT
-                    StreamsSortDialog.Companion.SORT_VIEWERS_ASC -> StreamSort.VIEWER_COUNT_ASC
-                    StreamsSortDialog.Companion.RECENT -> StreamSort.RECENT
-                    else -> StreamSort.VIEWER_COUNT
-                },
-                gqlLanguages = languages.ifEmpty { null }?.toList(),
                 gqlSort = when (sort) {
                     StreamsSortDialog.Companion.SORT_VIEWERS -> "VIEWER_COUNT"
                     StreamsSortDialog.Companion.SORT_VIEWERS_ASC -> "VIEWER_COUNT_ASC"
                     StreamsSortDialog.Companion.RECENT -> "RECENT"
                     else -> "VIEWER_COUNT"
                 },
-                tags = tags.ifEmpty { null }?.toList(),
-                kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext),
-                kickGraphQLRepository = kickGraphQLRepository,
-                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext),
-                kickPublicApiRepository = kickPublicApiRepository,
                 kickRepository = kickRepository,
-                enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                 apiPref = listOf(C.KICK),
-                networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
             )
         }.flow
     }.cachedIn(viewModelScope)

@@ -91,7 +91,11 @@ class IvsPlayerService : Service() {
             "IvsPlayerService:WakeLock"
         ).apply {
             setReferenceCounted(false)
-            acquire()
+            // Bounded, because this is acquired for the whole service lifetime — including
+            // while paused in the background — and released only in onDestroy. Without a
+            // timeout, pressing Home during a Kick live stream held the device out of deep
+            // sleep indefinitely. The lint check that flags this (WakelockTimeout) is disabled.
+            acquire(WAKE_LOCK_TIMEOUT_MS)
         }
         wifiLock = (applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager).let { wifiManager ->
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -583,5 +587,8 @@ class IvsPlayerService : Service() {
         private const val REQUEST_CODE_RESUME = 0
         private const val REQUEST_CODE_PLAY_PAUSE = 1
         private const val INTENT_PLAY_PAUSE = "com.github.andreyasadchy.xtra.IVS_PLAY_PAUSE"
+
+        /** Upper bound on a single uninterrupted viewing session. */
+        private const val WAKE_LOCK_TIMEOUT_MS = 4L * 60L * 60L * 1000L
     }
 }

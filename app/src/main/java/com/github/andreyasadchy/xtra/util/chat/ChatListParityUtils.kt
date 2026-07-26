@@ -2,29 +2,13 @@ package com.github.andreyasadchy.xtra.util.chat
 
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 
-data class ChatParityRebindRange(
-    val start: Int,
-    val count: Int,
-)
-
 object ChatListParityUtils {
 
-    /**
-     * With stable [ChatMessage.visualParitySlot] values, head removal never invalidates
-     * existing row colors, so no adapter rebind is required.
-     */
-    fun rebindRangeAfterPrepend(insertedCount: Int, totalCountAfterInsert: Int): ChatParityRebindRange? {
-        // Stable slots are assigned on bind/resolve; existing rows keep their parity.
-        return null
-    }
-
-    /**
-     * With stable [ChatMessage.visualParitySlot] values, odd head removals must not flip
-     * backgrounds of rows the user is still looking at while scrolled up.
-     */
-    fun rebindRangeAfterHeadRemoval(removedCount: Int, totalCountAfterRemoval: Int): ChatParityRebindRange? {
-        return null
-    }
+    // rebindRangeAfterPrepend / rebindRangeAfterHeadRemoval used to live here and both
+    // unconditionally returned null: with stable ChatMessage.visualParitySlot values, neither
+    // a prepend nor a head removal invalidates existing row colors, so no adapter rebind is
+    // ever required. Their call sites took a main-thread lock on chatMessages purely to
+    // compute arguments for a result that was always discarded.
 
     fun appendPositionAfterHeadRemoval(lastIndexAfterAppend: Int, removedCount: Int): Int {
         return if (removedCount > 0) {

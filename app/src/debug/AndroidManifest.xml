@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- profileable shipped unconditionally in release, letting any local shell attach a
+         profiler to a production build. Debug-only overlay instead. -->
+    <application>
+        <profileable android:shell="true" tools:ignore="UnusedAttribute" />
+    </application>
+</manifest>

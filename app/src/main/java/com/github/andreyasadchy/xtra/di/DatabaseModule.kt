@@ -19,19 +19,6 @@ import com.github.andreyasadchy.xtra.db.SortGameDao
 import com.github.andreyasadchy.xtra.db.VideoPositionsDao
 import com.github.andreyasadchy.xtra.db.VideosDao
 import com.github.andreyasadchy.xtra.db.VodBookmarkIgnoredUsersDao
-import com.github.andreyasadchy.xtra.repository.BookmarksRepository
-import com.github.andreyasadchy.xtra.repository.LocalFollowChannelRepository
-import com.github.andreyasadchy.xtra.repository.LocalFollowGameRepository
-import com.github.andreyasadchy.xtra.repository.MutedChatUsersRepository
-import com.github.andreyasadchy.xtra.repository.NotificationUsersRepository
-import com.github.andreyasadchy.xtra.repository.OfflineRepository
-import com.github.andreyasadchy.xtra.repository.KickRepository
-import com.github.andreyasadchy.xtra.repository.RecentSearchRepository
-import com.github.andreyasadchy.xtra.repository.SavedFiltersRepository
-import com.github.andreyasadchy.xtra.repository.ShownNotificationsRepository
-import com.github.andreyasadchy.xtra.repository.SortChannelRepository
-import com.github.andreyasadchy.xtra.repository.SortGameRepository
-import com.github.andreyasadchy.xtra.repository.VodBookmarkIgnoredUsersRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -42,110 +29,54 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 class DatabaseModule {
 
-    @Singleton
-    @Provides
-    fun providesRepository(videosDao: VideosDao, localFollowsChannelDao: LocalFollowsChannelDao, bookmarksDao: BookmarksDao): OfflineRepository = OfflineRepository(videosDao, localFollowsChannelDao, bookmarksDao)
+    // No repository @Provides here. All 12 repositories already declare
+    // `@Singleton class X @Inject constructor(...)`, and Dagger silently prefers a module
+    // binding over the constructor — so the module was the live definition, the @Inject
+    // constructors were dead, and the two could drift apart without a compile error.
+    //
+    // The DAO providers below are deliberately not @Singleton: AppDatabase is already a
+    // singleton and Room caches each DAO inside the generated implementation, so scoping
+    // them only added a DoubleCheck wrapper per DAO.
 
-    @Singleton
-    @Provides
-    fun providesLocalFollowsChannelRepository(localFollowsChannelDao: LocalFollowsChannelDao): LocalFollowChannelRepository = LocalFollowChannelRepository(localFollowsChannelDao)
-
-    @Singleton
-    @Provides
-    fun providesLocalFollowsGameRepository(localFollowsGameDao: LocalFollowsGameDao): LocalFollowGameRepository = LocalFollowGameRepository(localFollowsGameDao)
-
-    @Singleton
-    @Provides
-    fun providesBookmarksRepository(bookmarksDao: BookmarksDao, videosDao: VideosDao): BookmarksRepository = BookmarksRepository(bookmarksDao, videosDao)
-
-    @Singleton
-    @Provides
-    fun providesVodBookmarkIgnoredUsersRepository(vodBookmarkIgnoredUsersDao: VodBookmarkIgnoredUsersDao): VodBookmarkIgnoredUsersRepository = VodBookmarkIgnoredUsersRepository(vodBookmarkIgnoredUsersDao)
-
-    @Singleton
-    @Provides
-    fun providesMutedChatUsersRepository(mutedChatUsersDao: MutedChatUsersDao): MutedChatUsersRepository = MutedChatUsersRepository(mutedChatUsersDao)
-
-    @Singleton
-    @Provides
-    fun providesSortChannelRepository(sortChannelDao: SortChannelDao): SortChannelRepository = SortChannelRepository(sortChannelDao)
-
-    @Singleton
-    @Provides
-    fun providesSortGameRepository(sortGameDao: SortGameDao): SortGameRepository = SortGameRepository(sortGameDao)
-
-    @Singleton
-    @Provides
-    fun providesShownNotificationsRepository(
-        shownNotificationsDao: ShownNotificationsDao,
-        kickRepository: KickRepository,
-    ): ShownNotificationsRepository = ShownNotificationsRepository(shownNotificationsDao, kickRepository)
-
-    @Singleton
-    @Provides
-    fun providesNotificationUsersRepository(notificationUsersDao: NotificationUsersDao): NotificationUsersRepository = NotificationUsersRepository(notificationUsersDao)
-
-    @Singleton
-    @Provides
-    fun providesSavedFiltersRepository(savedFiltersDao: SavedFiltersDao): SavedFiltersRepository = SavedFiltersRepository(savedFiltersDao)
-
-    @Singleton
-    @Provides
-    fun providesRecentSearchRepository(recentSearchDao: RecentSearchDao): RecentSearchRepository = RecentSearchRepository(recentSearchDao)
-
-    @Singleton
     @Provides
     fun providesVideosDao(database: AppDatabase): VideosDao = database.videos()
 
-    @Singleton
     @Provides
     fun providesRecentEmotesDao(database: AppDatabase): RecentEmotesDao = database.recentEmotes()
 
-    @Singleton
     @Provides
     fun providesVideoPositions(database: AppDatabase): VideoPositionsDao = database.videoPositions()
 
-    @Singleton
     @Provides
     fun providesLocalFollowsChannelDao(database: AppDatabase): LocalFollowsChannelDao = database.localFollowsChannel()
 
-    @Singleton
     @Provides
     fun providesLocalFollowsGameDao(database: AppDatabase): LocalFollowsGameDao = database.localFollowsGame()
 
-    @Singleton
     @Provides
     fun providesBookmarksDao(database: AppDatabase): BookmarksDao = database.bookmarks()
 
-    @Singleton
     @Provides
     fun providesVodBookmarkIgnoredUsersDao(database: AppDatabase): VodBookmarkIgnoredUsersDao = database.vodBookmarkIgnoredUsers()
 
-    @Singleton
     @Provides
     fun providesMutedChatUsersDao(database: AppDatabase): MutedChatUsersDao = database.mutedChatUsers()
 
-    @Singleton
     @Provides
     fun providesSortChannelDao(database: AppDatabase): SortChannelDao = database.sortChannelDao()
 
-    @Singleton
     @Provides
     fun providesSortGameDao(database: AppDatabase): SortGameDao = database.sortGameDao()
 
-    @Singleton
     @Provides
     fun providesShownNotificationsDao(database: AppDatabase): ShownNotificationsDao = database.shownNotificationsDao()
 
-    @Singleton
     @Provides
     fun providesNotificationUsersDao(database: AppDatabase): NotificationUsersDao = database.notificationsDao()
 
-    @Singleton
     @Provides
     fun providesSavedFiltersDao(database: AppDatabase): SavedFiltersDao = database.savedFiltersDao()
 
-    @Singleton
     @Provides
     fun providesRecentSearchDao(database: AppDatabase): RecentSearchDao = database.recentSearchDao()
 
@@ -361,5 +292,10 @@ class DatabaseModule {
                     }
                 },
             )
+            // Migrations only cover 9->36, and schemas/ still holds snapshots for 1, 2 and 8.
+            // A database at any of those versions would throw on first open. No installed base
+            // can actually be there (the applicationId has never matched upstream), so wipe
+            // rather than crash.
+            .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3, 4, 5, 6, 7, 8)
             .build()
 }

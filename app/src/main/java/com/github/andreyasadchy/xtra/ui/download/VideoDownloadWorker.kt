@@ -48,6 +48,7 @@ import dagger.Lazy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
@@ -221,7 +222,6 @@ class VideoDownloadWorker @AssistedInject constructor(
                 }
             }
             val requestSemaphore = Semaphore(context.prefs().getInt(C.DOWNLOAD_CONCURRENT_LIMIT, 10))
-            val mutexMap = mutableMapOf<Int, Mutex>()
             val count = MutableStateFlow(0)
             val jobs = if (offlineVideo.playlistToFile) {
                 val videoFileUri = if (!offlineVideo.url.isNullOrBlank()) {
@@ -298,7 +298,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                     if (isShared) {
                                         context.contentResolver.openOutputStream(fileUri.toUri(), "wa")!!
                                     } else {
-                                        FileOutputStream(fileUri)
+                                        FileOutputStream(fileUri, true)
                                     }.use { outputStream ->
                                         response.body.byteStream().use { inputStream ->
                                             inputStream.copyTo(outputStream)
@@ -319,7 +319,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                     fileUri
                 }
                 runBlocking {
+                    val segmentIds = generateSequence(0) { it + 1 }.iterator()
                     remainingSegments.map {
+                        val id = segmentIds.next()
                         launch {
                             requestSemaphore.withPermit {
                                 when {
@@ -327,27 +329,20 @@ class VideoDownloadWorker @AssistedInject constructor(
                                         val response = suspendCoroutine { continuation ->
                                             httpEngine!!.get().newUrlRequestBuilder(urlPath + it.uri, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
                                         }
-                                        val mutex = Mutex()
-                                        val id = remainingSegments.indexOf(it)
-                                        if (count.value != id) {
-                                            mutex.lock()
-                                            mutexMap[id] = mutex
-                                        }
-                                        mutex.withLock {
-                                            if (isShared) {
-                                                context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!.use {
-                                                    it.write(response.second)
-                                                }
-                                            } else {
-                                                FileOutputStream(videoFileUri, true).use {
-                                                    it.write(response.second)
-                                                }
+                                        count.first { turn -> turn == id }
+                                        if (isShared) {
+                                            context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!.use {
+                                                it.write(response.second)
                                             }
-                                            offlineRepository.updateVideo(offlineVideo.apply {
-                                                bytes += response.second.size
-                                                progress += 1
-                                            })
+                                        } else {
+                                            FileOutputStream(videoFileUri, true).use {
+                                                it.write(response.second)
+                                            }
                                         }
+                                        offlineRepository.updateVideo(offlineVideo.apply {
+                                            bytes += response.second.size
+                                            progress += 1
+                                        })
                                     }
                                     networkLibrary == "Cronet" && cronetEngine != null -> {
                                         val response = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -360,56 +355,41 @@ class VideoDownloadWorker @AssistedInject constructor(
                                             }
                                             response.second
                                         }
-                                        val mutex = Mutex()
-                                        val id = remainingSegments.indexOf(it)
-                                        if (count.value != id) {
-                                            mutex.lock()
-                                            mutexMap[id] = mutex
-                                        }
-                                        mutex.withLock {
-                                            if (isShared) {
-                                                context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!.use {
-                                                    it.write(response)
-                                                }
-                                            } else {
-                                                FileOutputStream(videoFileUri, true).use {
-                                                    it.write(response)
-                                                }
+                                        count.first { turn -> turn == id }
+                                        if (isShared) {
+                                            context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!.use {
+                                                it.write(response)
                                             }
-                                            offlineRepository.updateVideo(offlineVideo.apply {
-                                                bytes += response.size
-                                                progress += 1
-                                            })
+                                        } else {
+                                            FileOutputStream(videoFileUri, true).use {
+                                                it.write(response)
+                                            }
                                         }
+                                        offlineRepository.updateVideo(offlineVideo.apply {
+                                            bytes += response.size
+                                            progress += 1
+                                        })
                                     }
                                     else -> {
                                         okHttpClient.newCall(Request.Builder().url(urlPath + it.uri).build()).execute().use { response ->
-                                            val mutex = Mutex()
-                                            val id = remainingSegments.indexOf(it)
-                                            if (count.value != id) {
-                                                mutex.lock()
-                                                mutexMap[id] = mutex
-                                            }
-                                            mutex.withLock {
-                                                if (isShared) {
-                                                    context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!
-                                                } else {
-                                                    FileOutputStream(videoFileUri)
-                                                }.use { outputStream ->
-                                                    response.body.byteStream().use { inputStream ->
-                                                        inputStream.copyTo(outputStream)
-                                                    }
-                                                    offlineRepository.updateVideo(offlineVideo.apply {
-                                                        bytes += response.body.contentLength()
-                                                        progress += 1
-                                                    })
+                                            count.first { turn -> turn == id }
+                                            if (isShared) {
+                                                context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!
+                                            } else {
+                                                FileOutputStream(videoFileUri, true)
+                                            }.use { outputStream ->
+                                                response.body.byteStream().use { inputStream ->
+                                                    inputStream.copyTo(outputStream)
                                                 }
+                                                offlineRepository.updateVideo(offlineVideo.apply {
+                                                    bytes += response.body.contentLength()
+                                                    progress += 1
+                                                })
                                             }
                                         }
                                     }
                                 }
                                 count.update { it + 1 }
-                                mutexMap.remove(count.value)?.unlock()
                                 setForeground(createForegroundInfo())
                             }
                         }
@@ -533,7 +513,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                         }
                     }
                     runBlocking {
+                        val segmentIds = generateSequence(0) { it + 1 }.iterator()
                         remainingSegments.map {
+                            val id = segmentIds.next()
                             launch {
                                 requestSemaphore.withPermit {
                                     val fileUri = (videoDirectoryUri + "%2F" + it.uri).toUri()
@@ -594,17 +576,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                                             }
                                         }
                                     }
-                                    val mutex = Mutex()
-                                    val id = remainingSegments.indexOf(it)
-                                    if (count.value != id) {
-                                        mutex.lock()
-                                        mutexMap[id] = mutex
-                                    }
-                                    mutex.withLock {
-                                        offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
-                                    }
+                                    count.first { turn -> turn == id }
+                                    offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
                                     count.update { it + 1 }
-                                    mutexMap.remove(count.value)?.unlock()
                                     setForeground(createForegroundInfo())
                                 }
                             }
@@ -672,7 +646,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                         p.segments.forEach { downloadedTracks.add(it.uri.substringAfterLast("%2F").substringAfterLast("/")) }
                     }
                     runBlocking {
+                        val segmentIds = generateSequence(0) { it + 1 }.iterator()
                         remainingSegments.map {
+                            val id = segmentIds.next()
                             launch {
                                 requestSemaphore.withPermit {
                                     if (!File(directory + it.uri).exists() || !downloadedTracks.contains(it.uri)) {
@@ -711,17 +687,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                                             }
                                         }
                                     }
-                                    val mutex = Mutex()
-                                    val id = remainingSegments.indexOf(it)
-                                    if (count.value != id) {
-                                        mutex.lock()
-                                        mutexMap[id] = mutex
-                                    }
-                                    mutex.withLock {
-                                        offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
-                                    }
+                                    count.first { turn -> turn == id }
+                                    offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
                                     count.update { it + 1 }
-                                    mutexMap.remove(count.value)?.unlock()
                                     setForeground(createForegroundInfo())
                                 }
                             }
@@ -1823,7 +1791,7 @@ class VideoDownloadWorker @AssistedInject constructor(
             addAction(android.R.drawable.ic_delete, ContextCompat.getString(context, R.string.stop), WorkManager.getInstance(context).createCancelPendingIntent(id))
         }.build()
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            ForegroundInfo(offlineVideo.id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            ForegroundInfo(offlineVideo.id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             ForegroundInfo(offlineVideo.id, notification)
         }

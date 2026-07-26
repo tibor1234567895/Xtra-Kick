@@ -43,21 +43,29 @@ class OfflineRepository @Inject constructor(
         videosDao.insert(video)
     }
 
-    suspend fun deleteVideo(video: OfflineVideo) = withContext(Dispatchers.IO) {
-        video.videoId?.let { id ->
-            if (id.isNotBlank() && videosDao.getByVideoId(id).none { it.id != video.id } && bookmarksDao.getByVideoId(id) == null) {
-                video.thumbnail?.let {
-                    if (it.isNotBlank()) {
-                        File(it).delete()
+    /**
+     * @param keepFiles mirrors the "keep files" option in the delete dialog. It used to apply
+     * only to the video and chat files while the thumbnail and channel logo were deleted
+     * regardless — so a download removed with "keep files" left recoverable media but lost its
+     * artwork, and anything restored from it came back blank.
+     */
+    suspend fun deleteVideo(video: OfflineVideo, keepFiles: Boolean = false) = withContext(Dispatchers.IO) {
+        if (!keepFiles) {
+            video.videoId?.let { id ->
+                if (id.isNotBlank() && videosDao.getByVideoId(id).none { it.id != video.id } && bookmarksDao.getByVideoId(id) == null) {
+                    video.thumbnail?.let {
+                        if (it.isNotBlank()) {
+                            File(it).delete()
+                        }
                     }
                 }
             }
-        }
-        video.channelId?.let { id ->
-            if (id.isNotBlank() && getVideosByUserId(id).none { it.id != video.id } && bookmarksDao.getByUserId(id).isEmpty()) {
-                video.channelLogo?.let {
-                    if (it.isNotBlank()) {
-                        File(it).delete()
+            video.channelId?.let { id ->
+                if (id.isNotBlank() && getVideosByUserId(id).none { it.id != video.id } && bookmarksDao.getByUserId(id).isEmpty()) {
+                    video.channelLogo?.let {
+                        if (it.isNotBlank()) {
+                            File(it).delete()
+                        }
                     }
                 }
             }

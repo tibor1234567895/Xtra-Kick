@@ -1,6 +1,8 @@
 package com.github.andreyasadchy.xtra.util
 
 import android.content.Context
+import android.webkit.CookieManager
+import android.webkit.WebStorage
 import androidx.core.content.edit
 
 object AuthStateHelper {
@@ -87,6 +89,27 @@ object AuthStateHelper {
             remove(C.KICK_USER_LOGIN)
             remove(C.KICK_AUTH_STATE)
             remove(C.KICK_PKCE_VERIFIER)
+        }
+        clearWebViewSession()
+    }
+
+    /**
+     * Clearing SharedPreferences alone left the kick.com session cookies on disk, so the next
+     * person to open the follow-import dialog was silently signed in as the previous user —
+     * and switching accounts was impossible without clearing app data.
+     *
+     * Only the follow-import flow and [com.github.andreyasadchy.xtra.ui.common.IntegrityDialog]
+     * use the WebView cookie jar, so clearing all of it is safe here.
+     */
+    fun clearWebViewSession() {
+        runCatching {
+            CookieManager.getInstance().apply {
+                removeAllCookies(null)
+                flush()
+            }
+        }
+        runCatching {
+            WebStorage.getInstance().deleteAllData()
         }
     }
 

@@ -50,7 +50,23 @@ class KickFollowImportDialog : DialogFragment() {
     private var manualLoginFallbackTriggered = false
     private var lastManualHelperInjectAtMs = 0L
     private var directImportAttempted = false
+
+    /**
+     * Origin of the page currently committed in the WebView. The bridge methods below are
+     * invoked on a background thread, where touching [WebView.getUrl] is illegal, so the value
+     * is captured on the main thread during navigation and read from the volatile field.
+     */
+    @Volatile
+    private var lastCommittedUrl: String = KICK_FOLLOWING_URL
     private val logTag = "KickFollowImport"
+
+    private fun isBridgeCallerTrusted(method: String): Boolean {
+        val trusted = KickFollowImportResolver.isAllowedImportOrigin(lastCommittedUrl)
+        if (!trusted) {
+            debugLogW("rejected $method from untrusted origin: $lastCommittedUrl")
+        }
+        return trusted
+    }
 
     private fun isDebugLoggingEnabled(): Boolean {
         return BuildConfig.DEBUG && requireContext().prefs().getBoolean(C.DEBUG_KICK_FOLLOW_IMPORT_LOGS, false)
@@ -77,8 +93,6 @@ class KickFollowImportDialog : DialogFragment() {
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         _binding = DialogKickFollowImportBinding.inflate(layoutInflater)
         debugLogI("onCreateDialog: starting import flow")
-        val tokenSeeded = webSessionManager.seedKickAuthCookie()
-        debugLogI("onCreateDialog: seedKickAuthCookie=$tokenSeeded")
         binding.cancelButton.setOnClickListener {
             dismissAllowingStateLoss()
         }
@@ -93,7 +107,22 @@ class KickFollowImportDialog : DialogFragment() {
             }
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                    // This WebView carries a JavaScript bridge and the kick.com cookie jar.
+                    // Refuse to follow any main-frame navigation that leaves the Kick origin,
+                    // including redirects and SSO hops.
+                    val target = request?.url?.toString()
+                    if (request?.isForMainFrame == true &&
+                        !KickFollowImportResolver.isAllowedImportOrigin(target)
+                    ) {
+                        debugLogW("blocked off-origin navigation in import webview: $target")
+                        return true
+                    }
                     return false
+                }
+
+                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                    super.doUpdateVisitedHistory(view, url, isReload)
+                    lastCommittedUrl = url.orEmpty()
                 }
 
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
@@ -108,6 +137,7 @@ class KickFollowImportDialog : DialogFragment() {
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                 val activeUrl = view.url.orEmpty()
+                lastCommittedUrl = activeUrl.ifBlank { url }
                 debugLogI("page finished: callbackUrl=$url activeUrl=$activeUrl waitingForManualLogin=$waitingForManualLogin importAttempted=$importAttempted bindingActive=${_binding != null}")
                 logRenderedPageState(view, url)
                 if (activeUrl.isNotBlank() && !activeUrl.equals(url, ignoreCase = true)) {
@@ -348,6 +378,7 @@ class KickFollowImportDialog : DialogFragment() {
     private inner class ImportBridge {
         @JavascriptInterface
         fun onImport(payload: String?) {
+            if (!isBridgeCallerTrusted("onImport")) return
             debugLogI("onImport payloadLength=${payload?.length ?: 0}")
             if (payload.isNullOrBlank()) {
                 handleImportError(IllegalStateException("empty payload"))
@@ -366,12 +397,14 @@ class KickFollowImportDialog : DialogFragment() {
 
         @JavascriptInterface
         fun onError(message: String?) {
+            if (!isBridgeCallerTrusted("onError")) return
             debugLogW("onError: $message")
             handleImportError(IllegalStateException(message ?: "unknown import error"))
         }
 
         @JavascriptInterface
         fun onStatus(message: String?) {
+            if (!isBridgeCallerTrusted("onStatus")) return
             val status = message ?: ""
             _binding?.webView?.post {
                 if (_binding == null) return@post

@@ -1114,10 +1114,6 @@
         <item name="android:layout_height">50dp</item>
     </style>
 
-    <style name="ChatMessageBannerOverlay">
-        <item name="cornerSizeBottomLeft">0dp</item>
-        <item name="cornerSizeBottomRight">0dp</item>
-    </style>
 
     <style name="Card" parent="Widget.Material3.CardView.Elevated">
         <item name="android:layout_margin">8dp</item>

@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -80,11 +81,9 @@ import com.github.andreyasadchy.xtra.ui.games.GamesFragmentDirections
 import com.github.andreyasadchy.xtra.ui.multipov.MultiPovFragment
 import com.github.andreyasadchy.xtra.ui.multipov.MultiPovSessionStore
 import com.github.andreyasadchy.xtra.ui.multipov.multiPovKey
-import com.github.andreyasadchy.xtra.ui.player.ExoPlayerFragment
 import com.github.andreyasadchy.xtra.ui.player.IvsPlayerFragment
 import com.github.andreyasadchy.xtra.ui.player.KickLivePlayback
 import com.github.andreyasadchy.xtra.ui.player.Media3Fragment
-import com.github.andreyasadchy.xtra.ui.player.MediaPlayerFragment
 import com.github.andreyasadchy.xtra.ui.player.PlaybackService
 import com.github.andreyasadchy.xtra.ui.player.PlayerFragment
 import com.github.andreyasadchy.xtra.ui.team.TeamFragmentDirections
@@ -709,6 +708,12 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             INTENT_INSTALL_UPDATE -> {
+                // Lint still reports UnsafeIntentLaunch on the two getParcelable calls below.
+                // That is a false positive: the extracted intent is sanitized by
+                // takeIf(::isSystemInstallerIntent) before it is ever launched. Lint recognises
+                // only a narrow set of sanitizer shapes, cannot see through the predicate, and
+                // UnsafeIntentLaunchDetector honours neither method- nor class-level
+                // @SuppressLint (both were tried). Left visible rather than silenced globally.
                 val extras = intent.extras
                 if (extras?.getInt(PackageInstaller.EXTRA_STATUS) == PackageInstaller.STATUS_PENDING_USER_ACTION) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -716,7 +721,7 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         @Suppress("DEPRECATION")
                         extras.getParcelable(Intent.EXTRA_INTENT)
-                    }?.let {
+                    }?.takeIf(::isSystemInstallerIntent)?.let {
                         tokenPrefs().edit {
                             putLong(C.UPDATE_LAST_CHECKED, System.currentTimeMillis())
                         }
@@ -758,6 +763,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * MainActivity is exported (it is the launcher), so any app can send it an
+     * [INTENT_INSTALL_UPDATE] intent carrying an arbitrary [Intent.EXTRA_INTENT] and have us
+     * start it with our own identity — an intent-redirection hole that can reach our own
+     * non-exported components.
+     *
+     * The legitimate value is written by PackageInstaller into the FLAG_MUTABLE PendingIntent
+     * committed in MainViewModel, and always resolves to the platform's install-confirmation
+     * activity. Requiring a system target is therefore lossless and blocks the redirect.
+     */
+    private fun isSystemInstallerIntent(candidate: Intent): Boolean {
+        val resolved = packageManager.resolveActivity(candidate, PackageManager.MATCH_DEFAULT_ONLY)
+        val appInfo = resolved?.activityInfo?.applicationInfo ?: return false
+        val systemFlags = ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP
+        return appInfo.flags and systemFlags != 0
+    }
+
 //Navigation listeners
 
     fun startStream(stream: Stream, resolvedUrl: String? = null, forceStandardLiveEngine: Boolean = false) {
@@ -767,20 +789,7 @@ class MainActivity : AppCompatActivity() {
             stream.source == C.KICK -> null
             else -> stream.playbackUrl
         }
-        val fragment = when (prefs.getString(C.PLAYER, "ExoPlayer")) {
-            "MediaPlayer" -> {
-                if (stream.source == C.KICK) {
-                    Toast.makeText(this, R.string.media_player_live_stream_fallback, Toast.LENGTH_LONG).show()
-                    createStreamFragment(stream, effectiveResolvedUrl, forceStandardLiveEngine)
-                } else {
-                    MediaPlayerFragment.newInstance(stream)
-                }
-            }
-            else -> {
-                createStreamFragment(stream, effectiveResolvedUrl, forceStandardLiveEngine)
-            }
-        }
-        startPlayer(fragment)
+        startPlayer(createStreamFragment(stream, effectiveResolvedUrl, forceStandardLiveEngine))
     }
 
     fun startMultiPov(
@@ -937,46 +946,19 @@ class MainActivity : AppCompatActivity() {
 
     fun startVideo(video: Video, offset: Long?, ignoreSavedPosition: Boolean = false) {
         closeMultiPovInternal()
-        val fragment = when (prefs.getString(C.PLAYER, "ExoPlayer")) {
-            "MediaPlayer" -> MediaPlayerFragment.newInstance(video, offset, ignoreSavedPosition)
-            else -> {
-                if (prefs.getBoolean(C.DEBUG_USE_CUSTOM_PLAYBACK_SERVICE, false)) {
-                    ExoPlayerFragment.newInstance(video, offset, ignoreSavedPosition)
-                } else {
-                    Media3Fragment.newInstance(video, offset, ignoreSavedPosition)
-                }
-            }
-        }
+        val fragment = Media3Fragment.newInstance(video, offset, ignoreSavedPosition)
         startPlayer(fragment)
     }
 
     fun startClip(clip: Clip) {
         closeMultiPovInternal()
-        val fragment = when (prefs.getString(C.PLAYER, "ExoPlayer")) {
-            "MediaPlayer" -> MediaPlayerFragment.newInstance(clip)
-            else -> {
-                if (prefs.getBoolean(C.DEBUG_USE_CUSTOM_PLAYBACK_SERVICE, false)) {
-                    ExoPlayerFragment.newInstance(clip)
-                } else {
-                    Media3Fragment.newInstance(clip)
-                }
-            }
-        }
+        val fragment = Media3Fragment.newInstance(clip)
         startPlayer(fragment)
     }
 
     fun startOfflineVideo(video: OfflineVideo) {
         closeMultiPovInternal()
-        val fragment = when (prefs.getString(C.PLAYER, "ExoPlayer")) {
-            "MediaPlayer" -> MediaPlayerFragment.newInstance(video)
-            else -> {
-                if (prefs.getBoolean(C.DEBUG_USE_CUSTOM_PLAYBACK_SERVICE, false)) {
-                    ExoPlayerFragment.newInstance(video)
-                } else {
-                    Media3Fragment.newInstance(video)
-                }
-            }
-        }
+        val fragment = Media3Fragment.newInstance(video)
         startPlayer(fragment)
     }
 
@@ -994,11 +976,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun createModernPlayerFragment(stream: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean): PlayerFragment {
-        return if (prefs.getBoolean(C.DEBUG_USE_CUSTOM_PLAYBACK_SERVICE, false)) {
-            ExoPlayerFragment.newInstance(stream, resolvedUrl, forceStandardLiveEngine)
-        } else {
-            Media3Fragment.newInstance(stream, resolvedUrl, forceStandardLiveEngine)
-        }
+        return Media3Fragment.newInstance(stream, resolvedUrl, forceStandardLiveEngine)
     }
 
 //Player methods

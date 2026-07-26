@@ -4,31 +4,16 @@ import com.github.andreyasadchy.xtra.model.chat.ChatMessage
 import com.github.andreyasadchy.xtra.model.chat.Reply
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatListParityUtilsTest {
 
-    @Test
-    fun prependDoesNotRequireRebindWithStableSlots() {
-        assertNull(
-            ChatListParityUtils.rebindRangeAfterPrepend(insertedCount = 3, totalCountAfterInsert = 8)
-        )
-        assertNull(
-            ChatListParityUtils.rebindRangeAfterPrepend(insertedCount = 2, totalCountAfterInsert = 8)
-        )
-    }
-
-    @Test
-    fun headRemovalDoesNotRequireRebindWithStableSlots() {
-        assertNull(
-            ChatListParityUtils.rebindRangeAfterHeadRemoval(removedCount = 1, totalCountAfterRemoval = 6)
-        )
-        assertNull(
-            ChatListParityUtils.rebindRangeAfterHeadRemoval(removedCount = 2, totalCountAfterRemoval = 6)
-        )
-    }
+    // The two tests that used to live here only asserted that rebindRangeAfterPrepend and
+    // rebindRangeAfterHeadRemoval returned null — the functions were unconditional no-ops and
+    // have been deleted. The stable-slot behaviour they were meant to protect is covered by
+    // headRemovalKeepsExistingMessageParityStable and
+    // prependAssignsSlotsRelativeToExistingMessagesWithoutChangingThem below.
 
     @Test
     fun appendAfterHeadRemovalUsesPostRemovalPosition() {

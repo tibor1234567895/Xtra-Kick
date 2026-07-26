@@ -55,6 +55,9 @@ import kotlin.math.pow
 
 object ChatAdapterUtils {
 
+    /** Neutral grey already used throughout this file for system/notice text. */
+    private const val FALLBACK_USERNAME_COLOR = 0xFF999999.toInt()
+
     private fun resolveKickRewardNoticeColor(
         rewardColor: String?,
         savedColors: HashMap<String, Int>,
@@ -685,13 +688,19 @@ object ChatAdapterUtils {
     }
 
     private fun getSavedColor(color: String, savedColors: HashMap<String, Int>, useReadableColors: Boolean, isLightTheme: Boolean): Int {
-        return savedColors[color] ?: Color.parseColor(color).let { newColor ->
-            if (useReadableColors) {
-                adaptUsernameColor(newColor, isLightTheme)
-            } else {
-                newColor
-            }.also { savedColors[color] = it }
-        }
+        // Color.parseColor throws on any malformed string, and both callers feed it wire data
+        // (chatMessage.color and emote.color) from inside onBindViewHolder — so one bad value
+        // from any chatter crashed the app mid-scroll. Fall back instead, and cache the
+        // fallback so a bad value isn't re-parsed for every message.
+        return savedColors[color] ?: runCatching { Color.parseColor(color) }
+            .getOrDefault(FALLBACK_USERNAME_COLOR)
+            .let { newColor ->
+                if (useReadableColors) {
+                    adaptUsernameColor(newColor, isLightTheme)
+                } else {
+                    newColor
+                }.also { savedColors[color] = it }
+            }
     }
 
     private fun adaptUsernameColor(color: Int, isLightTheme: Boolean): Int {

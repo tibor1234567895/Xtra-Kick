@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
@@ -361,6 +362,7 @@ class LoginActivity : AppCompatActivity() {
 
     private fun logoutAndFinish() {
         lifecycleScope.launch {
+            var revokeSucceeded = false
             try {
                 val networkLibrary = prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
                 val backendBaseUrl = KickOAuthConfig.getBackendBaseUrl(this@LoginActivity)
@@ -389,15 +391,26 @@ class LoginActivity : AppCompatActivity() {
                         )
                     }
                 }
+                revokeSucceeded = true
             } catch (e: Exception) {
-
+                // Local state is still cleared below so the user isn't stuck, but don't claim
+                // the server-side revoke worked — the tokens may still be live at Kick.
+                Log.e(TAG, "Kick token revocation failed", e)
             }
             AuthStateHelper.clearUnexpectedLogoutNotice(this@LoginActivity)
             AuthStateHelper.clearKickAuth(this@LoginActivity)
             AuthStateHelper.clearLegacyWebAuth(this@LoginActivity)
-            Toast.makeText(this@LoginActivity, R.string.logout_success_toast, Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this@LoginActivity,
+                if (revokeSucceeded) R.string.logout_success_toast else R.string.logout_revoke_failed_toast,
+                Toast.LENGTH_SHORT,
+            ).show()
             setResult(RESULT_OK)
             finish()
         }
+    }
+
+    private companion object {
+        private const val TAG = "LoginActivity"
     }
 }

@@ -7,8 +7,6 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.github.andreyasadchy.xtra.model.ui.Tag
-import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
-import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.datasource.GamesDataSource
 import com.github.andreyasadchy.xtra.util.C
@@ -24,8 +22,6 @@ import javax.inject.Inject
 @HiltViewModel
 class GamesViewModel @Inject constructor(
     @ApplicationContext applicationContext: Context,
-    private val kickGraphQLRepository: KickGraphQLRepository,
-    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
 ) : ViewModel() {
 
@@ -42,14 +38,8 @@ class GamesViewModel @Inject constructor(
         ) {
             GamesDataSource(
                 tags = tags.ifEmpty { null }?.mapNotNull { it.id },
-                kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext),
-                kickGraphQLRepository = kickGraphQLRepository,
-                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext),
-                kickPublicApiRepository = kickPublicApiRepository,
                 kickRepository = kickRepository,
-                enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
                 apiPref = listOf(C.KICK),
-                networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
             )
         }.flow
     }.cachedIn(viewModelScope)

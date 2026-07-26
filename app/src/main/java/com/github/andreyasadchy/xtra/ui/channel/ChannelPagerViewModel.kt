@@ -23,8 +23,11 @@ import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getByteArrayCronetCallback
+import android.content.Context
+import android.util.Log
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,6 +57,10 @@ class ChannelPagerViewModel @Inject constructor(
     private val cronetEngine: Lazy<CronetEngine>?,
     private val cronetExecutor: ExecutorService,
     private val okHttpClient: OkHttpClient,
+    // Injected rather than passed in from the Fragment: enableNotifications runs in
+    // viewModelScope, so holding a caller-supplied Activity Context would leak it across
+    // configuration change.
+    @param:ApplicationContext private val applicationContext: Context,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -268,6 +275,18 @@ class ChannelPagerViewModel @Inject constructor(
                         }
                     }
                 }
+                if (notificationsEnabled) {
+                    // Kept separate from the enclosing catch so a notification failure is
+                    // visible rather than being folded into the follow-toggle error path.
+                    runCatching {
+                        val newStreams = shownNotificationsRepository.getNewKickStreams(notificationUsersRepository)
+                        if (newStreams.isNotEmpty()) {
+                            shownNotificationsRepository.showLiveNotifications(applicationContext, newStreams)
+                        }
+                    }.onFailure {
+                        Log.e(TAG, "failed to post live notifications after enabling", it)
+                    }
+                }
             } catch (e: Exception) {
 
             }
@@ -447,5 +466,9 @@ class ChannelPagerViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private companion object {
+        private const val TAG = "ChannelPagerViewModel"
     }
 }

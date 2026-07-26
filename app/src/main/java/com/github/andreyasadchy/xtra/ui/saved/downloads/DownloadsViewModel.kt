@@ -883,7 +883,7 @@ class DownloadsViewModel @Inject internal constructor(
             }.invokeOnCompletion {
                 videosInUse.remove(video)
                 viewModelScope.launch(Dispatchers.IO) {
-                    repository.deleteVideo(video)
+                    repository.deleteVideo(video, keepFiles)
                 }
             }
         }

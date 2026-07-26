@@ -359,10 +359,16 @@ class Media3Fragment : PlayerFragment() {
                                                 if (!oldValue) {
                                                     val playlist = viewModel.qualities[viewModel.quality]?.second
                                                     if (!viewModel.stopProxy && !playlist.isNullOrBlank() && useProxy) {
+                                                        // This is the enable-the-proxy branch — it sent `false`, so
+                                                        // proxyMediaPlaylist could never become true and the media-playlist
+                                                        // proxy gate in PlaybackService was permanently off. The app then
+                                                        // believed it had switched and suppressed the mute/hide fallback,
+                                                        // so the ad played unmitigated. The other TOGGLE_PROXY sites send
+                                                        // `false` correctly — they are tear-down paths.
                                                         player?.sendCustomCommand(
                                                             SessionCommand(
                                                                 PlaybackService.TOGGLE_PROXY, bundleOf(
-                                                                    PlaybackService.USING_PROXY to false
+                                                                    PlaybackService.USING_PROXY to true
                                                                 )
                                                             ), Bundle.EMPTY
                                                         )

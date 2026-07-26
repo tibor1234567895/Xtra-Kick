@@ -4241,6 +4241,11 @@ class KickRepository @Inject constructor(
 
     private fun maybeRefreshKickBadgeCatalogOnAppOpenInBackground() {
         val refreshKey = "app_open_web"
+        // The TTL timestamp was written below but never read, so the only guard was the
+        // in-flight set — meaning every cold start re-scraped kick.com's HTML plus up to 18
+        // Next.js chunks. Mirrors the TTL check in maybeRefreshKickBadgeCatalogInBackground.
+        val lastRefresh = kickBadgeCatalogRefreshAt[refreshKey] ?: 0L
+        if (System.currentTimeMillis() - lastRefresh < kickWebBadgeScrapeTtlMs) return
         if (!kickBadgeCatalogRefreshInProgress.add(refreshKey)) return
         badgeCacheScope.launch {
             try {

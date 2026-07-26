@@ -11,14 +11,8 @@ import com.github.andreyasadchy.xtra.util.C
 
 class GamesDataSource(
     private val tags: List<String>?,
-    private val kickWebHeaders: Map<String, String>,
-    private val kickGraphQLRepository: KickGraphQLRepository,
-    private val kickPublicApiHeaders: Map<String, String>,
-    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
-    private val enableIntegrity: Boolean,
     private val apiPref: List<String>,
-    private val networkLibrary: String?,
 ) : PagingSource<Int, Game>() {
     private var api: String? = null
     private var offset: String? = null
@@ -50,101 +44,6 @@ class GamesDataSource(
             C.KICK -> if (tags.isNullOrEmpty()) kickLoad(params) else throw Exception()
             else -> throw Exception()
         }
-    }
-
-    private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Game> {
-        val response = kickGraphQLRepository.loadQueryTopGames(networkLibrary, kickWebHeaders, tags, params.loadSize, offset)
-        if (enableIntegrity) {
-            response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-        }
-        val data = response.data!!.games!!
-        val items = data.edges!!
-        val list = items.mapNotNull { item ->
-            item?.node?.let {
-                Game(
-                    gameId = it.id,
-                    gameSlug = it.slug,
-                    gameName = it.displayName,
-                    boxArtUrl = it.boxArtURL,
-                    viewersCount = it.viewersCount,
-                    broadcastersCount = it.broadcastersCount,
-                    tags = it.tags?.map { tag ->
-                        Tag(
-                            id = tag.id,
-                            name = tag.localizedName
-                        )
-                    }
-                )
-            }
-        }
-        offset = items.lastOrNull()?.cursor?.toString()
-        val nextPage = data.pageInfo?.hasNextPage != false
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank() && nextPage) {
-                (params.key ?: 1) + 1
-            } else null
-        )
-    }
-
-    private suspend fun gqlLoad(params: LoadParams<Int>): LoadResult<Int, Game> {
-        val response = kickGraphQLRepository.loadTopGames(networkLibrary, kickWebHeaders, tags, params.loadSize, offset)
-        if (enableIntegrity) {
-            response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-        }
-        val data = response.data!!.directoriesWithTags
-        val items = data.edges
-        val list = items.map { item ->
-            item.node.let {
-                Game(
-                    gameId = it.id,
-                    gameSlug = it.slug,
-                    gameName = it.displayName,
-                    boxArtUrl = it.avatarURL,
-                    viewersCount = it.viewersCount,
-                    tags = it.tags?.map { tag ->
-                        Tag(
-                            id = tag.id,
-                            name = tag.localizedName
-                        )
-                    }
-                )
-            }
-        }
-        offset = items.lastOrNull()?.cursor
-        val nextPage = data.pageInfo?.hasNextPage != false
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank() && nextPage) {
-                (params.key ?: 1) + 1
-            } else null
-        )
-    }
-
-    private suspend fun helixLoad(params: LoadParams<Int>): LoadResult<Int, Game> {
-        val response = kickPublicApiRepository.getTopGames(
-            networkLibrary = networkLibrary,
-            headers = kickPublicApiHeaders,
-            limit = params.loadSize,
-            offset = offset,
-        )
-        val list = response.data.map {
-            Game(
-                gameId = it.id,
-                gameName = it.name,
-                boxArtUrl = it.boxArtUrl,
-            )
-        }
-        offset = response.pagination?.cursor
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank()) {
-                (params.key ?: 1) + 1
-            } else null
-        )
     }
 
     private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Game> {

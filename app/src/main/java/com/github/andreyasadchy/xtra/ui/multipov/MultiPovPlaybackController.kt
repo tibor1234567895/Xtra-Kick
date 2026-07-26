@@ -255,11 +255,14 @@ class MultiPovPlaybackController(
                         recoverBehindLiveWindow(key)
                         return
                     }
-                    val http = error.cause as? HttpDataSource.InvalidResponseCodeException
-                    if (http != null && (http.responseCode == 403 || http.responseCode == 404)) {
+                    // Walk the cause chain: HLS nests chunk failures two or three levels deep,
+                    // so the direct cause is rarely the InvalidResponseCodeException and the
+                    // expired-URL recovery below never fired.
+                    val responseCode = httpResponseCode(error)
+                    if (responseCode == 403 || responseCode == 404) {
                         val failedUrl = players[key]?.currentMediaItem?.localConfiguration?.uri?.toString() ?: url
-                        onLoadState(key, MultiPovLoadState.Error("URL expired (HTTP ${http.responseCode})"))
-                        onHttpError(key, http.responseCode, failedUrl)
+                        onLoadState(key, MultiPovLoadState.Error("URL expired (HTTP $responseCode)"))
+                        onHttpError(key, responseCode, failedUrl)
                         return
                     }
                     val message = when (error.errorCode) {
@@ -661,6 +664,18 @@ class MultiPovPlaybackController(
             cause = cause.cause
         }
         return false
+    }
+
+    /** Same shape as [isBehindLiveWindow]: HLS nests the HTTP failure inside a loader error. */
+    private fun httpResponseCode(error: PlaybackException): Int? {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is HttpDataSource.InvalidResponseCodeException) {
+                return cause.responseCode
+            }
+            cause = cause.cause
+        }
+        return null
     }
 
     companion object {

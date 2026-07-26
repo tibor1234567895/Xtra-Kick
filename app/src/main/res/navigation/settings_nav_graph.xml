@@ -131,6 +131,13 @@
         android:id="@+id/action_global_debugLogSettingsFragment"
         app:destination="@id/debugLogSettingsFragment" />
     <fragment
+        android:id="@+id/multiPovSettingsFragment"
+        android:name="com.github.andreyasadchy.xtra.ui.settings.SettingsActivity$MultiPovSettingsFragment"
+        android:label="@string/multipov_settings" />
+    <action
+        android:id="@+id/action_global_multiPovSettingsFragment"
+        app:destination="@id/multiPovSettingsFragment" />
+    <fragment
         android:id="@+id/settingsSearchFragment"
         android:name="com.github.andreyasadchy.xtra.ui.settings.SettingsActivity$SettingsSearchFragment"
         android:label="" />

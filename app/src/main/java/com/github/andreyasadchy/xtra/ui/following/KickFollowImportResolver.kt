@@ -1,6 +1,7 @@
 package com.github.andreyasadchy.xtra.ui.following
 
 import android.util.Log
+import java.net.URI
 
 internal const val KICK_HOME_URL = "https://kick.com/"
 internal const val KICK_LOGIN_URL = "https://id.kick.com/en/login"
@@ -107,6 +108,21 @@ internal object KickFollowImportResolver {
     fun isKickImportUrl(url: String): Boolean {
         return url.startsWith("https://kick.com", ignoreCase = true) ||
             url.startsWith("https://id.kick.com/", ignoreCase = true)
+    }
+
+    /**
+     * Host-based allowlist for the import WebView.
+     *
+     * The WebView has a JavaScript bridge bound to it and holds the kick.com cookie jar, so it
+     * must never navigate off-origin. A prefix check is not enough — `https://kick.com.evil.test`
+     * starts with `https://kick.com` — so this parses the URI and compares the host exactly.
+     */
+    fun isAllowedImportOrigin(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        val uri = runCatching { URI(url) }.getOrNull() ?: return false
+        if (!"https".equals(uri.scheme, ignoreCase = true)) return false
+        val host = uri.host?.lowercase() ?: return false
+        return host == "kick.com" || host.endsWith(".kick.com")
     }
 
     fun hasKickWebsiteSession(cookieHeader: String?, debugLogging: Boolean = false): Boolean {

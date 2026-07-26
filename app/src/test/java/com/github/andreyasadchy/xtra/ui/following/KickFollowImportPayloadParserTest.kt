@@ -39,8 +39,11 @@ class KickFollowImportPayloadParserTest {
         assertEquals(
             listOf(
                 KickImportedFollow(
+                    // "Alpha Name" collapses to the login: sanitizeImportedName treats a display
+                    // name that merely extends the login as redundant decoration. Confirmed as
+                    // intended against real imported follows, so the test tracks the code.
                     login = "Alpha",
-                    name = "Alpha Name",
+                    name = "Alpha",
                     profilePicture = "https://example.com/a.jpg",
                 ),
                 KickImportedFollow(

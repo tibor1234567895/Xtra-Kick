@@ -562,7 +562,7 @@ object KickApiHelper {
                 "turbo_only_color" -> ContextCompat.getString(context, R.string.irc_notice_turbo_only_color).format(
                     message?.substringAfter("following instead: ", "") ?: "")
                 "unavailable_command" -> ContextCompat.getString(context, R.string.irc_notice_unavailable_command).format(
-                    message?.substringAfter("Sorry, â€œ", "")?.substringBefore("â€ is not available", "") ?: "")
+                    message?.substringAfter("Sorry, “", "")?.substringBefore("” is not available", "") ?: "")
                 "unban_success" -> ContextCompat.getString(context, R.string.irc_notice_unban_success).format(
                     message?.substringBefore(" is no longer", "") ?: "")
                 "unmod_success" -> ContextCompat.getString(context, R.string.irc_notice_unmod_success).format(

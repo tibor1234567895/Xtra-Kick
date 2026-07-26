@@ -279,17 +279,19 @@ class KickPublicApiRepository @Inject constructor(
     }
 
     suspend fun getClips(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, channelId: String? = null, gameId: String? = null, startedAt: String? = null, endedAt: String? = null, limit: Int? = null, offset: String? = null): ClipsResponse = withContext(Dispatchers.IO) {
-        val query = mutableMapOf<String, String>().apply {
-            ids?.forEach { put("id", it) }
-            channelId?.let { put("broadcaster_id", it) }
-            gameId?.let { put("game_id", it) }
-            startedAt?.let { put("started_at", it) }
-            endedAt?.let { put("ended_at", it) }
-            limit?.let { put("first", it.toString()) }
-            offset?.let { put("after", it) }
-        }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
-        } ?: ""
+        // A Map<String, String> collapsed repeated `id` params to the last one, so a request
+        // for N clips fetched exactly 1. Mirrors the list-based builder in getGames/getUsers/
+        // getStreams, which already do this correctly.
+        val queryParams = mutableListOf<String>().apply {
+            ids?.forEach { add("id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            channelId?.let { add("broadcaster_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            gameId?.let { add("game_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            startedAt?.let { add("started_at=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            endedAt?.let { add("ended_at=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            limit?.let { add("first=${URLEncoder.encode(it.toString(), Charsets.UTF_8.name())}") }
+            offset?.let { add("after=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+        }
+        val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
         when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                 val response = suspendCoroutine { continuation ->
@@ -328,19 +330,19 @@ class KickPublicApiRepository @Inject constructor(
     }
 
     suspend fun getVideos(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, gameId: String? = null, channelId: String? = null, period: String? = null, broadcastType: String? = null, sort: String? = null, language: String? = null, limit: Int? = null, offset: String? = null): VideosResponse = withContext(Dispatchers.IO) {
-        val query = mutableMapOf<String, String>().apply {
-            ids?.forEach { put("id", it) }
-            gameId?.let { put("game_id", it) }
-            channelId?.let { put("user_id", it) }
-            period?.let { put("period", it) }
-            broadcastType?.let { put("type", it) }
-            sort?.let { put("sort", it) }
-            language?.let { put("language", it) }
-            limit?.let { put("first", it.toString()) }
-            offset?.let { put("after", it) }
-        }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
-        } ?: ""
+        // See getClips: a Map collapsed repeated `id` params to the last one.
+        val queryParams = mutableListOf<String>().apply {
+            ids?.forEach { add("id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            gameId?.let { add("game_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            channelId?.let { add("user_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            period?.let { add("period=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            broadcastType?.let { add("type=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            sort?.let { add("sort=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            language?.let { add("language=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            limit?.let { add("first=${URLEncoder.encode(it.toString(), Charsets.UTF_8.name())}") }
+            offset?.let { add("after=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+        }
+        val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
         when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                 val response = suspendCoroutine { continuation ->
@@ -650,11 +652,10 @@ class KickPublicApiRepository @Inject constructor(
     }
 
     suspend fun getEmotesFromSet(networkLibrary: String?, headers: Map<String, String>, setIds: List<String>): EmoteSetsResponse = withContext(Dispatchers.IO) {
-        val query = mutableMapOf<String, String>().apply {
-            setIds.forEach { put("emote_set_id", it) }
-        }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
-        } ?: ""
+        // See getClips: a Map collapsed repeated `emote_set_id` params to the last one, so a
+        // request for N emote sets fetched exactly 1.
+        val queryParams = setIds.map { "emote_set_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}" }
+        val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
         when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                 val response = suspendCoroutine { continuation ->

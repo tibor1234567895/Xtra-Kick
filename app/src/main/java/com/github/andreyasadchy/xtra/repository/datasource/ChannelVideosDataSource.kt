@@ -14,23 +14,11 @@ import com.github.andreyasadchy.xtra.util.KickApiHelper
 class ChannelVideosDataSource(
     private val channelId: String?,
     private val channelLogin: String?,
-    private val gqlQueryType: BroadcastType?,
-    private val gqlQuerySort: VideoSort?,
-    private val gqlType: String?,
-    private val gqlSort: String?,
     private val helixPeriod: String,
     private val helixBroadcastTypes: String,
     private val helixSort: String,
-    private val kickWebHeaders: Map<String, String>,
-    private val kickGraphQLRepository: KickGraphQLRepository,
-    private val kickPublicApiHeaders: Map<String, String>,
-    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
-    private val enableIntegrity: Boolean,
-    private val apiPref: List<String>,
-    private val networkLibrary: String?,
 ) : PagingSource<Int, Video>() {
-    private var api: String? = null
     private var offset: String? = null
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Video> {
@@ -48,14 +36,6 @@ class ChannelVideosDataSource(
                 prevKey = null,
                 nextKey = null
             )
-        }
-    }
-
-    private suspend fun loadFromApi(apiPref: String?, params: LoadParams<Int>): LoadResult<Int, Video> {
-        api = apiPref
-        return when (apiPref) {
-            C.KICK -> if (helixPeriod == "all") kickLoad(params) else throw Exception()
-            else -> throw Exception()
         }
     }
 
@@ -121,117 +101,6 @@ class ChannelVideosDataSource(
             data = filtered,
             prevKey = null,
             nextKey = if (!offset.isNullOrBlank() && aggregated.isNotEmpty()) {
-                (params.key ?: 1) + 1
-            } else null
-        )
-    }
-
-    private suspend fun gqlQueryLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
-        val response = kickGraphQLRepository.loadQueryUserVideos(networkLibrary, kickWebHeaders, channelId, channelLogin.takeIf { channelId.isNullOrBlank() }, gqlQuerySort, gqlQueryType?.let { listOf(it) }, params.loadSize, offset)
-        if (enableIntegrity) {
-            response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-        }
-        val data = response.data!!.user!!
-        val items = data.videos!!.edges!!
-        val list = items.mapNotNull { item ->
-            item?.node?.let {
-                Video(
-                    id = it.id,
-                    channelId = channelId,
-                    channelLogin = data.login,
-                    channelName = data.displayName,
-                    gameId = it.game?.id,
-                    gameSlug = it.game?.slug,
-                    gameName = it.game?.displayName,
-                    type = it.broadcastType?.toString(),
-                    title = it.title,
-                    viewCount = it.viewCount,
-                    uploadDate = it.createdAt?.toString(),
-                    duration = it.lengthSeconds?.toString(),
-                    thumbnailUrl = it.previewThumbnailURL,
-                    profileImageUrl = data.profileImageURL,
-                    animatedPreviewURL = it.animatedPreviewURL
-                )
-            }
-        }
-        offset = items.lastOrNull()?.cursor?.toString()
-        val nextPage = data.videos.pageInfo?.hasNextPage != false
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank() && nextPage) {
-                (params.key ?: 1) + 1
-            } else null
-        )
-    }
-
-    private suspend fun gqlLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
-        val response = kickGraphQLRepository.loadChannelVideos(networkLibrary, kickWebHeaders, channelLogin, gqlType, gqlSort, params.loadSize, offset)
-        if (enableIntegrity) {
-            response.errors?.find { it.message == "failed integrity check" }?.let { return LoadResult.Error(Exception(it.message)) }
-        }
-        val data = response.data!!.user
-        val items = data.videos!!.edges
-        val list = items.map { item ->
-            item.node.let {
-                Video(
-                    id = it.id,
-                    channelId = it.owner?.id,
-                    channelLogin = it.owner?.login,
-                    channelName = it.owner?.displayName,
-                    gameId = it.game?.id,
-                    gameSlug = it.game?.slug,
-                    gameName = it.game?.displayName,
-                    title = it.title,
-                    viewCount = it.viewCount,
-                    uploadDate = it.publishedAt,
-                    duration = it.lengthSeconds?.toString(),
-                    thumbnailUrl = it.previewThumbnailURL,
-                    profileImageUrl = it.owner?.profileImageURL,
-                    animatedPreviewURL = it.animatedPreviewURL
-                )
-            }
-        }
-        offset = items.lastOrNull()?.cursor
-        val nextPage = data.videos.pageInfo?.hasNextPage != false
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank() && nextPage) {
-                (params.key ?: 1) + 1
-            } else null
-        )
-    }
-
-    private suspend fun helixLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
-        val response = kickPublicApiRepository.getVideos(
-            networkLibrary = networkLibrary,
-            headers = kickPublicApiHeaders,
-            channelId = channelId,
-            period = helixPeriod,
-            broadcastType = helixBroadcastTypes,
-            sort = helixSort,
-            limit = params.loadSize,
-            offset = offset,
-        )
-        val list = response.data.map {
-            Video(
-                id = it.id,
-                channelId = channelId,
-                channelLogin = it.channelLogin,
-                channelName = it.channelName,
-                title = it.title,
-                viewCount = it.viewCount,
-                uploadDate = it.uploadDate,
-                duration = it.duration,
-                thumbnailUrl = it.thumbnailUrl,
-            )
-        }
-        offset = response.pagination?.cursor
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = if (!offset.isNullOrBlank()) {
                 (params.key ?: 1) + 1
             } else null
         )

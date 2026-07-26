@@ -122,4 +122,24 @@ class KickFollowImportResolverTest {
         assertTrue(KickFollowImportResolver.isKickHomeUrl("https://kick.com/"))
         assertFalse(KickFollowImportResolver.isKickHomeUrl(KICK_FOLLOWING_URL))
     }
+
+    @Test
+    fun allowsOnlyKickOrigins() {
+        assertTrue(KickFollowImportResolver.isAllowedImportOrigin("https://kick.com/following/channels"))
+        assertTrue(KickFollowImportResolver.isAllowedImportOrigin("https://KICK.COM/"))
+        assertTrue(KickFollowImportResolver.isAllowedImportOrigin("https://id.kick.com/en/login"))
+        assertTrue(KickFollowImportResolver.isAllowedImportOrigin("https://web.kick.com/anything"))
+    }
+
+    @Test
+    fun rejectsLookalikeAndInsecureOrigins() {
+        // A prefix check would accept this one — the bridge must not be reachable from it.
+        assertFalse(KickFollowImportResolver.isAllowedImportOrigin("https://kick.com.evil.test/"))
+        assertFalse(KickFollowImportResolver.isAllowedImportOrigin("https://evilkick.com/"))
+        assertFalse(KickFollowImportResolver.isAllowedImportOrigin("http://kick.com/"))
+        assertFalse(KickFollowImportResolver.isAllowedImportOrigin("javascript:alert(1)"))
+        assertFalse(KickFollowImportResolver.isAllowedImportOrigin("about:blank"))
+        assertFalse(KickFollowImportResolver.isAllowedImportOrigin(""))
+        assertFalse(KickFollowImportResolver.isAllowedImportOrigin(null))
+    }
 }

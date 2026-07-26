@@ -9,8 +9,6 @@ import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.github.andreyasadchy.xtra.graphql.type.ClipsPeriod
 import com.github.andreyasadchy.xtra.model.ui.SortChannel
-import com.github.andreyasadchy.xtra.repository.KickGraphQLRepository
-import com.github.andreyasadchy.xtra.repository.KickPublicApiRepository
 import com.github.andreyasadchy.xtra.repository.KickRepository
 import com.github.andreyasadchy.xtra.repository.SortChannelRepository
 import com.github.andreyasadchy.xtra.repository.datasource.ChannelClipsDataSource
@@ -30,8 +28,6 @@ import javax.inject.Inject
 class ChannelClipsViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
     private val sortChannelRepository: SortChannelRepository,
-    private val kickGraphQLRepository: KickGraphQLRepository,
-    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -85,14 +81,7 @@ class ChannelClipsViewModel @Inject constructor(
                 gqlPeriod = gqlPeriod,
                 startedAt = started,
                 endedAt = ended,
-                kickWebHeaders = KickApiHelper.getKickWebHeaders(applicationContext),
-                kickGraphQLRepository = kickGraphQLRepository,
-                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext),
-                kickPublicApiRepository = kickPublicApiRepository,
                 kickRepository = kickRepository,
-                enableIntegrity = applicationContext.prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                apiPref = listOf(C.KICK),
-                networkLibrary = applicationContext.prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
             )
         }.flow
     }.cachedIn(viewModelScope)

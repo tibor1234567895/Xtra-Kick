@@ -68,4 +68,11 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
+    <Preference
+        android:key="action_leftover_files"
+        android:title="@string/leftover_files"
+        android:summary="@string/leftover_files_scanning"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
 </androidx.preference.PreferenceScreen>
