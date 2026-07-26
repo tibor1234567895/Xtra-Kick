@@ -28,15 +28,24 @@ android {
         ?.toMap()
         ?: emptyMap()
 
+    /**
+     * Resolution order, most specific first:
+     *  1. -P on the command line, so a one-off build can always override.
+     *  2. Environment (this is how CI supplies ORG_GRADLE_PROJECT_* values).
+     *  3. Xtra/.env, the checked-out-but-ignored local defaults.
+     *
+     * .env used to win over -P, which meant a value present in .env could not be overridden
+     * from the command line at all — including to unset a broken one.
+     */
     fun projectPropertyOrDefault(name: String, default: String = ""): String {
+        val fromGradleProp = (project.findProperty(name) as String?)?.trim()
+        if (!fromGradleProp.isNullOrEmpty()) return fromGradleProp
+
         val fromEnv = System.getenv(name)?.trim()
         if (!fromEnv.isNullOrEmpty()) return fromEnv
 
         val fromDotEnv = dotEnv[name]?.trim()
         if (!fromDotEnv.isNullOrEmpty()) return fromDotEnv
-
-        val fromGradleProp = (project.findProperty(name) as String?)?.trim()
-        if (!fromGradleProp.isNullOrEmpty()) return fromGradleProp
 
         return default
     }
@@ -146,6 +155,9 @@ android {
     androidResources {
         generateLocaleConfig = true
     }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
     lint {
         disable += listOf(
             "AlwaysShowAction",
@@ -242,6 +254,12 @@ dependencies {
 
     implementation(libs.coroutines)
     testImplementation("junit:junit:4.13.2")
+    // ChatBackgroundUtilsTest computes its expected values with androidx ColorUtils,
+    // which calls android.graphics.Color — absent on a plain JVM. Robolectric supplies it.
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    // conscrypt-android ships JNI only for Android. Robolectric loads it on the JVM, so the
+    // desktop build supplies the matching native library. Test runtime only.
+    testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.5.2")
 }
 
 ksp {

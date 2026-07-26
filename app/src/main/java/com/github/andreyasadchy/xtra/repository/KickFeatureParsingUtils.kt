@@ -55,8 +55,16 @@ object KickFeatureParsingUtils {
 
         fun collectChunkUrls(raw: String?) {
             if (raw.isNullOrBlank()) return
+            // The class must exclude backslash AND whitespace: `[^"'\\\s>]`.
+            // It previously read `[^"'\\s>]`, which in a raw string is "backslash or the
+            // letter s" with no whitespace class at all — so URLs were truncated at their
+            // first `s` (".../3787-page.js" -> ".../3787-page.j"). Dropping the `\\` instead
+            // lets the trailing backslash of an escaped `\"` be swallowed
+            // (".../3787-page.js\"). Both are needed.
+            // `\\?/` is deliberate: __next_f payloads carry JSON-escaped `https:\/\/`, and the
+            // `?` keeps plain URLs matching too.
             Regex(
-                """(?:https?:\\/\\/[^\"'\\s>]+/_next/static/chunks/[^\"'\\s>]+|/_next/static/chunks/[^\"'\\s>]+|_next/static/chunks/[^\"'\\s>]+|static/chunks/[^\"'\\s>]+)"""
+                """(?:https?:\\?/\\?/[^"'\\\s>]+/_next/static/chunks/[^"'\\\s>]+|/_next/static/chunks/[^"'\\\s>]+|_next/static/chunks/[^"'\\\s>]+|static/chunks/[^"'\\\s>]+)"""
             ).findAll(raw).forEach { match ->
                 resolveChunkUrl(cleanWebUrl(match.value) ?: match.value)?.let(chunkUrls::add)
             }

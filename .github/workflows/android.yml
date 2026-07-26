@@ -5,10 +5,7 @@ on:
     branches: [ main ]
 
 jobs:
-  # Tests and lint. Deliberately not a dependency of `build` yet: 4 of the 138 unit tests
-  # fail on the current tree — all ChatBackgroundUtilsTest/KickFeatureParsingUtilsTest cases
-  # that need android.graphics.Color, which does not exist on the JVM. Add Robolectric, then
-  # drop continue-on-error here and add `needs: check` to `build`.
+  # Tests and lint. All 138 unit tests pass, so this now gates `build`.
   #
   # Lint is clean apart from 6 known warnings, none of which fail the build:
   #   2x UnsafeIntentLaunch  - false positive; MainActivity's EXTRA_INTENT is sanitized by
@@ -19,7 +16,6 @@ jobs:
   #   1x AndroidGradlePluginVersion - upgrade advisory.
   check:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
@@ -44,6 +40,7 @@ jobs:
             app/build/reports/lint-results-debug.html
 
   build:
+    needs: check
     runs-on: ubuntu-latest
     env:
       ORG_GRADLE_PROJECT_KICK_CLIENT_ID: ${{ secrets.KICK_CLIENT_ID }}
