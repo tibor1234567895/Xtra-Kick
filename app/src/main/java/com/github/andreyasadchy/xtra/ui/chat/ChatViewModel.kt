@@ -1689,9 +1689,44 @@ class ChatViewModel @Inject constructor(
         return filterKickThreadMessages(historyMessages, selectedMessage, threadParentId)
     }
 
-    private suspend fun emitKickMessages(messages: List<ChatMessage>, replayStartTimeMs: Long? = null): KickClipEmitStats {
+    /**
+     * Appends [messages] as one block, reported with a single [appendMessages] emission.
+     *
+     * For backlogs: the history that fills the screen after a seek or at the start of a session.
+     * Pushing those through [onMessage] one at a time makes the list insert and scroll to the
+     * bottom once per message, so the whole backlog visibly scrolls past - several screenfuls of
+     * chat racing by - instead of simply already being there when the video resumes.
+     */
+    private suspend fun appendChatMessagesInBulk(messages: List<ChatMessage>) {
+        if (messages.isEmpty()) return
+        synchronized(rawChatMessages) {
+            val left = messageLimit - rawChatMessages.size
+            if (left > 0) {
+                val items = messages.takeLast(left)
+                rawChatMessages.addAll(items)
+                val visibleItems = items.filterNot(::isMutedMessage)
+                synchronized(chatMessages) {
+                    val insertStart = chatMessages.size
+                    chatMessages.addAll(visibleItems)
+                    visibleItems to insertStart
+                }
+            } else null
+        }?.takeIf { it.first.isNotEmpty() }?.let { appendMessages.emit(it) }
+    }
+
+    /**
+     * @param asBulk route the surviving messages through [appendChatMessagesInBulk] instead of
+     *   emitting them one by one. Use for backlogs, never for messages arriving in step with
+     *   playback - those need to appear individually to read as a live stream of chat.
+     */
+    private suspend fun emitKickMessages(
+        messages: List<ChatMessage>,
+        replayStartTimeMs: Long? = null,
+        asBulk: Boolean = false,
+    ): KickClipEmitStats {
         var emitted = 0
         var deduped = 0
+        val bulk = if (asBulk) mutableListOf<ChatMessage>() else null
         messages.forEach { message ->
             val key = message.id ?: "${message.timestamp}:${message.userName}:${message.message}"
             val shouldEmit = synchronized(kickMessageIds) {
@@ -1712,13 +1747,21 @@ class ChatViewModel @Inject constructor(
                 } else {
                     message
                 }
-                buildReplyPreviewMessage(displayMessage)?.let { onMessage(it) }
-                onMessage(displayMessage)
+                if (bulk != null) {
+                    buildReplyPreviewMessage(displayMessage)?.let { bulk += it }
+                    bulk += displayMessage
+                } else {
+                    buildReplyPreviewMessage(displayMessage)?.let { onMessage(it) }
+                    onMessage(displayMessage)
+                }
                 addChatter(displayMessage.userName)
                 emitted += 1
             } else {
                 deduped += 1
             }
+        }
+        if (bulk != null) {
+            appendChatMessagesInBulk(bulk)
         }
         return KickClipEmitStats(
             total = messages.size,
@@ -1880,7 +1923,10 @@ class ChatViewModel @Inject constructor(
                         debugSessionKey = sessionKey,
                         maxPages = 4
                     )
-                    val stats = emitKickMessages(preloadMessages, effectiveReplayStartTimeMs)
+                    // asBulk: this is the backlog that fills the screen behind the seek target. It
+                    // must land as one block - emitted one by one it scrolls several screenfuls of
+                    // chat past before settling, which is what a seek used to look like.
+                    val stats = emitKickMessages(preloadMessages, effectiveReplayStartTimeMs, asBulk = true)
                     logKickReplayChat(stage = "emit", sessionKey = sessionKey) {
                         "phase=preload startPositionMs=$initialPlaybackPositionMs playbackTs=$initialPlaybackTimestampMs " +
                             "${messageRangeSummary(preloadMessages)} total=${stats.total} emitted=${stats.emitted} deduped=${stats.deduped}"
@@ -4029,20 +4075,7 @@ class ChatViewModel @Inject constructor(
         }
 
         override suspend fun onChatMessages(messages: List<ChatMessage>) {
-            if (messages.isEmpty()) return
-            synchronized(rawChatMessages) {
-                val left = messageLimit - rawChatMessages.size
-                if (left > 0) {
-                    val items = messages.takeLast(left)
-                    rawChatMessages.addAll(items)
-                    val visibleItems = items.filterNot(::isMutedMessage)
-                    synchronized(chatMessages) {
-                        val insertStart = chatMessages.size
-                        chatMessages.addAll(visibleItems)
-                        visibleItems to insertStart
-                    }
-                } else null
-            }?.takeIf { it.first.isNotEmpty() }?.let { appendMessages.emit(it) }
+            appendChatMessagesInBulk(messages)
         }
 
         override suspend fun clearMessages() {
