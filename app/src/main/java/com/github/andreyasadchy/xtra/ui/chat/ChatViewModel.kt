@@ -155,6 +155,22 @@ class ChatViewModel @Inject constructor(
      */
     private val kickReplayCatchupThresholdMs = 3_000L
 
+    /**
+     * How far ahead of the playhead the pending queue should stay stocked.
+     *
+     * The timeline poll used to pull a single page per second, which on a busy channel is about a
+     * second of chat. Any slow response then left the pacer with nothing to release, showing up as
+     * a multi-second freeze rather than a smooth stream. Keeping a buffer this deep means a late
+     * response is invisible.
+     */
+    private val kickReplayTargetLookaheadMs = 8_000L
+
+    /** Pages to pull per timeline poll while the buffer is below [kickReplayTargetLookaheadMs]. */
+    private val kickReplayTimelineMaxPages = 3
+
+    /** Newest timestamp ever queued, i.e. how far ahead history has been fetched. */
+    private var kickReplayQueuedThroughMs: Long? = null
+
     /** Timestamp bucket currently being spread, or null when none is in flight. */
     private var kickReplayPacingBucketMs: Long? = null
 
@@ -1284,6 +1300,7 @@ class ChatViewModel @Inject constructor(
         kickReplayPendingKeys.clear()
         kickReplayPacingBucketMs = null
         kickReplayPacingPerTick = 1
+        kickReplayQueuedThroughMs = null
     }
 
     /**
@@ -1319,6 +1336,11 @@ class ChatViewModel @Inject constructor(
                 return@forEach
             }
             kickReplayPendingMessages.offer(message)
+            message.timestamp?.let { timestamp ->
+                if (timestamp > (kickReplayQueuedThroughMs ?: Long.MIN_VALUE)) {
+                    kickReplayQueuedThroughMs = timestamp
+                }
+            }
             queued += 1
         }
         return KickClipQueueStats(
@@ -1358,9 +1380,14 @@ class ChatViewModel @Inject constructor(
             if (nextTimestamp != null && nextTimestamp > cutoffTimestampMs) {
                 break
             }
-            // Leave the next bucket to its own tick, so its size decides its own pacing.
+            // Deliberately not stopping at a bucket boundary. Doing that drained a second in
+            // about six ticks and then idled until the next second came into range, which read
+            // as a pause on every cycle. Flowing straight into the next eligible bucket keeps
+            // the stream continuous; the release rate is re-derived below when the bucket
+            // changes, so a busier second still gets a bigger allowance.
             if (paced && nextTimestamp != null && nextTimestamp != kickReplayPacingBucketMs) {
-                break
+                kickReplayPacingBucketMs = nextTimestamp
+                kickReplayPacingPerTick = kickReplayPerTickForBucket(nextTimestamp)
             }
             kickReplayPendingMessages.poll()
             kickReplayPendingKeys.remove(kickMessageKey(next))
@@ -1915,9 +1942,28 @@ class ChatViewModel @Inject constructor(
                     while (currentCoroutineContext().isActive) {
                         try {
                             val position = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
-                            val startTime = formatIso8601Utc(effectiveReplayStartTimeMs + position)
+                            val playbackTimestampMs = effectiveReplayStartTimeMs + position
+                            // Fetch from the deepest point already buffered rather than from the
+                            // playhead, so each poll extends the buffer instead of re-requesting
+                            // the window we are currently playing out.
+                            val bufferedThroughMs = maxOf(kickReplayQueuedThroughMs ?: playbackTimestampMs, playbackTimestampMs)
+                            val bufferedAheadMs = bufferedThroughMs - playbackTimestampMs
+                            // Rewind one bucket before re-requesting. A page can end part way
+                            // through a second, and if the endpoint treats start_time as exclusive,
+                            // resuming exactly at the last message would drop the rest of that
+                            // second. The overlap costs one redundant second per poll, which
+                            // queueKickReplayMessages already discards by message id.
+                            val fetchFromMs = (bufferedThroughMs - ChatReplayPacing.SPREAD_WINDOW_MS)
+                                .coerceAtLeast(playbackTimestampMs)
+                            val startTime = formatIso8601Utc(fetchFromMs)
                             logKickReplayChat(stage = "timeline_tick", sessionKey = sessionKey) {
-                                "positionMs=$position startTime=$startTime pending=${kickReplayPendingMessages.size}"
+                                "positionMs=$position startTime=$startTime bufferedAheadMs=$bufferedAheadMs pending=${kickReplayPendingMessages.size}"
+                            }
+                            if (bufferedAheadMs >= kickReplayTargetLookaheadMs) {
+                                // Deep enough already; skipping the request keeps the poll rate off
+                                // Kick's API when there is nothing to gain.
+                                delay(kickReplayPollIntervalMs)
+                                continue
                             }
                             val timelineMessages = fetchKickHistoryMessages(
                                 messageSources = kickMessageSources,
@@ -1925,7 +1971,8 @@ class ChatViewModel @Inject constructor(
                                 channelId = channelId,
                                 channelLogin = channelLogin,
                                 debugSessionKey = sessionKey,
-                                debugPhase = "timeline"
+                                debugPhase = "timeline",
+                                maxPages = kickReplayTimelineMaxPages
                             )
                             val queueStats = queueKickReplayMessages(timelineMessages)
                             if (queueStats.queued > 0 || queueStats.alreadyQueued > 0) {
