@@ -1078,7 +1078,7 @@ object ChatAdapterUtils {
                                                 itemView.postDelayed(what, `when`)
                                             }
                                         }
-                                        (result as Animatable).start()
+                                        startAnimationIfOnScreen(result, itemView)
                                     }
                                     try {
                                         builder.setSpan(
@@ -1121,7 +1121,7 @@ object ChatAdapterUtils {
                                         itemView.postDelayed(what, `when`)
                                     }
                                 }
-                                (resource as Animatable).start()
+                                startAnimationIfOnScreen(resource, itemView)
                             }
                             try {
                                 builder.setSpan(
@@ -1284,9 +1284,24 @@ object ChatAdapterUtils {
                     itemView.postDelayed(what, `when`)
                 }
             }
-            result.start()
+            startAnimationIfOnScreen(result, itemView)
         }
         return result
+    }
+
+    /**
+     * Starts an animated chat drawable only while its row is on screen.
+     *
+     * Rows recycle while their emotes are still downloading, and ChatAdapter's
+     * onViewDetachedFromWindow has already run by the time a late image arrives. Starting the
+     * animation unconditionally leaves it decoding frames and rescheduling itself through
+     * [View.postDelayed] forever, for a row nobody can see. ChatAdapter.onViewAttachedToWindow
+     * starts the animation if the row scrolls back into view.
+     */
+    private fun startAnimationIfOnScreen(drawable: Drawable, itemView: View) {
+        if (itemView.isAttachedToWindow) {
+            (drawable as? Animatable)?.start()
+        }
     }
 
     private fun createChatImageKey(image: Image, source: Any, targetHeight: Int): ChatImageKey? {

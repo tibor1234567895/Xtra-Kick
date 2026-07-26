@@ -47,6 +47,7 @@ import com.github.andreyasadchy.xtra.util.DiagnosticLogger
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.WebSocketRuntime
+import com.github.andreyasadchy.xtra.util.chat.ChatListParityUtils
 import com.github.andreyasadchy.xtra.util.chat.ChatUtils
 import com.github.andreyasadchy.xtra.util.chat.KickChatSendErrorMapper
 import com.github.andreyasadchy.xtra.util.chat.KickPusherChatWebSocket
@@ -293,8 +294,12 @@ class ChatViewModel @Inject constructor(
     val thirdPartyEmotesUpdated = MutableSharedFlow<Unit>()
 
     private var messageLimit = 600
-    private val rawChatMessages = mutableListOf<ChatMessage>()
-    val chatMessages = mutableListOf<ChatMessage>()
+    // ArrayDeque, not ArrayList: both lists are trimmed from the head on every message once the
+    // channel is busy enough to sit at messageLimit, and removing index 0 from an ArrayList
+    // copies the remaining 600 elements each time. ArrayDeque drops the head in constant time
+    // and still gives the adapter O(1) indexed access.
+    private val rawChatMessages = ArrayDeque<ChatMessage>()
+    val chatMessages = ArrayDeque<ChatMessage>()
     val refreshMessages = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 1)
     val autoCompleteList = mutableListOf<Any?>()
     private val chatters = ConcurrentHashMap<String, Chatter>()
@@ -2057,18 +2062,22 @@ class ChatViewModel @Inject constructor(
         synchronized(rawChatMessages) {
             rawChatMessages.add(message)
             val removedRawItems = if (rawChatMessages.size > messageLimit) {
-                List(rawChatMessages.size - messageLimit) { rawChatMessages.removeAt(0) }
+                List(rawChatMessages.size - messageLimit) { rawChatMessages.removeFirst() }
             } else {
                 emptyList()
             }
             synchronized(chatMessages) {
                 val removeCount = removedRawItems.count { !isMutedMessage(it) }
                 repeat(removeCount.coerceAtMost(chatMessages.size)) {
-                    chatMessages.removeAt(0)
+                    chatMessages.removeFirst()
                 }
                 val visibleMessage = message.takeUnless(::isMutedMessage)
                 if (visibleMessage != null) {
                     chatMessages.add(visibleMessage)
+                    // Assign the row's alternating-shadow slot here, while we know it is the one
+                    // message at the tail without one. Leaving it to bind time made every bind
+                    // pay for a full sweep of the list looking for unassigned slots.
+                    ChatListParityUtils.assignSlotForAppendedMessage(chatMessages)
                 }
                 if (newMessage.subscriptionCount.value > 0 && visibleMessage != null) {
                     Triple(visibleMessage, chatMessages.lastIndex, removeCount)

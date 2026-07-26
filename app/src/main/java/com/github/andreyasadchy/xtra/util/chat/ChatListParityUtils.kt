@@ -22,9 +22,41 @@ object ChatListParityUtils {
         if (position < 0 || messages.isEmpty()) {
             return 0
         }
-        ensureVisualParitySlots(messages)
         val cappedPosition = position.coerceAtMost(messages.lastIndex)
+        // Slots are stable once assigned, so a row that already has one needs no sweep: the
+        // answer is that slot whatever the rest of the list looks like. This runs on every bind
+        // of every row, and [ensureVisualParitySlots] costs a full pass over the message list
+        // (600 by default) even when it has nothing to do. Rows that genuinely lack a slot still
+        // fall through and trigger the sweep, which fixes them and their neighbours as before.
+        messages[cappedPosition].visualParitySlot?.let { return it }
+        ensureVisualParitySlots(messages)
         return messages[cappedPosition].visualParitySlot ?: 0
+    }
+
+    /**
+     * Assigns [ChatMessage.visualParitySlot] for a message just appended to the end of
+     * [messages], in constant time.
+     *
+     * In the steady state of a live chat the only row missing a slot is the one that just
+     * arrived, so doing this at append time keeps the O(size) sweep in
+     * [ensureVisualParitySlots] off the bind path entirely. Bails out and leaves the work to
+     * that sweep if the preceding message has no slot yet.
+     */
+    fun assignSlotForAppendedMessage(messages: List<ChatMessage>) {
+        val lastIndex = messages.lastIndex
+        if (lastIndex < 0) {
+            return
+        }
+        val message = messages[lastIndex]
+        if (message.visualParitySlot != null) {
+            return
+        }
+        if (lastIndex == 0) {
+            message.visualParitySlot = 0
+            return
+        }
+        val previousSlot = messages[lastIndex - 1].visualParitySlot ?: return
+        message.visualParitySlot = nextSlot(messages, lastIndex, previousSlot)
     }
 
     fun shouldDrawDividerAbove(messages: List<ChatMessage>, position: Int): Boolean {

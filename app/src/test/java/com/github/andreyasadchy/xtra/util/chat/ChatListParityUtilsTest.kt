@@ -130,6 +130,70 @@ class ChatListParityUtilsTest {
     }
 
     @Test
+    fun appendTimeSlotAssignmentMatchesTheFullSweep() {
+        // assignSlotForAppendedMessage exists so the O(size) sweep stays off the bind path. It
+        // has to agree with the sweep exactly, or rows would alternate differently depending on
+        // which code path happened to assign them.
+        val incremental = mutableListOf<ChatMessage>()
+        val swept = mutableListOf<ChatMessage>()
+        repeat(6) { index ->
+            incremental.add(ChatMessage(id = "m$index", message = "m$index"))
+            ChatListParityUtils.assignSlotForAppendedMessage(incremental)
+            swept.add(ChatMessage(id = "m$index", message = "m$index"))
+            ChatListParityUtils.ensureVisualParitySlots(swept)
+        }
+
+        assertEquals(
+            swept.map { it.visualParitySlot },
+            incremental.map { it.visualParitySlot },
+        )
+    }
+
+    @Test
+    fun appendTimeSlotAssignmentSharesTheBlockWithAReplyPreview() {
+        val messages = mutableListOf<ChatMessage>(
+            ChatMessage(id = "first", message = "first"),
+            ChatMessage(
+                isReply = true,
+                reply = Reply(threadParentId = "parent-1", message = "hello"),
+                timestamp = 1000L,
+                fullMsg = "reply-one"
+            ),
+        )
+        ChatListParityUtils.ensureVisualParitySlots(messages)
+        val previewSlot = messages[1].visualParitySlot
+
+        // The reply body belongs to the same visual block as its preview, so appending it must
+        // reuse the preview's slot rather than advance to the next one.
+        messages.add(
+            ChatMessage(
+                id = "message-1",
+                message = "reply-one",
+                reply = Reply(threadParentId = "parent-1", message = "hello"),
+                timestamp = 1000L,
+                fullMsg = "reply-one"
+            )
+        )
+        ChatListParityUtils.assignSlotForAppendedMessage(messages)
+
+        assertEquals(previewSlot, messages[2].visualParitySlot)
+    }
+
+    @Test
+    fun resolveVisualParityPositionStillAssignsSlotsForUnassignedRows() {
+        // The fast path in resolveVisualParityPosition returns early for rows that already have
+        // a slot; rows that do not must still fall through to the sweep.
+        val messages = mutableListOf(
+            ChatMessage(id = "a", message = "a"),
+            ChatMessage(id = "b", message = "b"),
+        )
+
+        assertEquals(1, ChatListParityUtils.resolveVisualParityPosition(messages, 1))
+        assertEquals(0, messages[0].visualParitySlot)
+        assertEquals(1, messages[1].visualParitySlot)
+    }
+
+    @Test
     fun prependAssignsSlotsRelativeToExistingMessagesWithoutChangingThem() {
         val existing = mutableListOf(
             ChatMessage(id = "c", message = "c"),

@@ -237,9 +237,17 @@ class ChatAdapter(
 
     private fun renderSignature(): Long = renderConfigSignature() * 31L + renderGeneration
 
-    private fun messageBindKey(chatMessage: ChatMessage, position: Int): String {
+    /**
+     * Identifies the message a holder is bound to, so a late image load can tell whether the
+     * holder still shows the same message before applying its update.
+     *
+     * Deliberately excludes the adapter position: the head of the list is trimmed constantly on
+     * a busy channel, which shifts every position by one and used to change the key of every
+     * visible row. That made [ViewHolder.isBoundTo] report false for rows that had not actually
+     * changed, dropping their pending emote updates on the floor.
+     */
+    private fun messageBindKey(chatMessage: ChatMessage): String {
         return listOfNotNull(
-            position.toString(),
             chatMessage.id,
             chatMessage.timestamp?.toString(),
             chatMessage.userId,
@@ -255,7 +263,7 @@ class ChatAdapter(
         val chatMessage = synchronized(messages) {
             messages.getOrNull(position)
         } ?: return
-        val bindKey = messageBindKey(chatMessage, position)
+        val bindKey = messageBindKey(chatMessage)
         val result = ChatAdapterUtils.prepareChatMessage(
             chatMessage, renderSignature(), enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg,
             rewardChatMsg, replyMessage, null, useRandomColors, random, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints,
