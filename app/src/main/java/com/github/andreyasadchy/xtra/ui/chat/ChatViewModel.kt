@@ -65,6 +65,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -1874,58 +1875,80 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             }
-            var nextPollAtMs = 0L
-            while (currentCoroutineContext().isActive) {
-                try {
-                    val rawPosition = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
-                    val position = rawPosition
-                    kickReplayLastPlaybackPositionMs = position
-                    val playbackTimestampMs = effectiveReplayStartTimeMs + position
-                    val dueStats = emitDueKickReplayMessages(playbackTimestampMs + kickReplayEmitLeadMs, effectiveReplayStartTimeMs)
-                    if (dueStats.total > 0) {
-                        logKickReplayChat(stage = "emit_due", sessionKey = sessionKey) {
-                            "rawPositionMs=$rawPosition positionMs=$position playbackTs=$playbackTimestampMs total=${dueStats.total} emitted=${dueStats.emitted} deduped=${dueStats.deduped} pending=${kickReplayPendingMessages.size}"
-                        }
-                    }
-                    val nowMs = SystemClock.elapsedRealtime()
-                    if (nowMs >= nextPollAtMs) {
-                        val startTime = formatIso8601Utc(playbackTimestampMs)
-                        logKickReplayChat(stage = "timeline_tick", sessionKey = sessionKey) {
-                            "rawPositionMs=$rawPosition positionMs=$position startTime=$startTime pending=${kickReplayPendingMessages.size}"
-                        }
-                        val timelineMessages = fetchKickHistoryMessages(
-                            messageSources = kickMessageSources,
-                            startTime = startTime,
-                            channelId = channelId,
-                            channelLogin = channelLogin,
-                            debugSessionKey = sessionKey,
-                            debugPhase = "timeline"
-                        )
-                        val queueStats = queueKickReplayMessages(timelineMessages)
-                        if (queueStats.queued > 0 || queueStats.alreadyQueued > 0) {
-                            logKickReplayChat(stage = "queue", sessionKey = sessionKey) {
-                                "phase=timeline ${messageRangeSummary(timelineMessages)} total=${queueStats.total} queued=${queueStats.queued} alreadyEmitted=${queueStats.alreadyEmitted} alreadyQueued=${queueStats.alreadyQueued} pending=${kickReplayPendingMessages.size}"
+            // Emitting and polling run as separate coroutines on purpose. They used to share one
+            // loop, which awaited fetchKickHistoryMessages inline, so every poll stalled emission
+            // for as long as the request took: chat came out as a few evenly spaced batches and
+            // then a long gap once a second, with the gap being the network round trip. Splitting
+            // them keeps the release cadence at kickReplayEmitIntervalMs regardless of how slow
+            // the timeline request is.
+            //
+            // Both loops touch kickReplayPendingMessages and the pacing state, and both stay on
+            // this scope's main dispatcher, so they interleave only at suspension points - none of
+            // which sit inside the queue reads and writes.
+            coroutineScope {
+                launch {
+                    while (currentCoroutineContext().isActive) {
+                        try {
+                            val rawPosition = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
+                            kickReplayLastPlaybackPositionMs = rawPosition
+                            val playbackTimestampMs = effectiveReplayStartTimeMs + rawPosition
+                            val dueStats = emitDueKickReplayMessages(playbackTimestampMs + kickReplayEmitLeadMs, effectiveReplayStartTimeMs)
+                            if (dueStats.total > 0) {
+                                logKickReplayChat(stage = "emit_due", sessionKey = sessionKey) {
+                                    "rawPositionMs=$rawPosition positionMs=$rawPosition playbackTs=$playbackTimestampMs total=${dueStats.total} emitted=${dueStats.emitted} deduped=${dueStats.deduped} pending=${kickReplayPendingMessages.size}"
+                                }
+                            }
+                        } catch (e: CancellationException) {
+                            logKickReplayChat(stage = "cancelled", sessionKey = sessionKey) {
+                                "phase=emit"
+                            }
+                            throw e
+                        } catch (e: Exception) {
+                            logKickReplayChat(stage = "error", sessionKey = sessionKey) {
+                                "phase=emit error=${e::class.java.simpleName}:${e.message}"
                             }
                         }
-                        val immediateDueStats = emitDueKickReplayMessages(playbackTimestampMs + kickReplayEmitLeadMs, effectiveReplayStartTimeMs)
-                        if (immediateDueStats.total > 0) {
-                            logKickReplayChat(stage = "emit_due", sessionKey = sessionKey) {
-                                "phase=post_poll positionMs=$position playbackTs=$playbackTimestampMs total=${immediateDueStats.total} emitted=${immediateDueStats.emitted} deduped=${immediateDueStats.deduped} pending=${kickReplayPendingMessages.size}"
-                            }
-                        }
-                        nextPollAtMs = nowMs + kickReplayPollIntervalMs
-                    }
-                } catch (e: CancellationException) {
-                    logKickReplayChat(stage = "cancelled", sessionKey = sessionKey) {
-                        "phase=timeline"
-                    }
-                    throw e
-                } catch (e: Exception) {
-                    logKickReplayChat(stage = "error", sessionKey = sessionKey) {
-                        "phase=timeline error=${e::class.java.simpleName}:${e.message}"
+                        delay(kickReplayEmitIntervalMs)
                     }
                 }
-                delay(kickReplayEmitIntervalMs)
+                launch {
+                    while (currentCoroutineContext().isActive) {
+                        try {
+                            val position = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
+                            val startTime = formatIso8601Utc(effectiveReplayStartTimeMs + position)
+                            logKickReplayChat(stage = "timeline_tick", sessionKey = sessionKey) {
+                                "positionMs=$position startTime=$startTime pending=${kickReplayPendingMessages.size}"
+                            }
+                            val timelineMessages = fetchKickHistoryMessages(
+                                messageSources = kickMessageSources,
+                                startTime = startTime,
+                                channelId = channelId,
+                                channelLogin = channelLogin,
+                                debugSessionKey = sessionKey,
+                                debugPhase = "timeline"
+                            )
+                            val queueStats = queueKickReplayMessages(timelineMessages)
+                            if (queueStats.queued > 0 || queueStats.alreadyQueued > 0) {
+                                logKickReplayChat(stage = "queue", sessionKey = sessionKey) {
+                                    "phase=timeline ${messageRangeSummary(timelineMessages)} total=${queueStats.total} queued=${queueStats.queued} alreadyEmitted=${queueStats.alreadyEmitted} alreadyQueued=${queueStats.alreadyQueued} pending=${kickReplayPendingMessages.size}"
+                                }
+                            }
+                            // No emit here on purpose: the emit loop picks newly queued messages up
+                            // within one tick, and releasing them here too would put an extra
+                            // out-of-cadence batch on screen every poll.
+                        } catch (e: CancellationException) {
+                            logKickReplayChat(stage = "cancelled", sessionKey = sessionKey) {
+                                "phase=timeline"
+                            }
+                            throw e
+                        } catch (e: Exception) {
+                            logKickReplayChat(stage = "error", sessionKey = sessionKey) {
+                                "phase=timeline error=${e::class.java.simpleName}:${e.message}"
+                            }
+                        }
+                        delay(kickReplayPollIntervalMs)
+                    }
+                }
             }
             logKickReplayChat(stage = "session_end", sessionKey = sessionKey) {
                 "reason=job_inactive"
