@@ -1,6 +1,7 @@
 package com.github.andreyasadchy.xtra.ui.chat
 
 import com.github.andreyasadchy.xtra.model.chat.ChatMessage
+import com.github.andreyasadchy.xtra.util.chat.ChatReplayPacing
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -35,6 +36,34 @@ class ChatReplayManagerLocal(
     private var playbackSpeed: Float? = null
     var isActive = true
 
+    /** Timestamp bucket currently being spread, in ms, or null when no bucket is in flight. */
+    private var spreadBucketStartMs: Long? = null
+
+    /** Running sub-second offset within [spreadBucketStartMs]. See [ChatReplayPacing]. */
+    private var spreadStaggerMs = 0L
+
+    private fun resetSpread() {
+        spreadBucketStartMs = null
+        spreadStaggerMs = 0L
+    }
+
+    /**
+     * Number of queued messages sharing [timestamp], counting from the head.
+     *
+     * Indexed access rather than iteration on purpose: [load] appends to [list] from
+     * [Dispatchers.IO] while this runs on the replay job's dispatcher, and an iterator would be
+     * open to ConcurrentModificationException. Appends only ever land past the range being read.
+     */
+    private fun queuedInBucket(timestamp: Long): Int {
+        var count = 0
+        while (true) {
+            val queued = list.getOrNull(count) ?: break
+            if (queued.timestamp != timestamp) break
+            count++
+        }
+        return count
+    }
+
     fun setMessages(newMessages: List<ChatMessage>, newStartTime: Long) {
         messages = newMessages
         startTime = newStartTime
@@ -60,6 +89,7 @@ class ChatReplayManagerLocal(
         lastCheckedPosition = currentPosition
         playbackSpeed = getCurrentSpeed()
         list.clear()
+        resetSpread()
         coroutineScope.launch {
             listener.clearMessages()
         }
@@ -110,7 +140,16 @@ class ChatReplayManagerLocal(
                 val message = list.firstOrNull() ?: break
                 if (message.timestamp != null) {
                     var currentPosition: Long
-                    val messageOffset = message.timestamp
+                    val bucketStart = message.timestamp
+                    // Downloaded chat inherits Kick's whole-second offsets, so every message from
+                    // the same second shares one target and the bucket would otherwise go out in
+                    // a single pass of this loop.
+                    if (bucketStart != spreadBucketStartMs) {
+                        spreadBucketStartMs = bucketStart
+                        spreadStaggerMs = 0L
+                    }
+                    val stagger = ChatReplayPacing.staggerForEmission(spreadStaggerMs)
+                    val messageOffset = bucketStart + stagger
                     while (
                         (getCurrentPosition() ?: 0).let { position ->
                             lastCheckedPosition = position
@@ -146,6 +185,9 @@ class ChatReplayManagerLocal(
                             fullMsg = message.fullMsg
                         )
                     )
+                    // Counted before the head is removed below, so the just-emitted message is
+                    // included - that is what [advanceStagger] expects.
+                    spreadStaggerMs = ChatReplayPacing.advanceStagger(stagger, queuedInBucket(message.timestamp))
                 } else if (!isActive) break
                 list.remove(message)
             }
@@ -165,6 +207,7 @@ class ChatReplayManagerLocal(
                 loadJob?.cancel()
                 messageJob?.cancel()
                 list.clear()
+                resetSpread()
                 coroutineScope.launch {
                     listener.clearMessages()
                 }
