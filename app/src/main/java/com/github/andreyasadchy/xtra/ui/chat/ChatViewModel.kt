@@ -48,6 +48,7 @@ import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.KickOAuthConfig
 import com.github.andreyasadchy.xtra.util.WebSocketRuntime
 import com.github.andreyasadchy.xtra.util.chat.ChatListParityUtils
+import com.github.andreyasadchy.xtra.util.chat.ChatReplayPacing
 import com.github.andreyasadchy.xtra.util.chat.ChatUtils
 import com.github.andreyasadchy.xtra.util.chat.KickChatSendErrorMapper
 import com.github.andreyasadchy.xtra.util.chat.KickPusherChatWebSocket
@@ -143,6 +144,21 @@ class ChatViewModel @Inject constructor(
     private val kickReplayPollIntervalMs = 1_000L
     private val kickReplayEmitIntervalMs = 150L
     private val kickReplayEmitLeadMs = 500L
+
+    /**
+     * How far behind the playhead the queue may fall before pacing is abandoned.
+     *
+     * Preloads and seeks drop a large backlog into the queue at once, and that backlog has to go
+     * out immediately - pacing it would leave chat permanently trailing the video. Only the steady
+     * state, where the head of the queue is roughly at the playhead, gets spread out.
+     */
+    private val kickReplayCatchupThresholdMs = 3_000L
+
+    /** Timestamp bucket currently being spread, or null when none is in flight. */
+    private var kickReplayPacingBucketMs: Long? = null
+
+    /** Messages to release per tick for [kickReplayPacingBucketMs]. */
+    private var kickReplayPacingPerTick = 1
     private val kickReplyThreadHistoryWindowMs = 6L * 60L * 60L * 1000L
     private val kickRealtimeChatroomIdPrefix = "kick_realtime_chatroom_id"
     private val kickPreferredMessageSourcePrefix = "kick_preferred_message_source"
@@ -1265,6 +1281,25 @@ class ChatViewModel @Inject constructor(
     private fun resetKickReplayPendingQueue() {
         kickReplayPendingMessages.clear()
         kickReplayPendingKeys.clear()
+        kickReplayPacingBucketMs = null
+        kickReplayPacingPerTick = 1
+    }
+
+    /**
+     * How many messages of a bucket to release per tick so the bucket spans the second it covers.
+     *
+     * Counts the whole pending queue rather than a prefix because [kickReplayPendingMessages] is a
+     * PriorityQueue - its iteration order is arbitrary, so a matching timestamp can sit anywhere.
+     * Only runs once per bucket, so roughly once per second of playback.
+     */
+    private fun kickReplayPerTickForBucket(bucketTimestampMs: Long): Int {
+        var bucketSize = 0
+        kickReplayPendingMessages.forEach { pending ->
+            if (pending.timestamp == bucketTimestampMs) {
+                bucketSize += 1
+            }
+        }
+        return ChatReplayPacing.perTickRelease(bucketSize, kickReplayEmitIntervalMs)
     }
 
     private fun queueKickReplayMessages(messages: List<ChatMessage>): KickClipQueueStats {
@@ -1297,11 +1332,33 @@ class ChatViewModel @Inject constructor(
         if (kickReplayPendingMessages.isEmpty()) {
             return KickClipEmitStats(total = 0, emitted = 0, deduped = 0)
         }
+        // Kick reports comment times as whole seconds, so every message from the same second falls
+        // due on the same tick. Releasing the whole bucket at once is what made replay lurch a
+        // screenful at a time and scroll most of it past unread; spread it over the ticks that
+        // cover that second instead. Buckets more than kickReplayCatchupThresholdMs behind the
+        // playhead are a backlog from a preload or seek and still go out in one go.
+        val headTimestamp = kickReplayPendingMessages.peek()?.timestamp
+        val paced = headTimestamp != null &&
+            cutoffTimestampMs - headTimestamp <= kickReplayCatchupThresholdMs
+        val perTick = if (paced) {
+            if (headTimestamp != kickReplayPacingBucketMs) {
+                kickReplayPacingBucketMs = headTimestamp
+                kickReplayPacingPerTick = kickReplayPerTickForBucket(headTimestamp)
+            }
+            kickReplayPacingPerTick
+        } else {
+            Int.MAX_VALUE
+        }
+
         val due = mutableListOf<ChatMessage>()
-        while (kickReplayPendingMessages.isNotEmpty()) {
+        while (kickReplayPendingMessages.isNotEmpty() && due.size < perTick) {
             val next = kickReplayPendingMessages.peek() ?: break
             val nextTimestamp = next.timestamp
             if (nextTimestamp != null && nextTimestamp > cutoffTimestampMs) {
+                break
+            }
+            // Leave the next bucket to its own tick, so its size decides its own pacing.
+            if (paced && nextTimestamp != null && nextTimestamp != kickReplayPacingBucketMs) {
                 break
             }
             kickReplayPendingMessages.poll()

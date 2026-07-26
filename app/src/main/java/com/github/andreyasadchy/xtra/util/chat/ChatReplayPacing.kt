@@ -61,4 +61,21 @@ object ChatReplayPacing {
         val room = (windowMs - currentStaggerMs).coerceAtLeast(0L)
         return (currentStaggerMs + room / remainingInWindow).coerceAtMost(windowMs)
     }
+
+    /**
+     * How many of a bucket's messages to release per tick, for a loop that polls every
+     * [tickIntervalMs], so the bucket is spread over the window it covers instead of going out all
+     * at once.
+     *
+     * Rounds up, which guarantees the release rate keeps up with the bucket: there are at least
+     * `windowMs / tickIntervalMs` ticks in a window, and `ceil(size / ticks) * ticks >= size`. Never
+     * returns less than one, so a quiet second is not held back.
+     */
+    fun perTickRelease(bucketSize: Int, tickIntervalMs: Long, windowMs: Long = SPREAD_WINDOW_MS): Int {
+        if (bucketSize <= 0) {
+            return 1
+        }
+        val ticksPerWindow = (windowMs / tickIntervalMs.coerceAtLeast(1L)).coerceAtLeast(1L)
+        return (((bucketSize + ticksPerWindow - 1) / ticksPerWindow).toInt()).coerceAtLeast(1)
+    }
 }
