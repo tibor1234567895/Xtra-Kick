@@ -26,19 +26,13 @@ import dagger.Lazy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okio.buffer
 import okio.source
 import org.chromium.net.CronetEngine
 import org.chromium.net.apihelpers.RedirectHandlers
@@ -932,43 +926,6 @@ class PlayerRepository @Inject constructor(
         }
     }
 
-    suspend fun loadEmotesFromSet(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, setIds: List<String>, animateGifs: Boolean): List<ChatEmote> = withContext(Dispatchers.IO) {
-        val response = kickPublicApiRepository.getEmotesFromSet(networkLibrary, kickPublicApiHeaders, setIds)
-        response.data.mapNotNull { emote ->
-            emote.name?.let { name ->
-                emote.id?.let { id ->
-                    val format = if (animateGifs) {
-                        emote.format?.find { it == "animated" } ?: emote.format?.find { it == "static" }
-                    } else {
-                        emote.format?.find { it == "static" }
-                    } ?: emote.format?.firstOrNull() ?: ""
-                    val theme = emote.theme?.find { it == "dark" } ?: emote.theme?.lastOrNull() ?: ""
-                    val scale1x = emote.scale?.find { it.startsWith("1") } ?: emote.scale?.lastOrNull() ?: ""
-                    val scale2x = emote.scale?.find { it.startsWith("2") } ?: scale1x
-                    val scale3x = emote.scale?.find { it.startsWith("3") } ?: scale2x
-                    val url = response.template
-                        .replaceFirst("{{id}}", id)
-                        .replaceFirst("{{format}}", format)
-                        .replaceFirst("{{theme_mode}}", theme)
-                    ChatEmote(
-                        name = if (emote.type == "smilies") {
-                            name.replace("\\", "").replace("?", "")
-                                .replace("&lt;", "<").replace("&gt;", ">")
-                                .replace(Regex("\\((.)\\|.\\)")) { it.groups[1]?.value ?: "" }
-                                .replace(Regex("\\[(.).*?]")) { it.groups[1]?.value ?: "" }
-                        } else name,
-                        url1x = url.replaceFirst("{{scale}}", scale1x),
-                        url2x = url.replaceFirst("{{scale}}", scale2x),
-                        url3x = url.replaceFirst("{{scale}}", scale3x),
-                        url4x = url.replaceFirst("{{scale}}", scale3x),
-                        format = if (format == "animated") "gif" else null,
-                        setId = emote.setId,
-                        ownerId = emote.ownerId
-                    )
-                }
-            }
-        }
-    }
 
     fun loadRecentEmotesFlow() = recentEmotes.getAllFlow()
 

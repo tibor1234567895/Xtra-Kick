@@ -1148,50 +1148,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
     }
 
-    private fun buildChannelPointsPredictionOutcomesText(prediction: Prediction): CharSequence {
-        val totalPoints = prediction.outcomes?.sumOf { it.totalPoints?.toLong() ?: 0 } ?: 0
-        val selectedOutcomeId = prediction.userVote?.outcomeId
-        val resolved = prediction.status == "RESOLVED" || prediction.status == "RESOLVE_PENDING"
-        val builder = SpannableStringBuilder()
-        prediction.outcomes.orEmpty().forEachIndexed { index, outcome ->
-            if (index > 0) {
-                builder.append('\n')
-            }
-            val isSelected = selectedOutcomeId != null && outcome.id == selectedOutcomeId
-            val isWinner = resolved && (outcome.isWinner == true || (prediction.winningOutcomeId != null && prediction.winningOutcomeId == outcome.id))
-            val line = buildString {
-                val title = if (isWinner) {
-                    getString(R.string.channel_points_prediction_outcome_winner_title, outcome.title)
-                } else {
-                    outcome.title
-                }
-                append(title)
-                append(" • ")
-                append(getString(R.string.channel_points_prediction_percent, (((outcome.totalPoints ?: 0).toLong() * 100.0) / max(totalPoints, 1)).roundToInt()))
-                append(" • ")
-                append(getString(R.string.channel_points_prediction_points_short, outcome.totalPoints?.let { NumberFormat.getInstance().format(it) }))
-                append(" • ")
-                append(getString(R.string.channel_points_prediction_votes_short, outcome.totalUsers?.let { NumberFormat.getInstance().format(it) }))
-                formatPredictionOdds(outcome.returnRate)?.let {
-                    append(" • ")
-                    append(it)
-                }
-            }
-            val start = builder.length
-            builder.append(line)
-            val end = builder.length
-            when {
-                isSelected -> {
-                    builder.setSpan(BackgroundColorSpan(ColorUtils.setAlphaComponent(Color.WHITE, 36)), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                isWinner -> {
-                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-            }
-        }
-        return builder
-    }
 
     private fun createChannelPointsPredictionCard(
         prediction: Prediction,
@@ -1526,16 +1482,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
     }
 
-    private fun formatViewerKickRewardLabel(reward: com.github.andreyasadchy.xtra.model.chat.ChannelPointReward): String {
-        val title = reward.title ?: reward.prompt ?: reward.id ?: getString(R.string.channel_points_rewards_title)
-        return buildString {
-            append(getString(R.string.channel_points_reward_line, NumberFormat.getInstance().format(reward.cost ?: 0), title))
-            if (reward.isUserInputRequired == true) {
-                append(" • ")
-                append(getString(R.string.channel_points_reward_input_required))
-            }
-        }
-    }
 
     private fun showViewerKickRewardRedeemDialog(reward: com.github.andreyasadchy.xtra.model.chat.ChannelPointReward) {
         val channelLogin = currentChannelLogin() ?: return

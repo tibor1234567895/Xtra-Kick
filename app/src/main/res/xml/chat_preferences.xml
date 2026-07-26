@@ -146,20 +146,6 @@
 
     <SwitchPreferenceCompat
         android:defaultValue="true"
-        android:key="chat_use_websocket"
-        android:title="@string/use_websocket"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="true"
-        android:key="chat_use_ssl"
-        android:title="@string/chat_ssl"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="true"
         android:key="chat_show_paints"
         android:title="@string/show_name_paints"
         app:iconSpaceReserved="false"
@@ -307,11 +293,5 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
-    <SwitchPreferenceCompat
-        android:defaultValue="true"
-        android:key="chat_throttle_background"
-        android:title="@string/chat_throttle_background"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
 
 </androidx.preference.PreferenceScreen>
