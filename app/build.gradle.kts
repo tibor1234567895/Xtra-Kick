@@ -98,9 +98,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        // Deliberately differs from the pre-rotation id: the old signing key was published,
-        // so a new id prevents a build signed with the leaked key from posing as an update.
-        applicationId = "com.github.tibor1234567895.xtrakick"
+        applicationId = "com.github.andreyasadchy.xtrakick"
         minSdk = 26
         targetSdk = 36
         versionCode = 121
