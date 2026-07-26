@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
 
 jobs:
   # Tests and lint. Deliberately not a dependency of `build` yet: 4 of the 138 unit tests
