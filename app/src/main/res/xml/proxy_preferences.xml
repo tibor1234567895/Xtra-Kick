@@ -15,12 +15,6 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
-    <SwitchPreferenceCompat
-        android:defaultValue="true"
-        android:key="proxy_media_playlist"
-        android:title="@string/proxy_media_playlist"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
 
     <EditTextPreference
         android:key="proxy_host"

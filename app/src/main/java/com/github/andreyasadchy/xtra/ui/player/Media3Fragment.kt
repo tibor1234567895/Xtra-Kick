@@ -229,8 +229,7 @@ class Media3Fragment : PlayerFragment() {
                     setSubtitlesButton()
                     if (!tracks.isEmpty) {
                         if (viewModel.qualities.containsKey(AUTO_QUALITY)
-                            && viewModel.quality != AUDIO_ONLY_QUALITY
-                            && !viewModel.hidden) {
+                            && viewModel.quality != AUDIO_ONLY_QUALITY) {
                             changeQuality(viewModel.quality)
                         }
                         chatFragment?.startReplayChatLoad()
@@ -325,104 +324,6 @@ class Media3Fragment : PlayerFragment() {
                                     }
                                 }
                             }, MoreExecutors.directExecutor())
-                        }
-                    }
-                    if (videoType == STREAM) {
-                        val hideAds = prefs.getBoolean(C.PLAYER_HIDE_ADS, false)
-                        val useProxy = prefs.getBoolean(C.PROXY_MEDIA_PLAYLIST, true)
-                                && !prefs.getString(C.PROXY_HOST, null).isNullOrBlank()
-                                && prefs.getString(C.PROXY_PORT, null)?.toIntOrNull() != null
-                        if (hideAds || useProxy) {
-                            player?.sendCustomCommand(
-                                SessionCommand(PlaybackService.CHECK_ADS, Bundle.EMPTY),
-                                Bundle.EMPTY
-                            )?.let { result ->
-                                result.addListener({
-                                    if (result.get().resultCode == SessionResult.RESULT_SUCCESS) {
-                                        val playingAds = result.get().extras.getBoolean(PlaybackService.RESULT)
-                                        val oldValue = viewModel.playingAds
-                                        viewModel.playingAds = playingAds
-                                        if (playingAds) {
-                                            if (viewModel.usingProxy) {
-                                                if (!viewModel.stopProxy) {
-                                                    player?.sendCustomCommand(
-                                                        SessionCommand(
-                                                            PlaybackService.TOGGLE_PROXY, bundleOf(
-                                                                PlaybackService.USING_PROXY to false
-                                                            )
-                                                        ), Bundle.EMPTY
-                                                    )
-                                                    viewModel.usingProxy = false
-                                                    viewModel.stopProxy = true
-                                                }
-                                            } else {
-                                                if (!oldValue) {
-                                                    val playlist = viewModel.qualities[viewModel.quality]?.second
-                                                    if (!viewModel.stopProxy && !playlist.isNullOrBlank() && useProxy) {
-                                                        // This is the enable-the-proxy branch — it sent `false`, so
-                                                        // proxyMediaPlaylist could never become true and the media-playlist
-                                                        // proxy gate in PlaybackService was permanently off. The app then
-                                                        // believed it had switched and suppressed the mute/hide fallback,
-                                                        // so the ad played unmitigated. The other TOGGLE_PROXY sites send
-                                                        // `false` correctly — they are tear-down paths.
-                                                        player?.sendCustomCommand(
-                                                            SessionCommand(
-                                                                PlaybackService.TOGGLE_PROXY, bundleOf(
-                                                                    PlaybackService.USING_PROXY to true
-                                                                )
-                                                            ), Bundle.EMPTY
-                                                        )
-                                                        viewModel.usingProxy = true
-                                                        viewLifecycleOwner.lifecycleScope.launch {
-                                                            for (i in 0 until 10) {
-                                                                delay(10000)
-                                                                if (!viewModel.checkPlaylist(prefs.getString(C.NETWORK_LIBRARY, "OkHttp"), playlist)) {
-                                                                    break
-                                                                }
-                                                            }
-                                                            player?.sendCustomCommand(
-                                                                SessionCommand(
-                                                                    PlaybackService.TOGGLE_PROXY, bundleOf(
-                                                                        PlaybackService.USING_PROXY to false
-                                                                    )
-                                                                ), Bundle.EMPTY
-                                                            )
-                                                            viewModel.usingProxy = false
-                                                        }
-                                                    } else {
-                                                        if (hideAds) {
-                                                            viewModel.hidden = true
-                                                            player?.let { player ->
-                                                                if (viewModel.quality != AUDIO_ONLY_QUALITY) {
-                                                                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
-                                                                        setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
-                                                                    }.build()
-                                                                    binding.playerSurface.visibility = View.GONE
-                                                                }
-                                                                player.volume = 0f
-                                                            }
-                                                            Toast.makeText(requireContext(), R.string.waiting_ads, Toast.LENGTH_LONG).show()
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        } else {
-                                            if (hideAds && viewModel.hidden) {
-                                                viewModel.hidden = false
-                                                player?.let { player ->
-                                                    if (viewModel.quality != AUDIO_ONLY_QUALITY) {
-                                                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
-                                                            setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
-                                                        }.build()
-                                                        binding.playerSurface.visibility = View.VISIBLE
-                                                    }
-                                                    player.volume = prefs.getInt(C.PLAYER_VOLUME, 100) / 100f
-                                                }
-                                            }
-                                        }
-                                    }
-                                }, MoreExecutors.directExecutor())
-                            }
                         }
                     }
                 }
@@ -985,16 +886,6 @@ class Media3Fragment : PlayerFragment() {
                             binding.playerSurface.visibility = View.VISIBLE
                         }
                         AUDIO_ONLY_QUALITY -> {
-                            if (viewModel.usingProxy) {
-                                player.sendCustomCommand(
-                                    SessionCommand(
-                                        PlaybackService.TOGGLE_PROXY, bundleOf(
-                                            PlaybackService.USING_PROXY to false
-                                        )
-                                    ), Bundle.EMPTY
-                                )
-                                viewModel.usingProxy = false
-                            }
                             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                 setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                             }.build()
@@ -1010,16 +901,6 @@ class Media3Fragment : PlayerFragment() {
                             }
                         }
                         CHAT_ONLY_QUALITY -> {
-                            if (viewModel.usingProxy) {
-                                player.sendCustomCommand(
-                                    SessionCommand(
-                                        PlaybackService.TOGGLE_PROXY, bundleOf(
-                                            PlaybackService.USING_PROXY to false
-                                        )
-                                    ), Bundle.EMPTY
-                                )
-                                viewModel.usingProxy = false
-                            }
                             player.stop()
                         }
                         else -> {
@@ -1092,16 +973,6 @@ class Media3Fragment : PlayerFragment() {
         player?.let { player ->
             if (player.isConnected) {
                 savePosition()
-                if (viewModel.usingProxy) {
-                    player.sendCustomCommand(
-                        SessionCommand(
-                            PlaybackService.TOGGLE_PROXY, bundleOf(
-                                PlaybackService.USING_PROXY to false
-                            )
-                        ), Bundle.EMPTY
-                    )
-                    viewModel.usingProxy = false
-                }
                 if (viewModel.quality != AUDIO_ONLY_QUALITY) {
                     viewModel.restoreQuality = true
                     viewModel.previousQuality = viewModel.quality
@@ -1197,16 +1068,6 @@ class Media3Fragment : PlayerFragment() {
         player?.let { player ->
             if (player.isConnected) {
                 savePosition()
-                if (viewModel.usingProxy) {
-                    player.sendCustomCommand(
-                        SessionCommand(
-                            PlaybackService.TOGGLE_PROXY, bundleOf(
-                                PlaybackService.USING_PROXY to false
-                            )
-                        ), Bundle.EMPTY
-                    )
-                    viewModel.usingProxy = false
-                }
                 if (shouldContinuePlaybackInBackground()) {
                     if (player.playWhenReady && viewModel.quality != AUDIO_ONLY_QUALITY) {
                         viewModel.restoreQuality = true

@@ -1,12 +1,6 @@
 <androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="player_hide_ads"
-        android:title="@string/hide_during_ads"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
 
     <EditTextPreference
         android:defaultValue="av1,h265,h264"

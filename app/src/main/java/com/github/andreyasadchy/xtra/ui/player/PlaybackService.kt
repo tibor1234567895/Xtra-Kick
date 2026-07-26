@@ -112,7 +112,6 @@ class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private var dynamicsProcessing: DynamicsProcessing? = null
     private var background = false
-    private var proxyMediaPlaylist = false
     private var videoId: Long? = null
     private var offlineVideoId: Int? = null
     private var backgroundHandoffMode = false
@@ -288,9 +287,7 @@ class PlaybackService : MediaSessionService() {
                             add(SessionCommand(START_CLIP, Bundle.EMPTY))
                             add(SessionCommand(START_OFFLINE_VIDEO, Bundle.EMPTY))
                             add(SessionCommand(TOGGLE_DYNAMICS_PROCESSING, Bundle.EMPTY))
-                            add(SessionCommand(TOGGLE_PROXY, Bundle.EMPTY))
                             add(SessionCommand(SET_SLEEP_TIMER, Bundle.EMPTY))
-                            add(SessionCommand(CHECK_ADS, Bundle.EMPTY))
                             add(SessionCommand(GET_QUALITIES, Bundle.EMPTY))
                             add(SessionCommand(GET_DURATION, Bundle.EMPTY))
                             add(SessionCommand(GET_ERROR_CODE, Bundle.EMPTY))
@@ -320,17 +317,15 @@ class PlaybackService : MediaSessionService() {
                                 )
                                 videoId = null
                                 offlineVideoId = null
-                                proxyMediaPlaylist = false
                                 val proxyHost = prefs().getString(C.PROXY_HOST, null)
                                 val proxyPort = prefs().getString(C.PROXY_PORT, null)?.toIntOrNull()
                                 val proxyUser = prefs().getString(C.PROXY_USER, null)
                                 val proxyPassword = prefs().getString(C.PROXY_PASSWORD, null)
                                 val proxyMultivariantPlaylist = prefs().getBoolean(C.PROXY_MULTIVARIANT_PLAYLIST, false)
-                                val proxyMediaPlaylistEnabled = prefs().getBoolean(C.PROXY_MEDIA_PLAYLIST, true)
                                 val validProxyConfiguration = PlaybackProxyUtils.isValidProxyConfiguration(proxyHost, proxyPort)
                                 val streamLatencyConfig = activeLatencyConfig
                                 logBufferDebug("Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(streamLatencyConfig)}")
-                                if ((proxyMultivariantPlaylist || proxyMediaPlaylistEnabled) && !validProxyConfiguration) {
+                                if (proxyMultivariantPlaylist && !validProxyConfiguration) {
                                     PlaybackProxyUtils.logInvalidProxyConfiguration("playback_service", proxyHost, proxyPort)
                                 }
                                 val multivariantPlaylistProxyClient = if (proxyMultivariantPlaylist && validProxyConfiguration) {
@@ -354,27 +349,6 @@ class PlaybackService : MediaSessionService() {
                                         }
                                     }.build()
                                 } else null
-                                val mediaPlaylistProxyClient = if (proxyMediaPlaylistEnabled && validProxyConfiguration) {
-                                    val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort!!))
-                                    okHttpClient.newBuilder().apply {
-                                        proxySelector(
-                                            object : ProxySelector() {
-                                                override fun select(u: URI): List<Proxy> {
-                                                    return PlaybackProxyUtils.selectProxy(u, proxy, "media")
-                                                }
-
-                                                override fun connectFailed(u: URI, sa: SocketAddress, e: IOException) {}
-                                            }
-                                        )
-                                        if (!proxyUser.isNullOrBlank() && !proxyPassword.isNullOrBlank()) {
-                                            proxyAuthenticator { _, response ->
-                                                response.request.newBuilder().header(
-                                                    "Proxy-Authorization", Credentials.basic(proxyUser, proxyPassword)
-                                                ).build()
-                                            }
-                                        }
-                                    }.build()
-                                } else null
                                 val networkLibrary = prefs().getString(C.NETWORK_LIBRARY, "OkHttp")
                                 player.setMediaSource(
                                     HlsMediaSource.Factory(
@@ -382,13 +356,13 @@ class PlaybackService : MediaSessionService() {
                                             this@PlaybackService,
                                             when {
                                                 networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                                    HttpEngineDataSource.Factory(httpEngine!!.get(), cronetExecutor, multivariantPlaylistProxyClient, mediaPlaylistProxyClient) { proxyMediaPlaylist }
+                                                    HttpEngineDataSource.Factory(httpEngine!!.get(), cronetExecutor, multivariantPlaylistProxyClient, null) { false }
                                                 }
                                                 networkLibrary == "Cronet" && cronetEngine != null -> {
-                                                    CronetDataSource.Factory(cronetEngine!!.get(), cronetExecutor, multivariantPlaylistProxyClient, mediaPlaylistProxyClient) { proxyMediaPlaylist }
+                                                    CronetDataSource.Factory(cronetEngine!!.get(), cronetExecutor, multivariantPlaylistProxyClient, null) { false }
                                                 }
                                                 else -> {
-                                                    OkHttpDataSource.Factory(multivariantPlaylistProxyClient ?: okHttpClient, mediaPlaylistProxyClient) { proxyMediaPlaylist }
+                                                    OkHttpDataSource.Factory(multivariantPlaylistProxyClient ?: okHttpClient, null) { false }
                                                 }
                                             }.apply {
                                                 prefs().getString(C.PLAYER_STREAM_HEADERS, null)?.let {
@@ -597,10 +571,6 @@ class PlaybackService : MediaSessionService() {
                                     RESULT to enabled
                                 )))
                             }
-                            TOGGLE_PROXY -> {
-                                proxyMediaPlaylist = customCommand.customExtras.getBoolean(USING_PROXY)
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-                            }
                             SET_SLEEP_TIMER -> {
                                 val duration = customCommand.customExtras.getLong(DURATION)
                                 background = duration != -1L
@@ -621,26 +591,6 @@ class PlaybackService : MediaSessionService() {
                                 }
                                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
                                     RESULT to endTime
-                                )))
-                            }
-                            CHECK_ADS -> {
-                                val playlist = (session.player.currentManifest as? HlsManifest)?.mediaPlaylist
-                                val adSegment = playlist?.segments?.lastOrNull()?.let { segment ->
-                                    val segmentStartTime = playlist.startTimeUs + segment.relativeStartTimeUs
-                                    listOf("Amazon", "Adform", "DCM").any { segment.title.contains(it) } ||
-                                            playlist.interstitials.find {
-                                                val startTime = it.startDateUnixUs
-                                                val endTime = it.endDateUnixUs.takeIf { it != androidx.media3.common.C.TIME_UNSET }
-                                                    ?: it.durationUs.takeIf { it != androidx.media3.common.C.TIME_UNSET }?.let { startTime + it }
-                                                    ?: it.plannedDurationUs.takeIf { it != androidx.media3.common.C.TIME_UNSET }?.let { startTime + it }
-                                                endTime != null && (it.id.startsWith("stitched-ad-") ||
-                                                        it.clientDefinedAttributes.find { it.name == "CLASS" }?.textValue?.contains("stitched-ad") == true ||
-                                                        it.clientDefinedAttributes.find { it.name.contains("AD", ignoreCase = true) } != null)
-                                                        && (startTime <= segmentStartTime && segmentStartTime < endTime)
-                                            } != null
-                                }
-                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                    RESULT to adSegment
                                 )))
                             }
                             GET_QUALITIES -> {
@@ -878,9 +828,7 @@ class PlaybackService : MediaSessionService() {
         const val START_CLIP = "startClip"
         const val START_OFFLINE_VIDEO = "startOfflineVideo"
         const val TOGGLE_DYNAMICS_PROCESSING = "toggleDynamicsProcessing"
-        const val TOGGLE_PROXY = "toggleProxy"
         const val SET_SLEEP_TIMER = "setSleepTimer"
-        const val CHECK_ADS = "checkAds"
         const val GET_QUALITIES = "getQualities"
         const val GET_DURATION = "getDuration"
         const val GET_ERROR_CODE = "getErrorCode"
@@ -896,7 +844,6 @@ class PlaybackService : MediaSessionService() {
         const val CHANNEL_LOGO = "channelLogo"
         const val DISABLE_VIDEO = "disableVideo"
         const val KEY_BACKGROUND_HANDOFF_PENDING = "playbackService.backgroundHandoffPending"
-        const val USING_PROXY = "usingProxy"
         const val DURATION = "duration"
         const val NAMES = "names"
         const val CODECS = "codecs"

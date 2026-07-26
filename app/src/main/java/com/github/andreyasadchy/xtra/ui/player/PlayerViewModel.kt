@@ -90,9 +90,6 @@ class PlayerViewModel @Inject constructor(
     val stream = MutableStateFlow<Stream?>(null)
     private var streamJob: Job? = null
     var useCustomProxy = false
-    var playingAds = false
-    var usingProxy = false
-    var stopProxy = false
 
     val videoResult = MutableStateFlow<String?>(null)
     val videoError = MutableStateFlow<Int?>(null)
@@ -125,129 +122,10 @@ class PlayerViewModel @Inject constructor(
     var started = false
     var restoreQuality = false
     var resume = false
-    var hidden = false
     val loaded = MutableStateFlow(false)
     private val _isFollowing = MutableStateFlow<Boolean?>(null)
     val isFollowing: StateFlow<Boolean?> = _isFollowing
     val follow = MutableStateFlow<Pair<Boolean, String?>?>(null)
-
-    @OptIn(UnstableApi::class)
-    fun getDataSourceFactory(networkLibrary: String?, proxyMultivariantPlaylist: Boolean = false, proxyMediaPlaylist: Boolean = false, proxyHost: String? = null, proxyPort: Int? = null, proxyUser: String? = null, proxyPassword: String? = null, useProxy: (() -> Boolean)? = { false }): HttpDataSource.Factory {
-        val validProxyConfiguration = PlaybackProxyUtils.isValidProxyConfiguration(proxyHost, proxyPort)
-        if ((proxyMultivariantPlaylist || proxyMediaPlaylist) && !validProxyConfiguration) {
-            PlaybackProxyUtils.logInvalidProxyConfiguration("player_view_model", proxyHost, proxyPort)
-        }
-        val multivariantPlaylistProxyClient = if (proxyMultivariantPlaylist && validProxyConfiguration) {
-            val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort!!))
-            okHttpClient.newBuilder().apply {
-                proxySelector(
-                    object : ProxySelector() {
-                        override fun select(u: URI): List<Proxy> {
-                            return PlaybackProxyUtils.selectProxy(u, proxy, "multivariant")
-                        }
-
-                        override fun connectFailed(u: URI, sa: SocketAddress, e: IOException) {}
-                    }
-                )
-                if (!proxyUser.isNullOrBlank() && !proxyPassword.isNullOrBlank()) {
-                    proxyAuthenticator { _, response ->
-                        response.request.newBuilder().header(
-                            "Proxy-Authorization", Credentials.basic(proxyUser, proxyPassword)
-                        ).build()
-                    }
-                }
-            }.build()
-        } else null
-        val mediaPlaylistProxyClient = if (proxyMediaPlaylist && validProxyConfiguration) {
-            val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort!!))
-            okHttpClient.newBuilder().apply {
-                proxySelector(
-                    object : ProxySelector() {
-                        override fun select(u: URI): List<Proxy> {
-                            return PlaybackProxyUtils.selectProxy(u, proxy, "media")
-                        }
-
-                        override fun connectFailed(u: URI, sa: SocketAddress, e: IOException) {}
-                    }
-                )
-                if (!proxyUser.isNullOrBlank() && !proxyPassword.isNullOrBlank()) {
-                    proxyAuthenticator { _, response ->
-                        response.request.newBuilder().header(
-                            "Proxy-Authorization", Credentials.basic(proxyUser, proxyPassword)
-                        ).build()
-                    }
-                }
-            }.build()
-        } else null
-        return when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                HttpEngineDataSource.Factory(httpEngine.get(), cronetExecutor, multivariantPlaylistProxyClient, mediaPlaylistProxyClient, useProxy)
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                CronetDataSource.Factory(cronetEngine.get(), cronetExecutor, multivariantPlaylistProxyClient, mediaPlaylistProxyClient, useProxy)
-            }
-            else -> {
-                OkHttpDataSource.Factory(multivariantPlaylistProxyClient ?: okHttpClient, mediaPlaylistProxyClient, useProxy)
-            }
-        }
-    }
-
-    suspend fun checkPlaylist(networkLibrary: String?, url: String): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val playlist = when {
-                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                    val response = suspendCoroutine { continuation ->
-                        httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                    }
-                    response.second.inputStream().use {
-                        PlaylistUtils.parseMediaPlaylist(it)
-                    }
-                }
-                networkLibrary == "Cronet" && cronetEngine != null -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                        cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                        val response = request.future.get().responseBody as ByteArray
-                        response.inputStream().use {
-                            PlaylistUtils.parseMediaPlaylist(it)
-                        }
-                    } else {
-                        val response = suspendCoroutine { continuation ->
-                            cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                        }
-                        response.second.inputStream().use {
-                            PlaylistUtils.parseMediaPlaylist(it)
-                        }
-                    }
-                }
-                else -> {
-                    okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                        response.body.byteStream().use {
-                            PlaylistUtils.parseMediaPlaylist(it)
-                        }
-                    }
-                }
-            }
-            playlist.segments.lastOrNull()?.let { segment ->
-                segment.title?.let { it.contains("Amazon") || it.contains("Adform") || it.contains("DCM") } == true ||
-                        segment.programDateTime?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { segmentStartTime ->
-                            playlist.dateRanges.find { dateRange ->
-                                (dateRange.id.startsWith("stitched-ad-") || dateRange.rangeClass?.contains("stitched-ad") == true || dateRange.ad) &&
-                                        dateRange.endDate?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { endTime ->
-                                            segmentStartTime < endTime
-                                        } == true ||
-                                        dateRange.startDate.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { startTime ->
-                                            (dateRange.duration ?: dateRange.plannedDuration)?.let { (it * 1000f).toLong() }?.let { duration ->
-                                                segmentStartTime < (startTime + duration)
-                                            } == true
-                                        } == true
-                            } != null
-                        } == true
-            } == true
-        } catch (e: Exception) {
-            false
-        }
-    }
 
     suspend fun loadPlaylist(url: String, networkLibrary: String?, proxyMultivariantPlaylist: Boolean = false, proxyHost: String? = null, proxyPort: Int? = null, proxyUser: String? = null, proxyPassword: String? = null): Pair<String?, Int?>? = withContext(Dispatchers.IO) {
         try {
