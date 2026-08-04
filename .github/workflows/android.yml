@@ -25,7 +25,7 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6.2.0
       - name: Unit tests
         run: ./gradlew testDebugUnitTest
       - name: Lint
@@ -61,7 +61,7 @@ jobs:
         java-version: '21'
         distribution: 'temurin'
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v5
+      uses: gradle/actions/setup-gradle@v6.2.0
 
     # Required: without it the release signing config is absent and the build fails by
     # design, rather than silently falling back to the debug key as it used to.
