@@ -72,7 +72,13 @@
         <service
             android:name=".ui.player.IvsPlayerService"
             android:foregroundServiceType="mediaPlayback"
-            android:stopWithTask="true" />
+            android:stopWithTask="true"
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </service>
 
         <!-- exported without a permission is required by media3: system media controllers
              (notification, Bluetooth, lockscreen) must be able to bind. Connections are gated

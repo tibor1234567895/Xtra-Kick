@@ -243,6 +243,17 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
+    <ListPreference
+        android:defaultValue="15"
+        android:dependency="animatedGifEmotes"
+        android:entries="@array/chatAnimatedEmoteFpsEntries"
+        android:entryValues="@array/chatAnimatedEmoteFpsValues"
+        android:key="chat_animated_emote_fps"
+        android:title="@string/animated_emote_frame_rate"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false"
+        app:useSimpleSummaryProvider="true" />
+
     <SwitchPreferenceCompat
         android:defaultValue="true"
         android:key="chat_zerowidth"

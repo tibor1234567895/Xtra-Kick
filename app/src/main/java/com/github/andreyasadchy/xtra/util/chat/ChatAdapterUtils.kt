@@ -1,11 +1,14 @@
 package com.github.andreyasadchy.xtra.util.chat
 
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
 import android.graphics.Typeface
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.LayerDrawable
+import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
 import android.text.TextPaint
@@ -46,6 +49,7 @@ import com.github.andreyasadchy.xtra.ui.view.CenteredImageSpan
 import com.github.andreyasadchy.xtra.ui.view.NamePaintImageSpan
 import com.github.andreyasadchy.xtra.ui.view.NamePaintSpan
 import com.github.andreyasadchy.xtra.util.KickApiHelper
+import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.LinkedHashMap
 import java.util.Random
@@ -57,6 +61,125 @@ object ChatAdapterUtils {
 
     /** Neutral grey already used throughout this file for system/notice text. */
     private const val FALLBACK_USERNAME_COLOR = 0xFF999999.toInt()
+    private const val DEFAULT_ANIMATED_EMOTE_FPS = 15
+    private val animatedFrameSchedulers = Collections.synchronizedMap(
+        WeakHashMap<View, AnimatedFrameScheduler>()
+    )
+
+    private class AnimatedFrameScheduler(rootView: View, framesPerSecond: Int) {
+        private val rootViewRef = WeakReference(rootView)
+        private val dirtyViews = Collections.synchronizedMap(WeakHashMap<View, Unit>())
+        private var frameIntervalMs = frameIntervalMs(framesPerSecond)
+        private var lastInvalidateMs = 0L
+        private var invalidateScheduled = false
+        private val invalidateRunnable = Runnable {
+            invalidateScheduled = false
+            lastInvalidateMs = SystemClock.uptimeMillis()
+            val views = synchronized(dirtyViews) {
+                dirtyViews.keys.toList().also { dirtyViews.clear() }
+            }
+            views.forEach(View::invalidate)
+        }
+
+        fun updateFrameRate(framesPerSecond: Int) {
+            frameIntervalMs = frameIntervalMs(framesPerSecond)
+        }
+
+        fun requestInvalidate(view: View) {
+            dirtyViews[view] = Unit
+            val rootView = rootViewRef.get() ?: return
+            val now = SystemClock.uptimeMillis()
+            val delayMs = frameIntervalMs - (now - lastInvalidateMs)
+            if (delayMs <= 0L) {
+                if (invalidateScheduled) {
+                    rootView.removeCallbacks(invalidateRunnable)
+                    invalidateScheduled = false
+                }
+                invalidateRunnable.run()
+            } else if (!invalidateScheduled) {
+                invalidateScheduled = true
+                rootView.postDelayed(invalidateRunnable, delayMs)
+            }
+        }
+
+        companion object {
+            private fun frameIntervalMs(framesPerSecond: Int): Long =
+                (1_000L / framesPerSecond.coerceIn(5, 60)).coerceAtLeast(1L)
+        }
+    }
+
+    private fun animatedFrameScheduler(itemView: View, framesPerSecond: Int): AnimatedFrameScheduler {
+        val rootView = itemView.rootView
+        return synchronized(animatedFrameSchedulers) {
+            animatedFrameSchedulers[rootView]?.apply {
+                updateFrameRate(framesPerSecond)
+            } ?: AnimatedFrameScheduler(rootView, framesPerSecond).also {
+                animatedFrameSchedulers[rootView] = it
+            }
+        }
+    }
+
+    private class ThrottledAnimatedDrawable(
+        private val delegate: Drawable,
+        private val itemView: View,
+        framesPerSecond: Int,
+    ) : Drawable(), Animatable, Drawable.Callback {
+        private val scheduler = animatedFrameScheduler(itemView, framesPerSecond)
+        private val animation = delegate as Animatable
+
+        init {
+            delegate.callback = this
+        }
+
+        override fun draw(canvas: Canvas) = delegate.draw(canvas)
+
+        override fun onBoundsChange(bounds: android.graphics.Rect) {
+            delegate.bounds = bounds
+        }
+
+        override fun setAlpha(alpha: Int) {
+            delegate.alpha = alpha
+        }
+
+        override fun setColorFilter(colorFilter: ColorFilter?) {
+            delegate.colorFilter = colorFilter
+        }
+
+        @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+        override fun getOpacity(): Int = delegate.opacity
+
+        override fun getIntrinsicWidth(): Int = delegate.intrinsicWidth
+
+        override fun getIntrinsicHeight(): Int = delegate.intrinsicHeight
+
+        override fun start() = animation.start()
+
+        override fun stop() = animation.stop()
+
+        override fun isRunning(): Boolean = animation.isRunning
+
+        override fun invalidateDrawable(who: Drawable) {
+            scheduler.requestInvalidate(itemView)
+        }
+
+        override fun scheduleDrawable(who: Drawable, what: Runnable, `when`: Long) {
+            itemView.postDelayed(what, (`when` - SystemClock.uptimeMillis()).coerceAtLeast(0L))
+        }
+
+        override fun unscheduleDrawable(who: Drawable, what: Runnable) {
+            itemView.removeCallbacks(what)
+        }
+    }
+
+    private fun throttleAnimatedDrawable(drawable: Drawable, itemView: View, framesPerSecond: Int): Drawable {
+        return if (drawable is Animatable) {
+            ThrottledAnimatedDrawable(drawable, itemView, framesPerSecond).apply {
+                bounds = drawable.bounds
+            }
+        } else {
+            drawable
+        }
+    }
 
     private fun resolveKickRewardNoticeColor(
         rewardColor: String?,
@@ -960,7 +1083,7 @@ object ChatAdapterUtils {
                     }
                 }
                 if (chatEmote != null) {
-                    chatEmotes?.remove(chatEmote)
+                    chatEmotes.remove(chatEmote)
                     builder.replace(builderIndex, builderIndex + value.length, ".")
                     builder.setSpan(ForegroundColorSpan(Color.TRANSPARENT), builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
                     val emote = localChatEmotes.find { emote -> emote.id == chatEmote.id }?.let { emote ->
@@ -1049,7 +1172,7 @@ object ChatAdapterUtils {
         }
     }
 
-    fun loadImages(fragment: Fragment, itemView: View, bind: (SpannableStringBuilder) -> Unit, images: List<Image>, imagePaint: NamePaint?, userName: String?, userNameStartIndex: Int?, backgroundColor: Int, imageLibrary: String?, builder: SpannableStringBuilder, emoteSize: Int, badgeSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean) {
+    fun loadImages(fragment: Fragment, itemView: View, bind: (SpannableStringBuilder) -> Unit, images: List<Image>, imagePaint: NamePaint?, userName: String?, userNameStartIndex: Int?, backgroundColor: Int, imageLibrary: String?, builder: SpannableStringBuilder, emoteSize: Int, badgeSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int = DEFAULT_ANIMATED_EMOTE_FPS) {
         if (imagePaint != null) {
             if (imageLibrary == "0") {
                 fragment.requireContext().imageLoader.enqueue(
@@ -1063,23 +1186,12 @@ object ChatAdapterUtils {
                         }.build())
                         target(
                             onSuccess = {
-                                (it.asDrawable(fragment.resources)).let { result ->
-                                    if (result is Animatable && animateGifs) {
-                                        result.callback = object : Drawable.Callback {
-                                            override fun unscheduleDrawable(who: Drawable, what: Runnable) {
-                                                itemView.removeCallbacks(what)
-                                            }
-
-                                            override fun invalidateDrawable(who: Drawable) {
-                                                itemView.invalidate()
-                                            }
-
-                                            override fun scheduleDrawable(who: Drawable, what: Runnable, `when`: Long) {
-                                                itemView.postDelayed(what, `when`)
-                                            }
+                                (it.asDrawable(fragment.resources)).let { loaded ->
+                                    val result = if (loaded is Animatable && animateGifs) {
+                                        throttleAnimatedDrawable(loaded, itemView, animatedEmoteFps).also {
+                                            startAnimationIfOnScreen(it, itemView)
                                         }
-                                        startAnimationIfOnScreen(result, itemView)
-                                    }
+                                    } else loaded
                                     try {
                                         builder.setSpan(
                                             NamePaintImageSpan(
@@ -1107,22 +1219,11 @@ object ChatAdapterUtils {
                     .diskCacheStrategy(DiskCacheStrategy.DATA)
                     .into(object : CustomTarget<Drawable>() {
                         override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
-                            if (resource is Animatable && animateGifs) {
-                                resource.callback = object : Drawable.Callback {
-                                    override fun unscheduleDrawable(who: Drawable, what: Runnable) {
-                                        itemView.removeCallbacks(what)
-                                    }
-
-                                    override fun invalidateDrawable(who: Drawable) {
-                                        itemView.invalidate()
-                                    }
-
-                                    override fun scheduleDrawable(who: Drawable, what: Runnable, `when`: Long) {
-                                        itemView.postDelayed(what, `when`)
-                                    }
+                            val result = if (resource is Animatable && animateGifs) {
+                                throttleAnimatedDrawable(resource, itemView, animatedEmoteFps).also {
+                                    startAnimationIfOnScreen(it, itemView)
                                 }
-                                startAnimationIfOnScreen(resource, itemView)
-                            }
+                            } else resource
                             try {
                                 builder.setSpan(
                                     NamePaintImageSpan(
@@ -1130,7 +1231,7 @@ object ChatAdapterUtils {
                                         imagePaint.shadows,
                                         (itemView.background as? ColorDrawable)?.color,
                                         backgroundColor,
-                                        resource
+                                        result
                                     ),
                                     userNameStartIndex!!,
                                     userNameStartIndex + userName.length,
@@ -1153,10 +1254,10 @@ object ChatAdapterUtils {
                 badgeSize
             }
             loadImage(imageLibrary, fragment, image, emoteQuality, imageSize) { loaded ->
-                val result = prepareDrawableForChat(fragment, loaded, imageSize, itemView, image.isAnimated, animateGifs)
+                val result = prepareDrawableForChat(fragment, loaded, imageSize, itemView, animateGifs, animatedEmoteFps)
                 if (image.overlayEmote != null) {
                     val drawables = arrayOf(result)
-                    nextOverlayEmote(imageLibrary, fragment, drawables, image.overlayEmote!!, image, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes)
+                    nextOverlayEmote(imageLibrary, fragment, drawables, image.overlayEmote!!, image, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps)
                 } else {
                     replaceImageSpan(builder, image.start, image.end, CenteredImageSpan(result))
                     bind(builder)
@@ -1165,12 +1266,12 @@ object ChatAdapterUtils {
         }
     }
 
-    private fun nextOverlayEmote(imageLibrary: String?, fragment: Fragment, drawables: Array<Drawable>, image: Image, bottomImage: Image, itemView: View, bind: (SpannableStringBuilder) -> Unit, builder: SpannableStringBuilder, emoteSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean) {
+    private fun nextOverlayEmote(imageLibrary: String?, fragment: Fragment, drawables: Array<Drawable>, image: Image, bottomImage: Image, itemView: View, bind: (SpannableStringBuilder) -> Unit, builder: SpannableStringBuilder, emoteSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int) {
         loadImage(imageLibrary, fragment, image, emoteQuality, emoteSize) { loaded ->
-            val result = prepareDrawableForChat(fragment, loaded, emoteSize, itemView, image.isAnimated, animateGifs)
+            val result = prepareDrawableForChat(fragment, loaded, emoteSize, itemView, animateGifs, animatedEmoteFps)
             val array = drawables.plus(result)
             if (image.overlayEmote != null) {
-                nextOverlayEmote(imageLibrary, fragment, array, image.overlayEmote!!, bottomImage, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes)
+                nextOverlayEmote(imageLibrary, fragment, array, image.overlayEmote!!, bottomImage, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps)
             } else {
                 val layer = LayerDrawable(array)
                 val width = array.maxOf { it.bounds.right }
@@ -1257,8 +1358,8 @@ object ChatAdapterUtils {
         drawable: Drawable,
         targetHeight: Int,
         itemView: View,
-        isAnimated: Boolean,
         animateGifs: Boolean,
+        animatedEmoteFps: Int,
     ): Drawable {
         val result = cloneDrawableForBind(fragment, drawable)
         val intrinsicWidth = result.intrinsicWidth.takeIf { it > 0 } ?: targetHeight
@@ -1270,21 +1371,10 @@ object ChatAdapterUtils {
             (targetHeight * widthRatio).toInt().coerceAtLeast(1)
         }
         result.setBounds(0, 0, width, targetHeight)
-        if (result is Animatable && isAnimated && animateGifs) {
-            result.callback = object : Drawable.Callback {
-                override fun unscheduleDrawable(who: Drawable, what: Runnable) {
-                    itemView.removeCallbacks(what)
-                }
-
-                override fun invalidateDrawable(who: Drawable) {
-                    itemView.invalidate()
-                }
-
-                override fun scheduleDrawable(who: Drawable, what: Runnable, `when`: Long) {
-                    itemView.postDelayed(what, `when`)
-                }
+        if (result is Animatable && animateGifs) {
+            return throttleAnimatedDrawable(result, itemView, animatedEmoteFps).also {
+                startAnimationIfOnScreen(it, itemView)
             }
-            startAnimationIfOnScreen(result, itemView)
         }
         return result
     }

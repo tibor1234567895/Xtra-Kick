@@ -434,4 +434,14 @@
         <item>primary_top</item>
         <item>primary_left</item>
     </string-array>
+
+    <string-array name="chatAnimatedEmoteFpsEntries">
+        <item>@string/animated_emote_fps_battery</item>
+        <item>@string/animated_emote_fps_smooth</item>
+    </string-array>
+
+    <string-array name="chatAnimatedEmoteFpsValues">
+        <item>15</item>
+        <item>30</item>
+    </string-array>
 </resources>

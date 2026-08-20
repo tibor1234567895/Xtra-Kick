@@ -475,7 +475,11 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         }
         val state = viewModel.uiState.value
         // Compact count only — stream names live in chips.
-        _binding?.titleText?.text = "${state.slots.size}/${state.maxStreams}"
+        _binding?.titleText?.text = getString(
+            R.string.multipov_stream_count,
+            state.slots.size,
+            state.maxStreams,
+        )
         _binding?.addButton?.isVisible = state.canAdd && immersiveKey == null
         _binding?.layoutButton?.isVisible = immersiveKey == null && state.slots.size >= 2
         _binding?.rotateButton?.isVisible = immersiveKey == null && state.slots.size >= 2
@@ -598,7 +602,10 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         val prefs = requireContext().prefs()
         if (liveOffsetMs != null && prefs.getBoolean(C.PLAYER_SHOW_LATENCY, true)) {
             controls.latencyLayout.isVisible = true
-            controls.latencyText.text = "~%.1fs".format(liveOffsetMs / 1000.0)
+            controls.latencyText.text = getString(
+                R.string.multipov_latency_approx,
+                liveOffsetMs / 1000.0,
+            )
         } else {
             controls.latencyLayout.isVisible = false
         }

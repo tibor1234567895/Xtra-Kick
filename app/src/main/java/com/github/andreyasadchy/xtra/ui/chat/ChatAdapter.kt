@@ -83,6 +83,7 @@ class ChatAdapter(
     private var badgeSize: Int,
     private var emoteQuality: String,
     private var animateGifs: Boolean,
+    private var animatedEmoteFps: Int,
     private var enableOverlayEmotes: Boolean,
     private val channelId: String?,
     private val loggedInUser: String?,
@@ -126,6 +127,7 @@ class ChatAdapter(
         val badgeSize: Int,
         val emoteQuality: String,
         val animateGifs: Boolean,
+        val animatedEmoteFps: Int,
         val enableOverlayEmotes: Boolean,
     )
 
@@ -157,6 +159,7 @@ class ChatAdapter(
             badgeSize,
             emoteQuality,
             animateGifs,
+            animatedEmoteFps,
             enableOverlayEmotes,
             enableAlternatingLineShadows,
             alternatingLineShadowStrength
@@ -207,6 +210,7 @@ class ChatAdapter(
             badgeSize == settings.badgeSize &&
             emoteQuality == settings.emoteQuality &&
             animateGifs == settings.animateGifs &&
+            animatedEmoteFps == settings.animatedEmoteFps &&
             enableOverlayEmotes == settings.enableOverlayEmotes
         ) {
             return false
@@ -230,6 +234,7 @@ class ChatAdapter(
         badgeSize = settings.badgeSize
         emoteQuality = settings.emoteQuality
         animateGifs = settings.animateGifs
+        animatedEmoteFps = settings.animatedEmoteFps
         enableOverlayEmotes = settings.enableOverlayEmotes
         invalidateFormatting()
         return true
@@ -280,7 +285,8 @@ class ChatAdapter(
                         holder.bind(bindKey, chatMessage, updatedBuilder, position, result.backgroundRes)
                     }
                 }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
-                backgroundColor, imageLibrary, result.builder, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes
+                backgroundColor, imageLibrary, result.builder, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes,
+                animatedEmoteFps
             )
         }
     }

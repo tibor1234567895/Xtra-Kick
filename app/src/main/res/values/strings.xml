@@ -119,6 +119,9 @@
     <string name="channels">Channels</string>
     <string name="watch_video">Watch full video</string>
     <string name="animated_emotes">Animated emotes</string>
+    <string name="animated_emote_frame_rate">Animated emote frame rate</string>
+    <string name="animated_emote_fps_battery">15 fps (battery saver)</string>
+    <string name="animated_emote_fps_smooth">30 fps (smooth)</string>
     <string name="sleep_timer">Sleep timer</string>
     <string name="start">Start</string>
     <string name="set">Set</string>
@@ -969,4 +972,6 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="multipov_adaptive_quality">Lower non-focused quality under heat/cellular</string>
     <string name="multipov_pip_focused">Picture-in-Picture for focused stream only</string>
     <string name="multipov_badge">×%d</string>
+    <string name="multipov_stream_count">%1$d/%2$d</string>
+    <string name="multipov_latency_approx">~%1$.1fs</string>
 </resources>

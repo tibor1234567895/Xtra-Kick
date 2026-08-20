@@ -2,7 +2,6 @@ package com.github.andreyasadchy.xtra.ui.player
 
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -14,9 +13,7 @@ import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.PlayerSettingsBinding
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.DiagnosticLogger
-import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
-import com.github.andreyasadchy.xtra.util.tokenPrefs
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 
@@ -69,6 +66,13 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
                 (parentFragment as? PlayerFragment)?.setQualityText()
             }
             if (videoType == PlayerFragment.STREAM) {
+                if (requireContext().prefs().getBoolean(C.MULTIPOV_ENABLED, true)) {
+                    menuMultiPov.visibility = View.VISIBLE
+                    menuMultiPov.setOnClickListener {
+                        (parentFragment as? PlayerFragment)?.openMultiPov()
+                        dismiss()
+                    }
+                }
                 if (requireContext().prefs().getBoolean(C.PLAYER_MENU_VIEWER_LIST, true)) {
                     menuViewerList.visibility = View.VISIBLE
                     menuViewerList.setOnClickListener {

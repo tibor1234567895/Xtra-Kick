@@ -37,7 +37,7 @@
         app:singleLineTitle="false" />
 
     <SwitchPreferenceCompat
-        android:defaultValue="false"
+        android:defaultValue="true"
         android:key="player_audio_focus"
         android:title="@string/use_audio_focus"
         app:iconSpaceReserved="false"

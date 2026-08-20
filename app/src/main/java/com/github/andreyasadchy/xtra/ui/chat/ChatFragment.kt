@@ -2347,6 +2347,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         badgeSize = liveSettings.badgeSize,
                         emoteQuality = liveSettings.emoteQuality,
                         animateGifs = liveSettings.animateGifs,
+                        animatedEmoteFps = liveSettings.animatedEmoteFps,
                         enableOverlayEmotes = liveSettings.enableOverlayEmotes,
                         channelId = channelId,
                         loggedInUser = if (enableMessaging) accountLogin else null,
@@ -3406,6 +3407,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             ).toInt(),
             emoteQuality = prefs.getString(C.CHAT_IMAGE_QUALITY, "4") ?: "4",
             animateGifs = prefs.getBoolean(C.ANIMATED_EMOTES, true),
+            animatedEmoteFps = prefs.getString(C.CHAT_ANIMATED_EMOTE_FPS, "15")?.toIntOrNull()?.coerceIn(5, 60) ?: 15,
             enableOverlayEmotes = prefs.getBoolean(C.CHAT_ZEROWIDTH, true),
         )
     }
@@ -3490,6 +3492,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             C.CHAT_EMOTE_SIZE,
             C.CHAT_BADGE_SIZE,
             C.ANIMATED_EMOTES,
+            C.CHAT_ANIMATED_EMOTE_FPS,
             C.CHAT_ZEROWIDTH,
         )
 

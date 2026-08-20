@@ -185,6 +185,7 @@ object C {
     const val PLAYER_SHOW_UPTIME = "player_show_uptime"
     const val PLAYER_SHOW_LATENCY = "player_show_latency"
     const val ANIMATED_EMOTES = "animatedGifEmotes"
+    const val CHAT_ANIMATED_EMOTE_FPS = "chat_animated_emote_fps"
     const val CHAT_IMAGE_LIBRARY = "chat_image_library"
     const val CHAT_USE_WEBP = "chat_use_webp"
     const val CHAT_IMAGE_QUALITY = "chat_image_quality"
