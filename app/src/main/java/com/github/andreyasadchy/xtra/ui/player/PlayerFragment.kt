@@ -46,7 +46,7 @@ import androidx.activity.trackPipAnimationHintView
 import androidx.annotation.OptIn
 import androidx.appcompat.widget.TooltipCompat
 import androidx.core.content.edit
-import androidx.core.os.bundleOf
+import com.github.andreyasadchy.xtra.util.bundleOf
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat

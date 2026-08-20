@@ -8,7 +8,7 @@ import android.graphics.Color
 import android.view.View
 import android.widget.TextView
 import androidx.core.graphics.ColorUtils
-import androidx.core.os.bundleOf
+import com.github.andreyasadchy.xtra.util.bundleOf
 import androidx.core.view.children
 import androidx.fragment.app.DialogFragment
 import androidx.preference.EditTextPreference

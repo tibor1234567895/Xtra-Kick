@@ -135,6 +135,7 @@ class KickPusherChatWebSocket(
                 val payload = when (rawData) {
                     is JSONObject -> rawData.toString()
                     is String -> rawData
+                    null -> null
                     else -> null
                 }
                 // Never log the payload: it carries the text of every chat message the user

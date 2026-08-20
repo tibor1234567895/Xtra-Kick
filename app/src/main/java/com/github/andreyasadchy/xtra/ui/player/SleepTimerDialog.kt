@@ -9,7 +9,7 @@ import android.content.DialogInterface
 import android.content.Intent
 import android.os.Bundle
 import androidx.core.content.edit
-import androidx.core.os.bundleOf
+import com.github.andreyasadchy.xtra.util.bundleOf
 import androidx.fragment.app.DialogFragment
 import com.github.andreyasadchy.xtra.R
 import com.github.andreyasadchy.xtra.databinding.DialogSleepTimerBinding

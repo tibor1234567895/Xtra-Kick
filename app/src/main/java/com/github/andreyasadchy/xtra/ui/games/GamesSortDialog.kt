@@ -5,7 +5,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.os.bundleOf
+import com.github.andreyasadchy.xtra.util.bundleOf
 import com.github.andreyasadchy.xtra.databinding.DialogGamesSortBinding
 import com.github.andreyasadchy.xtra.model.ui.Tag
 import com.google.android.material.bottomsheet.BottomSheetBehavior

@@ -12,7 +12,7 @@ import android.widget.RadioButton
 import android.widget.RadioGroup
 import androidx.appcompat.widget.AppCompatRadioButton
 import androidx.core.content.res.use
-import androidx.core.os.bundleOf
+import com.github.andreyasadchy.xtra.util.bundleOf
 import androidx.core.view.setPadding
 import androidx.core.widget.NestedScrollView
 import com.github.andreyasadchy.xtra.R

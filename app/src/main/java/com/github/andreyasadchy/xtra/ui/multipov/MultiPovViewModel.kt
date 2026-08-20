@@ -548,7 +548,6 @@ class MultiPovViewModel @Inject constructor(
         resolveJobs.values.forEach { it.cancel() }
         pickerJob?.cancel()
         offlinePollJob?.cancel()
-        super.onCleared()
     }
 
     companion object {

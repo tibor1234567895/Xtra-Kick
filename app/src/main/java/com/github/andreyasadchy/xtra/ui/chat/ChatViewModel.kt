@@ -490,7 +490,6 @@ class ChatViewModel @Inject constructor(
         latestPrediction.value = null
         predictionSecondsLeft.value = null
         predictionTimer?.cancel()
-        super.onCleared()
     }
 
     private fun loadEmotes(channelId: String?, channelLogin: String?) {

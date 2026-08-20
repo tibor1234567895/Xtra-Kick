@@ -13,7 +13,7 @@ import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.content.edit
 import androidx.core.net.toUri
-import androidx.core.os.bundleOf
+import com.github.andreyasadchy.xtra.util.bundleOf
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.ForwardingSimpleBasePlayer
 import androidx.media3.common.MediaItem
