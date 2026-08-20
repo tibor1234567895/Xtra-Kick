@@ -104,7 +104,7 @@ android {
     }
 
     namespace = "com.github.andreyasadchy.xtra"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.github.andreyasadchy.xtrakick"
