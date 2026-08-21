@@ -35,6 +35,7 @@ import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentSanitizer
 import androidx.core.content.edit
 import androidx.core.content.res.use
 import androidx.core.net.toUri
@@ -708,24 +709,23 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             INTENT_INSTALL_UPDATE -> {
-                // Lint still reports UnsafeIntentLaunch on the two getParcelable calls below.
-                // That is a false positive: the extracted intent is sanitized by
-                // takeIf(::isSystemInstallerIntent) before it is ever launched. Lint recognises
-                // only a narrow set of sanitizer shapes, cannot see through the predicate, and
-                // UnsafeIntentLaunchDetector honours neither method- nor class-level
-                // @SuppressLint (both were tried). Left visible rather than silenced globally.
                 val extras = intent.extras
                 if (extras?.getInt(PackageInstaller.EXTRA_STATUS) == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val rawIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         extras.getParcelable(Intent.EXTRA_INTENT, Intent::class.java)
                     } else {
                         @Suppress("DEPRECATION")
                         extras.getParcelable(Intent.EXTRA_INTENT)
-                    }?.takeIf(::isSystemInstallerIntent)?.let {
+                    }
+                    rawIntent?.takeIf(::isSystemInstallerIntent)?.let { verifiedIntent ->
                         tokenPrefs().edit {
                             putLong(C.UPDATE_LAST_CHECKED, System.currentTimeMillis())
                         }
-                        startActivity(it)
+                        val sanitized = IntentSanitizer.Builder()
+                            .allowAnyComponent()
+                            .build()
+                            .sanitizeByFiltering(verifiedIntent)
+                        startActivity(sanitized)
                     }
                 }
             }

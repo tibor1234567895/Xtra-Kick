@@ -161,6 +161,7 @@ android {
     lint {
         disable += listOf(
             "AlwaysShowAction",
+            "AndroidGradlePluginVersion",
             "AppBundleLocaleChanges",
             "ChromeOsAbiSupport",
             "ContentDescription",
