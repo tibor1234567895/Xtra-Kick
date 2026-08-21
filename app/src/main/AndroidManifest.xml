@@ -43,6 +43,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- Volumee and other media-key redirect apps classify players via
+                 CATEGORY_APP_MUSIC. Without it InstalledMusicPlayers never contains
+                 this package, so MyNotificationListener filters its StatusBarNotification
+                 out and shows "No player is active" even though MediaStyle is present. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.APP_MUSIC" />
+            </intent-filter>
         </activity>
         <activity android:name=".ui.settings.SettingsActivity" />
         <activity
@@ -135,6 +143,14 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/diagnostic_file_paths" />
         </provider>
+
+        <receiver
+            android:name=".ui.player.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
 
         <receiver
             android:name="android.app.admin.DeviceAdminReceiver"

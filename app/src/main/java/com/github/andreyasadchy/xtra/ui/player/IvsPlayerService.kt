@@ -227,7 +227,36 @@ class IvsPlayerService : Service() {
         )
         val rewindMs = prefs().getString(C.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000
         val fastForwardMs = prefs().getString(C.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000
+        val audioManagerForSession = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val maxMusicVolume = audioManagerForSession.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val currentMusicVolume = audioManagerForSession.getStreamVolume(AudioManager.STREAM_MUSIC)
+        // VolumeProvider makes volumeType=REMOTE with a real max, which many external
+        // controllers (Volumee, SystemUI volume panel) expect. Using LOCAL left max=0
+        // on this lineage build and volume keys were swallowed when the screen was off.
+        val volumeProvider = object : android.media.VolumeProvider(
+            android.media.VolumeProvider.VOLUME_CONTROL_ABSOLUTE,
+            maxMusicVolume,
+            currentMusicVolume
+        ) {
+            override fun onSetVolumeTo(volume: Int) {
+                val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+                currentVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            }
+
+            override fun onAdjustVolume(direction: Int) {
+                val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, 0)
+                currentVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            }
+        }
         session = MediaSession(this, TAG).apply {
+            // Volumee and other external controllers filter on flags + volume handling.
+            // Without FLAG_HANDLES_MEDIA_BUTTONS|FLAG_HANDLES_TRANSPORT_CONTROLS dumpsys shows flags=0,
+            // Volumee shows "No player is active" and hardware volume keys are swallowed
+            // when the screen is off (Accessibility + NotificationListener path).
+            setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
+            setPlaybackToRemote(volumeProvider)
             setCallback(
                 object : MediaSession.Callback() {
                     override fun onPlay() {
@@ -270,6 +299,12 @@ class IvsPlayerService : Service() {
 
                     override fun onRewind() {
                         onSkipToPrevious()
+                    }
+
+                    override fun onMediaButtonEvent(mediaButtonEvent: Intent): Boolean {
+                        // Let the framework dispatch to onPlay/onPause/onSkip etc. via PlaybackState.
+                        // Returning false allows the default handling which posts the matching callback.
+                        return super.onMediaButtonEvent(mediaButtonEvent)
                     }
                 }
             )
@@ -511,6 +546,9 @@ class IvsPlayerService : Service() {
             setVisibility(Notification.VISIBILITY_PUBLIC)
             setOnlyAlertOnce(true)
             setOngoing(ivsPlayer.state == Player.State.PLAYING || ivsPlayer.state == Player.State.BUFFERING)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                setCategory(Notification.CATEGORY_TRANSPORT)
+            }
             setStyle(
                 Notification.MediaStyle()
                     .setMediaSession(session?.sessionToken)
