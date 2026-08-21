@@ -357,6 +357,7 @@ class StreamDownloadWorker @AssistedInject constructor(
         return Result.success()
     }
 
+    @Suppress("UNUSED_EXPRESSION", "UNREACHABLE_CODE")
     private suspend fun download(channelLogin: String, sourceUrl: String, path: String): Boolean {
         val isShared = path.toUri().scheme == ContentResolver.SCHEME_CONTENT
         val liveCheck = max(context.prefs().getString(C.DOWNLOAD_STREAM_LIVE_CHECK, "2")?.toLongOrNull() ?: 2L, 2L) * 1000L

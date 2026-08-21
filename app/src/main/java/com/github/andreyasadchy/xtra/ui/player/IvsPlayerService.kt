@@ -160,6 +160,7 @@ class IvsPlayerService : Service() {
         }
     }
 
+    @Suppress("DEPRECATION")
     override fun onCreate() {
         super.onCreate()
         wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager).newWakeLock(
