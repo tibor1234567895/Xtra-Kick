@@ -52,6 +52,7 @@ android {
 
     val kickClientId = projectPropertyOrDefault("KICK_CLIENT_ID").replace("\"", "\\\"")
     val kickOAuthBackendBaseUrl = projectPropertyOrDefault("KICK_OAUTH_BACKEND_BASE_URL", "https://kickauth.example.invalid").replace("\"", "\\\"")
+    val kickOAuthBackendHmacSecret = projectPropertyOrDefault("KICK_OAUTH_BACKEND_HMAC_SECRET").replace("\"", "\\\"")
     val targetAbi = (project.findProperty("TARGET_ABI") as String?)?.trim()?.takeIf { it.isNotBlank() }
     val localDebugKeystorePath = projectPropertyOrDefault("LOCAL_DEBUG_KEYSTORE_FILE", "${project.projectDir}/debug-keystore.jks")
     val localDebugStorePassword = projectPropertyOrDefault("LOCAL_DEBUG_STORE_PASSWORD")
@@ -127,6 +128,7 @@ android {
             }
             buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
+            buildConfigField("String", "KICK_OAUTH_BACKEND_HMAC_SECRET", "\"$kickOAuthBackendHmacSecret\"")
         }
         release {
             isShrinkResources = true
@@ -146,6 +148,7 @@ android {
             }
             buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
+            buildConfigField("String", "KICK_OAUTH_BACKEND_HMAC_SECRET", "\"$kickOAuthBackendHmacSecret\"")
         }
     }
     buildFeatures {

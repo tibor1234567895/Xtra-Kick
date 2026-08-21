@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.ext.SdkExtensions
 import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresExtension
+import com.github.andreyasadchy.xtra.BuildConfig
 import com.github.andreyasadchy.xtra.model.kick.auth.KickOAuthTokenResponse
 import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendExchangeRequest
 import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendIntrospectRequest
@@ -12,6 +13,7 @@ import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendRefreshRequest
 import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendRevokeRequest
 import com.github.andreyasadchy.xtra.model.kick.auth.KickTokenIntrospectResponse
 import com.github.andreyasadchy.xtra.model.kick.auth.KickUsersResponse
+import com.github.andreyasadchy.xtra.util.BackendRequestSigner
 import com.github.andreyasadchy.xtra.util.HttpEngineUtils
 import com.github.andreyasadchy.xtra.util.getByteArrayCronetCallback
 import dagger.Lazy
@@ -160,13 +162,24 @@ class AuthRepository @Inject constructor(
     }
 
     private suspend fun postJson(networkLibrary: String?, url: String, body: String): String = withContext(Dispatchers.IO) {
+        val authHeaders = BackendRequestSigner.sign(
+            secret = BuildConfig.KICK_OAUTH_BACKEND_HMAC_SECRET,
+            method = "POST",
+            url = url,
+            body = body.toByteArray(),
+        )
         when {
-            networkLibrary == "HttpEngine" && canUseHttpEngine() -> executeHttpEnginePostJson(url, body)
+            networkLibrary == "HttpEngine" && canUseHttpEngine() ->
+                executeHttpEnginePostJson(url, body) {
+                    addHeader("Content-Type", "application/json")
+                    authHeaders.forEach { (name, value) -> addHeader(name, value) }
+                }
             networkLibrary == "Cronet" && cronetEngine != null -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
                     cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).apply {
                         addHeader("Content-Type", "application/json")
+                        authHeaders.forEach { (name, value) -> addHeader(name, value) }
                         setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
                     }.build().start()
                     val response = request.future.get(KICK_AUTH_REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -179,6 +192,7 @@ class AuthRepository @Inject constructor(
                 } else {
                     val response = awaitTimedCronetResponse(url) {
                         addHeader("Content-Type", "application/json")
+                        authHeaders.forEach { (name, value) -> addHeader(name, value) }
                         setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
                     }
                     response.asCronetStringBody()
@@ -188,6 +202,7 @@ class AuthRepository @Inject constructor(
                 executeOkHttp(
                     Request.Builder()
                         .url(url)
+                        .apply { authHeaders.forEach { (name, value) -> header(name, value) } }
                         .header("Content-Type", "application/json")
                         .post(body.toRequestBody("application/json".toMediaTypeOrNull()))
                         .build()
@@ -213,9 +228,13 @@ class AuthRepository @Inject constructor(
 
     @RequiresApi(Build.VERSION_CODES.R)
     @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
-    private suspend fun executeHttpEnginePostJson(url: String, body: String): String {
+    private suspend fun executeHttpEnginePostJson(
+        url: String,
+        body: String,
+        configure: android.net.http.UrlRequest.Builder.() -> Unit,
+    ): String {
         val response = awaitTimedHttpEngineResponse(url) {
-            addHeader("Content-Type", "application/json")
+            configure()
             setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
         }
         return response.asHttpEngineStringBody()
