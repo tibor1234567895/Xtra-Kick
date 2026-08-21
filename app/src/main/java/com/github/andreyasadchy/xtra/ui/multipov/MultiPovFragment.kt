@@ -113,6 +113,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     private var chatProgressAnimator: ValueAnimator? = null
     private var velocityTracker: VelocityTracker? = null
     private var latencyPollJob: Job? = null
+    private var backgroundPauseRunnable: Runnable? = null
+    private val backgroundGraceMs = 20_000L
 
     /**
      * When set, only this stream fills the video area (in-MultiPOV fullscreen).
@@ -901,9 +903,16 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
 
     override fun onStart() {
         super.onStart()
+        // Cancel pending grace-period pause if user returned quickly.
+        backgroundPauseRunnable?.let { view?.removeCallbacks(it) }
+        backgroundPauseRunnable = null
         val inPip = isInPipMode()
         if (!inPip) {
             if (!requireContext().prefs().getBoolean(C.MULTIPOV_PAUSE_INACTIVE_ON_BACKGROUND, true) || isMaximized) {
+                playbackController?.resumeAll()
+            } else {
+                // Toggle ON but was background-paused with grace: resume secondaries.
+                // If we kept only focused audible in background, resume the rest now.
                 playbackController?.resumeAll()
             }
         }
@@ -912,12 +921,31 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     override fun onStop() {
         val inPip = isInPipMode()
         if (!inPip && requireContext().prefs().getBoolean(C.MULTIPOV_PAUSE_INACTIVE_ON_BACKGROUND, true)) {
-            playbackController?.pauseAll()
+            // Grace period: avoid re-buffer if user accidentally hid or rotated and comes back quickly.
+            // When optimization is ON:
+            // - if background audio is allowed, keep focused stream audible, pause others after grace
+            // - otherwise pause all after grace
+            val prefs = requireContext().prefs()
+            val keepFocusedAudible = prefs.getBoolean(C.PLAYER_BACKGROUND_AUDIO, true) ||
+                prefs.getString(C.PLAYER_BACKGROUND_PLAYBACK, "0") != "0" ||
+                prefs.getBoolean(C.PLAYER_BACKGROUND_AUDIO_LOCKED, true)
+            val runnable = Runnable {
+                if (!isAdded || isInPipMode()) return@Runnable
+                if (keepFocusedAudible && viewModel.uiState.value.focusedKey != null) {
+                    playbackController?.pauseSecondaries()
+                } else {
+                    playbackController?.pauseAll()
+                }
+            }
+            backgroundPauseRunnable = runnable
+            view?.postDelayed(runnable, backgroundGraceMs)
         }
         super.onStop()
     }
 
     override fun onDestroyView() {
+        backgroundPauseRunnable?.let { view?.removeCallbacks(it) }
+        backgroundPauseRunnable = null
         cancelHideControls()
         view?.removeCallbacks(hideFocusBorderRunnable)
         chatProgressAnimator?.cancel()

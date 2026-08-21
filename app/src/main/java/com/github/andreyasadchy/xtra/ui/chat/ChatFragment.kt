@@ -3338,10 +3338,11 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     override fun onStop() {
         super.onStop()
-        if (!requireArguments().getBoolean(KEY_IS_LIVE) || !requireContext().prefs().getBoolean(C.PLAYER_KEEP_CHAT_OPEN, false)) {
-            viewModel.stopLiveChat()
-            viewModel.stopReplayChat()
-        }
+        // Battery optimization: always disconnect live chat when fragment not visible.
+        // onResume will re-establish via resumeLive(). Previously kept socket alive
+        // when PLAYER_KEEP_CHAT_OPEN was true, holding radio even with no visible chat.
+        viewModel.stopLiveChat()
+        viewModel.stopReplayChat()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

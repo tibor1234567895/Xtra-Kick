@@ -955,7 +955,8 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="multipov_picker_followed_empty">No followed channels are live right now.\nSearch above to add someone else.</string>
     <string name="multipov_settings">MultiPOV</string>
     <string name="multipov_enabled">Enable MultiPOV</string>
-    <string name="multipov_pause_background">Pause streams when app is in background</string>
+    <string name="multipov_pause_background">Battery saving: pause hidden MultiPOV streams</string>
+    <string name="multipov_pause_background_summary">Pauses non-audible streams 20s after app goes to background. Focused audio keeps playing.</string>
     <string name="multipov_added">Added %s to MultiPOV</string>
     <string name="multipov_already_added">%s is already in MultiPOV</string>
     <string name="multipov_retry">Retry</string>

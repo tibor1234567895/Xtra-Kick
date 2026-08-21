@@ -136,6 +136,7 @@ class IvsPlayerService : Service() {
     }
 
     private fun acquirePlaybackLocks() {
+        // Only hold locks while actively playing/buffering — 10 min safety timeout.
         wakeLock?.takeUnless { it.isHeld }?.acquire(WAKE_LOCK_TIMEOUT_MS)
         wifiLock?.takeUnless { it.isHeld }?.acquire()
     }
@@ -143,6 +144,20 @@ class IvsPlayerService : Service() {
     private fun releasePlaybackLocks() {
         wakeLock?.takeIf { it.isHeld }?.release()
         wifiLock?.takeIf { it.isHeld }?.release()
+    }
+
+    private fun syncLocksWithState(state: Player.State) {
+        // Battery optimization: tie locks strictly to playback state.
+        // Hold only while PLAYING or BUFFERING; release on PAUSE/READY/ENDED.
+        if (state == Player.State.PLAYING || state == Player.State.BUFFERING) {
+            acquirePlaybackLocks()
+        } else {
+            // When playbackRequested is still true but player is READY (paused),
+            // we still release — explicit play() will re-acquire.
+            if (state == Player.State.READY || state == Player.State.ENDED) {
+                releasePlaybackLocks()
+            }
+        }
     }
 
     override fun onCreate() {
@@ -178,10 +193,8 @@ class IvsPlayerService : Service() {
                     if (state == Player.State.PLAYING) {
                         hasStablePlayback = true
                         requestAudioFocus()
-                        acquirePlaybackLocks()
-                    } else if (state == Player.State.ENDED || (state == Player.State.READY && !playbackRequested)) {
-                        releasePlaybackLocks()
                     }
+                    syncLocksWithState(state)
                     if (state == Player.State.READY || state == Player.State.PLAYING) {
                         syncDynamicsProcessingWithPreference()
                     }
@@ -340,7 +353,7 @@ class IvsPlayerService : Service() {
         playerDebugLog("playStream channel=$channelName title=$title")
         playbackRequested = true
         requestAudioFocus()
-        acquirePlaybackLocks()
+        // Don't acquire locks pre-emptively — wait for BUFFERING/PLAYING callback.
         player?.apply {
             setLiveLowLatencyEnabled(true)
             setRebufferToLive(true)
@@ -372,8 +385,10 @@ class IvsPlayerService : Service() {
     fun play() {
         playbackRequested = true
         requestAudioFocus()
-        acquirePlaybackLocks()
+        // Locks will be acquired on PLAYING/BUFFERING state change.
         player?.play()
+        // If player is already in PLAYING/BUFFERING, acquire now; otherwise wait for callback.
+        player?.state?.let { syncLocksWithState(it) }
         updatePlaybackState()
         updateNotification()
     }
@@ -745,7 +760,7 @@ class IvsPlayerService : Service() {
         private const val REQUEST_CODE_PLAY_PAUSE = 1
         private const val INTENT_PLAY_PAUSE = "com.github.andreyasadchy.xtra.IVS_PLAY_PAUSE"
 
-        /** Upper bound on a single uninterrupted viewing session. */
-        private const val WAKE_LOCK_TIMEOUT_MS = 4L * 60L * 60L * 1000L
+        /** Safety timeout — locks are explicitly released on pause/stop, this is fallback only. */
+        private const val WAKE_LOCK_TIMEOUT_MS = 10L * 60L * 1000L
     }
 }
