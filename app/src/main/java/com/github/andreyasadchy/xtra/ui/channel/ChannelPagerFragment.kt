@@ -576,7 +576,10 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     }
                 }
             }
-            stream?.channelLogo.let {
+            // Fall back to the logo the page was opened with: Kick's channel
+            // response sometimes omits the profile image, and hiding the avatar
+            // we already displayed looks broken.
+            (stream?.channelLogo ?: args.channelLogo).let {
                 if (it != null) {
                     userLayout.visibility = View.VISIBLE
                     userImage.visibility = View.VISIBLE

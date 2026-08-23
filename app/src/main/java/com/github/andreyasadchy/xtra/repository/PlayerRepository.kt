@@ -100,11 +100,17 @@ class PlayerRepository @Inject constructor(
 
     suspend fun loadClipUrls(networkLibrary: String?, kickWebHeaders: Map<String, String>, clipId: String?, enableIntegrity: Boolean): Map<Pair<String, String?>, String>? = withContext(Dispatchers.IO) {
         val id = clipId?.takeIf { it.isNotBlank() } ?: return@withContext null
-        // Resolve clip playback from Kick web APIs only (do not post Twitch GQL persisted queries).
-        kickRepository.getClipPlaybackUrl(id)?.let { playbackUrl ->
-            return@withContext mapOf(Pair("source", null as String?) to playbackUrl)
+        // Kick serves clips as a source MP4 plus an IVS HLS multivariant playlist
+        // obtained from the web player playback endpoint. Every HLS variant becomes
+        // a selectable quality; the MP4 stays as "source".
+        kickRepository.getClipPlayback(id)?.let { playback ->
+            val map = linkedMapOf<Pair<String, String?>, String>()
+            playback.sourceUrl?.let { map[Pair("source", null)] = it }
+            playback.qualities.forEach { quality ->
+                map.putIfAbsent(Pair(quality.name, quality.codec), quality.url)
+            }
+            map.takeIf { it.isNotEmpty() }
         }
-        null
     }
 
     suspend fun sendMinuteWatched(networkLibrary: String?, userId: String?, streamId: String?, channelId: String?, channelLogin: String?) = withContext(Dispatchers.IO) {

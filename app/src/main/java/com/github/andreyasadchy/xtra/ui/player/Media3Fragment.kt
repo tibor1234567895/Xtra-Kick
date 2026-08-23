@@ -645,6 +645,10 @@ class Media3Fragment : PlayerFragment() {
         }
     }
 
+    override fun currentPlaybackUrl(): String? {
+        return player?.currentMediaItem?.localConfiguration?.uri?.toString()
+    }
+
     override fun startOfflineVideo(url: String?, position: Long) {
         player?.let { player ->
             pendingInitialLiveSync = false

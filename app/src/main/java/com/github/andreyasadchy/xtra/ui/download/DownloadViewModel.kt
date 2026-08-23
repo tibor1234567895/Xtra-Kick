@@ -131,12 +131,20 @@ class DownloadViewModel @Inject constructor(
 
     fun setClip(networkLibrary: String?, kickWebHeaders: Map<String, String>, clipId: String?, qualities: Map<String, Pair<String, String>>?, enableIntegrity: Boolean) {
         if (_qualities.value == null) {
-            if (!qualities.isNullOrEmpty()) {
-                _qualities.value = qualities
+            // Clip downloads only support progressive MP4 URLs, so drop HLS variants.
+            val downloadable = qualities
+                ?.filterNot { it.value.second.substringBefore('?').endsWith(".m3u8", ignoreCase = true) }
+                ?.takeIf { it.isNotEmpty() }
+            if (!downloadable.isNullOrEmpty()) {
+                _qualities.value = downloadable
             } else {
                 viewModelScope.launch {
                     try {
-                        val urls = playerRepository.loadClipUrls(networkLibrary, kickWebHeaders, clipId, enableIntegrity)
+                        val allUrls = playerRepository.loadClipUrls(networkLibrary, kickWebHeaders, clipId, enableIntegrity)
+                        val urls = allUrls
+                            ?.filterNot { it.value.substringBefore('?').endsWith(".m3u8", ignoreCase = true) }
+                            ?.takeIf { it.isNotEmpty() }
+                            ?: allUrls
                         val hideCodecs = urls?.all {
                             it.key.second?.substringBefore('.').let { codec ->
                                 codec == "avc1" || codec == "mp4a" || codec.isNullOrBlank()

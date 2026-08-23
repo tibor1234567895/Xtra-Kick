@@ -184,6 +184,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     open fun startStream(url: String?) {}
     open fun startVideo(url: String?, playbackPosition: Long?, multivariantPlaylist: Boolean) {}
     open fun startClip(url: String?) {}
+    open fun currentPlaybackUrl(): String? = null
     open fun startOfflineVideo(url: String?, position: Long) {}
     open fun getCurrentPosition(): Long? = null
     open fun getCurrentSpeed(): Float? = null
@@ -1279,8 +1280,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     setDefaultQuality()
                                     changePlayerMode()
                                     val quality = viewModel.qualities.entries.find { it.key == viewModel.quality }
-                                    (quality?.value?.second ?: viewModel.qualities.values.firstOrNull()?.second)?.let {
-                                        startClip(it)
+                                    (quality?.value?.second ?: viewModel.qualities.values.firstOrNull()?.second)?.let { url ->
+                                        if (url != currentPlaybackUrl()) {
+                                            startClip(url)
+                                        }
                                     }
                                     viewModel.clipUrls.value = null
                                 }
@@ -2694,14 +2697,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     setDefaultQuality()
                     changePlayerMode()
                     startClip(clipUrl)
-                } else {
-                    viewModel.loadClip(
-                        networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
-                        id = requireArguments().getString(KEY_CLIP_ID),
-                        enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                    )
                 }
+                // Kick serves the clip quality ladder through the web playback
+                // endpoint, so fetch it even when the MP4 URL is already known.
+                viewModel.loadClip(
+                    networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
+                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
+                    id = requireArguments().getString(KEY_CLIP_ID),
+                    enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
+                )
             }
             OFFLINE_VIDEO -> {
                 if (prefs.getBoolean(C.PLAYER_USE_VIDEOPOSITIONS, true)) {
@@ -3452,14 +3456,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 setDefaultQuality()
                                 changePlayerMode()
                                 startClip(clipUrl)
-                            } else {
-                                viewModel.loadClip(
-                                    networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
-                                    id = requireArguments().getString(KEY_CLIP_ID),
-                                    enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                                )
                             }
+                            viewModel.loadClip(
+                                networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
+                                kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
+                                id = requireArguments().getString(KEY_CLIP_ID),
+                                enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
+                            )
                             viewModel.isFollowingChannel(
                                 requireContext().tokenPrefs().getString(C.USER_ID, null),
                                 requireArguments().getString(KEY_CHANNEL_ID),

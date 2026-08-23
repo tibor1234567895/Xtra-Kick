@@ -102,6 +102,7 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.security.SecureRandom
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -1748,12 +1749,8 @@ class KickRepository @Inject constructor(
             candidates += "https://kick.com/api/v1/channels/$encoded"
             candidates += "https://kick.com/api/internal/v1/channels/$encoded/chatroom/pinned-message"
         }
-        resolveDedicatedChatroomCandidates(channelId?.takeIf { !it.isNullOrBlank() } ?: channelSlug.orEmpty())
-            .forEach { chatroomId ->
-                val encoded = urlEncode(chatroomId)
-                candidates += "https://kick.com/api/v1/chatrooms/$encoded"
-                candidates += "https://kick.com/api/v2/chatrooms/$encoded"
-            }
+        // Note: kick.com/api/v1|v2/chatrooms/{id} return 405/404, so chatroom-id
+        // candidates are not probed; the endpoints above resolve the pinned state.
         candidates.forEach { url ->
             val raw = runCatching { getRaw(url, isKickWeb = true) }.getOrNull() ?: return@forEach
             val update = runCatching {
@@ -1835,12 +1832,8 @@ class KickRepository @Inject constructor(
         val candidates = linkedSetOf<String>()
         val normalizedSlug = channelSlug?.trim()?.takeIf { it.isNotBlank() }
         val normalizedChannelId = channelId?.trim()?.takeIf { it.isNotBlank() }
-        resolveDedicatedChatroomCandidates(normalizedSlug ?: normalizedChannelId.orEmpty())
-            .forEach { chatroomId ->
-                val encoded = urlEncode(chatroomId)
-                candidates += "https://kick.com/api/v1/chatrooms/$encoded"
-                candidates += "https://kick.com/api/v2/chatrooms/$encoded"
-            }
+        // Note: kick.com/api/v1|v2/chatrooms/{id} return 405/404, so chatroom-id
+        // candidates are not probed; the slug-based endpoints below resolve room state.
         normalizedSlug?.let { slug ->
             val encoded = urlEncode(slug)
             candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
@@ -2549,6 +2542,7 @@ class KickRepository @Inject constructor(
                     ?: item.objOrNull("video")?.primitiveOrNull("url")
                     ?: item.objOrNull("clip")?.primitiveOrNull("url")
                 val videoId = item.primitiveOrNull("video_id")
+                    ?: item.objOrNull("vod")?.primitiveOrNull("id")
                     ?: item.objOrNull("video")?.primitiveOrNull("id")
                 val category = item.arrayOrNull("categories")?.firstNotNullOfOrNull { categoryElement ->
                     (categoryElement as? JsonObject)?.let { categoryObject ->
@@ -2761,9 +2755,12 @@ class KickRepository @Inject constructor(
                     channelLogin = data.primitiveOrNull("channel_slug")
                         ?: data.objOrNull("channel")?.primitiveOrNull("slug"),
                     channelName = data.objOrNull("channel")?.objOrNull("user")?.primitiveOrNull("username")
+                        ?: data.objOrNull("channel")?.primitiveOrNull("username")
                         ?: data.objOrNull("channel")?.primitiveOrNull("name"),
                     clipUrl = clipUrl,
-                    videoId = data.primitiveOrNull("video_id") ?: data.objOrNull("video")?.primitiveOrNull("id"),
+                    videoId = data.primitiveOrNull("video_id")
+                        ?: data.objOrNull("vod")?.primitiveOrNull("id")
+                        ?: data.objOrNull("video")?.primitiveOrNull("id"),
                     title = data.primitiveOrNull("title"),
                     viewCount = data.intOrNull("views") ?: data.intOrNull("view_count"),
                     uploadDate = normalizeDate(data.primitiveOrNull("created_at") ?: data.primitiveOrNull("published_at")),
@@ -2778,12 +2775,195 @@ class KickRepository @Inject constructor(
         null
     }
 
+    data class KickClipQuality(
+        val name: String,
+        val codec: String?,
+        val url: String,
+    )
+
+    data class KickClipPlayback(
+        val sourceUrl: String?,
+        val qualities: List<KickClipQuality>,
+    )
+
     /**
-     * Resolve a Kick clip playback URL by slug/id from Kick web APIs.
-     * Does not use Twitch GQL persisted queries.
+     * Resolve Kick clip playback from Kick web APIs: the original MP4 (source)
+     * plus the IVS HLS variants the Kick web player receives from the playback
+     * endpoint. Kick gates the top HLS qualities behind a logged-in session, so
+     * logged-out users may only get a partial ladder; the MP4 is always included.
      */
-    suspend fun getClipPlaybackUrl(clipIdOrSlug: String): String? = withContext(Dispatchers.IO) {
-        getClip(clipIdOrSlug)?.clipUrl?.takeIf { it.isNotBlank() }
+    suspend fun getClipPlayback(clipIdOrSlug: String): KickClipPlayback? = withContext(Dispatchers.IO) {
+        val clip = getClip(clipIdOrSlug) ?: return@withContext null
+        val sourceUrl = clip.clipUrl?.takeIf { it.isNotBlank() }
+        val videoUuid = clip.videoId?.trim()?.takeIf { it.isNotBlank() }
+        val qualities = if (videoUuid != null) {
+            runCatching { getClipHlsQualities(videoUuid, clip.channelLogin) }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+        if (sourceUrl == null && qualities.isEmpty()) {
+            null
+        } else {
+            KickClipPlayback(sourceUrl, qualities)
+        }
+    }
+
+    private suspend fun getClipHlsQualities(videoUuid: String, channelSlug: String?): List<KickClipQuality> = withContext(Dispatchers.IO) {
+        val payload = buildJsonObject {
+            put("video_player", buildJsonObject {
+                put("player", buildJsonObject {
+                    put("player_name", JsonPrimitive("web"))
+                    put("player_version", JsonPrimitive("web_95f0e436"))
+                    put("player_software", JsonPrimitive("IVS Player"))
+                    put("player_software_version", JsonPrimitive("1.54.1"))
+                })
+                put("mux_sdk", buildJsonObject {
+                    put("sdk_available", JsonPrimitive(true))
+                })
+                put("pal_sdk", buildJsonObject {
+                    put("sdk_available", JsonPrimitive(false))
+                    put("nonce", JsonPrimitive(""))
+                })
+                put("datazoom_sdk", buildJsonObject {
+                    put("sdk_available", JsonPrimitive(true))
+                    put("datazoom_sdk_version", JsonPrimitive("2.32.0"))
+                    put("om_sdk_version", JsonPrimitive("1.6.6"))
+                })
+                put("google_ads_sdk", buildJsonObject {
+                    put("sdk_available", JsonPrimitive(false))
+                })
+            })
+            put("video_session", buildJsonObject {
+                put("page_type", JsonPrimitive("video"))
+                put("player_remote_played", JsonPrimitive(false))
+                put("enable_sampling", JsonPrimitive(false))
+                put("url_path", JsonPrimitive("${channelSlug?.takeIf { it.isNotBlank() } ?: "channel"}/videos/$videoUuid"))
+                put("autoplay_behaviour", JsonPrimitive("click"))
+                put("play_muted", JsonPrimitive(false))
+                put("viewer_connection_type", JsonPrimitive(""))
+            })
+            put("user_session", buildJsonObject {
+                put("session_id", JsonPrimitive(UUID.randomUUID().toString()))
+                put("player_device_id", JsonPrimitive(UUID.randomUUID().toString()))
+                put("browser_lang", JsonPrimitive(Locale.getDefault().language))
+                put("non_personalised_ads", JsonPrimitive(true))
+            })
+        }
+        // The official Kick app resolves clip playback via the mobile subdomain
+        // (authenticated); web.kick.com is kept as a fallback since the web
+        // player uses it too. Both 404 without a valid session, which degrades
+        // gracefully to the single-quality source playlist.
+        val endpoints = listOf(
+            "https://mobile.kick.com/api/v1/stream/${urlEncode(videoUuid)}/playback",
+            "https://web.kick.com/api/v1/stream/${urlEncode(videoUuid)}/playback",
+        )
+        for (endpoint in endpoints) {
+            val manifestUrl = runCatching {
+                okHttpClient.newCall(
+                    createRequestBuilder(endpoint, isKickWeb = true)
+                        .header("User-Agent", "KickMobile/40.29.0 (com.kick.mobile; platform: android; build:40290)")
+                        .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                        .build()
+                ).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        if (isKickFeatureDebugEnabled()) {
+                            Log.d(featureDebugTag, "clip playback $endpoint -> ${response.code}")
+                        }
+                        return@runCatching null
+                    }
+                    val root = runCatching { json.parseToJsonElement(response.body.string()) }.getOrNull()
+                        ?: return@runCatching null
+                    (root as? JsonObject)
+                        ?.objOrNull("playback_url")
+                        ?.primitiveOrNull("vod")
+                        ?.takeIf { it.isNotBlank() }
+                }
+            }.getOrNull() ?: continue
+            val qualities = fetchClipMasterPlaylist(manifestUrl)
+            if (qualities.isNotEmpty()) {
+                return@withContext qualities
+            }
+        }
+        emptyList()
+    }
+
+    private suspend fun fetchClipMasterPlaylist(playlistUrl: String): List<KickClipQuality> = withContext(Dispatchers.IO) {
+        okHttpClient.newCall(
+            createRequestBuilder(playlistUrl, isKickWeb = true).build()
+        ).execute().use { response ->
+            if (!response.isSuccessful) {
+                return@withContext emptyList()
+            }
+            val text = response.body.string()
+            parseHlsMasterQualities(text, response.request.url.toString())
+        }
+    }
+
+    private fun parseHlsMasterQualities(playlistText: String, playlistUrl: String): List<KickClipQuality> {
+        if (!playlistText.contains("#EXT-X-STREAM-INF", ignoreCase = true)) {
+            return emptyList()
+        }
+        val mediaNames = mutableMapOf<String, String>()
+        val qualities = mutableListOf<KickClipQuality>()
+        val seenNames = mutableSetOf<String>()
+        var pendingAttributes: Map<String, String>? = null
+        for (rawLine in playlistText.lineSequence()) {
+            val line = rawLine.trim()
+            when {
+                line.startsWith("#EXT-X-MEDIA:", ignoreCase = true) -> {
+                    val attributes = parseHlsAttributes(line.substringAfter(':'))
+                    if (attributes["TYPE"]?.equals("VIDEO", ignoreCase = true) == true) {
+                        val groupId = attributes["GROUP-ID"]
+                        val name = attributes["NAME"]?.takeIf { it.isNotBlank() }
+                        if (groupId != null && name != null) {
+                            mediaNames[groupId] = name
+                        }
+                    }
+                }
+                line.startsWith("#EXT-X-STREAM-INF:", ignoreCase = true) -> {
+                    pendingAttributes = parseHlsAttributes(line.substringAfter(':'))
+                }
+                line.isNotBlank() && !line.startsWith("#") -> {
+                    val attributes = pendingAttributes
+                    pendingAttributes = null
+                    if (attributes != null) {
+                        val url = runCatching { URI(playlistUrl).resolve(line).toString() }.getOrNull() ?: continue
+                        val resolutionHeight = attributes["RESOLUTION"]
+                            ?.substringAfter('x')?.trim()
+                            ?.takeIf { it.isNotBlank() && it.all { it.isDigit() } }
+                        val name = attributes["VIDEO"]?.let { mediaNames[it] }?.takeIf { it.isNotBlank() }
+                            ?: resolutionHeight?.let { "${it}p" }
+                            ?: url.substringBefore('?').substringAfterLast('/').substringBefore('.').takeIf { it.isNotBlank() }
+                            ?: continue
+                        if (seenNames.add(name)) {
+                            qualities.add(
+                                KickClipQuality(
+                                    name = name,
+                                    codec = attributes["CODECS"]
+                                        ?.split(',')
+                                        ?.map { it.trim() }
+                                        ?.firstOrNull { it.isNotBlank() },
+                                    url = url,
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        return qualities
+    }
+
+    private fun parseHlsAttributes(line: String): Map<String, String> {
+        val attributes = mutableMapOf<String, String>()
+        Regex("([A-Za-z0-9-]+)=(\"[^\"]*\"|[^,]*)").findAll(line).forEach { match ->
+            var value = match.groupValues[2]
+            if (value.length >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+                value = value.substring(1, value.length - 1)
+            }
+            attributes[match.groupValues[1].uppercase(Locale.ROOT)] = value
+        }
+        return attributes
     }
 
     /**
@@ -3906,24 +4086,15 @@ class KickRepository @Inject constructor(
             channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() },
             channel.id?.toString()?.takeIf { it.isNotBlank() }
         ).distinct()
+        // Kick's API only resolves the slug-based endpoints below. The numeric
+        // channel-id paths and chatroom-id paths (api/v1|v2/chatrooms/{id},
+        // api/v2/channels/{id}/..., api/v2/channels/{slug}/badges) do not exist
+        // and only produce 404/405 noise, so they are no longer requested.
         val urls = linkedSetOf<String>().apply {
-            channel.chatroom?.id?.let { chatroomId ->
-                add("https://kick.com/api/v1/chatrooms/$chatroomId")
-                add("https://kick.com/api/v2/chatrooms/$chatroomId")
-                add("https://kick.com/api/v2/chatrooms/$chatroomId/badges")
-            }
-            channel.id?.let { channelId ->
-                add("https://kick.com/api/v2/channels/$channelId/info")
-                add("https://kick.com/api/v2/channels/$channelId/chatroom")
-                add("https://kick.com/api/v2/channels/$channelId/chatroom/badges")
-                add("https://kick.com/api/v2/channels/$channelId/badges")
-            }
             channel.slug?.takeIf { it.isNotBlank() }?.let { slug ->
                 val encodedSlug = urlEncode(slug)
                 add("https://kick.com/api/v2/channels/$encodedSlug/info")
                 add("https://kick.com/api/v2/channels/$encodedSlug/chatroom")
-                add("https://kick.com/api/v2/channels/$encodedSlug/chatroom/badges")
-                add("https://kick.com/api/v2/channels/$encodedSlug/badges")
                 add("https://kick.com/api/v1/$encodedSlug/chatroom")
                 add("https://kick.com/api/v1/channels/$encodedSlug")
             }
