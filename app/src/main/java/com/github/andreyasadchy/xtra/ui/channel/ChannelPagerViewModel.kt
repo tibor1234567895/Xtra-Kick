@@ -109,7 +109,7 @@ class ChannelPagerViewModel @Inject constructor(
                                 channelName = channel.user?.username,
                                 profileImageUrl = channel.user?.profileImage,
                                 followersCount = channel.followersCount,
-                                bannerImageURL = channel.bannerImage?.url,
+                                bannerImageURL = channel.bannerUrl,
                                 lastBroadcast = stream.startedAt,
                                 isLive = channel.livestream != null,
                             )

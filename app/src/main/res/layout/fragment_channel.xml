@@ -143,9 +143,11 @@
 
                         <TextView
                             android:id="@+id/title"
-                            android:layout_width="wrap_content"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:textAppearance="?attr/textAppearanceTitleMedium"
+                            android:maxLines="2"
+                            android:ellipsize="end"
+                            android:textAppearance="?attr/textAppearanceBodyMedium"
                             android:visibility="gone"
                             tools:text="@sample/streams.json/streams/channel/status"
                             tools:visibility="visible" />

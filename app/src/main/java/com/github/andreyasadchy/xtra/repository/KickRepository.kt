@@ -3136,7 +3136,7 @@ class KickRepository @Inject constructor(
             channelName = channel.user?.username,
             profileImageUrl = channel.user?.profileImage,
             followersCount = channel.followersCount,
-            bannerImageURL = channel.bannerImage?.url,
+            bannerImageURL = channel.bannerUrl,
             isLive = channel.livestream != null
         )
     }

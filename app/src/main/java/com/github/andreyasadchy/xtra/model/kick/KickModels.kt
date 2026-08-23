@@ -69,10 +69,17 @@ class KickChannelResponse(
     @SerialName("founder_badges")
     val founderBadges: List<KickChannelBadge>? = null,
     val badges: List<KickChannelBadge>? = null,
+    @SerialName("offline_banner_image")
+    val offlineBannerImage: KickBanner? = null,
     val chatroom: KickChatroom? = null,
     val livestream: KickChannelLivestream? = null,
     val user: KickUser? = null,
-)
+) {
+    /** Channel page backdrop: the banner, falling back to the offline banner image. */
+    val bannerUrl: String?
+        get() = bannerImage?.url?.takeIf { it.isNotBlank() }
+            ?: offlineBannerImage?.src?.takeIf { it.isNotBlank() }
+}
 
 @Serializable
 class KickChannelSummary(

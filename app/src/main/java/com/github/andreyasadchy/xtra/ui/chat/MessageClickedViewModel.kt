@@ -138,7 +138,7 @@ class MessageClickedViewModel @Inject constructor(
                         channelLogin = kickUser.username,
                         channelName = kickUser.username,
                         profileImageUrl = kickUser.profileImage,
-                        bannerImageURL = response.bannerImage?.url,
+                        bannerImageURL = response.bannerUrl,
                         createdAt = userCardDetails.createdAt ?: kickUser.createdAt,
                         followedAt = userCardDetails.followingSince
                     )
