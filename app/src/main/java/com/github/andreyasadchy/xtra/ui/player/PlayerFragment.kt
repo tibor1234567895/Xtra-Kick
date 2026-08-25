@@ -1132,9 +1132,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         seekLive.visibility = View.VISIBLE
                         seekLive.setOnClickListener { seekToLivePosition() }
                     }
-                    if (prefs.getBoolean(C.PLAYER_VIEWERLIST, false)) {
-                        viewersLayout.setOnClickListener { openViewerList() }
-                    }
                     if (prefs.getBoolean(C.PLAYER_SHOW_UPTIME, true)) {
                         requireArguments().getString(KEY_STARTED_AT)?.let {
                             KickApiHelper.parseIso8601DateUTC(it)?.let { startedAtMs ->
@@ -2165,12 +2162,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
         binding.playerControls.restart.contentDescription = description
         TooltipCompat.setTooltipText(binding.playerControls.restart, description)
-    }
-
-    fun openViewerList() {
-        requireArguments().getString(KEY_CHANNEL_LOGIN)?.let { login ->
-            PlayerViewerListDialog.newInstance(login).show(childFragmentManager, "closeOnPip")
-        }
     }
 
     fun openMultiPov() {

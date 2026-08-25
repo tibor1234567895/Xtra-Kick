@@ -16,13 +16,6 @@
         app:singleLineTitle="false" />
 
     <SwitchPreferenceCompat
-        android:defaultValue="true"
-        android:key="player_menu_viewer_list"
-        android:title="@string/viewer_list"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
         android:defaultValue="false"
         android:key="player_menu_games"
         android:title="@string/chapters"

@@ -52,7 +52,6 @@ import com.github.andreyasadchy.xtra.util.chat.ChatReplayPacing
 import com.github.andreyasadchy.xtra.util.chat.ChatUtils
 import com.github.andreyasadchy.xtra.util.chat.KickChatSendErrorMapper
 import com.github.andreyasadchy.xtra.util.chat.KickPusherChatWebSocket
-import com.github.andreyasadchy.xtra.util.chat.RecentMessageUtils
 import com.github.andreyasadchy.xtra.util.chat.StvEventApiUtils
 import com.github.andreyasadchy.xtra.util.chat.StvEventApiWebSocket
 import com.github.andreyasadchy.xtra.util.chat.WebSocketDisconnectUtils
@@ -898,42 +897,7 @@ class ChatViewModel @Inject constructor(
                             }
                         }
                         .toMutableList()
-                } else {
-                    val recentList = mutableListOf<ChatMessage>()
-                    playerRepository.loadRecentMessages(networkLibrary, channelLogin, applicationContext.prefs().getInt(C.CHAT_RECENT_LIMIT, 100).toString()).messages.forEach { message ->
-                        when {
-                            message.contains("PRIVMSG") -> RecentMessageUtils.parseChatMessage(message, false)
-                            message.contains("USERNOTICE") -> {
-                                if (applicationContext.prefs().getBoolean(C.CHAT_SHOW_USERNOTICE, true)) {
-                                    RecentMessageUtils.parseChatMessage(message, true)
-                                } else null
-                            }
-                            message.contains("CLEARMSG") -> {
-                                if (applicationContext.prefs().getBoolean(C.CHAT_SHOW_CLEARMSG, true)) {
-                                    val pair = RecentMessageUtils.parseClearMessage(message)
-                                    val deletedMessageIndex = pair.second?.let { targetId -> recentList.indexOfLast { it.id == targetId } } ?: -1
-                                    if (deletedMessageIndex != -1) {
-                                        recentList[deletedMessageIndex] = createDeletedMessage(recentList[deletedMessageIndex])
-                                        null
-                                    } else {
-                                        getClearMessage(pair.first, null, applicationContext.prefs().getString(C.UI_NAME_DISPLAY, "1"))
-                                    }
-                                } else null
-                            }
-                            message.contains("CLEARCHAT") -> {
-                                if (applicationContext.prefs().getBoolean(C.CHAT_SHOW_CLEARCHAT, true)) {
-                                    RecentMessageUtils.parseClearChat(applicationContext, message)
-                                } else null
-                            }
-                            message.contains("NOTICE") -> RecentMessageUtils.parseNotice(applicationContext, message)
-                            else -> null
-                        }?.let {
-                            buildReplyPreviewMessage(it, recentList)?.let(recentList::add)
-                            recentList.add(it)
-                        }
-                    }
-                    recentList
-                }
+                } else emptyList()
                 if (list.isNotEmpty()) {
                     synchronized(rawChatMessages) {
                         val left = messageLimit - rawChatMessages.size

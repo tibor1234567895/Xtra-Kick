@@ -73,13 +73,6 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
                         dismiss()
                     }
                 }
-                if (requireContext().prefs().getBoolean(C.PLAYER_MENU_VIEWER_LIST, true)) {
-                    menuViewerList.visibility = View.VISIBLE
-                    menuViewerList.setOnClickListener {
-                        (parentFragment as? PlayerFragment)?.openViewerList()
-                        dismiss()
-                    }
-                }
                 if (requireContext().prefs().getBoolean(C.PLAYER_MENU_RESTART, false)) {
                     menuRestart.visibility = View.VISIBLE
                     menuRestart.setOnClickListener {

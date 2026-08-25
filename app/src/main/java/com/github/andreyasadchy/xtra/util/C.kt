@@ -125,7 +125,6 @@ object C {
     const val PLAYER_MENU = "player_menu"
     const val PLAYER_MENU_QUALITY = "player_menu_quality"
     const val PLAYER_MENU_SPEED = "player_menu_speed"
-    const val PLAYER_MENU_VIEWER_LIST = "player_menu_viewer_list"
     const val PLAYER_MENU_GAMES = "player_menu_games"
     const val PLAYER_MENU_BOOKMARK = "player_menu_bookmark"
     const val PLAYER_MENU_DOWNLOAD = "player_menu_download"
