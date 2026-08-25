@@ -989,6 +989,7 @@ class SettingsActivity : AppCompatActivity() {
                     }
                 } else {
                     debugPreference.isVisible = false
+                    findPreference<Preference>("advanced_category")?.isVisible = false
                 }
             }
         }
@@ -2155,7 +2156,7 @@ class SettingsActivity : AppCompatActivity() {
             if (preferences == null) {
                 val list = mutableListOf<SettingsSearchItem>()
                 val preferenceManager = PreferenceManager(requireContext())
-                listOf(
+                val searchSources = mutableListOf(
                     Triple(R.xml.general_preferences, SettingsNavGraphDirections.actionGlobalGeneralSettingsFragment(), getString(R.string.general)),
                     Triple(R.xml.appearance_preferences, SettingsNavGraphDirections.actionGlobalAppearanceSettingsFragment(), getString(R.string.appearance)),
                     Triple(R.xml.navigation_preferences, SettingsNavGraphDirections.actionGlobalNavigationSettingsFragment(), getString(R.string.navigation)),
@@ -2171,10 +2172,18 @@ class SettingsActivity : AppCompatActivity() {
                     Triple(R.xml.playback_preferences, SettingsNavGraphDirections.actionGlobalPlaybackSettingsFragment(), getString(R.string.playback_settings)),
                     Triple(R.xml.api_token_preferences, SettingsNavGraphDirections.actionGlobalApiTokenSettingsFragment(), getString(R.string.api_token_settings)),
                     Triple(R.xml.update_preferences, SettingsNavGraphDirections.actionGlobalUpdateSettingsFragment(), getString(R.string.update_settings)),
-                    Triple(R.xml.debug_preferences, SettingsNavGraphDirections.actionGlobalDebugSettingsFragment(), getString(R.string.debug_settings)),
-                    Triple(R.xml.debug_log_preferences, SettingsNavGraphDirections.actionGlobalDebugLogSettingsFragment(), getString(R.string.customize_debug_logs)),
-                ).forEach { item ->
+                )
+                // Debug Settings can swap the entire playback stack and the search
+                // implementation. It must not be reachable in a shipped build.
+                if (BuildConfig.DEBUG) {
+                    searchSources.add(Triple(R.xml.debug_preferences, SettingsNavGraphDirections.actionGlobalDebugSettingsFragment(), getString(R.string.debug_settings)))
+                    searchSources.add(Triple(R.xml.debug_log_preferences, SettingsNavGraphDirections.actionGlobalDebugLogSettingsFragment(), getString(R.string.customize_debug_logs)))
+                }
+                searchSources.forEach { item ->
                     preferenceManager.inflateFromResource(requireContext(), item.first, null).forEach {
+                        if (!BuildConfig.DEBUG && it.key == "nav_debug_settings") {
+                            return@forEach
+                        }
                         when (it) {
                             is SwitchPreferenceCompat -> {
                                 list.add(SettingsSearchItem(
