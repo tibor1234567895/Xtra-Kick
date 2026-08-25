@@ -285,7 +285,7 @@ class MainActivity : AppCompatActivity() {
                             .setTitle(getString(R.string.update_available))
                             .setMessage(getString(R.string.update_message))
                             .setPositiveButton(getString(R.string.yes)) { _, _ ->
-                                if (prefs.getBoolean(AppConstants.UPDATE_USE_BROWSER, false)) {
+                                if (BuildConfig.DEBUG || prefs.getBoolean(AppConstants.UPDATE_USE_BROWSER, false)) {
                                     try {
                                         val intent = Intent(Intent.ACTION_VIEW, it.toUri()).apply {
                                             addCategory(Intent.CATEGORY_BROWSABLE)
@@ -667,7 +667,17 @@ class MainActivity : AppCompatActivity() {
                             .allowAnyComponent()
                             .build()
                             .sanitizeByFiltering(verifiedIntent)
-                        startActivity(sanitized)
+                        try {
+                            startActivity(sanitized)
+                        } catch (e: Exception) {
+                            DiagnosticLogger.e(TAG, "install confirmation activity launch failed", e)
+                            // Debug builds target a different applicationId than release;
+                            // PackageInstaller cannot hand off the confirmation dialog.
+                            // Open the release page in the browser so the user can install manually.
+                            runCatching {
+                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/tibor1234567895/Xtra-Kick/releases/latest")))
+                            }
+                        }
                     }
                 }
             }
