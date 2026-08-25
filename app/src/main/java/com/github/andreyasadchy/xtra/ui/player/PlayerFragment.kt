@@ -3519,11 +3519,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         )
     }
 
-    protected fun getStreamArguments(item: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean, attachToExistingPlayback: Boolean = false): Bundle {
+    protected fun getStreamArguments(item: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean): Bundle {
         return getStreamArguments(item).apply {
             putString(KEY_RESOLVED_STREAM_URL, resolvedUrl)
             putBoolean(KEY_FORCE_STANDARD_LIVE_ENGINE, forceStandardLiveEngine)
-            putBoolean(KEY_ATTACH_TO_EXISTING_PLAYBACK, attachToExistingPlayback)
         }
     }
 
@@ -3642,7 +3641,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         protected const val KEY_STREAM_SOURCE = "streamSource"
         protected const val KEY_RESOLVED_STREAM_URL = "resolvedStreamUrl"
         protected const val KEY_FORCE_STANDARD_LIVE_ENGINE = "forceStandardLiveEngine"
-        protected const val KEY_ATTACH_TO_EXISTING_PLAYBACK = "attachToExistingPlayback"
         protected const val KEY_VIDEO_ID = "videoId"
         protected const val KEY_VIDEO_SOURCE = "videoSource"
         protected const val KEY_CLIP_REPLAY_START_TIME = "clipReplayStartTime"

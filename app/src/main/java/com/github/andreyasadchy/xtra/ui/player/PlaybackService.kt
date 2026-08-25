@@ -114,7 +114,6 @@ class PlaybackService : MediaSessionService() {
     private var background = false
     private var videoId: Long? = null
     private var offlineVideoId: Int? = null
-    private var backgroundHandoffMode = false
     private lateinit var activeLatencyConfig: LiveLatencyConfig
     private var sleepTimer: Timer? = null
     private var sleepTimerEndTime = 0L
@@ -133,13 +132,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        backgroundHandoffMode = prefs().getBoolean(KEY_BACKGROUND_HANDOFF_PENDING, false)
-        prefs().edit { remove(KEY_BACKGROUND_HANDOFF_PENDING) }
-        activeLatencyConfig = if (backgroundHandoffMode) {
-            LiveLatencySettings.preset(LiveLatencySettings.PROFILE_STABLE)
-        } else {
-            LiveLatencySettings.resolve(prefs())
-        }
+        activeLatencyConfig = LiveLatencySettings.resolve(prefs())
         val player = ExoPlayer.Builder(this).apply {
             setLoadControl(LiveLatencySettings.toLoadControl(activeLatencyConfig))
             setAudioAttributes(AudioAttributes.DEFAULT, prefs().getBoolean(C.PLAYER_AUDIO_FOCUS, true))
@@ -148,8 +141,7 @@ class PlaybackService : MediaSessionService() {
             setSeekForwardIncrementMs(prefs().getString(C.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000)
         }.build()
         logBufferDebug(
-            "PlaybackService created with latency=${LiveLatencySettings.describe(activeLatencyConfig)} " +
-                "backgroundHandoffMode=$backgroundHandoffMode"
+            "PlaybackService created with latency=${LiveLatencySettings.describe(activeLatencyConfig)}"
         )
         player.addListener(
             object : Player.Listener {
@@ -157,7 +149,7 @@ class PlaybackService : MediaSessionService() {
                     logBufferDebug(
                         "playbackState=${playbackStateName(playbackState)} " +
                             "playWhenReady=${player.playWhenReady} isPlaying=${player.isPlaying} " +
-                            "background=$background backgroundHandoffMode=$backgroundHandoffMode " +
+                            "background=$background " +
                             "mediaItemPresent=${player.currentMediaItem != null}"
                     )
                 }
@@ -165,14 +157,14 @@ class PlaybackService : MediaSessionService() {
                 override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                     logBufferDebug(
                         "playWhenReadyChanged playWhenReady=$playWhenReady reason=$reason " +
-                            "background=$background backgroundHandoffMode=$backgroundHandoffMode"
+                            "background=$background"
                     )
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     logBufferDebug(
                         "isPlayingChanged isPlaying=$isPlaying " +
-                            "background=$background backgroundHandoffMode=$backgroundHandoffMode " +
+                            "background=$background " +
                             "currentPosition=${player.currentPosition}"
                     )
                     if (isPlaying) {
@@ -198,7 +190,7 @@ class PlaybackService : MediaSessionService() {
                         if (isBehindLiveWindowError(error)) {
                             DiagnosticLogger.w(
                                 TAG,
-                                "behindLiveWindow recovery start background=$background backgroundHandoffMode=$backgroundHandoffMode " +
+                                "behindLiveWindow recovery start background=$background " +
                                     "state=${playbackStateName(player.playbackState)} playWhenReady=${player.playWhenReady} " +
                                     "isPlaying=${player.isPlaying} mediaItemPresent=${player.currentMediaItem != null}"
                             )
@@ -208,7 +200,7 @@ class PlaybackService : MediaSessionService() {
                             Handler(Looper.getMainLooper()).postDelayed({
                                 DiagnosticLogger.w(
                                     TAG,
-                                    "behindLiveWindow recovery followup background=$background backgroundHandoffMode=$backgroundHandoffMode " +
+                                    "behindLiveWindow recovery followup background=$background " +
                                         "state=${playbackStateName(player.playbackState)} playWhenReady=${player.playWhenReady} " +
                                         "isPlaying=${player.isPlaying} error=${player.playerError?.errorCodeName}"
                                 )
@@ -304,15 +296,13 @@ class PlaybackService : MediaSessionService() {
                                 val title = customCommand.customExtras.getString(TITLE)
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
-                                val disableVideo = customCommand.customExtras.getBoolean(DISABLE_VIDEO)
                                 logBufferDebug(
-                                    "START_STREAM received channel=$channelName disableVideo=$disableVideo " +
-                                        "backgroundHandoffMode=$backgroundHandoffMode uriPresent=${!uri.isNullOrBlank()}"
+                                    "START_STREAM received channel=$channelName uriPresent=${!uri.isNullOrBlank()}"
                                 )
                                 DiagnosticLogger.i(
                                     TAG,
-                                    "START_STREAM service received channel=$channelName disableVideo=$disableVideo " +
-                                        "background=$background backgroundHandoffMode=$backgroundHandoffMode " +
+                                    "START_STREAM service received channel=$channelName " +
+                                        "background=$background " +
                                         "${summarizePlaybackUri(uri)}"
                                 )
                                 videoId = null
@@ -399,10 +389,6 @@ class PlaybackService : MediaSessionService() {
                                         }.build()
                                     )
                                 )
-                                session.player.trackSelectionParameters = session.player.trackSelectionParameters
-                                    .buildUpon()
-                                    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, disableVideo)
-                                    .build()
                                 session.player.volume = prefs().getInt(C.PLAYER_VOLUME, 100) / 100f
                                 session.player.setPlaybackSpeed(1f)
                                 session.player.prepare()
@@ -760,7 +746,7 @@ class PlaybackService : MediaSessionService() {
     private fun logPlayerError(error: PlaybackException) {
         val responseCode = httpResponseCode(error)
         val message = "playerError code=${error.errorCode} name=${error.errorCodeName} " +
-            "http=$responseCode background=$background backgroundHandoffMode=$backgroundHandoffMode " +
+            "http=$responseCode background=$background " +
             "message=${error.message}"
         if (responseCode == 403 || responseCode == 404 || isBehindLiveWindowError(error)) {
             DiagnosticLogger.w(TAG, message)
@@ -842,8 +828,6 @@ class PlaybackService : MediaSessionService() {
         const val TITLE = "title"
         const val CHANNEL_NAME = "channelName"
         const val CHANNEL_LOGO = "channelLogo"
-        const val DISABLE_VIDEO = "disableVideo"
-        const val KEY_BACKGROUND_HANDOFF_PENDING = "playbackService.backgroundHandoffPending"
         const val DURATION = "duration"
         const val NAMES = "names"
         const val CODECS = "codecs"

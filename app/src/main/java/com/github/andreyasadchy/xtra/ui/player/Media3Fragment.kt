@@ -93,29 +93,6 @@ class Media3Fragment : PlayerFragment() {
         return null
     }
 
-    private fun attachToExistingPlaybackIfNeeded(controller: MediaController?): Boolean {
-        val requested = requireArguments().getBoolean(KEY_ATTACH_TO_EXISTING_PLAYBACK)
-        if (!requested) {
-            return false
-        }
-        if (controller?.currentMediaItem != null) {
-            playerDebugLog(
-                "attachToExistingPlaybackIfNeeded attached mediaId=${controller.currentMediaItem?.mediaId} " +
-                    "isPlaying=${controller.isPlaying}"
-            )
-            viewModel.started = true
-            controller.trackSelectionParameters = controller.trackSelectionParameters
-                .buildUpon()
-                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
-                .build()
-            binding.playerSurface.visibility = View.VISIBLE
-            requireArguments().putBoolean(KEY_ATTACH_TO_EXISTING_PLAYBACK, false)
-            return true
-        }
-        playerDebugLog("attachToExistingPlaybackIfNeeded pending but controller has no currentMediaItem")
-        return false
-    }
-
     override fun onStart() {
         super.onStart()
         controllerFuture = MediaController.Builder(
@@ -478,7 +455,6 @@ class Media3Fragment : PlayerFragment() {
                 player?.prepare()
             }
             player?.let { player ->
-                attachToExistingPlaybackIfNeeded(player)
                 if (viewModel.loaded.value && player.currentMediaItem == null) {
                     viewModel.started = false
                 }
@@ -513,10 +489,6 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun initialize() {
-        if (attachToExistingPlaybackIfNeeded(player)) {
-            playerDebugLog("initialize attached to existing playback")
-            return
-        }
         if (player != null && !viewModel.started) {
             playerDebugLog("initialize starting fresh playback")
             startPlayer()
@@ -1154,9 +1126,9 @@ class Media3Fragment : PlayerFragment() {
             }
         }
 
-        fun newInstance(item: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean, attachToExistingPlayback: Boolean = false): Media3Fragment {
+        fun newInstance(item: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean): Media3Fragment {
             return Media3Fragment().apply {
-                arguments = getStreamArguments(item, resolvedUrl, forceStandardLiveEngine, attachToExistingPlayback)
+                arguments = getStreamArguments(item, resolvedUrl, forceStandardLiveEngine)
             }
         }
 

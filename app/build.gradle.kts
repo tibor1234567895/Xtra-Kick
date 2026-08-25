@@ -258,6 +258,8 @@ dependencies {
 
     implementation(libs.coroutines)
     testImplementation("junit:junit:4.13.2")
+// Real org.json for JVM tests — android.jar's stub throws "not mocked".
+testImplementation("org.json:json:20240303")
     // ChatBackgroundUtilsTest computes its expected values with androidx ColorUtils,
     // which calls android.graphics.Color — absent on a plain JVM. Robolectric supplies it.
     testImplementation("org.robolectric:robolectric:4.14.1")

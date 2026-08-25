@@ -2250,6 +2250,80 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /**
+     * The channel owner's own 7TV paint/badge otherwise only arrives through EventApi deltas,
+     * so a fresh chat session rendered no streamer flair until some cosmetic event happened to
+     * fire. Fetch the equipped style up front and hydrate missing definitions via the public
+     * GQL endpoint. Chatters still come from deltas — no bulk endpoint exists for them.
+     */
+    private fun hydrateStvChannelCosmetics(channelId: String?) {
+        val id = channelId?.takeIf { it.isNotBlank() } ?: return
+        val prefs = applicationContext.prefs()
+        val showPaints = prefs.getBoolean(C.CHAT_SHOW_PAINTS, true)
+        val showBadges = prefs.getBoolean(C.CHAT_SHOW_STV_BADGES, true)
+        if (!showPaints && !showBadges) return
+        val networkLibrary = prefs.getString(C.NETWORK_LIBRARY, "OkHttp")
+        viewModelScope.launch(Dispatchers.IO) {
+            val (paintId, badgeId) = runCatching { playerRepository.loadStvChannelStyle(networkLibrary, id) }.getOrNull()
+                ?: return@launch
+            val wantPaint = showPaints && !paintId.isNullOrBlank()
+            val wantBadge = showBadges && !badgeId.isNullOrBlank()
+            if (!wantPaint && !wantBadge) return@launch
+            val missingPaint = wantPaint && synchronized(namePaints) { namePaints.none { it.id == paintId } }
+            val missingBadge = wantBadge && synchronized(stvBadges) { stvBadges.none { it.id == badgeId } }
+            if (missingPaint || missingBadge) {
+                runCatching {
+                    playerRepository.loadStvCosmetics(
+                        paintIds = if (missingPaint) listOf(paintId!!) else emptyList(),
+                        badgeIds = if (missingBadge) listOf(badgeId!!) else emptyList(),
+                    )
+                }.getOrNull()?.let { defs ->
+                    StvEventApiUtils.hydrateFromGql(defs, prefs.getBoolean(C.CHAT_USE_WEBP, true)).forEach { result ->
+                        when (result) {
+                            is StvEventApiUtils.Cosmetic.Paint -> if (wantPaint && result.paint.id == paintId) {
+                                synchronized(namePaints) {
+                                    namePaints.removeAll { it.id == result.paint.id }
+                                    namePaints.add(result.paint)
+                                }
+                            }
+                            is StvEventApiUtils.Cosmetic.Badge -> if (wantBadge && result.badge.id == badgeId) {
+                                synchronized(stvBadges) {
+                                    stvBadges.removeAll { it.id == result.badge.id }
+                                    stvBadges.add(result.badge)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            val changed = synchronized(stvUsers) {
+                val existing = stvUsers.find { it.userId == id }
+                if (existing != null) {
+                    var touched = false
+                    if (existing.paintId.isNullOrBlank() && wantPaint) {
+                        existing.paintId = paintId
+                        touched = true
+                    }
+                    if (existing.badgeId.isNullOrBlank() && wantBadge) {
+                        existing.badgeId = badgeId
+                        touched = true
+                    }
+                    touched
+                } else {
+                    stvUsers.add(StvUser(
+                        userId = id,
+                        paintId = paintId?.takeIf { wantPaint },
+                        badgeId = badgeId?.takeIf { wantBadge },
+                    ))
+                    true
+                }
+            }
+            if (changed) {
+                updateUserMessages.emit(id)
+            }
+        }
+    }
+
     fun startLiveChat(channelId: String?, channelLogin: String) {
         stopLiveChat()
         val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext)
@@ -2279,6 +2353,7 @@ class ChatViewModel @Inject constructor(
             }
         }
         loadKickInitialRoomStateIfNeeded(channelId, channelLogin)
+        hydrateStvChannelCosmetics(channelId)
         chatReadJob = viewModelScope.launch {
             val resolvedChannel = runCatching {
                 kickRepository.getChannel(channelLogin)

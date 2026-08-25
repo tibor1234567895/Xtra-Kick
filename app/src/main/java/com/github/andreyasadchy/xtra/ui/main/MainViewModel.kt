@@ -26,7 +26,6 @@ import com.github.andreyasadchy.xtra.model.kick.auth.KickBackendRefreshRequest
 import com.github.andreyasadchy.xtra.model.ui.Clip
 import com.github.andreyasadchy.xtra.model.ui.Game
 import com.github.andreyasadchy.xtra.model.ui.OfflineVideo
-import com.github.andreyasadchy.xtra.model.ui.Tag
 import com.github.andreyasadchy.xtra.model.ui.User
 import com.github.andreyasadchy.xtra.model.ui.Video
 import com.github.andreyasadchy.xtra.repository.AuthRepository
@@ -126,7 +125,6 @@ class MainViewModel @Inject constructor(
     val clip = MutableStateFlow<Clip?>(null)
     val user = MutableStateFlow<User?>(null)
     val game = MutableStateFlow<Pair<Game?, String?>?>(null)
-    val tag = MutableStateFlow<Tag?>(null)
 
     val updateUrl = MutableSharedFlow<String?>()
 
@@ -330,13 +328,6 @@ class MainViewModel @Inject constructor(
                 )
                 game.value = resolved to tag
             }
-        }
-    }
-
-    fun loadTag(tagId: String, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
-        if (tag.value == null) {
-            // Kick freeform tags have no Twitch GQL contentTag API; keep id as display name.
-            tag.value = Tag(id = tagId, name = tagId)
         }
     }
 

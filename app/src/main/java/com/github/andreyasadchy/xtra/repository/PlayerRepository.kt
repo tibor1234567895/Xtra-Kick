@@ -26,10 +26,15 @@ import dagger.Lazy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -339,6 +344,83 @@ class PlayerRepository @Inject constructor(
         }
         val set = response.emoteSet
         Pair(set.id, parseStvEmotes(set.emotes, useWebp, Emote.CHANNEL_STV))
+    }
+
+    /**
+     * 7TV style (equipped paint/badge ids) of a Kick channel owner, or null when the channel
+     * has no 7TV account, nothing equipped, or the request failed. The EventApi only pushes
+     * cosmetic *changes*, so without this up-front lookup a fresh session renders no flair
+     * until some unrelated cosmetic event happens to fire.
+     */
+    suspend fun loadStvChannelStyle(networkLibrary: String?, kickUserId: String?): Pair<String?, String?>? = withContext(Dispatchers.IO) {
+        if (kickUserId.isNullOrBlank()) return@withContext null
+        val body = stvGet(networkLibrary, "https://7tv.io/v3/users/kick/$kickUserId") ?: return@withContext null
+        runCatching {
+            fun JsonObject?.text(key: String): String? =
+                (this?.get(key) as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+            val style = json.parseToJsonElement(body).jsonObject["user"]?.jsonObject?.get("style")?.jsonObject
+            Pair(style.text("paint_id"), style.text("badge_id"))
+        }.getOrNull()?.takeIf { (paintId, badgeId) -> !paintId.isNullOrBlank() || !badgeId.isNullOrBlank() }
+    }
+
+    /**
+     * Batch-fetch 7TV cosmetic definitions from the public GQL endpoint. Returns the raw
+     * `data.cosmetics` object ({paints:[...], badges:[...]}) for StvEventApiUtils to map onto
+     * the same models the live event stream produces.
+     */
+    suspend fun loadStvCosmetics(paintIds: List<String>, badgeIds: List<String>): JsonObject? = withContext(Dispatchers.IO) {
+        val ids = (paintIds + badgeIds).filter { it.isNotBlank() }.joinToString(",") { "\\\"$it\\\"" }
+        if (ids.isEmpty()) return@withContext null
+        // Small authenticated-free POST; OkHttp is always available and Cronet upload plumbing
+        // is not worth it for a one-off hydration request.
+        runCatching {
+            okHttpClient.newCall(Request.Builder().apply {
+                url("https://7tv.io/v3/gql")
+                header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                post(
+                    ("{\"query\":\"{ cosmetics(list: [$ids]) { paints { id name gradients { function angle repeat " +
+                        "image_url stops { at color } } shadows { x_offset y_offset radius color } } " +
+                        "badges { id name tooltip host { url files { name format } } } } }\"}")
+                        .toRequestBody("application/json".toMediaType())
+                )
+            }.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val data = json.parseToJsonElement(response.body.string()).jsonObject["data"]?.jsonObject
+                data?.get("cosmetics")?.jsonObject
+            }
+        }.getOrNull()
+    }
+
+    /** GET honoring the network-library preference; null on any failure or non-2xx. */
+    private suspend fun stvGet(networkLibrary: String?, url: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            when {
+                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                    val response = suspendCoroutine { continuation ->
+                        httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                            addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                        }.build().start()
+                    }
+                    String(response.second).takeIf { response.first.httpStatusCode in 200..299 }
+                }
+                networkLibrary == "Cronet" && cronetEngine != null -> {
+                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
+                    cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).apply {
+                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                    }.build().start()
+                    val response = request.future.get()
+                    (response.responseBody as? String)?.takeIf { response.urlResponseInfo.httpStatusCode in 200..299 }
+                }
+                else -> {
+                    okHttpClient.newCall(Request.Builder().apply {
+                        url(url)
+                        header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                    }.build()).execute().use { response ->
+                        response.body.string().takeIf { response.isSuccessful }
+                    }
+                }
+            }
+        }.getOrNull()
     }
 
     suspend fun loadStvKickEmotes(networkLibrary: String?, userId: String, useWebp: Boolean): Pair<String?, List<Emote>> = withContext(Dispatchers.IO) {

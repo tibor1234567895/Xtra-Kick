@@ -34,7 +34,6 @@ import com.github.andreyasadchy.xtra.databinding.FragmentAboutBinding
 import com.github.andreyasadchy.xtra.ui.channel.ChannelPagerFragmentArgs
 import com.github.andreyasadchy.xtra.ui.common.BaseNetworkFragment
 import com.github.andreyasadchy.xtra.ui.common.IntegrityDialog
-import com.github.andreyasadchy.xtra.ui.team.TeamFragmentDirections
 import com.github.andreyasadchy.xtra.util.C
 import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.prefs
@@ -123,36 +122,6 @@ class ChannelAboutFragment : BaseNetworkFragment(), IntegrityDialog.CallbackList
                                         }
                                     )
                                 }
-                            }
-                        }
-                    }
-                }
-            }
-            viewLifecycleOwner.lifecycleScope.launch {
-                repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    viewModel.team.collectLatest { result ->
-                        if (result != null) {
-                            val name = result.first
-                            val displayName = result.second
-                            if (!displayName.isNullOrBlank()) {
-                                team.visibility = View.VISIBLE
-                                val string = getString(R.string.team, displayName)
-                                val index = string.indexOf(displayName)
-                                val spannableString = SpannableString(string)
-                                spannableString.setSpan(StyleSpan(Typeface.BOLD), index, index + displayName.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                                if (name != null) {
-                                    spannableString.setSpan(object : ClickableSpan() {
-                                        override fun onClick(widget: View) {
-                                            findNavController().navigate(
-                                                TeamFragmentDirections.actionGlobalTeamFragment(
-                                                    teamName = name,
-                                                )
-                                            )
-                                        }
-                                    }, index, index + displayName.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                                    team.movementMethod = LinkMovementMethod.getInstance()
-                                }
-                                team.text = spannableString
                             }
                         }
                     }

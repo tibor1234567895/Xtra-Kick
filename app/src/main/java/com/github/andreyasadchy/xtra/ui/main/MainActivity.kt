@@ -5,7 +5,6 @@ import android.app.PictureInPictureParams
 import android.app.admin.DevicePolicyManager
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -39,7 +38,6 @@ import androidx.core.content.IntentSanitizer
 import androidx.core.content.edit
 import androidx.core.content.res.use
 import androidx.core.net.toUri
-import com.github.andreyasadchy.xtra.util.bundleOf
 import androidx.core.os.LocaleListCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -53,9 +51,6 @@ import androidx.lifecycle.withStarted
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
-import androidx.media3.session.MediaController
-import androidx.media3.session.SessionCommand
-import androidx.media3.session.SessionToken
 import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.NavigationUI
@@ -87,7 +82,6 @@ import com.github.andreyasadchy.xtra.ui.player.KickLivePlayback
 import com.github.andreyasadchy.xtra.ui.player.Media3Fragment
 import com.github.andreyasadchy.xtra.ui.player.PlaybackService
 import com.github.andreyasadchy.xtra.ui.player.PlayerFragment
-import com.github.andreyasadchy.xtra.ui.team.TeamFragmentDirections
 import com.github.andreyasadchy.xtra.ui.top.TopStreamsFragmentDirections
 import com.github.andreyasadchy.xtra.util.AuthStateHelper
 import com.github.andreyasadchy.xtra.util.C
@@ -99,7 +93,6 @@ import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.tokenPrefs
 import com.google.android.material.color.MaterialColors
-import com.google.common.util.concurrent.MoreExecutors
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -109,11 +102,6 @@ import kotlin.concurrent.schedule
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
-
-    private data class BackgroundStreamHandoff(
-        val stream: Stream,
-        val resolvedUrl: String,
-    )
 
     companion object {
         private const val TAG = "MainActivity"
@@ -136,7 +124,6 @@ class MainActivity : AppCompatActivity() {
     var multiPovFragment: MultiPovFragment? = null
         private set
     private var launchingSettings = false
-    private var pendingBackgroundStreamHandoff: BackgroundStreamHandoff? = null
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             lifecycleScope.launch {
@@ -432,21 +419,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.tag.collectLatest { tag ->
-                    if (tag != null) {
-                        playerFragment?.minimize()
-                        navController.navigate(
-                            GamesFragmentDirections.actionGlobalGamesFragment(
-                                tags = arrayOf(tag)
-                            )
-                        )
-                        viewModel.tag.value = null
-                    }
-                }
-            }
-        }
         if (prefs.getBoolean(C.LIVE_NOTIFICATIONS_ENABLED, false)) {
             WorkManager.getInstance(this).enqueueUniquePeriodicWork(
                 "live_notifications",
@@ -502,15 +474,6 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         launchingSettings = false
-        pendingBackgroundStreamHandoff?.let { handoff ->
-            logPlayerShell(
-                "onResume attaching pending background handoff channel=${handoff.stream.channelName} " +
-                    "urlPresent=${handoff.resolvedUrl.isNotBlank()}"
-            )
-            startPlayer(Media3Fragment.newInstance(handoff.stream, handoff.resolvedUrl, true, attachToExistingPlayback = true))
-            pendingBackgroundStreamHandoff = null
-            return
-        }
         logPlayerShell("onResume restoring existing playerFragment=${playerFragment?.javaClass?.simpleName}")
         restorePlayerFragment()
     }
@@ -595,8 +558,10 @@ class MainActivity : AppCompatActivity() {
                 val url = intent.data?.toString()
                 if (url != null) {
                     when {
-                        url.contains("kick.com/videos/") -> {
-                            val id = url.substringAfter("kick.com/videos/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
+                        url.contains("kick.com/videos/") || url.contains("kick.com/video/") -> {
+                            val id = url.substringAfter("kick.com/videos/", "")
+                                .ifEmpty { url.substringAfter("kick.com/video/", "") }
+                                .takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
                             val offset = url.substringAfter("?t=", "").takeIf { it.isNotBlank() }?.let { (KickApiHelper.getDuration(it) ?: 0) * 1000 }
                             if (!id.isNullOrBlank()) {
                                 viewModel.loadVideo(
@@ -665,33 +630,11 @@ class MainActivity : AppCompatActivity() {
                                 TopStreamsFragmentDirections.actionGlobalTopFragment()
                             )
                         }
-                        url.contains("kick.com/tags/") -> {
-                            val tagId = url.substringAfter("kick.com/tags/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
-                            if (!tagId.isNullOrBlank()) {
-                                viewModel.loadTag(
-                                    tagId,
-                                    prefs.getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getKickWebHeaders(this),
-                                    prefs.getBoolean(C.ENABLE_INTEGRITY, false),
-                                )
-                            }
-                        }
                         url.contains("kick.com/directory") -> {
                             playerFragment?.minimize()
                             navController.navigate(
                                 GamesFragmentDirections.actionGlobalGamesFragment()
                             )
-                        }
-                        url.contains("kick.com/team/") -> {
-                            val teamName = url.substringAfter("kick.com/team/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
-                            if (!teamName.isNullOrBlank()) {
-                                playerFragment?.minimize()
-                                navController.navigate(
-                                    TeamFragmentDirections.actionGlobalTeamFragment(
-                                        teamName = Uri.decode(teamName)
-                                    )
-                                )
-                            }
                         }
                         else -> {
                             val login = url.substringAfter("kick.com/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
@@ -888,62 +831,6 @@ class MainActivity : AppCompatActivity() {
 
     fun isLaunchingSettings(): Boolean = launchingSettings
 
-    fun startStreamForBackgroundHandoff(stream: Stream, resolvedUrl: String? = null) {
-        val streamUrl = resolvedUrl?.takeIf { it.isNotBlank() } ?: return
-        if (isFinishing || isDestroyed) {
-            logPlayerShell(
-                "startStreamForBackgroundHandoff ignored finishing=$isFinishing destroyed=$isDestroyed " +
-                    "channel=${stream.channelName}"
-            )
-            return
-        }
-        val disableVideo = prefs.getBoolean(C.PLAYER_DISABLE_BACKGROUND_VIDEO, true)
-        logPlayerShell(
-            "startStreamForBackgroundHandoff channel=${stream.channelName} " +
-                "disableVideo=$disableVideo title=${stream.title}"
-        )
-        prefs.edit {
-            putBoolean(PlaybackService.KEY_BACKGROUND_HANDOFF_PENDING, true)
-        }
-        pendingBackgroundStreamHandoff = BackgroundStreamHandoff(stream, streamUrl)
-        val controllerFuture = MediaController.Builder(
-            this,
-            SessionToken(this, ComponentName(this, PlaybackService::class.java))
-        ).buildAsync()
-        controllerFuture.addListener({
-            val controller = try {
-                controllerFuture.get()
-            } catch (e: Exception) {
-                DiagnosticLogger.e(TAG, "background handoff controller connect failed", e)
-                MediaController.releaseFuture(controllerFuture)
-                return@addListener
-            }
-            logPlayerShell("background handoff controller connected")
-            val command = SessionCommand(
-                PlaybackService.START_STREAM,
-                bundleOf(
-                    PlaybackService.URI to streamUrl,
-                    PlaybackService.TITLE to stream.title,
-                    PlaybackService.CHANNEL_NAME to stream.channelName,
-                    PlaybackService.CHANNEL_LOGO to stream.channelLogo,
-                    PlaybackService.DISABLE_VIDEO to disableVideo,
-                )
-            )
-            val commandResult = controller.sendCustomCommand(command, Bundle.EMPTY)
-            commandResult.addListener({
-                try {
-                    commandResult.get()
-                } catch (e: Exception) {
-                    DiagnosticLogger.e(TAG, "background handoff START_STREAM failed", e)
-                    MediaController.releaseFuture(controllerFuture)
-                    return@addListener
-                }
-                logPlayerShell("background handoff START_STREAM completed channel=${stream.channelName}")
-                MediaController.releaseFuture(controllerFuture)
-            }, MoreExecutors.directExecutor())
-        }, MoreExecutors.directExecutor())
-    }
-
     fun startVideo(video: Video, offset: Long?, ignoreSavedPosition: Boolean = false) {
         closeMultiPovInternal()
         val fragment = Media3Fragment.newInstance(video, offset, ignoreSavedPosition)
@@ -980,8 +867,6 @@ class MainActivity : AppCompatActivity() {
     }
 
 //Player methods
-
-    fun hasPendingBackgroundStreamHandoff(): Boolean = pendingBackgroundStreamHandoff != null
 
     private fun startPlayer(fragment: PlayerFragment) {
         if (isFinishing || isDestroyed) {

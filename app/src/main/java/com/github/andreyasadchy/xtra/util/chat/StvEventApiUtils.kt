@@ -4,6 +4,13 @@ import android.graphics.Color
 import com.github.andreyasadchy.xtra.model.chat.Emote
 import com.github.andreyasadchy.xtra.model.chat.NamePaint
 import com.github.andreyasadchy.xtra.model.chat.StvBadge
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import org.json.JSONArray
 import org.json.JSONObject
 
 object StvEventApiUtils {
@@ -217,6 +224,88 @@ object StvEventApiUtils {
 
     private fun parseRGBAColor(value: Int): Int {
         return Color.argb(value and 0xFF, value shr 24 and 0xFF, value shr 16 and 0xFF, value shr 8 and 0xFF)
+    }
+
+    private fun JsonObject?.gqlText(key: String): String? =
+        (this?.get(key) as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+
+    /**
+     * Maps cosmetic definitions fetched from the public GQL endpoint (`cosmetics(list:[...])`,
+     * structured fields) onto the exact JSON shape [parseCosmetic] expects from live EventApi
+     * events, so hydrated paints/badges are indistinguishable from delta-delivered ones.
+     * Solid-color-only paints (no gradients, no image) are skipped — the renderer has no
+     * representation for them today, matching EventApi behavior.
+     */
+    fun hydrateFromGql(cosmetics: JsonObject, useWebp: Boolean): List<Cosmetic> {
+        val out = mutableListOf<Cosmetic>()
+        (cosmetics["paints"] as? JsonArray)?.forEach { element ->
+            val paint = (element as? JsonObject) ?: return@forEach
+            val id = paint.gqlText("id") ?: return@forEach
+            val gradients = paint["gradients"] as? JsonArray ?: return@forEach
+            val gradient = gradients
+                .mapNotNull { it as? JsonObject }
+                .firstOrNull { it.gqlText("function") == "LINEAR_GRADIENT" || it.gqlText("function") == "RADIAL_GRADIENT" }
+                ?: gradients.mapNotNull { it as? JsonObject }.firstOrNull { it.gqlText("function") == "URL" }
+                ?: return@forEach
+            val data = JSONObject().apply {
+                put("id", id)
+                when (val function = gradient.gqlText("function")) {
+                    "URL" -> {
+                        put("function", function)
+                        put("image_url", gradient.gqlText("image_url").orEmpty())
+                    }
+                    else -> {
+                        put("function", function)
+                        put("angle", gradient.gqlText("angle")?.toFloatOrNull()?.toInt() ?: 0)
+                        put("repeat", gradient.gqlText("repeat") == "true")
+                        put("stops", JSONArray().apply {
+                            (gradient["stops"] as? JsonArray)?.forEach { stopElement ->
+                                val stop = stopElement as? JsonObject ?: return@forEach
+                                put(JSONObject().apply {
+                                    put("at", stop.gqlText("at")?.toFloatOrNull() ?: 0f)
+                                    put("color", stop.gqlText("color")?.toIntOrNull() ?: 0)
+                                })
+                            }
+                        })
+                    }
+                }
+                put("shadows", JSONArray().apply {
+                    (paint["shadows"] as? JsonArray)?.forEach { shadowElement ->
+                        val shadow = shadowElement as? JsonObject ?: return@forEach
+                        put(JSONObject().apply {
+                            put("x_offset", shadow.gqlText("x_offset")?.toFloatOrNull() ?: 0f)
+                            put("y_offset", shadow.gqlText("y_offset")?.toFloatOrNull() ?: 0f)
+                            put("radius", shadow.gqlText("radius")?.toFloatOrNull() ?: 0f)
+                            put("color", shadow.gqlText("color")?.toIntOrNull() ?: 0)
+                        })
+                    }
+                })
+            }
+            parseCosmetic(JSONObject().put("object", JSONObject().put("kind", "PAINT").put("data", data)), useWebp)?.let { out.add(it) }
+        }
+        (cosmetics["badges"] as? JsonArray)?.forEach { element ->
+            val badge = (element as? JsonObject) ?: return@forEach
+            val id = badge.gqlText("id") ?: return@forEach
+            val host = (badge["host"] as? JsonObject) ?: return@forEach
+            val data = JSONObject().apply {
+                put("id", id)
+                put("tooltip", badge.gqlText("tooltip") ?: badge.gqlText("name").orEmpty())
+                put("host", JSONObject().apply {
+                    put("url", host.gqlText("url").orEmpty())
+                    put("files", JSONArray().apply {
+                        (host["files"] as? JsonArray)?.forEach { fileElement ->
+                            val file = fileElement as? JsonObject ?: return@forEach
+                            put(JSONObject().apply {
+                                put("name", file.gqlText("name").orEmpty())
+                                put("format", file.gqlText("format").orEmpty())
+                            })
+                        }
+                    })
+                })
+            }
+            parseCosmetic(JSONObject().put("object", JSONObject().put("kind", "BADGE").put("data", data)), useWebp)?.let { out.add(it) }
+        }
+        return out
     }
 
     private fun findConnectionId(connections: org.json.JSONArray, platform: String): String? {
