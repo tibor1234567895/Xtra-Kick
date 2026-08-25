@@ -1,7 +1,6 @@
 [versions]
 activity = "1.12.4"
 android-gradle-plugin = "9.3.1"
-apollo = "5.0.1"
 appcompat = "1.7.1"
 coil = "3.5.0"
 conscrypt = "2.5.3"
@@ -36,7 +35,6 @@ work = "2.11.1"
 
 [libraries]
 activity = { module = "androidx.activity:activity", version.ref = "activity" }
-apollo-api = { module = "com.apollographql.apollo:apollo-api", version.ref = "apollo" }
 appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 coil = { module = "io.coil-kt.coil3:coil", version.ref = "coil" }
 coil-gif = { module = "io.coil-kt.coil3:coil-gif", version.ref = "coil" }
@@ -84,7 +82,6 @@ work-runtime = { module = "androidx.work:work-runtime", version.ref = "work" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "android-gradle-plugin" }
-apollo = { id = "com.apollographql.apollo", version.ref = "apollo" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

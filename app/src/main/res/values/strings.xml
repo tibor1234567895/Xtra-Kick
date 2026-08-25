@@ -33,7 +33,6 @@
     <string name="apply">Apply</string>
     <string name="sort_and_period">Sort by: %1$s. Period: %2$s</string>
     <string name="live">Live</string>
-    <string name="tags">Tags</string>
     <string name="videos">Videos</string>
     <string name="clips">Clips</string>
     <string name="scroll_down">Scroll down</string>
@@ -269,7 +268,7 @@
     <string name="irc_notice_bad_ban_self">You cannot ban yourself.</string>
     <string name="irc_notice_bad_ban_staff">You cannot ban a staff %s. Please email Kick support if a staff member is being abusive.</string>
     <string name="irc_notice_bad_commercial_error">Failed to start the commercial.</string>
-    <string name="irc_notice_bad_delete_message_broadcaster">You cannot delete the broadcasterÃ¢â‚¬â„¢s messages.</string>
+    <string name="irc_notice_bad_delete_message_broadcaster">You cannot delete the broadcaster\'s messages.</string>
     <string name="irc_notice_bad_delete_message_mod">You cannot delete messages from another moderator %s.</string>
     <string name="irc_notice_bad_host_error">There was a problem hosting %s. Please try again in a minute.</string>
     <string name="irc_notice_bad_host_hosting">This channel is already hosting %s.</string>
@@ -325,17 +324,17 @@
     <string name="irc_notice_msg_r9k">This room is in unique-chat mode and the message you attempted to send is not unique.</string>
     <string name="irc_notice_msg_ratelimit">Your message was not sent because you are sending messages too quickly.</string>
     <string name="irc_notice_msg_rejected">Hey! Your message is being checked by mods and has not been sent.</string>
-    <string name="irc_notice_msg_rejected_mandatory">Your message wasnÃ¢â‚¬â„¢t posted due to conflicts with the channelÃ¢â‚¬â„¢s moderation settings.</string>
+    <string name="irc_notice_msg_rejected_mandatory">Your message wasn\'t posted due to conflicts with the channel\'s moderation settings.</string>
     <string name="irc_notice_msg_slowmode">This room is in slow mode and you are sending messages too quickly. You will be able to talk again in %s seconds.</string>
     <string name="irc_notice_msg_subsonly">This room is in subscribers only mode. To talk, purchase a channel subscription at Kick subscriptions.</string>
-    <string name="irc_notice_msg_suspended">You donÃ¢â‚¬â„¢t have permission to perform that action.</string>
+    <string name="irc_notice_msg_suspended">You don\'t have permission to perform that action.</string>
     <string name="irc_notice_msg_timedout">You are timed out for %s more seconds.</string>
     <string name="irc_notice_msg_verified_email">This room requires a verified account to chat. Please verify your account at your account settings.</string>
     <string name="irc_notice_no_help">No help available.</string>
     <string name="irc_notice_no_mods">There are no moderators of this channel.</string>
     <string name="irc_notice_no_vips">This channel does not have any VIPs.</string>
     <string name="irc_notice_not_hosting">No channel is currently being hosted.</string>
-    <string name="irc_notice_no_permission">You donÃ¢â‚¬â„¢t have permission to perform that action.</string>
+    <string name="irc_notice_no_permission">You don\'t have permission to perform that action.</string>
     <string name="irc_notice_r9k_off">This room is no longer in unique-chat mode.</string>
     <string name="irc_notice_r9k_on">This room is now in unique-chat mode.</string>
     <string name="irc_notice_raid_error_already_raiding">You already have a raid in progress.</string>
@@ -354,14 +353,14 @@
     <string name="irc_notice_timeout_success">%1$s has been timed out for %2$s.</string>
     <string name="irc_notice_tos_ban">The community has closed channel %s due to Terms of Service violations.</string>
     <string name="irc_notice_turbo_only_color">Only turbo users can specify an arbitrary hex color. Use one of the following instead: %s.</string>
-    <string name="irc_notice_unavailable_command">Sorry, Ã¢â‚¬Å“%sÃ¢â‚¬Â is not available through this client.</string>
+    <string name="irc_notice_unavailable_command">Sorry, \"%s\" is not available through this client.</string>
     <string name="irc_notice_unban_success">%s is no longer banned from this channel.</string>
     <string name="irc_notice_unmod_success">You have removed %s as a moderator of this channel.</string>
     <string name="irc_notice_unraid_error_no_active_raid">You do not have an active raid.</string>
     <string name="irc_notice_unraid_error_unexpected">There was a problem stopping the raid. Please try again in a minute.</string>
     <string name="irc_notice_unraid_success">The raid has been canceled.</string>
     <string name="irc_notice_unrecognized_cmd">Unrecognized command: %s</string>
-    <string name="irc_notice_untimeout_banned">%s is permanently banned. Use Ã¢â‚¬Å“/unbanÃ¢â‚¬Â to remove a ban.</string>
+    <string name="irc_notice_untimeout_banned">%s is permanently banned. Use \"/unban\" to remove a ban.</string>
     <string name="irc_notice_untimeout_success">%s is no longer timed out in this channel.</string>
     <string name="irc_notice_unvip_success">You have removed %s as a VIP of this channel.</string>
     <string name="irc_notice_usage_ban">Usage: \"/ban &lt;username&gt; [reason]\" - Permanently prevent a user from chatting. Reason is optional and will be shown to the target user and other moderators. Use \"/unban\" to remove a ban.</string>
@@ -407,12 +406,7 @@
     <string name="irc_notice_whisper_limit_per_min">You are sending whispers too fast. Try again in a minute.</string>
     <string name="irc_notice_whisper_limit_per_sec">You are sending whispers too fast. Try again in a second.</string>
     <string name="irc_notice_whisper_restricted">Your settings prevent you from sending this whisper.</string>
-    <string name="irc_notice_whisper_restricted_recipient">That userÃ¢â‚¬â„¢s settings prevent them from receiving this whisper.</string>
-    <string name="moderators">Moderators</string>
-    <string name="vips">VIPs</string>
-    <string name="viewers">Viewers</string>
-    <string name="broadcaster">Broadcaster</string>
-    <string name="user_count">%s users in chat</string>
+    <string name="irc_notice_whisper_restricted_recipient">That user\'s settings prevent them from receiving this whisper.</string>
     <string name="position">Position: %s</string>
     <string name="player_viewerlist">Open viewer list from view count</string>
     <string name="use_followpager">Use tabs for \"Following\" page</string>
@@ -739,9 +733,6 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="replying_to_message">Replying to %1$s\: %2$s</string>
     <string name="channel_stv_emote">Channel 7TV emote</string>
     <string name="global_stv_emote">Global 7TV emote</string>
-    <string name="channel_sub_emote">%1$s tier %2$s sub emote</string>
-    <string name="channel_follower_emote">%s follower emote</string>
-    <string name="bits_reward_emote">%d bits reward</string>
     <string name="show_name_paints">Show 7TV name paints</string>
     <string name="api_kick" translatable="false">Kick</string>
     <string name="kick_oauth_not_configured" translatable="false">Kick login is not configured. Set KICK_CLIENT_ID and KICK_OAUTH_BACKEND_BASE_URL in build config.</string>
@@ -909,7 +900,6 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="saved_date">Saved date</string>
     <string name="about">About</string>
     <string name="team">Team: %s</string>
-    <string name="owner">Owner: %s</string>
     <string name="use_background_audio_locked">Play audio in the background when the screen is locked</string>
     <string name="use_background_audio_pip_closed">Play audio in the background when closing PiP</string>
     <string name="use_background_audio_pip_locked">Play audio in the background when the screen is locked in PiP mode</string>

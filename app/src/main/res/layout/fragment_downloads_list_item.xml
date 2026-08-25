@@ -19,7 +19,7 @@
             app:layout_constraintTop_toTopOf="parent"
             tools:src="@tools:sample/backgrounds/scenic" />
 
-        <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+        <com.xtrakick.app.ui.view.TextWithShadow
             android:id="@+id/date"
             style="@style/ThumbnailItem"
             android:layout_marginStart="5dp"
@@ -28,7 +28,7 @@
             app:layout_constraintStart_toStartOf="parent"
             tools:text="Uploaded: July 16" />
 
-        <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+        <com.xtrakick.app.ui.view.TextWithShadow
             android:id="@+id/downloadDate"
             style="@style/ThumbnailItem"
             android:layout_marginEnd="5dp"
@@ -37,7 +37,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             tools:text="Downloaded: August 7" />
 
-        <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+        <com.xtrakick.app.ui.view.TextWithShadow
             android:id="@+id/duration"
             style="@style/ThumbnailItem"
             android:layout_marginStart="10dp"
@@ -57,18 +57,18 @@
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintVertical_bias="1.0">
 
-            <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+            <com.xtrakick.app.ui.view.TextWithShadow
                 android:id="@+id/sourceStart"
                 style="@style/ThumbnailItem"
                 tools:text="13:37:69" />
 
-            <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+            <com.xtrakick.app.ui.view.TextWithShadow
                 android:id="@+id/sourceEnd"
                 style="@style/ThumbnailItem"
                 tools:layout_marginTop="5dp"
                 tools:text="69:13:37" />
 
-            <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+            <com.xtrakick.app.ui.view.TextWithShadow
                 android:id="@+id/type"
                 style="@style/ThumbnailItem"
                 tools:layout_marginTop="5dp"

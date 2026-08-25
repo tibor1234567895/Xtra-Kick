@@ -1,0 +1,28 @@
+package com.xtrakick.app.repository
+
+import com.xtrakick.app.model.kick.KickMessageBadge
+
+internal fun mergeKickMessageBadges(
+    existingBadges: List<KickMessageBadge>,
+    syntheticBadges: List<KickMessageBadge>,
+    resolveType: (KickMessageBadge) -> String?,
+    normalizeType: (String) -> String,
+): List<KickMessageBadge> {
+    val merged = LinkedHashMap<String, KickMessageBadge>()
+    existingBadges.forEach { badge ->
+        val type = resolveType(badge)?.let(normalizeType) ?: return@forEach
+        merged[type] = badge
+    }
+    syntheticBadges.forEach { badge ->
+        val type = resolveType(badge)?.let(normalizeType) ?: return@forEach
+        val current = merged[type]
+        if (current == null || kickMessageBadgeSpecificity(badge) > kickMessageBadgeSpecificity(current)) {
+            merged[type] = badge
+        }
+    }
+    return merged.values.toList()
+}
+
+internal fun kickMessageBadgeSpecificity(badge: KickMessageBadge): Int {
+    return kickMessageBadgeSpecificityValue(badge)
+}

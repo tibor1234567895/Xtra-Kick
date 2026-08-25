@@ -103,7 +103,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="5dp">
 
-                    <com.github.andreyasadchy.xtra.ui.view.StrictEditText
+                    <com.xtrakick.app.ui.view.StrictEditText
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:digits="0123456789:."
@@ -127,7 +127,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="5dp">
 
-                    <com.github.andreyasadchy.xtra.ui.view.StrictEditText
+                    <com.xtrakick.app.ui.view.StrictEditText
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:digits="0123456789:."

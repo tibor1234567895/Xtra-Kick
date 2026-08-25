@@ -1,0 +1,26 @@
+package com.xtrakick.app.db
+
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.Query
+import com.xtrakick.app.model.NotificationUser
+
+@Dao
+interface NotificationUsersDao {
+
+    @Query("SELECT * FROM notifications")
+    fun getAll(): List<NotificationUser>
+
+    @Query("SELECT * FROM notifications WHERE channelId = :id")
+    fun getByUserId(id: String): NotificationUser?
+
+    @Insert()
+    fun insert(item: NotificationUser)
+
+    @Query("DELETE FROM notifications")
+    fun deleteAll()
+
+    @Delete
+    fun delete(item: NotificationUser)
+}

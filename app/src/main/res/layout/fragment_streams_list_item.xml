@@ -25,7 +25,7 @@
                 tools:src="@tools:sample/backgrounds/scenic"
                 tools:visibility="visible" />
 
-            <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+            <com.xtrakick.app.ui.view.TextWithShadow
                 android:id="@+id/viewers"
                 style="@style/ThumbnailItem"
                 android:layout_marginStart="5dp"
@@ -36,7 +36,7 @@
                 tools:text="133769 viewers"
                 tools:visibility="visible" />
 
-            <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+            <com.xtrakick.app.ui.view.TextWithShadow
                 android:id="@+id/uptime"
                 style="@style/ThumbnailItem"
                 android:layout_marginEnd="5dp"

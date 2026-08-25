@@ -1,9 +1,0 @@
-query SelfFollowingGame($id: ID, $slug: String, $name: String) {
-    game(id: $id, slug: $slug, name: $name) {
-        self {
-            follow {
-                followedAt
-            }
-        }
-    }
-}

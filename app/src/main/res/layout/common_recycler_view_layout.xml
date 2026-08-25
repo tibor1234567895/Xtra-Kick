@@ -19,21 +19,21 @@
         app:layout_constraintRight_toRightOf="parent"
         tools:visibility="visible" />
 
-    <com.github.andreyasadchy.xtra.ui.view.CustomSwipeRefreshLayout
+    <com.xtrakick.app.ui.view.CustomSwipeRefreshLayout
         android:id="@+id/swipeRefresh"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:enabled="false"
         app:layout_constraintTop_toTopOf="parent">
 
-        <com.github.andreyasadchy.xtra.ui.view.GridRecyclerView
+        <com.xtrakick.app.ui.view.GridRecyclerView
             android:id="@+id/recyclerView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:clipToPadding="false"
             tools:listitem="@layout/fragment_downloads_list_item" />
 
-    </com.github.andreyasadchy.xtra.ui.view.CustomSwipeRefreshLayout>
+    </com.xtrakick.app.ui.view.CustomSwipeRefreshLayout>
 
     <TextView
         android:id="@+id/nothingHere"

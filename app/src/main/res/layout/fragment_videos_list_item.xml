@@ -18,7 +18,7 @@
             app:layout_constraintTop_toTopOf="parent"
             tools:src="@tools:sample/backgrounds/scenic" />
 
-        <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+        <com.xtrakick.app.ui.view.TextWithShadow
             android:id="@+id/date"
             style="@style/ThumbnailItem"
             android:layout_marginEnd="5dp"
@@ -27,7 +27,7 @@
             app:layout_constraintEnd_toEndOf="parent"
             tools:text="April 20, 2017" />
 
-        <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+        <com.xtrakick.app.ui.view.TextWithShadow
             android:id="@+id/views"
             style="@style/ThumbnailItem"
             android:layout_marginStart="5dp"
@@ -36,7 +36,7 @@
             app:layout_constraintStart_toStartOf="parent"
             tools:text="133769 views" />
 
-        <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+        <com.xtrakick.app.ui.view.TextWithShadow
             android:id="@+id/duration"
             style="@style/ThumbnailItem"
             android:layout_marginStart="10dp"
@@ -45,7 +45,7 @@
             app:layout_constraintTop_toTopOf="parent"
             tools:text="13:37" />
 
-        <com.github.andreyasadchy.xtra.ui.view.TextWithShadow
+        <com.xtrakick.app.ui.view.TextWithShadow
             android:id="@+id/type"
             style="@style/ThumbnailItem"
             android:layout_marginTop="10dp"

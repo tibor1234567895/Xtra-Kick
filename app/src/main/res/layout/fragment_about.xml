@@ -59,7 +59,7 @@
             tools:text="@string/old_username"
             tools:visibility="visible" />
 
-        <com.github.andreyasadchy.xtra.ui.view.GridRecyclerView
+        <com.xtrakick.app.ui.view.GridRecyclerView
             android:id="@+id/recyclerView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

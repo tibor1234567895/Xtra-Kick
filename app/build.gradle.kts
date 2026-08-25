@@ -5,7 +5,6 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.navigation.safeargs)
-    alias(libs.plugins.apollo)
 }
 
 kotlin {
@@ -104,7 +103,7 @@ android {
         }
     }
 
-    namespace = "com.github.andreyasadchy.xtra"
+    namespace = "com.xtrakick.app"
     compileSdk = 37
 
     defaultConfig {
@@ -233,7 +232,6 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.conscrypt)
     implementation(libs.serialization.json)
-    implementation(libs.apollo.api)
     implementation(libs.ivs.player)
 
     implementation(libs.media3.exoplayer)
@@ -272,9 +270,3 @@ ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
 
-apollo {
-    @Suppress("ApolloEndpointNotConfigured")
-    service("service") {
-        packageName.set("com.github.andreyasadchy.xtra.graphql")
-    }
-}
