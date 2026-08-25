@@ -172,9 +172,19 @@ class MainActivity : AppCompatActivity() {
             return
         }
         migrateSettings()
-        if (tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECKED, 0) <= 0L) {
+        // The updater flags an update when the release asset is newer than the last check time.
+        // CI re-uploads the APK without bumping versionCode, so detect (re)installs instead:
+        // anything published before the install moment is the build being installed, i.e. seen.
+        val lastInstallTime = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0)).lastUpdateTime
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0).lastUpdateTime
+        }
+        if (tokenPrefs().getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L) != lastInstallTime) {
             tokenPrefs().edit {
-                putLong(AppConstants.UPDATE_LAST_CHECKED, System.currentTimeMillis())
+                putLong(AppConstants.UPDATE_LAST_INSTALL_TIME, lastInstallTime)
+                putLong(AppConstants.UPDATE_LAST_CHECKED, lastInstallTime)
             }
         }
         lifecycleScope.launch {

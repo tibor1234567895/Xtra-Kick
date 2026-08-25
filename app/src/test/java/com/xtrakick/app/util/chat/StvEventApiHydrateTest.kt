@@ -59,7 +59,7 @@ class StvEventApiHydrateTest {
         assertEquals(2, cosmetic.paint.colors?.size)
         assertEquals(2, cosmetic.paint.colorPositions?.size)
         assertEquals(0f, cosmetic.paint.colorPositions!![0])
-        assertEquals(1f, cosmetic.paint.colorPositions!![1])
+        assertEquals(1f, cosmetic.paint.colorPositions[1])
         assertEquals(1, cosmetic.paint.shadows?.size)
         val shadow = cosmetic.paint.shadows!!.first()
         assertEquals(0.5f, shadow.xOffset)

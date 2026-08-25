@@ -295,6 +295,7 @@ object AppConstants {
     const val DEFAULT_API_PREFS_SEARCH_STREAMS = "3:1"
     const val DEFAULT_API_PREFS_SEARCH_GAMES = "3:1"
     const val UPDATE_LAST_CHECKED = "update_last_checked"
+    const val UPDATE_LAST_INSTALL_TIME = "update_last_install_time"
     const val UPDATE_URL = "update_url"
     const val UPDATE_CHECK_ENABLED = "update_check_enabled"
     const val UPDATE_CHECK_FREQUENCY = "update_check_frequency"
