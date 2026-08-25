@@ -6,9 +6,12 @@ import org.junit.Test
 
 class BackendRequestSignerTest {
 
-    // Reference values generated with the backend's Node.js implementation
-    // (server.js computeHmacSignature) so both sides stay in sync.
-    private val secret = "bf5e39808213761d74b49a2c7817b6e0b7ac7950389c02532e2a273e5693a15f"
+    // Deliberately FAKE secret — never place the real backend HMAC secret in source.
+    // The expected signature below is the reference value for this fake input, computed
+    // with the canonical scheme shared with the backend's Node.js implementation
+    // (server.js computeHmacSignature): HMAC-SHA256 over
+    // "timestamp\nnonce\nMETHOD\npathname\nsha256hex(body)".
+    private val secret = "test-secret-do-not-use-0001"
 
     @Test
     fun `signature matches backend reference implementation`() {
@@ -24,7 +27,7 @@ class BackendRequestSignerTest {
         assertEquals("1700000000", headers[BackendRequestSigner.HEADER_TIMESTAMP])
         assertEquals("test-nonce", headers[BackendRequestSigner.HEADER_NONCE])
         assertEquals(
-            "bab67859304ca0122086f434526d8a95ea93c6936019a129dc1c52d6ea75b160",
+            "665ea01b2ef1abfce9a23bf010a5b7a84586ea91d83d4ee1f33bdc3f61206c39",
             headers[BackendRequestSigner.HEADER_SIGNATURE]
         )
     }

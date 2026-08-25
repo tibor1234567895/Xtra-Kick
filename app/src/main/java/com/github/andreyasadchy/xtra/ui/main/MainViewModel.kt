@@ -946,7 +946,9 @@ class MainViewModel @Inject constructor(
                         }
                     }
                     response["assets"]?.jsonArray?.find {
-                        it.jsonObject.getValue("content_type").jsonPrimitive.contentOrNull == "application/vnd.android.package-archive"
+                        val asset = it.jsonObject
+                        asset.getValue("content_type").jsonPrimitive.contentOrNull == "application/vnd.android.package-archive" ||
+                            (asset["name"]?.jsonPrimitive?.contentOrNull)?.endsWith(".apk") == true
                     }?.jsonObject?.let { obj ->
                         obj.getValue("updated_at").jsonPrimitive.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let {
                             if (it > lastChecked) {

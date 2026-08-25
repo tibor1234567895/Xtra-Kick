@@ -71,7 +71,7 @@ class LiveNotificationWorker @AssistedInject constructor(
                     setContentIntent(
                         PendingIntent.getActivity(
                             context,
-                            it.channelId.hashCode(),
+                            ShownNotificationsRepository.notificationIdFor(it),
                             Intent(context, MainActivity::class.java).apply {
                                 flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                                 action = MainActivity.INTENT_LIVE_NOTIFICATION
@@ -81,7 +81,7 @@ class LiveNotificationWorker @AssistedInject constructor(
                         )
                     )
                 }.build()
-                notificationManager.notify(it.channelId.hashCode(), notification)
+                notificationManager.notify(ShownNotificationsRepository.notificationIdFor(it), notification)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 val notification = NotificationCompat.Builder(context, channelId).apply {
@@ -89,7 +89,7 @@ class LiveNotificationWorker @AssistedInject constructor(
                     setSmallIcon(R.drawable.notification_icon)
                     setGroupSummary(true)
                 }.build()
-                notificationManager.notify(0, notification)
+                notificationManager.notify(ShownNotificationsRepository.SUMMARY_NOTIFICATION_ID, notification)
             }
         }
         return Result.success()
