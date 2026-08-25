@@ -1301,5 +1301,15 @@ class MainActivity : AppCompatActivity() {
                 putInt(AppConstants.SETTINGS_VERSION, 15)
             }
         }
+        if (version < 16) {
+            // Releases built before the fork rename shipped the upstream update check URL and
+            // it got persisted on those installs. Drop it so the built-in default applies again.
+            prefs.edit {
+                if (prefs.getString(AppConstants.UPDATE_URL, null)?.contains("crackededed") == true) {
+                    remove(AppConstants.UPDATE_URL)
+                }
+                putInt(AppConstants.SETTINGS_VERSION, 16)
+            }
+        }
     }
 }
