@@ -113,6 +113,7 @@
     <string name="reply">Reply</string>
     <string name="copy_message">Copy message</string>
     <string name="view_profile">View profile</string>
+    <string name="user_not_found">Channel not found</string>
     <string name="chat">Chat</string>
     <string name="search_emotes">Search emotes</string>
     <string name="notification_playback_channel_title">Playback</string>
@@ -603,8 +604,6 @@
     <string name="hide_subtitles">Hide subtitles</string>
     <string name="toggle_subtitles">Toggle subtitles</string>
     <string name="enable_stv">Enable 7TV emotes</string>
-    <string name="user_id">User ID</string>
-    <string name="user_login">User login</string>
     <string name="show_playlist_tags">Show playlist tags</string>
     <string name="show_media_playlist_tags">Show media playlist tags</string>
     <string name="show_multivariant_playlist_tags">Show multivariant playlist tags</string>

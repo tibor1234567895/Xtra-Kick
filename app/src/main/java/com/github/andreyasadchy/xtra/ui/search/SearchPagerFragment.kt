@@ -27,10 +27,8 @@ import com.github.andreyasadchy.xtra.databinding.FragmentSearchBinding
 import com.github.andreyasadchy.xtra.ui.channel.ChannelPagerFragmentDirections
 import com.github.andreyasadchy.xtra.ui.common.BaseNetworkFragment
 import com.github.andreyasadchy.xtra.ui.common.FragmentHost
-import com.github.andreyasadchy.xtra.ui.common.IntegrityDialog
 import com.github.andreyasadchy.xtra.ui.common.Sortable
 import com.github.andreyasadchy.xtra.util.C
-import com.github.andreyasadchy.xtra.util.KickApiHelper
 import com.github.andreyasadchy.xtra.util.getAlertDialogBuilder
 import com.github.andreyasadchy.xtra.util.prefs
 import com.github.andreyasadchy.xtra.util.reduceDragSensitivity
@@ -65,20 +63,6 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.integrity.collectLatest {
-                    if (it != null &&
-                        it != "done" &&
-                        requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false) &&
-                        requireContext().prefs().getBoolean(C.USE_WEBVIEW_INTEGRITY, true)
-                    ) {
-                        IntegrityDialog.show(childFragmentManager, it)
-                        viewModel.integrity.value = "done"
-                    }
-                }
-            }
-        }
         with(binding) {
             val tabList = requireContext().prefs().getString(C.UI_SEARCH_TABS, null).let { tabPref ->
                 val defaultTabs = C.DEFAULT_SEARCH_TABS.split(',')
@@ -176,23 +160,22 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
                             setNegativeButton(getString(android.R.string.cancel), null)
                             setPositiveButton(getString(android.R.string.ok)) { _, _ ->
                                 val result = binding.editText.editText?.text?.toString()
-                                val checkedId = if (binding.radioButton.isChecked) 0 else 1
                                 if (!result.isNullOrBlank()) {
-                                    userResult = Pair(checkedId, result)
-                                    viewModel.loadUserResult(
-                                        checkedId = checkedId,
-                                        result = result,
-                                        networkLibrary = requireContext().prefs().getString(C.NETWORK_LIBRARY, "OkHttp"),
-                                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
-                                        enableIntegrity = requireContext().prefs().getBoolean(C.ENABLE_INTEGRITY, false),
-                                    )
+                                    userResult = result
+                                    viewModel.loadUserResult(result)
                                     viewLifecycleOwner.lifecycleScope.launch {
                                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                                             viewModel.userResult.collectLatest {
                                                 if (it != null) {
                                                     if (!it.first.isNullOrBlank()) {
                                                         requireContext().getAlertDialogBuilder().apply {
-                                                            setTitle(it.first)
+                                                            setTitle(
+                                                                if (it.first == SearchPagerViewModel.NOT_FOUND) {
+                                                                    getString(R.string.user_not_found)
+                                                                } else {
+                                                                    it.first
+                                                                }
+                                                            )
                                                             setMessage(it.second)
                                                             setNegativeButton(getString(android.R.string.cancel), null)
                                                             setPositiveButton(getString(R.string.view_profile)) { _, _ -> viewUserResult() }
@@ -209,9 +192,8 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
                             }
                             setNeutralButton(getString(R.string.view_profile)) { _, _ ->
                                 val result = binding.editText.editText?.text?.toString()
-                                val checkedId = if (binding.radioButton.isChecked) 0 else 1
                                 if (!result.isNullOrBlank()) {
-                                    userResult = Pair(checkedId, result)
+                                    userResult = result
                                     viewUserResult()
                                 }
                             }
@@ -263,23 +245,15 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
         binding.searchView.setQuery(query, true)
     }
 
-    private var userResult: Pair<Int?, String?>? = null
+    private var userResult: String? = null
 
     private fun viewUserResult() {
-        userResult?.let {
-            when (it.first) {
-                0 -> findNavController().navigate(
-                    ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(
-                        channelId = it.second
-                    )
+        userResult?.let { login ->
+            findNavController().navigate(
+                ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(
+                    channelLogin = login
                 )
-                1 -> findNavController().navigate(
-                    ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(
-                        channelLogin = it.second
-                    )
-                )
-                else -> {}
-            }
+            )
         }
     }
 
