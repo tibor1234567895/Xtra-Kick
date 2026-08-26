@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -183,15 +184,19 @@ class KickFollowImporter @Inject constructor(
                     } else {
                         context.getString(R.string.import_kick_followed_empty)
                     }
-                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    }
                 }
                 .onFailure { error ->
                     Log.w(LOG_TAG, "Post-login Kick follow import failed", error)
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.import_kick_followed_error, error.message ?: "unknown error"),
-                        Toast.LENGTH_LONG,
-                    ).show()
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.import_kick_followed_error, error.message ?: "unknown error"),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
                 }
         }
     }
