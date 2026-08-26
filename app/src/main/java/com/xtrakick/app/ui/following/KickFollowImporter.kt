@@ -87,6 +87,13 @@ internal object KickFollowImportPayloadParser {
     }
 }
 
+sealed class KickFollowImportState {
+    object Idle : KickFollowImportState()
+    data class Importing(val count: Int) : KickFollowImportState()
+    data class Success(val count: Int) : KickFollowImportState()
+    data class Error(val message: String?) : KickFollowImportState()
+}
+
 @Singleton
 class KickFollowImporter @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -98,7 +105,10 @@ class KickFollowImporter @Inject constructor(
     private val enrichmentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // Outlives the login screen so a post-login import keeps running after LoginActivity finishes.
-    private val postLoginImportScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val postLoginImportScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    private val _importState = kotlinx.coroutines.flow.MutableStateFlow<KickFollowImportState>(KickFollowImportState.Idle)
+    val importState: kotlinx.coroutines.flow.StateFlow<KickFollowImportState> = _importState
 
     companion object {
         private const val LOG_TAG = "KickFollowImport"
@@ -114,9 +124,13 @@ class KickFollowImporter @Inject constructor(
         }
     }
 
-    private fun debugLogW(message: String) {
+    private fun logWarn(message: String, throwable: Throwable? = null) {
         if (isDebugLoggingEnabled()) {
-            Log.w(LOG_TAG, message)
+            if (throwable != null) {
+                Log.w(LOG_TAG, message, throwable)
+            } else {
+                Log.w(LOG_TAG, message)
+            }
         }
     }
 
@@ -125,10 +139,14 @@ class KickFollowImporter @Inject constructor(
         return importFollows(follows)
     }
 
-    suspend fun importStoredKickFollows(networkLibrary: String?): Int {
+    suspend fun importStoredKickFollows(
+        networkLibrary: String?,
+        onProgress: ((count: Int) -> Unit)? = null,
+    ): Int {
         val collected = LinkedHashMap<String, KickImportedFollow>()
         var cursor: String? = null
         Log.i(LOG_TAG, "Kick follow import pagination started")
+        _importState.value = KickFollowImportState.Importing(0)
         do {
             val response = kickRepository.getFollowedChannelsWebPage(cursor)
             response.channels.forEach { follow ->
@@ -139,6 +157,8 @@ class KickFollowImporter @Inject constructor(
                     profilePicture = follow.profilePicture,
                 )
             }
+            _importState.value = KickFollowImportState.Importing(collected.size)
+            onProgress?.invoke(collected.size)
             val nextCursor = response.nextCursor?.takeIf { it.isNotBlank() }
             cursor = nextCursor?.takeIf { it != cursor }
         } while (!cursor.isNullOrBlank())
@@ -150,54 +170,45 @@ class KickFollowImporter @Inject constructor(
                 profilePicture = channel.profilePicture,
             )
         }
-        return importFollows(follows)
+        val storedCount = importFollows(follows)
+        _importState.value = KickFollowImportState.Success(storedCount)
+        return storedCount
     }
 
     /**
-     * Fetches the logged-in user's followed channels from Kick using the stored OAuth token and
-     * stores them locally. Unlike [importStoredKickFollows] this does not depend on kick.com
-     * website cookies, which makes it the right choice right after an OAuth login.
+     * Fetches the logged-in user's followed channels from Kick using stored website session cookies
+     * and stores them locally.
      */
     suspend fun importAuthenticatedKickFollows(networkLibrary: String?): Int {
-        val channels = kickRepository.getFollowedChannelsWithStoredAuth(networkLibrary)
-        return importFollows(channels.map { channel ->
-            KickImportedFollow(
-                login = channel.login,
-                name = channel.name,
-                profilePicture = channel.profilePicture,
-            )
-        })
+        return importStoredKickFollows(networkLibrary)
     }
 
     /**
-     * Runs [importAuthenticatedKickFollows] on a scope that outlives the login screen and reports
-     * the outcome with a toast. Failures are non-fatal; the manual import dialog remains
+     * Runs follow import on a scope that outlives the login screen.
+     * If followed channels are found, a toast reports the count.
+     * Failures are non-fatal and silently logged; the manual import dialog in Following tab remains
      * available as a fallback.
      */
     fun schedulePostLoginImport(networkLibrary: String?) {
         postLoginImportScope.launch {
-            runCatching { importAuthenticatedKickFollows(networkLibrary) }
-                .onSuccess { count ->
-                    Log.i(LOG_TAG, "Post-login Kick follow import succeeded count=$count")
-                    val message = if (count > 0) {
-                        context.getString(R.string.import_kick_followed_success, count)
-                    } else {
-                        context.getString(R.string.import_kick_followed_empty)
-                    }
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                    }
+            _importState.value = KickFollowImportState.Importing(0)
+            val result = runCatching {
+                importStoredKickFollows(networkLibrary)
+            }
+            result.onSuccess { count ->
+                Log.i(LOG_TAG, "Post-login Kick follow import succeeded count=$count")
+                _importState.value = KickFollowImportState.Success(count)
+                if (count > 0) {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.import_kick_followed_success, count),
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 }
-                .onFailure { error ->
-                    Log.w(LOG_TAG, "Post-login Kick follow import failed", error)
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.import_kick_followed_error, error.message ?: "unknown error"),
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                }
+            }.onFailure { error ->
+                Log.i(LOG_TAG, "Post-login Kick follow import skipped or unavailable: ${error.message}")
+                _importState.value = KickFollowImportState.Error(error.message)
+            }
         }
     }
 
@@ -229,7 +240,7 @@ class KickFollowImporter @Inject constructor(
             runCatching {
                 enrichImportedFollows(snapshot)
             }.onFailure { error ->
-                debugLogW("imported follow enrichment failed: ${error.message}")
+                logWarn("imported follow enrichment failed: ${error.message}", error)
             }
         }
     }

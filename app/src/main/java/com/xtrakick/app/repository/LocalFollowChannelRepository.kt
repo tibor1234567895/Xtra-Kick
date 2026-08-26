@@ -4,6 +4,9 @@ import com.xtrakick.app.db.LocalFollowsChannelDao
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.util.AppConstants
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -12,6 +15,13 @@ import javax.inject.Singleton
 class LocalFollowChannelRepository @Inject constructor(
     private val localFollowsChannelDao: LocalFollowsChannelDao,
 ) {
+
+    private val _followsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val followsChanged: SharedFlow<Unit> = _followsChanged.asSharedFlow()
+
+    fun notifyFollowsChanged() {
+        _followsChanged.tryEmit(Unit)
+    }
 
     suspend fun loadFollows() = withContext(Dispatchers.IO) {
         dedupeFollows(localFollowsChannelDao.getAll())
@@ -35,10 +45,12 @@ class LocalFollowChannelRepository @Inject constructor(
 
     suspend fun updateFollow(item: LocalFollowChannel) = withContext(Dispatchers.IO) {
         localFollowsChannelDao.update(item)
+        notifyFollowsChanged()
     }
 
     suspend fun deleteAllFollows() = withContext(Dispatchers.IO) {
         localFollowsChannelDao.deleteAll()
+        notifyFollowsChanged()
     }
 
     suspend fun upsertLocalFollow(
@@ -69,11 +81,13 @@ class LocalFollowChannelRepository @Inject constructor(
             existing.sourceMask = existing.sourceMask or AppConstants.FOLLOW_SOURCE_MASK_LOCAL
             localFollowsChannelDao.update(existing)
         }
+        notifyFollowsChanged()
     }
 
     suspend fun removeLocalFollow(userId: String?, userLogin: String?) = withContext(Dispatchers.IO) {
         findExistingFollow(userId?.takeIf { it.isNotBlank() }, userLogin?.takeIf { it.isNotBlank() })?.let { existing ->
             localFollowsChannelDao.delete(existing)
+            notifyFollowsChanged()
         }
     }
 

@@ -13,6 +13,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
@@ -28,6 +29,16 @@ class FollowedChannelsViewModel @Inject constructor(
         get() = normalizeSort(filter.value?.sort)
     val order: String
         get() = normalizeOrder(filter.value?.order)
+
+    private var currentDataSource: FollowedChannelsDataSource? = null
+
+    init {
+        viewModelScope.launch {
+            localFollowsChannel.followsChanged.collect {
+                currentDataSource?.invalidate()
+            }
+        }
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val flow = filter.flatMapLatest {
@@ -46,7 +57,7 @@ class FollowedChannelsViewModel @Inject constructor(
                     else -> "asc"
                 },
                 localFollowsChannel = localFollowsChannel,
-            )
+            ).also { currentDataSource = it }
         }.flow
     }.cachedIn(viewModelScope)
 

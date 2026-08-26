@@ -21,12 +21,14 @@ import android.net.NetworkRequest
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Looper
 import android.os.PowerManager
 import android.text.format.Formatter
 import android.util.Log
 import android.view.Menu
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.CookieManager
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -94,12 +96,14 @@ import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.color.MaterialColors
+import com.xtrakick.app.repository.LocalFollowChannelRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.Timer
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.schedule
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
@@ -151,6 +155,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+    @Inject
+    lateinit var localFollowChannelRepository: LocalFollowChannelRepository
+
     private lateinit var prefs: SharedPreferences
     private var updateDownloadDialogBinding: DialogUpdateDownloadBinding? = null
     private var updateDownloadDialog: AlertDialog? = null
@@ -235,11 +242,27 @@ class MainActivity : AppCompatActivity() {
         }
         loginResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == RESULT_OK) {
-                restartActivity()
+                viewModel.startKickValidationIfNeeded(this)
+                localFollowChannelRepository.notifyFollowsChanged()
+                val navHostFragment = supportFragmentManager.findFragmentById(R.id.navHostFragment) as? NavHostFragment
+                val navController = navHostFragment?.navController
+                if (navController?.currentDestination?.id == R.id.followPagerFragment) {
+                    navController.popBackStack(R.id.followPagerFragment, true)
+                    navController.navigate(R.id.followPagerFragment)
+                } else {
+                    navController?.navigate(R.id.followPagerFragment)
+                }
             }
         }
         logoutResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            restartActivity()
+            viewModel.startKickValidationIfNeeded(this)
+            localFollowChannelRepository.notifyFollowsChanged()
+            val navHostFragment = supportFragmentManager.findFragmentById(R.id.navHostFragment) as? NavHostFragment
+            val navController = navHostFragment?.navController
+            navController?.currentDestination?.id?.let { destinationId ->
+                navController.popBackStack(destinationId, true)
+                navController.navigate(destinationId)
+            }
         }
 
         var initialized = savedInstanceState != null
@@ -256,6 +279,12 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.no_connection, Toast.LENGTH_SHORT).show()
         }
         initNavigation()
+        Looper.myQueue().addIdleHandler {
+            runCatching {
+                CookieManager.getInstance().setAcceptCookie(true)
+            }
+            false
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.checkNetworkStatus.collectLatest {

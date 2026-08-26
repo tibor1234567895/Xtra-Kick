@@ -140,6 +140,14 @@ class FollowedStreamsViewModel @Inject constructor(
         }
     }
 
+    init {
+        viewModelScope.launch {
+            localFollowsChannel.followsChanged.collect {
+                refresh()
+            }
+        }
+    }
+
     fun initialize() {
         if (sortText.value == null) {
             sortText.value = buildSortText(sort.value)

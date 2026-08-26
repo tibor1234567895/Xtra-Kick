@@ -4,10 +4,17 @@ import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -36,6 +43,7 @@ import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -58,6 +66,19 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var binding: ActivityLoginBinding
     private var callbackHandled = false
     private var pendingKickCallback: PendingKickCallback? = null
+    private var fallbackButtonHandler: Handler? = null
+    private var fallbackButtonRunnable: Runnable? = null
+
+    override fun onDestroy() {
+        cancelDelayedFallbackButton()
+        super.onDestroy()
+    }
+
+    private fun cancelDelayedFallbackButton() {
+        fallbackButtonRunnable?.let { fallbackButtonHandler?.removeCallbacks(it) }
+        fallbackButtonHandler = null
+        fallbackButtonRunnable = null
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -106,6 +127,16 @@ class LoginActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView() {
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(binding.webView, true)
+        binding.webView.setBackgroundColor(Color.TRANSPARENT)
+
+        val defaultUa = binding.webView.settings.userAgentString
+        val cleanUa = defaultUa
+            .replace(Regex(";\\s*wv"), "")
+            .replace(Regex("Version/[0-9.]+\\s*"), "")
+            .replace(Regex(";\\s*\\)"), ")")
+
         binding.webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -114,15 +145,37 @@ class LoginActivity : AppCompatActivity() {
             allowContentAccess = false
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
-            // Strip the "wv" (WebView) flag and "Version/4.0" from the user agent so
-            // Google's OAuth service does not reject the request with disallowed_useragent.
-            userAgentString = userAgentString
-                .replace("; wv", "")
-                .replace("Version/4.0 ", "")
+            mediaPlaybackRequiresUserGesture = true
+            userAgentString = cleanUa
         }
         binding.webView.isFocusable = true
         binding.webView.isFocusableInTouchMode = true
+        binding.webView.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                super.onProgressChanged(view, newProgress)
+                if (newProgress < 100) {
+                    binding.webProgressBar.visibility = View.VISIBLE
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        binding.webProgressBar.setProgress(newProgress, true)
+                    } else {
+                        binding.webProgressBar.progress = newProgress
+                    }
+                    if (newProgress >= 80) {
+                        revealWebView()
+                    }
+                } else {
+                    binding.webProgressBar.visibility = View.GONE
+                    revealWebView()
+                }
+            }
+        }
         binding.webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                revealWebView()
+                binding.webProgressBar.visibility = View.GONE
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 return request?.url?.let(::tryHandleKickCallback) == true
             }
@@ -131,6 +184,13 @@ class LoginActivity : AppCompatActivity() {
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
                 return !url.isNullOrBlank() && tryHandleKickCallback(Uri.parse(url))
             }
+        }
+    }
+
+    private fun revealWebView() {
+        binding.loadingContainer.visibility = View.GONE
+        if (binding.webView.alpha < 1f) {
+            binding.webView.animate().alpha(1f).setDuration(200).start()
         }
     }
 
@@ -262,19 +322,38 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun showKickLoginInWebView(url: String) {
-        binding.progressBar.visibility = View.GONE
+        binding.loadingContainer.visibility = View.VISIBLE
+        binding.loadingTitle.text = getString(R.string.loading_kick_login)
+        binding.loadingSubtitle.visibility = View.GONE
+        binding.webProgressBar.visibility = View.VISIBLE
+        binding.webProgressBar.progress = 15
+        binding.webView.alpha = 0f
         binding.webView.visibility = View.VISIBLE
         binding.secondaryWebView.visibility = View.GONE
         binding.codeText.visibility = View.GONE
         binding.copyCode.visibility = View.GONE
         binding.openUrl.visibility = View.GONE
         binding.next.visibility = View.GONE
-        binding.havingTrouble.visibility = View.VISIBLE
+        binding.havingTrouble.visibility = View.GONE
+
+        // Delay showing "Having trouble?" button so users aren't distracted during fast loads
+        cancelDelayedFallbackButton()
+        val handler = Handler(Looper.getMainLooper())
+        val runnable = Runnable {
+            if (!isFinishing && !isDestroyed && !callbackHandled) {
+                binding.havingTrouble.visibility = View.VISIBLE
+            }
+        }
+        fallbackButtonHandler = handler
+        fallbackButtonRunnable = runnable
+        handler.postDelayed(runnable, 3500L)
+
         binding.webView.loadUrl(url)
     }
 
     private fun showKickExchangeLoading() {
-        binding.progressBar.visibility = View.VISIBLE
+        cancelDelayedFallbackButton()
+        binding.webProgressBar.visibility = View.GONE
         binding.webView.visibility = View.GONE
         binding.secondaryWebView.visibility = View.GONE
         binding.codeText.visibility = View.GONE
@@ -282,10 +361,17 @@ class LoginActivity : AppCompatActivity() {
         binding.openUrl.visibility = View.GONE
         binding.next.visibility = View.GONE
         binding.havingTrouble.visibility = View.GONE
+        binding.progressBar.visibility = View.VISIBLE
+        binding.loadingContainer.visibility = View.VISIBLE
+        binding.loadingTitle.text = getString(R.string.logging_in)
+        binding.loadingSubtitle.text = getString(R.string.importing_kick_follows)
+        binding.loadingSubtitle.visibility = View.VISIBLE
     }
 
     private fun showKickBackendOfflineError() {
-        binding.progressBar.visibility = View.GONE
+        cancelDelayedFallbackButton()
+        binding.loadingContainer.visibility = View.GONE
+        binding.webProgressBar.visibility = View.GONE
         binding.webView.visibility = View.GONE
         binding.secondaryWebView.visibility = View.GONE
         binding.copyCode.visibility = View.GONE
@@ -299,7 +385,8 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun retryPendingKickCallback() {
-        pendingKickCallback?.let(::exchangePendingKickCallback) ?: startKickLogin()
+        val pending = pendingKickCallback ?: return
+        exchangePendingKickCallback(pending)
     }
 
     private fun exchangePendingKickCallback(callback: PendingKickCallback) {
@@ -323,7 +410,8 @@ class LoginActivity : AppCompatActivity() {
                     throw IllegalStateException("missing scopes")
                 }
                 val refreshToken = tokenResponse.refreshToken
-                val expiresAt = (System.currentTimeMillis() / 1000L) + (tokenResponse.expiresIn ?: 0L)
+                val expiresIn = tokenResponse.expiresIn ?: 0L
+                val expiresAt = if (expiresIn > 0L) (System.currentTimeMillis() / 1000L) + expiresIn else 0L
                 val userResponse = authRepository.getKickCurrentUser(networkLibrary, accessToken)
                 val user = userResponse.data.firstOrNull()
                 val userId = user?.id?.toString()
@@ -343,9 +431,7 @@ class LoginActivity : AppCompatActivity() {
                     putString(AppConstants.USERNAME, loginName)
                 }
                 pendingKickCallback = null
-                Toast.makeText(this@LoginActivity, getString(R.string.login_success_toast, loginName ?: ""), Toast.LENGTH_SHORT).show()
-                // Automatically import the account's Kick follows in the background; the result
-                // is reported with a toast and must not delay the login completion.
+                // Schedule follow import asynchronously and return to the app immediately with zero delay
                 followImporter.schedulePostLoginImport(networkLibrary)
                 setResult(RESULT_OK)
                 finish()

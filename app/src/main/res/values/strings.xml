@@ -915,6 +915,10 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="next">Next</string>
     <string name="open_url">Open URL</string>
     <string name="open_browser_login_recommended" translatable="false">Open in browser (Not recommended)</string>
+    <string name="loading_kick_login" translatable="false">Loading Kick login…</string>
+    <string name="logging_in" translatable="false">Logging in…</string>
+    <string name="importing_kick_follows" translatable="false">Importing followed channels…</string>
+    <string name="importing_kick_follows_progress" translatable="false">Importing followed channels (%1$d found)…</string>
     <string name="loading">Loading...</string>
     <string name="copy_code">Copy code</string>
     <string name="multipov">MultiPOV</string>

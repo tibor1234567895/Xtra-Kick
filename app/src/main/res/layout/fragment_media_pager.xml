@@ -32,6 +32,32 @@
             android:id="@+id/sortBar"
             layout="@layout/sort_bar" />
 
+        <LinearLayout
+            android:id="@+id/importProgressContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.google.android.material.progressindicator.LinearProgressIndicator
+                android:id="@+id/importProgressBar"
+                android:layout_width="match_parent"
+                android:layout_height="3dp"
+                android:indeterminate="true"
+                app:indicatorColor="?attr/colorPrimary" />
+
+            <TextView
+                android:id="@+id/importProgressText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:paddingVertical="4dp"
+                android:paddingHorizontal="16dp"
+                android:text="@string/importing_kick_follows"
+                android:textAppearance="?attr/textAppearanceLabelMedium"
+                android:textColor="?attr/colorOnSurfaceVariant" />
+        </LinearLayout>
+
     </com.google.android.material.appbar.AppBarLayout>
 
     <androidx.viewpager2.widget.ViewPager2

@@ -509,13 +509,17 @@ class KickRepository @Inject constructor(
     }
 
     suspend fun getFollowedChannelsWithStoredAuth(networkLibrary: String?): List<KickFollowedChannel> = withContext(Dispatchers.IO) {
-        val authHeader = getKickPublicApiHeadersWithRefresh(networkLibrary)[AppConstants.HEADER_TOKEN]
-            ?.takeIf { it.isNotBlank() }
-            ?: throw IOException("missing kick auth token")
         val collected = LinkedHashMap<String, KickFollowedChannel>()
         var cursor: String? = null
         do {
-            val page = getFollowedChannelsAuthorizedPage(authHeader = authHeader, cursor = cursor)
+            val page = runCatching {
+                getFollowedChannelsWebPage(cursor)
+            }.getOrElse {
+                val authHeader = getKickPublicApiHeadersWithRefresh(networkLibrary)[AppConstants.HEADER_TOKEN]
+                    ?.takeIf { it.isNotBlank() }
+                    ?: throw it
+                getFollowedChannelsAuthorizedPage(authHeader = authHeader, cursor = cursor)
+            }
             page.channels.forEach { channel ->
                 val key = channel.login.trim().lowercase(Locale.ROOT)
                 if (key.isNotBlank()) {

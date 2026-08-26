@@ -10,11 +10,16 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.doOnLayout
 import androidx.core.view.updateLayoutParams
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.setupWithNavController
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
+import com.google.android.material.tabs.TabLayout
+import com.google.android.material.tabs.TabLayoutMediator
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.FragmentMediaPagerBinding
 import com.xtrakick.app.ui.common.FragmentHost
@@ -28,12 +33,16 @@ import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.reduceDragSensitivity
 import com.xtrakick.app.util.tokenPrefs
-import com.google.android.material.tabs.TabLayout
-import com.google.android.material.tabs.TabLayoutMediator
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImportDialog.CallbackListener {
+
+    @Inject
+    lateinit var kickFollowImporter: KickFollowImporter
 
     private var _binding: FragmentMediaPagerBinding? = null
     private val binding get() = _binding!!
@@ -55,6 +64,46 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         with(binding) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    kickFollowImporter.importState.collect { state ->
+                        when (state) {
+                            is KickFollowImportState.Importing -> {
+                                importProgressContainer.alpha = 1f
+                                importProgressContainer.visibility = View.VISIBLE
+                                importProgressBar.visibility = View.VISIBLE
+                                if (state.count > 0) {
+                                    importProgressText.text = getString(R.string.importing_kick_follows_progress, state.count)
+                                } else {
+                                    importProgressText.text = getString(R.string.importing_kick_follows)
+                                }
+                            }
+                            is KickFollowImportState.Success -> {
+                                if (state.count > 0) {
+                                    importProgressBar.visibility = View.GONE
+                                    importProgressText.text = getString(R.string.import_kick_followed_success, state.count)
+                                    delay(2500L)
+                                    importProgressContainer.animate()
+                                        .alpha(0f)
+                                        .setDuration(300)
+                                        .withEndAction {
+                                            importProgressContainer.visibility = View.GONE
+                                            importProgressContainer.alpha = 1f
+                                        }
+                                        .start()
+                                } else {
+                                    importProgressContainer.visibility = View.GONE
+                                }
+                            }
+                            is KickFollowImportState.Error,
+                            is KickFollowImportState.Idle -> {
+                                importProgressContainer.visibility = View.GONE
+                            }
+                        }
+                    }
+                }
+            }
+
             val activity = requireActivity() as MainActivity
             val navController = findNavController()
             val appBarConfiguration = AppBarConfiguration(setOf(R.id.rootGamesFragment, R.id.rootTopFragment, R.id.followPagerFragment, R.id.followMediaFragment, R.id.savedPagerFragment, R.id.savedMediaFragment))
