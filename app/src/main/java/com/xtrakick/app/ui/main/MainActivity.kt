@@ -272,8 +272,21 @@ class MainActivity : AppCompatActivity() {
                 && networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 && networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         viewModel.isNetworkAvailable.value = isNetworkAvailableOnCreate
+        fun checkUpdatesIfNeeded() {
+            if (!KickApiHelper.checkedUpdates &&
+                prefs.getBoolean(AppConstants.UPDATE_CHECK_ENABLED, false) &&
+                (prefs.getString(AppConstants.UPDATE_CHECK_FREQUENCY, "7")?.toIntOrNull() ?: 7) * 86400000 + tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECKED, 0) < System.currentTimeMillis()
+            ) {
+                viewModel.checkUpdates(
+                    prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                    prefs.getString(AppConstants.UPDATE_URL, null) ?: "https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest",
+                    tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECKED, 0)
+                )
+            }
+        }
         if (isNetworkAvailableOnCreate) {
             viewModel.startKickValidationIfNeeded(this)
+            checkUpdatesIfNeeded()
         } else if (!initialized) {
             initialized = true
             Toast.makeText(this, R.string.no_connection, Toast.LENGTH_SHORT).show()
@@ -303,16 +316,7 @@ class MainActivity : AppCompatActivity() {
                             }
                             if (isNetworkAvailable) {
                                 viewModel.startKickValidationIfNeeded(this@MainActivity)
-                                if (!KickApiHelper.checkedUpdates &&
-                                    prefs.getBoolean(AppConstants.UPDATE_CHECK_ENABLED, false) &&
-                                    (prefs.getString(AppConstants.UPDATE_CHECK_FREQUENCY, "7")?.toIntOrNull() ?: 7) * 86400000 + tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECKED, 0) < System.currentTimeMillis()
-                                ) {
-                                    viewModel.checkUpdates(
-                                        prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                        prefs.getString(AppConstants.UPDATE_URL, null) ?: "https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest",
-                                        tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECKED, 0)
-                                    )
-                                }
+                                checkUpdatesIfNeeded()
                             }
                         }
                         viewModel.checkNetworkStatus.value = false
