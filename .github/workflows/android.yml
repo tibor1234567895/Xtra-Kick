@@ -4,6 +4,13 @@ on:
   push:
     branches: [ main ]
 
+# A newer push to main supersedes the run in progress. The publish steps sit at
+# the very end and finish in seconds, so an interrupted publish self-heals on
+# the next successful run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Tests and lint. All 163 unit tests pass and lint reports 0 issues, so this gates `build`.
   #
