@@ -35,7 +35,9 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.xtrakick.app.util.bundleOf
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.doOnPreDraw
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
@@ -197,9 +199,14 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         isChatOpen = prefs.getBoolean(AppConstants.KEY_CHAT_OPENED, true) && !prefs.getBoolean(AppConstants.CHAT_DISABLE, false)
         chatOpenProgress = if (isChatOpen) 1f else 0f
         ensureChatWidthLandscape()
+        val activity = requireActivity()
+        WindowCompat.getInsetsController(
+            activity.window,
+            activity.window.decorView
+        ).systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         applyOrientationLayout()
         applySystemBarInsets(view)
-        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
+        activity.onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
 
         playbackController = MultiPovPlaybackController(
             context = requireContext().applicationContext,
@@ -241,6 +248,20 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                     updateAdaptiveQuality()
                 }
             }
+        }
+    }
+
+    private fun showStatusBar() {
+        activity?.let {
+            WindowCompat.getInsetsController(it.window, it.window.decorView)
+                .show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    private fun hideStatusBar() {
+        activity?.let {
+            WindowCompat.getInsetsController(it.window, it.window.decorView)
+                .hide(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -944,6 +965,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     override fun onDestroyView() {
+        showStatusBar()
         backgroundPauseRunnable?.let { view?.removeCallbacks(it) }
         backgroundPauseRunnable = null
         cancelHideControls()
@@ -1051,6 +1073,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     fun minimize() {
         if (!isMaximized) return
         isMaximized = false
+        showStatusBar()
         cancelHideControls()
         resetVideoZoom()
         val binding = _binding ?: return
@@ -1080,6 +1103,11 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         binding.multiPovRoot.translationY = 0f
         binding.chatFragmentContainer.isVisible = isChatOpen
         binding.minimizeBadge.isVisible = false
+        if (isPortrait) {
+            showStatusBar()
+        } else {
+            hideStatusBar()
+        }
         applyOrientationLayout(rebuildTiles = false)
         playbackController?.resumeSecondaries()
         render(viewModel.uiState.value, forceGridRebuild = true)
@@ -1706,8 +1734,10 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         focusedControls()?.toggleChat?.isVisible =
             !chatDisabled && requireContext().prefs().getBoolean(AppConstants.PLAYER_CHATTOGGLE, true)
         if (isPortrait) {
+            showStatusBar()
             applyPortraitChatLayout()
         } else {
+            hideStatusBar()
             ensureChatWidthLandscape()
             applyChatOpenProgress(if (isChatOpen) 1f else 0f, finalize = true)
         }
