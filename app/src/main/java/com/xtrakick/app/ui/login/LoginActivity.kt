@@ -25,6 +25,7 @@ import com.xtrakick.app.model.kick.auth.KickBackendExchangeRequest
 import com.xtrakick.app.model.kick.auth.KickBackendRevokeRequest
 import com.xtrakick.app.repository.AuthRepository
 import com.xtrakick.app.repository.KickAuthRequestException
+import com.xtrakick.app.ui.following.KickFollowImporter
 import com.xtrakick.app.ui.settings.SettingsActivity
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.AppConstants
@@ -50,6 +51,9 @@ class LoginActivity : AppCompatActivity() {
 
     @Inject
     lateinit var authRepository: AuthRepository
+
+    @Inject
+    lateinit var followImporter: KickFollowImporter
 
     private lateinit var binding: ActivityLoginBinding
     private var callbackHandled = false
@@ -340,6 +344,9 @@ class LoginActivity : AppCompatActivity() {
                 }
                 pendingKickCallback = null
                 Toast.makeText(this@LoginActivity, getString(R.string.login_success_toast, loginName ?: ""), Toast.LENGTH_SHORT).show()
+                // Automatically import the account's Kick follows in the background; the result
+                // is reported with a toast and must not delay the login completion.
+                followImporter.schedulePostLoginImport(networkLibrary)
                 setResult(RESULT_OK)
                 finish()
             } catch (e: Exception) {

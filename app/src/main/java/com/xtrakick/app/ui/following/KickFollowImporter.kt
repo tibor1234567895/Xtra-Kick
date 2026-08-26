@@ -2,7 +2,9 @@ package com.xtrakick.app.ui.following
 
 import android.content.Context
 import android.util.Log
+import android.widget.Toast
 import com.xtrakick.app.BuildConfig
+import com.xtrakick.app.R
 import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowChannelRepository
@@ -94,6 +96,9 @@ class KickFollowImporter @Inject constructor(
 
     private val enrichmentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // Outlives the login screen so a post-login import keeps running after LoginActivity finishes.
+    private val postLoginImportScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     companion object {
         private const val LOG_TAG = "KickFollowImport"
     }
@@ -145,6 +150,50 @@ class KickFollowImporter @Inject constructor(
             )
         }
         return importFollows(follows)
+    }
+
+    /**
+     * Fetches the logged-in user's followed channels from Kick using the stored OAuth token and
+     * stores them locally. Unlike [importStoredKickFollows] this does not depend on kick.com
+     * website cookies, which makes it the right choice right after an OAuth login.
+     */
+    suspend fun importAuthenticatedKickFollows(networkLibrary: String?): Int {
+        val channels = kickRepository.getFollowedChannelsWithStoredAuth(networkLibrary)
+        return importFollows(channels.map { channel ->
+            KickImportedFollow(
+                login = channel.login,
+                name = channel.name,
+                profilePicture = channel.profilePicture,
+            )
+        })
+    }
+
+    /**
+     * Runs [importAuthenticatedKickFollows] on a scope that outlives the login screen and reports
+     * the outcome with a toast. Failures are non-fatal; the manual import dialog remains
+     * available as a fallback.
+     */
+    fun schedulePostLoginImport(networkLibrary: String?) {
+        postLoginImportScope.launch {
+            runCatching { importAuthenticatedKickFollows(networkLibrary) }
+                .onSuccess { count ->
+                    Log.i(LOG_TAG, "Post-login Kick follow import succeeded count=$count")
+                    val message = if (count > 0) {
+                        context.getString(R.string.import_kick_followed_success, count)
+                    } else {
+                        context.getString(R.string.import_kick_followed_empty)
+                    }
+                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                }
+                .onFailure { error ->
+                    Log.w(LOG_TAG, "Post-login Kick follow import failed", error)
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.import_kick_followed_error, error.message ?: "unknown error"),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+        }
     }
 
     internal suspend fun importFollows(follows: List<KickImportedFollow>): Int {
