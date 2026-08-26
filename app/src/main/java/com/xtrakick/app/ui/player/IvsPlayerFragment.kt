@@ -25,6 +25,7 @@ import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.NetworkMonitor
 
 @OptIn(UnstableApi::class)
@@ -268,7 +269,14 @@ class IvsPlayerFragment : PlayerFragment() {
         map[AUTO_QUALITY] = getString(R.string.auto) to null
         availableQualities.forEach { quality ->
             val baseKey = KickLivePlayback.qualityKey(quality)
-            val key = generateSequence(baseKey) { "$it+" }.first { !qualitiesByKey.containsKey(it) }
+            // disambiguate variants sharing a name with the bitrate, e.g. "720p 2.5 Mbps"
+            val key = if (qualitiesByKey.containsKey(baseKey)) {
+                val bitrateSuffix = KickLivePlayback.bitrateLabel(quality)
+                val suffixed = if (bitrateSuffix != null) "$baseKey $bitrateSuffix" else baseKey
+                generateSequence(suffixed) { "$it+" }.first { !qualitiesByKey.containsKey(it) }
+            } else {
+                baseKey
+            }
             qualitiesByKey[key] = quality
             map[key] = KickLivePlayback.qualityLabel(quality) to null
         }
@@ -297,7 +305,8 @@ class IvsPlayerFragment : PlayerFragment() {
             url = resolvedUrl,
             title = requireArguments().getString(KEY_TITLE),
             channelName = requireArguments().getString(KEY_CHANNEL_NAME),
-            channelLogo = requireArguments().getString(KEY_CHANNEL_LOGO)
+            channelLogo = requireArguments().getString(KEY_CHANNEL_LOGO),
+            streamStartedAtMs = requireArguments().getString(KEY_STARTED_AT)?.let { KickApiHelper.parseIso8601DateUTC(it) }
         )
         updatePlayingState()
     }

@@ -131,6 +131,13 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
                     (parentFragment as? PlayerFragment)?.checkBookmark()
                 }
             }
+            if (videoType != PlayerFragment.OFFLINE_VIDEO && requireContext().prefs().getBoolean(AppConstants.PLAYER_MENU_SHARE, true)) {
+                menuShare.visibility = View.VISIBLE
+                menuShare.setOnClickListener {
+                    (parentFragment as? PlayerFragment)?.share()
+                    dismiss()
+                }
+            }
             if (videoType != PlayerFragment.OFFLINE_VIDEO && requireContext().prefs().getBoolean(AppConstants.PLAYER_MENU_DOWNLOAD, true)) {
                 menuDownload.visibility = View.VISIBLE
                 menuDownload.setOnClickListener {

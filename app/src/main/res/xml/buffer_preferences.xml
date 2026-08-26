@@ -1,6 +1,13 @@
 <androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="player_show_stream_notification_seekbar"
+        android:title="@string/player_show_stream_notification_seekbar"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
     <ListPreference
         android:defaultValue="balanced"
         android:entries="@array/playerLatencyProfileEntries"

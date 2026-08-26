@@ -801,6 +801,7 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="min_buffer">Minimum buffer</string>
     <string name="min_buffer_summary">Minimum buffer in milliseconds</string>
     <string name="player_latency_profile">Live latency profile</string>
+    <string name="player_show_stream_notification_seekbar">Show seekbar on media notification for live streams</string>
     <string name="player_latency_profile_summary">Select a latency/stability profile to fill the values below. You can edit those values afterward.</string>
     <string name="player_latency_profile_lowest">Lowest latency (may rebuffer more)</string>
     <string name="player_latency_profile_balanced">Balanced latency and stability</string>

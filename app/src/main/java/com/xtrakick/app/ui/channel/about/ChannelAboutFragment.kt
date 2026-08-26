@@ -88,8 +88,14 @@ class ChannelAboutFragment : BaseNetworkFragment(), IntegrityDialog.CallbackList
                                 if (!title.isNullOrBlank()) {
                                     socialMediaList.addView(
                                         TextView(requireContext()).apply {
-                                            val spannableString = SpannableString(title)
-                                            spannableString.setSpan(StyleSpan(Typeface.BOLD), 0, title.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                                            val host = url?.toUri()?.host?.removePrefix("www.")
+                                            val string = if (!host.isNullOrBlank()) {
+                                                "$title ($host)"
+                                            } else {
+                                                title
+                                            }
+                                            val spannableString = SpannableString(string)
+                                            spannableString.setSpan(StyleSpan(Typeface.BOLD), 0, string.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                                             if (url != null) {
                                                 spannableString.setSpan(object : ClickableSpan() {
                                                     override fun onClick(widget: View) {
@@ -102,7 +108,7 @@ class ChannelAboutFragment : BaseNetworkFragment(), IntegrityDialog.CallbackList
                                                             Toast.makeText(requireContext(), R.string.no_browser_found, Toast.LENGTH_LONG).show()
                                                         }
                                                     }
-                                                }, 0, title.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                                                }, 0, string.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                                                 movementMethod = LinkMovementMethod.getInstance()
                                             }
                                             text = spannableString

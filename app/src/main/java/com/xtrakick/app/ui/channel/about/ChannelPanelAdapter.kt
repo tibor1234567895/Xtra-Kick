@@ -18,6 +18,7 @@ import coil3.request.target
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.FragmentChannelPanelListItemBinding
 import com.xtrakick.app.model.ui.ChannelPanel
+import com.xtrakick.app.util.HeadingFixPlugin
 import io.noties.markwon.Markwon
 import io.noties.markwon.SoftBreakAddsNewLinePlugin
 import io.noties.markwon.linkify.LinkifyPlugin
@@ -49,6 +50,7 @@ class ChannelPanelAdapter(
     private val markwon = Markwon.builder(fragment.requireContext())
         .usePlugin(SoftBreakAddsNewLinePlugin.create())
         .usePlugin(LinkifyPlugin.create())
+        .usePlugin(HeadingFixPlugin())
         .build()
 
     inner class ViewHolder(

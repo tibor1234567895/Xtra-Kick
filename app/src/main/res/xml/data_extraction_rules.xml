@@ -3,6 +3,7 @@
     <cloud-backup>
         <include domain="sharedpref" path="."/>
         <exclude domain="sharedpref" path="prefs2.xml"/>
+        <exclude domain="sharedpref" path="com.github.andreyasadchy.xtrakick_preferences.xml"/>
         <include domain="database" path="."/>
     </cloud-backup>
 </data-extraction-rules>

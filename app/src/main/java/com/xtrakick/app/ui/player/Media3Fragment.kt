@@ -125,7 +125,7 @@ class Media3Fragment : PlayerFragment() {
                     setPipActions(!showPlayButton)
                     updateProgress()
                     controllerAutoHide = !showPlayButton
-                    if (videoType != STREAM && useController) {
+                    if (videoType != STREAM && useController && playbackState == Player.STATE_ENDED) {
                         showController()
                     }
                 }
@@ -145,7 +145,7 @@ class Media3Fragment : PlayerFragment() {
                     setPipActions(!showPlayButton)
                     updateProgress()
                     controllerAutoHide = !showPlayButton
-                    if (videoType != STREAM && useController) {
+                    if (videoType != STREAM && useController && player?.playbackState == Player.STATE_ENDED) {
                         showController()
                     }
                 }
@@ -241,6 +241,7 @@ class Media3Fragment : PlayerFragment() {
                                         }
                                     }?.takeUnless { it.all { it == "H.264" || it == "mp4a" } }
                                     val urls = result.get().extras.getStringArray(PlaybackService.URLS)
+                                    val bitrates = result.get().extras.getIntArray(PlaybackService.BITRATES)
                                     if (BuildConfig.DEBUG) {
                                         Log.d(
                                             "KickVodQuality",
@@ -249,20 +250,35 @@ class Media3Fragment : PlayerFragment() {
                                         )
                                     }
                                     if (!names.isNullOrEmpty() && !urls.isNullOrEmpty()) {
+                                        // disambiguate variants that share the same name but
+                                        // differ in bitrate, so one doesn't overwrite the other
+                                        val nameCounts = mutableMapOf<String, Int>()
+                                        names.forEach { quality -> nameCounts[quality] = (nameCounts[quality] ?: 0) + 1 }
+                                        fun displayName(index: Int): String {
+                                            val quality = names[index]
+                                            return if ((nameCounts[quality] ?: 0) > 1) {
+                                                bitrates?.getOrNull(index)?.takeIf { it > 0 }?.let { bitrate ->
+                                                    "$quality (${"%.1f".format(bitrate / 1_000_000f)} Mbps)"
+                                                } ?: "$quality ${index + 1}"
+                                            } else {
+                                                quality
+                                            }
+                                        }
                                         val map = mutableMapOf<String, Pair<String, String?>>()
                                         map[AUTO_QUALITY] = Pair(getString(R.string.auto), null)
                                         names.forEachIndexed { index, quality ->
                                             urls.getOrNull(index)?.let { url ->
                                                 when {
                                                     quality.equals("source", true) -> {
-                                                        val quality = getString(R.string.source)
-                                                        map["source"] = Pair(codecs?.getOrNull(index)?.let { "$quality $it" } ?: quality, url)
+                                                        val label = getString(R.string.source)
+                                                        map["source"] = Pair(codecs?.getOrNull(index)?.let { "$label $it" } ?: label, url)
                                                     }
                                                     quality.startsWith("audio", true) -> {
                                                         map[AUDIO_ONLY_QUALITY] = Pair(getString(R.string.audio_only), url)
                                                     }
                                                     else -> {
-                                                        map[quality] = Pair(codecs?.getOrNull(index)?.let { "$quality $it" } ?: quality, url)
+                                                        val display = displayName(index)
+                                                        map[display] = Pair(codecs?.getOrNull(index)?.let { "$display $it" } ?: display, url)
                                                     }
                                                 }
                                             }

@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.text.InputType
 import android.os.ext.SdkExtensions
 import android.provider.Settings
 import android.util.TypedValue
@@ -1144,6 +1145,19 @@ class SettingsActivity : AppCompatActivity() {
     class PlayerButtonSettingsFragment : MaterialPreferenceFragment() {
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.player_button_preferences, rootKey)
+            listOf(AppConstants.PLAYER_REWIND, AppConstants.PLAYER_FORWARD).forEach { key ->
+                findPreference<EditTextPreference>(key)?.apply {
+                    summary = getString(R.string.seconds_full, requireContext().prefs().getString(key, "10"))
+                    setOnPreferenceChangeListener { _, newValue ->
+                        summary = getString(R.string.seconds_full, newValue.toString())
+                        true
+                    }
+                    setOnBindEditTextListener {
+                        it.inputType = InputType.TYPE_CLASS_NUMBER
+                        it.setSelection(it.text.length)
+                    }
+                }
+            }
             findPreference<SwitchPreferenceCompat>("sleep_timer_lock")?.setOnPreferenceChangeListener { _, newValue ->
                 if (newValue == true) {
                     val devicePolicyManager = requireContext().getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager

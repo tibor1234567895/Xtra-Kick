@@ -27,6 +27,7 @@ import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.WebSocketRuntime
 import com.xtrakick.app.util.coil.CacheControlCacheStrategy
 import com.xtrakick.app.util.getByteArrayCronetCallback
+import com.xtrakick.app.util.UsagePing
 import com.xtrakick.app.util.prefs
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
@@ -73,6 +74,7 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
             androidx.media3.common.util.Log.setLogLevel(media3LogLevel)
         }
         showUnexpectedLogoutNoticeThisProcess = AuthStateHelper.hasPendingUnexpectedLogoutNotice(this)
+        UsagePing.maybeSend(this, delayMillis = 15_000L)
         var startedActivities = 0
         registerActivityLifecycleCallbacks(
             object : ActivityLifecycleCallbacks {
@@ -80,6 +82,9 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                     startedActivities += 1
                     WebSocketRuntime.isAppInForeground = startedActivities > 0
                     DiagnosticLogger.updateAppState(WebSocketRuntime.isAppInForeground)
+                    if (startedActivities == 1) {
+                        UsagePing.maybeSend(activity.applicationContext, delayMillis = 3_000L)
+                    }
                 }
 
                 override fun onActivityStopped(activity: android.app.Activity) {

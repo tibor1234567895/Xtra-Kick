@@ -25,9 +25,15 @@ object KickLivePlayback {
         }
     }
 
+    fun bitrateLabel(quality: Quality): String? {
+        return quality.bitrate.takeIf { it > 0 }?.let { bitrate ->
+            "${(bitrate / 1_000_000f).let { mbps -> "%.1f".format(mbps) }} Mbps"
+        }
+    }
+
     fun qualityLabel(quality: Quality): String {
         val key = qualityKey(quality)
-        val bitrate = quality.bitrate.takeIf { it > 0 }?.let { " ${(it / 1_000_000f).let { mbps -> "%.1f".format(mbps) }} Mbps" } ?: ""
+        val bitrate = bitrateLabel(quality)?.let { " $it" } ?: ""
         return "$key$bitrate".trim()
     }
 }

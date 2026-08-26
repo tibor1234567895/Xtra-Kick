@@ -2777,6 +2777,7 @@ class KickRepository @Inject constructor(
     data class KickClipQuality(
         val name: String,
         val codec: String?,
+        val bitrate: Int? = null,
         val url: String,
     )
 
@@ -2904,7 +2905,6 @@ class KickRepository @Inject constructor(
         }
         val mediaNames = mutableMapOf<String, String>()
         val qualities = mutableListOf<KickClipQuality>()
-        val seenNames = mutableSetOf<String>()
         var pendingAttributes: Map<String, String>? = null
         for (rawLine in playlistText.lineSequence()) {
             val line = rawLine.trim()
@@ -2934,23 +2934,34 @@ class KickRepository @Inject constructor(
                             ?: resolutionHeight?.let { "${it}p" }
                             ?: url.substringBefore('?').substringAfterLast('/').substringBefore('.').takeIf { it.isNotBlank() }
                             ?: continue
-                        if (seenNames.add(name)) {
-                            qualities.add(
-                                KickClipQuality(
-                                    name = name,
-                                    codec = attributes["CODECS"]
-                                        ?.split(',')
-                                        ?.map { it.trim() }
-                                        ?.firstOrNull { it.isNotBlank() },
-                                    url = url,
-                                )
+                        qualities.add(
+                            KickClipQuality(
+                                name = name,
+                                codec = attributes["CODECS"]
+                                    ?.split(',')
+                                    ?.map { it.trim() }
+                                    ?.firstOrNull { it.isNotBlank() },
+                                bitrate = attributes["BANDWIDTH"]?.trim()?.toIntOrNull()?.takeIf { it > 0 },
+                                url = url,
                             )
-                        }
+                        )
                     }
                 }
             }
         }
-        return qualities
+        // disambiguate variants that share a display name but differ in bitrate,
+        // so one doesn't silently replace the other (mirrors upstream Xtra)
+        val nameCounts = qualities.groupingBy { it.name }.eachCount()
+        return qualities.map { quality ->
+            if ((nameCounts[quality.name] ?: 0) > 1) {
+                val suffix = quality.bitrate?.let { bitrate ->
+                    " (${(bitrate / 1_000_000f).let { mbps -> "%.1f".format(mbps) }} Mbps)"
+                } ?: ""
+                quality.copy(name = "${quality.name}$suffix")
+            } else {
+                quality
+            }
+        }
     }
 
     private fun parseHlsAttributes(line: String): Map<String, String> {

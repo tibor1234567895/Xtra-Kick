@@ -470,7 +470,11 @@ class PlayerViewModel @Inject constructor(
 
     fun getOfflineVideoPosition(id: Int) {
         viewModelScope.launch {
-            savedOfflineVideoPosition.value = offlineRepository.getVideoById(id)?.lastWatchPosition ?: 0
+            val video = offlineRepository.getVideoById(id)
+            val position = video?.lastWatchPosition ?: 0
+            // start from the beginning when the saved position is at (or past) the end
+            val duration = video?.duration
+            savedOfflineVideoPosition.value = if (duration != null && duration > 0 && position >= duration) 0 else position
         }
     }
 

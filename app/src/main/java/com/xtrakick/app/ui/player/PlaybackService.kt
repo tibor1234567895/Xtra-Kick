@@ -118,6 +118,30 @@ class PlaybackService : MediaSessionService() {
     private var sleepTimerEndTime = 0L
     private var lastSavedPosition: Long? = null
     private var savePositionTimer: Timer? = null
+    private var idleStopTimer: Timer? = null
+
+    /**
+     * Stops the service when it has been left paused/idle for 10 minutes with no
+     * connected controller, mirroring upstream Xtra's idle auto-stop.
+     */
+    private fun startIdleTimerIfUnused() {
+        val hasController = mediaSession?.connectedControllers?.isNotEmpty() == true
+        if (idleStopTimer == null && !hasController && mediaSession?.player?.isPlaying != true) {
+            idleStopTimer = Timer().apply {
+                schedule(600000) {
+                    Handler(Looper.getMainLooper()).post {
+                        savePosition()
+                        pauseAllPlayersAndStopSelf()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun stopIdleTimer() {
+        idleStopTimer?.cancel()
+        idleStopTimer = null
+    }
 
     private fun isBufferDebugEnabled(): Boolean {
         return BuildConfig.DEBUG && prefs().getBoolean(AppConstants.DEBUG_PLAYER_BUFFER_LOGS, false)
@@ -136,8 +160,8 @@ class PlaybackService : MediaSessionService() {
             setLoadControl(LiveLatencySettings.toLoadControl(activeLatencyConfig))
             setAudioAttributes(AudioAttributes.DEFAULT, prefs().getBoolean(AppConstants.PLAYER_AUDIO_FOCUS, true))
             setHandleAudioBecomingNoisy(prefs().getBoolean(AppConstants.PLAYER_HANDLE_AUDIO_BECOMING_NOISY, true))
-            setSeekBackIncrementMs(prefs().getString(AppConstants.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000)
-            setSeekForwardIncrementMs(prefs().getString(AppConstants.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000)
+            setSeekBackIncrementMs((prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10) * 1000)
+            setSeekForwardIncrementMs((prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10) * 1000)
         }.build()
         logBufferDebug(
             "PlaybackService created with latency=${LiveLatencySettings.describe(activeLatencyConfig)}"
@@ -167,6 +191,7 @@ class PlaybackService : MediaSessionService() {
                             "currentPosition=${player.currentPosition}"
                     )
                     if (isPlaying) {
+                        stopIdleTimer()
                         if (savePositionTimer == null && (videoId != null || offlineVideoId != null)) {
                             savePositionTimer = Timer().apply {
                                 scheduleAtFixedRate(30000, 30000) {
@@ -180,6 +205,7 @@ class PlaybackService : MediaSessionService() {
                         savePositionTimer?.cancel()
                         savePositionTimer = null
                         updateSavedPosition()
+                        startIdleTimerIfUnused()
                     }
                 }
 
@@ -304,6 +330,10 @@ class PlaybackService : MediaSessionService() {
                                         "background=$background " +
                                         "${summarizePlaybackUri(uri)}"
                                 )
+                                // mark the media3 engine as the last used one so the
+                                // headset-button resume receiver stays out of the way
+                                prefs().edit { putString(AppConstants.LAST_PLAYBACK_ENGINE, "media3") }
+                                stopIdleTimer()
                                 videoId = null
                                 offlineVideoId = null
                                 val proxyHost = prefs().getString(AppConstants.PROXY_HOST, null)
@@ -418,6 +448,10 @@ class PlaybackService : MediaSessionService() {
                                 } else {
                                     customCommand.customExtras.getLong(PLAYBACK_POSITION)
                                 }
+                                // mark the media3 engine as the last used one so the
+                                // headset-button resume receiver stays out of the way
+                                prefs().edit { putString(AppConstants.LAST_PLAYBACK_ENGINE, "media3") }
+                                stopIdleTimer()
                                 videoId = newId
                                 offlineVideoId = null
                                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
@@ -601,6 +635,7 @@ class PlaybackService : MediaSessionService() {
                                     Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
                                         NAMES to names,
                                         CODECS to playlist.variants.map { it.format.codecs }.toTypedArray(),
+                                        BITRATES to playlist.variants.map { it.format.bitrate }.toIntArray(),
                                         URLS to playlist.variants.map { it.url.toString() }.toTypedArray(),
                                     )))
                                 } else {
@@ -618,6 +653,7 @@ class PlaybackService : MediaSessionService() {
                                     Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
                                         NAMES to variants?.map { it.second }?.toTypedArray(),
                                         CODECS to variants?.map { it.first.format.codecs }?.toTypedArray(),
+                                        BITRATES to variants?.map { it.first.format.bitrate }?.toIntArray(),
                                         URLS to variants?.map { it.first.url.toString() }?.toTypedArray(),
                                     )))
                                 }
@@ -732,6 +768,8 @@ class PlaybackService : MediaSessionService() {
         sleepTimer = null
         savePositionTimer?.cancel()
         savePositionTimer = null
+        idleStopTimer?.cancel()
+        idleStopTimer = null
         dynamicsProcessing?.release()
         dynamicsProcessing = null
         mediaSession?.run {
@@ -830,6 +868,7 @@ class PlaybackService : MediaSessionService() {
         const val DURATION = "duration"
         const val NAMES = "names"
         const val CODECS = "codecs"
+        const val BITRATES = "bitrates"
         const val URLS = "urls"
 
         const val REQUEST_CODE_RESUME = 2

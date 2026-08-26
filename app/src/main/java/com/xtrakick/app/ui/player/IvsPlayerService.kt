@@ -82,6 +82,7 @@ class IvsPlayerService : Service() {
     private var hasStablePlayback = false
     private var playbackRequested = false
     private var retryCount = 0
+    private var startedAtMs = 0L
     private var surfaceAttached = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
@@ -89,7 +90,20 @@ class IvsPlayerService : Service() {
     private var dynamicsProcessingAudioSessionId: Int? = null
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: AudioFocusRequest? = null
-
+    private var idleStopRunnable: Runnable? = null
+    private val liveSeekbarTicker: Runnable = object : Runnable {
+        override fun run() {
+            val ivsPlayer = player
+            if (ivsPlayer != null && ivsPlayer.state == Player.State.PLAYING && ivsPlayer.duration <= 0L &&
+                startedAtMs > 0L && prefs().getBoolean(AppConstants.PLAYER_SHOW_STREAM_NOTIFICATION_SEEKBAR, true)
+            ) {
+                // keep the synthetic live timeline (stream uptime) in sync with the session
+                updatePlaybackState()
+                updateMetadata()
+                applicationHandler?.postDelayed(this, 30_000L)
+            }
+        }
+    }
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
@@ -203,6 +217,12 @@ class IvsPlayerService : Service() {
                         "state=$state backgroundPlaybackEnabled=$backgroundPlaybackEnabled " +
                             "surfaceAttached=$surfaceAttached urlPresent=${!currentUrl.isNullOrBlank()}"
                     )
+                    if (state == Player.State.PLAYING) {
+                        applicationHandler?.removeCallbacks(liveSeekbarTicker)
+                        applicationHandler?.post(liveSeekbarTicker)
+                    } else {
+                        applicationHandler?.removeCallbacks(liveSeekbarTicker)
+                    }
                     updatePlaybackState()
                     updateMetadata()
                     updateNotification()
@@ -239,8 +259,8 @@ class IvsPlayerService : Service() {
                 override fun onQualityChanged(quality: com.amazonaws.ivs.player.Quality) = Unit
             }
         )
-        val rewindMs = prefs().getString(AppConstants.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000
-        val fastForwardMs = prefs().getString(AppConstants.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000
+        val rewindMs = (prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10) * 1000
+        val fastForwardMs = (prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10) * 1000
         session = MediaSession(this, TAG).apply {
             // Volumee and other external controllers filter on flags. Without these
             // dumpsys shows flags=0 and Volumee shows "No player is active".
@@ -272,6 +292,7 @@ class IvsPlayerService : Service() {
                         abandonAudioFocus()
                         player?.pause()
                         releasePlaybackLocks()
+                        clearLastPlaybackRequestIfCurrent()
                         updatePlaybackState()
                         updateNotification()
                         stopSelf()
@@ -325,16 +346,19 @@ class IvsPlayerService : Service() {
         playerDebugLog("service created")
     }
 
-    fun playStream(url: String, title: String?, channelName: String?, channelLogo: String?) {
+    fun playStream(url: String, title: String?, channelName: String?, channelLogo: String?, streamStartedAtMs: Long? = null) {
         this.currentUrl = url
         this.title = title
         this.channelName = channelName
         this.channelLogo = channelLogo
+        this.startedAtMs = streamStartedAtMs ?: 0L
+        saveLastPlaybackRequest(url, title, channelName, channelLogo, startedAtMs)
         hasStablePlayback = false
         retryCount = 0
         releaseDynamicsProcessing()
         playerDebugLog("playStream channel=$channelName title=$title")
         playbackRequested = true
+        disarmIdleStop()
         requestAudioFocus()
         // Don't acquire locks pre-emptively — wait for BUFFERING/PLAYING callback.
         player?.apply {
@@ -349,8 +373,81 @@ class IvsPlayerService : Service() {
         updateNotification()
     }
 
-    fun attachSurface(surface: android.view.Surface?) {
-        surfaceAttached = surface != null
+    private fun saveLastPlaybackRequest(url: String, title: String?, channelName: String?, channelLogo: String?, startedAtMs: Long) {
+        try {
+            prefs().edit {
+                putString(AppConstants.LAST_PLAYBACK_ENGINE, "ivs")
+                putString(AppConstants.LAST_PLAYBACK_URL, url)
+                putString(AppConstants.LAST_PLAYBACK_TITLE, title)
+                putString(AppConstants.LAST_PLAYBACK_CHANNEL_NAME, channelName)
+                putString(AppConstants.LAST_PLAYBACK_CHANNEL_LOGO, channelLogo)
+                putLong(AppConstants.LAST_PLAYBACK_STARTED_AT_MS, startedAtMs)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun clearLastPlaybackRequestIfCurrent() {
+        if (prefs().getString(AppConstants.LAST_PLAYBACK_URL, null) == currentUrl) {
+            try {
+                prefs().edit {
+                    remove(AppConstants.LAST_PLAYBACK_URL)
+                    remove(AppConstants.LAST_PLAYBACK_TITLE)
+                    remove(AppConstants.LAST_PLAYBACK_CHANNEL_NAME)
+                    remove(AppConstants.LAST_PLAYBACK_CHANNEL_LOGO)
+                    remove(AppConstants.LAST_PLAYBACK_STARTED_AT_MS)
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /**
+     * Restores the last playback request after the service process was killed
+     * (e.g. headset PLAY button received while nothing is playing).
+     */
+    private fun restoreFromSavedRequest(): Boolean {
+        val prefs = prefs()
+        val url = prefs.getString(AppConstants.LAST_PLAYBACK_URL, null)
+        if (url.isNullOrBlank()) return false
+        if (!currentUrl.isNullOrBlank()) return false
+        playStream(
+            url = url,
+            title = prefs.getString(AppConstants.LAST_PLAYBACK_TITLE, null),
+            channelName = prefs.getString(AppConstants.LAST_PLAYBACK_CHANNEL_NAME, null),
+            channelLogo = prefs.getString(AppConstants.LAST_PLAYBACK_CHANNEL_LOGO, null),
+            streamStartedAtMs = if (prefs.getLong(AppConstants.LAST_PLAYBACK_STARTED_AT_MS, 0L) > 0L) {
+                prefs.getLong(AppConstants.LAST_PLAYBACK_STARTED_AT_MS, 0L)
+            } else {
+                null
+            },
+        )
+        return true
+    }
+
+    /**
+     * Stops the service when it has been left paused/idle for 10 minutes without
+     * playback being requested (mirrors upstream Xtra's idle auto-stop).
+     */
+    private fun armIdleStop() {
+        if (idleStopRunnable == null && !playbackRequested && boundClients == 0) {
+            val runnable = Runnable {
+                idleStopRunnable = null
+                if (!playbackRequested) {
+                    stopSelf()
+                }
+            }
+            idleStopRunnable = runnable
+            applicationHandler?.postDelayed(runnable, 600_000L)
+        }
+    }
+
+    private fun disarmIdleStop() {
+        idleStopRunnable?.let { applicationHandler?.removeCallbacks(it) }
+        idleStopRunnable = null
+    }
+
+    fun attachSurface(surface: android.view.Surface?) {        surfaceAttached = surface != null
         player?.setSurface(surface)
         playerDebugLog("attachSurface attached=$surfaceAttached")
     }
@@ -367,6 +464,7 @@ class IvsPlayerService : Service() {
 
     fun play() {
         playbackRequested = true
+        disarmIdleStop()
         requestAudioFocus()
         // Locks will be acquired on PLAYING/BUFFERING state change.
         player?.play()
@@ -383,6 +481,7 @@ class IvsPlayerService : Service() {
         }
         player?.pause()
         releasePlaybackLocks()
+        armIdleStop()
         updatePlaybackState()
         updateNotification()
     }
@@ -420,6 +519,12 @@ class IvsPlayerService : Service() {
     private fun updatePlaybackState(error: Boolean = false) {
         val ivsPlayer = player ?: return
         val live = !error && ivsPlayer.duration <= 0L
+        val showSeekbar = prefs().getBoolean(AppConstants.PLAYER_SHOW_STREAM_NOTIFICATION_SEEKBAR, true)
+        val liveDuration = if (live && startedAtMs > 0L) {
+            (System.currentTimeMillis() - startedAtMs).coerceAtLeast(0L)
+        } else {
+            0L
+        }
         val state = when {
             error -> PlaybackState.STATE_ERROR
             ivsPlayer.state == Player.State.PLAYING -> PlaybackState.STATE_PLAYING
@@ -433,7 +538,11 @@ class IvsPlayerService : Service() {
             PlaybackState.Builder().apply {
                 setState(
                     state,
-                    if (live) -1L else ivsPlayer.position,
+                    when {
+                        live && showSeekbar && liveDuration > 0L -> liveDuration
+                        live -> -1L
+                        else -> ivsPlayer.position
+                    },
                     if (state == PlaybackState.STATE_PLAYING) ivsPlayer.playbackRate else 0f
                 )
                 setActions(
@@ -445,7 +554,7 @@ class IvsPlayerService : Service() {
                         PlaybackState.ACTION_FAST_FORWARD or
                         PlaybackState.ACTION_REWIND or
                         PlaybackState.ACTION_PLAY_PAUSE or
-                        (if (!live) PlaybackState.ACTION_SEEK_TO else 0L)
+                        (if (!live || (showSeekbar && liveDuration > 0L)) PlaybackState.ACTION_SEEK_TO else 0L)
                 )
             }.build()
         )
@@ -483,6 +592,13 @@ class IvsPlayerService : Service() {
 
     private fun setMetadata(bitmap: Bitmap?) {
         player?.let { player ->
+            val showSeekbar = prefs().getBoolean(AppConstants.PLAYER_SHOW_STREAM_NOTIFICATION_SEEKBAR, true)
+            val live = player.duration <= 0L
+            val liveDuration = if (live && startedAtMs > 0L) {
+                (System.currentTimeMillis() - startedAtMs).coerceAtLeast(0L)
+            } else {
+                -1L
+            }
             session?.setMetadata(
                 MediaMetadata.Builder().apply {
                     putText(MediaMetadata.METADATA_KEY_TITLE, title)
@@ -491,7 +607,16 @@ class IvsPlayerService : Service() {
                         putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, bitmap)
                         putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, bitmap)
                     }
-                    putLong(MediaMetadata.METADATA_KEY_DURATION, if (player.duration > 0L) player.duration else -1L)
+                    // expose the stream uptime as a synthetic timeline so system UI
+                    // can render a seekbar for live streams too
+                    putLong(
+                        MediaMetadata.METADATA_KEY_DURATION,
+                        when {
+                            player.duration > 0L -> player.duration
+                            live && showSeekbar && liveDuration > 0L -> liveDuration
+                            else -> -1L
+                        }
+                    )
                 }.build()
             )
         }
@@ -611,27 +736,39 @@ class IvsPlayerService : Service() {
                             if (ivsPlayer?.state == Player.State.PLAYING) {
                                 pause(clearPlaybackRequest = true)
                             } else {
-                                play()
+                                if (ivsPlayer?.state == Player.State.READY || ivsPlayer?.state == Player.State.ENDED || playbackRequested) {
+                                    play()
+                                } else {
+                                    restoreFromSavedRequest()
+                                }
                             }
                             updatePlaybackState()
                             updateNotification()
                         }
                         KeyEvent.KEYCODE_MEDIA_PLAY -> {
-                            play()
+                            val ivsPlayer = player
+                            if (ivsPlayer?.state == Player.State.READY || ivsPlayer?.state == Player.State.ENDED || playbackRequested) {
+                                play()
+                            } else {
+                                restoreFromSavedRequest()
+                            }
                             updatePlaybackState()
                             updateNotification()
                         }
                         KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP -> {
                             pause(clearPlaybackRequest = true)
+                            if (keyEvent.keyCode == KeyEvent.KEYCODE_MEDIA_STOP) {
+                                clearLastPlaybackRequestIfCurrent()
+                            }
                             updatePlaybackState()
                             updateNotification()
                         }
                         KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                            val fastForwardMs = prefs().getString(AppConstants.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000L
+                            val fastForwardMs = (prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10) * 1000
                             player?.let { it.seekTo(it.position + fastForwardMs) }
                         }
                         KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                            val rewindMs = prefs().getString(AppConstants.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000L
+                            val rewindMs = (prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10) * 1000
                             player?.let { it.seekTo((it.position - rewindMs).coerceAtLeast(0L)) }
                         }
                     }
@@ -652,9 +789,16 @@ class IvsPlayerService : Service() {
         return START_STICKY
     }
 
-    override fun onBind(intent: Intent?): IBinder = ServiceBinder()
+    private var boundClients = 0
+
+    override fun onBind(intent: Intent?): IBinder {
+        boundClients += 1
+        disarmIdleStop()
+        return ServiceBinder()
+    }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        boundClients = (boundClients - 1).coerceAtLeast(0)
         if (!backgroundPlaybackEnabled && !playbackRequested) {
             stopSelf()
         }

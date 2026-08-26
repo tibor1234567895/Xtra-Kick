@@ -921,11 +921,20 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 root.setOnTouchListener { _, event ->
                     controllerTapDetector.onTouchEvent(event)
                 }
-                playPause.setOnClickListener { playPause() }
-                rewind.text = String.format(Locale.getDefault(), "%d", (prefs.getString(AppConstants.PLAYER_REWIND, "10000")?.toLongOrNull() ?: 10000) / 1000)
-                rewind.setOnClickListener { rewind() }
-                fastForward.text = String.format(Locale.getDefault(), "%d", (prefs.getString(AppConstants.PLAYER_FORWARD, "10000")?.toLongOrNull() ?: 10000) / 1000)
-                fastForward.setOnClickListener { fastForward() }
+                playPause.setOnClickListener {
+                    showController(force = true)
+                    playPause()
+                }
+                rewind.text = String.format(Locale.getDefault(), "%d", (prefs.getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10))
+                rewind.setOnClickListener {
+                    showController(force = true)
+                    rewind()
+                }
+                fastForward.text = String.format(Locale.getDefault(), "%d", (prefs.getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10))
+                fastForward.setOnClickListener {
+                    showController(force = true)
+                    fastForward()
+                }
                 progressBar.addListener(
                     object : TimeBar.OnScrubListener {
                         override fun onScrubStart(timeBar: TimeBar, position: Long) {
@@ -1011,15 +1020,22 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
                 if (prefs.getBoolean(AppConstants.PLAYER_VOLUMEBUTTON, true)) {
                     volume.visibility = View.VISIBLE
-                    volume.setOnClickListener { showVolumeDialog() }
+                    volume.setOnClickListener {
+                        showController(force = true)
+                        showVolumeDialog()
+                    }
                 }
                 if (prefs.getBoolean(AppConstants.PLAYER_SETTINGS, true)) {
                     quality.visibility = View.VISIBLE
-                    quality.setOnClickListener { showQualityDialog() }
+                    quality.setOnClickListener {
+                        showController(force = true)
+                        showQualityDialog()
+                    }
                 }
                 if (prefs.getBoolean(AppConstants.PLAYER_MODE, false)) {
                     audioOnly.visibility = View.VISIBLE
                     audioOnly.setOnClickListener {
+                        showController(force = true)
                         if (viewModel.quality == AUDIO_ONLY_QUALITY) {
                             changeQuality(viewModel.previousQuality)
                         } else {
@@ -1067,7 +1083,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     if (com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())) {
                         if (prefs.getBoolean(AppConstants.PLAYER_CHATBARTOGGLE, false) && !prefs.getBoolean(AppConstants.CHAT_DISABLE, false)) {
                             toggleChatInput.visibility = View.VISIBLE
-                            toggleChatInput.setOnClickListener { toggleChatBar() }
+                            toggleChatInput.setOnClickListener {
+                        showController(force = true)
+                        toggleChatBar()
+                    }
                         }
                         slidingLayout.viewTreeObserver.addOnGlobalLayoutListener {
                             if (slidingLayout.isKeyboardShown) {
@@ -1125,12 +1144,18 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     }
                     if (prefs.getBoolean(AppConstants.PLAYER_RESTART, true)) {
                         restart.visibility = View.VISIBLE
-                        restart.setOnClickListener { restartPlayer() }
+                        restart.setOnClickListener {
+                        showController(force = true)
+                        restartPlayer()
+                    }
                         updateRestartButtonUi()
                     }
                     if (prefs.getBoolean(AppConstants.PLAYER_SEEKLIVE, false)) {
                         seekLive.visibility = View.VISIBLE
-                        seekLive.setOnClickListener { seekToLivePosition() }
+                        seekLive.setOnClickListener {
+                        showController(force = true)
+                        seekToLivePosition()
+                    }
                     }
                     if (prefs.getBoolean(AppConstants.PLAYER_SHOW_UPTIME, true)) {
                         requireArguments().getString(KEY_STARTED_AT)?.let {
@@ -1157,7 +1182,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 } else {
                     if (prefs.getBoolean(AppConstants.PLAYER_SPEEDBUTTON, true)) {
                         speed.visibility = View.VISIBLE
-                        speed.setOnClickListener { showSpeedDialog() }
+                        speed.setOnClickListener {
+                    showController(force = true)
+                    showSpeedDialog()
+                }
                     }
                 }
                 if (videoType == VIDEO) {
@@ -2761,13 +2789,18 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     protected fun playVideo(skipAccessToken: Boolean, playbackPosition: Long?) {
+        // start from the beginning when the saved position is at (or past) the end
+        val position = playbackPosition?.let { saved ->
+            val durationMs = requireArguments().getString(KEY_DURATION)?.let { KickApiHelper.getDuration(it) }?.times(1000L)
+            if (durationMs != null && durationMs > 0 && saved >= durationMs) 0L else saved
+        }
         requireArguments().getString(KEY_URL)?.takeIf { it.isNotBlank() }?.let { directUrl ->
             val isHlsPlaylist = directUrl.contains(".m3u8", ignoreCase = true)
             if (isHlsPlaylist) {
                 viewModel.qualities = emptyMap()
                 viewModel.quality = null
                 viewModel.updateQualities = true
-                startVideo(directUrl, playbackPosition, true)
+                startVideo(directUrl, position, true)
             } else {
                 viewModel.qualities = mapOf(
                     "source" to Pair(getString(R.string.source), directUrl),
@@ -2775,7 +2808,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 )
                 setDefaultQuality()
                 changePlayerMode()
-                startVideo(directUrl, playbackPosition, false)
+                startVideo(directUrl, position, false)
             }
             return
         }
@@ -2807,10 +2840,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 viewModel.quality = qualities.keys.firstOrNull()
                 qualities.values.firstOrNull()?.second
             }?.let { url ->
-                startVideo(url, playbackPosition, false)
+                startVideo(url, position, false)
             }
         } else {
-            viewModel.playbackPosition = playbackPosition
+            viewModel.playbackPosition = position
             viewModel.loadVideo(
                 networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
                 kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
@@ -3266,6 +3299,44 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 )
                 start()
             }
+        }
+    }
+
+    fun share() {
+        val text = when (videoType) {
+            STREAM -> {
+                requireArguments().getString(KEY_CHANNEL_LOGIN)?.let { channelLogin ->
+                    "https://kick.com/$channelLogin"
+                }
+            }
+            VIDEO -> {
+                requireArguments().getString(KEY_VIDEO_ID)?.let { videoId ->
+                    val position = getCurrentPosition()?.takeIf { it > 0L }?.let { position ->
+                        val totalSeconds = position / 1000
+                        String.format(Locale.US, "?t=%02dh%02dm%02ds", totalSeconds / 3600, (totalSeconds % 3600) / 60, totalSeconds % 60)
+                    } ?: ""
+                    "https://kick.com/video/$videoId$position"
+                }
+            }
+            CLIP -> {
+                requireArguments().getString(KEY_CLIP_ID)?.let { clipId ->
+                    "https://kick.com/clip/$clipId"
+                }
+            }
+            else -> null
+        }
+        if (!text.isNullOrBlank()) {
+            startActivity(
+                Intent.createChooser(
+                    Intent().apply {
+                        action = Intent.ACTION_SEND
+                        putExtra(Intent.EXTRA_TEXT, text)
+                        putExtra(Intent.EXTRA_TITLE, requireArguments().getString(KEY_TITLE))
+                        type = "text/plain"
+                    },
+                    null,
+                )
+            )
         }
     }
 
