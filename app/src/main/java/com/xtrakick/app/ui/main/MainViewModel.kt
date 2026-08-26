@@ -43,6 +43,7 @@ import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.KickApiHelper
+import com.xtrakick.app.util.NetworkUtils
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
@@ -56,7 +57,10 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -64,11 +68,13 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.chromium.net.CronetEngine
 import org.chromium.net.apihelpers.RedirectHandlers
 import org.chromium.net.apihelpers.UrlRequestCallbacks
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Timer
@@ -127,6 +133,10 @@ class MainViewModel @Inject constructor(
     val game = MutableStateFlow<Pair<Game?, String?>?>(null)
 
     val updateUrl = MutableSharedFlow<String?>()
+    var updateSize: Long? = null
+    var updateJob: Job? = null
+    val updateProgress = MutableSharedFlow<Int>()
+    val closeUpdateDialog = MutableSharedFlow<Boolean>()
 
     private fun markKickValidationComplete() {
         _kickValidationState.value = KickValidationState.COMPLETE
@@ -943,6 +953,7 @@ class MainViewModel @Inject constructor(
                     }?.jsonObject?.let { obj ->
                         obj.getValue("updated_at").jsonPrimitive.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let {
                             if (it > lastChecked) {
+                                updateSize = obj["size"]?.jsonPrimitive?.longOrNull
                                 obj.getValue("browser_download_url").jsonPrimitive.contentOrNull
                             } else null
                         }
@@ -956,42 +967,65 @@ class MainViewModel @Inject constructor(
     }
 
     fun downloadUpdate(networkLibrary: String?, url: String) {
-        viewModelScope.launch(Dispatchers.IO) {
+        updateJob = viewModelScope.launch(Dispatchers.IO) {
             try {
+                val progressListener = NetworkUtils.ProgressListener { bytesRead ->
+                    runBlocking {
+                        updateProgress.emit(bytesRead)
+                    }
+                }
                 val response = when {
                     networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                        val response = suspendCoroutine { continuation ->
-                            httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
+                        val response = suspendCancellableCoroutine { continuation ->
+                            val request = httpEngine.get().newUrlRequestBuilder(
+                                url,
+                                cronetExecutor,
+                                HttpEngineUtils.byteArrayUrlCallback(continuation, progressListener)
+                            ).build()
+                            continuation.invokeOnCancellation {
+                                request.cancel()
+                            }
+                            request.start()
                         }
                         if (response.first.httpStatusCode in 200..299) {
                             response.second
                         } else null
                     }
                     networkLibrary == "Cronet" && cronetEngine != null -> {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                            val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                            cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                            val response = request.future.get()
-                            if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                response.responseBody as ByteArray
-                            } else null
-                        } else {
-                            val response = suspendCoroutine { continuation ->
-                                cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
+                        val response = suspendCancellableCoroutine { continuation ->
+                            val request = cronetEngine.get().newUrlRequestBuilder(
+                                url,
+                                NetworkUtils.ByteArrayCronetUrlCallback(continuation, progressListener),
+                                cronetExecutor
+                            ).build()
+                            continuation.invokeOnCancellation {
+                                request.cancel()
                             }
-                            if (response.first.httpStatusCode in 200..299) {
-                                response.second
-                            } else null
+                            request.start()
                         }
+                        if (response.first.httpStatusCode in 200..299) {
+                            response.second
+                        } else null
                     }
                     else -> {
                         okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
                             if (response.isSuccessful) {
-                                response.body.bytes()
+                                val output = ByteArrayOutputStream()
+                                response.body.byteStream().use { input ->
+                                    val buffer = ByteArray(32 * 1024)
+                                    var read: Int
+                                    while (input.read(buffer).also { read = it } != -1) {
+                                        output.write(buffer, 0, read)
+                                        progressListener.update(output.size())
+                                    }
+                                }
+                                output.toByteArray()
                             } else null
                         }
                     }
                 }
+                // Dialog was dismissed mid-download; don't prompt the install.
+                if (!isActive) return@launch
                 if (response != null && response.isNotEmpty()) {
                     val packageInstaller = applicationContext.packageManager.packageInstaller
                     val sessionId = packageInstaller.createSession(
@@ -1017,6 +1051,7 @@ class MainViewModel @Inject constructor(
             } catch (e: Exception) {
 
             }
+            closeUpdateDialog.emit(true)
         }
     }
 

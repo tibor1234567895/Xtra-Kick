@@ -773,6 +773,8 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="api_token_settings">API token settings</string>
     <string name="download_settings">Downloads</string>
     <string name="update_settings">Update settings</string>
+    <string name="downloading_update_progress">Downloading update. %1$s / %2$s</string>
+    <string name="downloading_update">Downloading update.</string>
     <string name="playback_settings">Playback</string>
     <string name="chat_settings">Chat</string>
     <string name="ui_settings">UI</string>

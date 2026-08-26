@@ -22,7 +22,10 @@ object HttpEngineUtils {
     private const val MAX_ARRAY_SIZE = Int.MAX_VALUE - 8
     private const val BYTE_BUFFER_CAPACITY = 32 * 1024
 
-    fun byteArrayUrlCallback(continuation: Continuation<Pair<UrlResponseInfo, ByteArray>>): UrlRequest.Callback {
+    fun byteArrayUrlCallback(
+        continuation: Continuation<Pair<UrlResponseInfo, ByteArray>>,
+        progressListener: NetworkUtils.ProgressListener? = null,
+    ): UrlRequest.Callback {
         return object : UrlRequest.Callback {
             private lateinit var mResponseBodyStream: ByteArrayOutputStream
             private lateinit var mResponseBodyChannel: WritableByteChannel
@@ -47,6 +50,7 @@ object HttpEngineUtils {
                 byteBuffer.flip()
                 mResponseBodyChannel.write(byteBuffer)
                 byteBuffer.clear()
+                progressListener?.update(mResponseBodyStream.size())
                 request.read(byteBuffer)
             }
 

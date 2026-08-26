@@ -492,7 +492,7 @@ class SettingsActivity : AppCompatActivity() {
                                 .setTitle(getString(R.string.update_available))
                                 .setMessage(getString(R.string.update_message))
                                 .setPositiveButton(getString(R.string.yes)) { _, _ ->
-                                    if (requireContext().prefs().getBoolean(AppConstants.UPDATE_USE_BROWSER, false)) {
+                                    if (BuildConfig.DEBUG || requireContext().prefs().getBoolean(AppConstants.UPDATE_USE_BROWSER, false)) {
                                         try {
                                             val intent = Intent(Intent.ACTION_VIEW, updateUrl.toUri()).apply {
                                                 addCategory(Intent.CATEGORY_BROWSABLE)

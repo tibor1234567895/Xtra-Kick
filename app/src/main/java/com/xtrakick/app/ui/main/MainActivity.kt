@@ -22,6 +22,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.text.format.Formatter
 import android.util.Log
 import android.view.Menu
 import android.view.View
@@ -31,10 +32,10 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.OptIn
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
-import androidx.core.content.IntentSanitizer
 import androidx.core.content.edit
 import androidx.core.content.res.use
 import androidx.core.net.toUri
@@ -64,6 +65,7 @@ import com.xtrakick.app.R
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.KickApp
 import com.xtrakick.app.databinding.ActivityMainBinding
+import com.xtrakick.app.databinding.DialogUpdateDownloadBinding
 import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.model.ui.Stream
@@ -150,6 +152,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
     private lateinit var prefs: SharedPreferences
+    private var updateDownloadDialogBinding: DialogUpdateDownloadBinding? = null
+    private var updateDownloadDialog: AlertDialog? = null
     var settingsResultLauncher: ActivityResultLauncher<Intent>? = null
     var loginResultLauncher: ActivityResultLauncher<Intent>? = null
     var logoutResultLauncher: ActivityResultLauncher<Intent>? = null
@@ -308,7 +312,30 @@ class MainActivity : AppCompatActivity() {
                                         Toast.makeText(this@MainActivity, R.string.no_browser_found, Toast.LENGTH_LONG).show()
                                     }
                                 } else {
+                                    val binding = DialogUpdateDownloadBinding.inflate(layoutInflater)
+                                    updateDownloadDialogBinding = binding
+                                    val size = viewModel.updateSize
+                                    if (size != null) {
+                                        binding.textView.text = getString(
+                                            R.string.downloading_update_progress,
+                                            Formatter.formatFileSize(this@MainActivity, 0),
+                                            Formatter.formatFileSize(this@MainActivity, size),
+                                        )
+                                    } else {
+                                        binding.textView.text = getString(R.string.downloading_update)
+                                        binding.progressBar.visibility = View.GONE
+                                    }
                                     viewModel.downloadUpdate(prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), it)
+                                    val dialog = getAlertDialogBuilder()
+                                        .setView(binding.root)
+                                        .setNegativeButton(getString(android.R.string.cancel), null)
+                                        .setOnDismissListener {
+                                            viewModel.updateJob?.cancel()
+                                            updateDownloadDialogBinding = null
+                                            updateDownloadDialog = null
+                                        }
+                                        .show()
+                                    updateDownloadDialog = dialog
                                 }
                             }
                             .setNegativeButton(getString(R.string.no)) { _, _ ->
@@ -318,6 +345,30 @@ class MainActivity : AppCompatActivity() {
                             }
                             .show()
                     }
+                }
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.updateProgress.collectLatest {
+                    updateDownloadDialogBinding?.let { binding ->
+                        val size = viewModel.updateSize
+                        if (size != null && size > 0) {
+                            binding.textView.text = getString(
+                                R.string.downloading_update_progress,
+                                Formatter.formatFileSize(this@MainActivity, it.toLong()),
+                                Formatter.formatFileSize(this@MainActivity, size),
+                            )
+                            binding.progressBar.progress = (((it.toFloat() / size) * 100)).toInt()
+                        }
+                    }
+                }
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.closeUpdateDialog.collectLatest {
+                    updateDownloadDialog?.dismiss()
                 }
             }
         }
@@ -673,12 +724,8 @@ class MainActivity : AppCompatActivity() {
                         tokenPrefs().edit {
                             putLong(AppConstants.UPDATE_LAST_CHECKED, System.currentTimeMillis())
                         }
-                        val sanitized = IntentSanitizer.Builder()
-                            .allowAnyComponent()
-                            .build()
-                            .sanitizeByFiltering(verifiedIntent)
                         try {
-                            startActivity(sanitized)
+                            startActivity(verifiedIntent)
                         } catch (e: Exception) {
                             DiagnosticLogger.e(TAG, "install confirmation activity launch failed", e)
                             // Debug builds target a different applicationId than release;
