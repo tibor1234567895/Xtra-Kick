@@ -611,7 +611,7 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
                                     .build();
                     Variant variant =
                             new Variant(
-                                    newUri, format, null, null, null, null);
+                                    newUri, format, null, null, null, null, null, null);
                     variants.add(variant);
                     @Nullable ArrayList<VariantInfo> variantInfosForUrl = urlToVariantInfos.get(newUri);
                     if (variantInfosForUrl == null) {
@@ -649,7 +649,14 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
                 .build();
         Variant variant =
             new Variant(
-                uri, format, videoGroupId, audioGroupId, subtitlesGroupId, closedCaptionsGroupId);
+                uri,
+                format,
+                videoGroupId,
+                audioGroupId,
+                subtitlesGroupId,
+                closedCaptionsGroupId,
+                /* pathwayId= */ null,
+                /* stableVariantId= */ null);
         variants.add(variant);
         @Nullable ArrayList<VariantInfo> variantInfosForUrl = urlToVariantInfos.get(uri);
         if (variantInfosForUrl == null) {
@@ -735,10 +742,10 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
           if (uri == null) {
             // TODO: Remove this case and add a Rendition with a null uri to videos.
             formatBuilder.setMetadata(metadata);
-            videos.add(new Rendition(uri, formatBuilder.build(), groupId, name)); // xtra: quality names
+            videos.add(new Rendition(uri, formatBuilder.build(), groupId, name, /* stableRenditionId= */ null)); // xtra: quality names
           } else {
             formatBuilder.setMetadata(metadata);
-            videos.add(new Rendition(uri, formatBuilder.build(), groupId, name));
+            videos.add(new Rendition(uri, formatBuilder.build(), groupId, name, /* stableRenditionId= */ null));
           }
           break;
         case TYPE_AUDIO:
@@ -764,7 +771,7 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
           formatBuilder.setSampleMimeType(sampleMimeType);
           if (uri != null) {
             formatBuilder.setMetadata(metadata);
-            audios.add(new Rendition(uri, formatBuilder.build(), groupId, name));
+            audios.add(new Rendition(uri, formatBuilder.build(), groupId, name, /* stableRenditionId= */ null));
           } else if (variant != null) {
             // TODO: Remove muxedAudioFormat and add a Rendition with a null uri to audios.
             muxedAudioFormat = formatBuilder.build();
@@ -784,7 +791,7 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
           }
           formatBuilder.setSampleMimeType(sampleMimeType).setMetadata(metadata);
           if (uri != null) {
-            subtitles.add(new Rendition(uri, formatBuilder.build(), groupId, name));
+            subtitles.add(new Rendition(uri, formatBuilder.build(), groupId, name, /* stableRenditionId= */ null));
           } else {
             Log.w(LOG_TAG, "EXT-X-MEDIA tag with missing mandatory URI attribute: skipping");
           }
@@ -837,7 +844,8 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
         muxedCaptionFormats,
         hasIndependentSegmentsTag,
         variableDefinitions,
-        sessionKeyDrmInitData);
+        sessionKeyDrmInitData,
+        /* contentSteeringInfo= */ null);
   }
 
   @Nullable
@@ -1538,7 +1546,8 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
         trailingParts,
         serverControl,
         renditionReportMap,
-        interstitials);
+        interstitials,
+        /* lastSeenInitSegment= */ null);
   }
 
   private static DrmInitData getPlaylistProtectionSchemes(

@@ -1,8 +1,9 @@
 name: Build
 
+# Builds are manual: run from the Actions tab ("Run workflow") or
+# `gh workflow run Build`. Merges/pushes to main no longer trigger releases.
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch:
 
 # A newer push to main supersedes the run in progress. The publish steps sit at
 # the very end and finish in seconds, so an interrupted publish self-heals on
@@ -95,6 +96,8 @@ jobs:
           git log -n 50 --oneline --decorate=no > notes.txt
         fi
         [ -s notes.txt ] || echo "Release build $(date -u +'%Y-%m-%d %H:%M:%S UTC')" > notes.txt
+        echo "" >> notes.txt
+        echo "Active Changelog: https://github.com/tibor1234567895/Xtra-Kick/commits/main" >> notes.txt
 
     - name: Update tag
       run: |
