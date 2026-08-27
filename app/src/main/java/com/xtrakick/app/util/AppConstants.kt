@@ -319,6 +319,7 @@ object AppConstants {
     const val REWARD_DROPS_BACKOFF_UNTIL = "reward_drops_backoff_until"
     const val REWARD_LAST_DAILY_NAME = "reward_last_daily_name"
     const val REWARD_LAST_DAILY_RARITY = "reward_last_daily_rarity"
+    const val REWARD_LAST_DAILY_CARD_URL = "reward_last_daily_card_url"
     const val REWARD_LAST_CLAIM_AT = "reward_last_claim_at"
     const val NETWORK_LIBRARY = "network_library"
     const val DEBUG_CHAT_FULLMSG = "debug_chat_fullmsg"

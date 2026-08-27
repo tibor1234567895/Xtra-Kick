@@ -21,6 +21,7 @@ data class KickDailyChallenge(
     val endsAtEpochMs: Long?,
     val winnerName: String?,
     val winnerRarity: String?,
+    val winnerCardUrl: String?,
 ) {
     /** Watch-time minutes still missing before the daily becomes claimable. */
     val remainingMinutes: Long?
@@ -30,6 +31,23 @@ data class KickDailyChallenge(
             null
         }
 }
+
+data class KickDailyClaimResult(
+    val challengeId: String?,
+    val roulette: List<KickDailyRouletteItem>,
+    val winner: KickDailyRewardWinner?,
+)
+
+data class KickDailyRouletteItem(
+    val id: String,
+    val itemUrl: String?,
+)
+
+data class KickDailyRewardWinner(
+    val id: String,
+    val cardUrl: String?,
+    val rarity: String?,
+)
 
 data class KickDropReward(
     val id: String,
@@ -63,6 +81,36 @@ object KickRewardsParsing {
 
     fun parseDropCampaigns(root: JsonElement): List<KickDropCampaign> =
         dataArray(root).mapNotNull { it.toDropCampaign() }
+
+    fun parseDailyClaim(root: JsonElement): KickDailyClaimResult {
+        val data = (root as? JsonObject)?.objectAt("data") ?: root as? JsonObject
+            ?: return KickDailyClaimResult(null, emptyList(), null)
+        val roulette = (data["roulette"] as? JsonArray)
+            ?.filterIsInstance<JsonObject>()
+            .orEmpty()
+            .mapNotNull { item ->
+                val id = item.scalar("id") ?: return@mapNotNull null
+                KickDailyRouletteItem(id, item.scalar("item_url"))
+            }
+        val winner = data.objectAt("winner")?.let { item ->
+            val id = item.scalar("id") ?: return@let null
+            KickDailyRewardWinner(
+                id = id,
+                cardUrl = item.scalar("card_url"),
+                rarity = item.scalar("rarity"),
+            )
+        }
+        return KickDailyClaimResult(
+            challengeId = data.scalar("challenge_id"),
+            roulette = roulette,
+            winner = winner,
+        )
+    }
+
+    fun parseStreakLengthDays(root: JsonElement): Long? {
+        val data = (root as? JsonObject)?.objectAt("data") ?: root as? JsonObject ?: return null
+        return data.longValue("length_days")
+    }
 
     /** Parses Kick ISO-8601 timestamps (`...Z`, optional millis, or explicit offsets); null when unparseable. */
     fun parseIsoTimestampMs(value: String): Long? {
@@ -128,6 +176,7 @@ object KickRewardsParsing {
                     ?: currentWinner.scalar("label")
             },
             winnerRarity = winner?.scalar("rarity"),
+            winnerCardUrl = winner?.scalar("card_url"),
         )
     }
 

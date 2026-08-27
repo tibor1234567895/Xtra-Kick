@@ -7,6 +7,7 @@ import com.xtrakick.app.model.chat.Reply
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -86,6 +87,17 @@ class ChatAdapterUtilsTest {
         )
 
         assertNull(result)
+    }
+
+    @Test
+    fun concatenatedEmoteSplitKeepsFirstDuplicateName() {
+        val first = Emote(name = "cat", source = Emote.CHANNEL_STV)
+        val second = Emote(name = "cat", source = Emote.GLOBAL_STV)
+
+        val result = ChatAdapterUtils.splitConcatenatedThirdPartyEmotes("catcat", listOf(first, second))
+
+        assertSame(first, result?.get(0))
+        assertSame(first, result?.get(1))
     }
 
     @Test

@@ -16,7 +16,7 @@ class KickRewardsParsingTest {
             {"data":[{"id":123,"recurrence":"daily","status":"claimable",
               "condition":{"threshold":30,"progress":30},
               "window":{"ends_at":"2026-08-27T00:02:00.000Z"},
-              "winner":{"name":"Blue Emote","rarity":"rare"}}],
+              "winner":{"name":"Blue Emote","rarity":"rare","card_url":"https://ext.cdn.kick.com/card.png"}}],
              "message":"ok"}
             """.trimIndent(),
         )
@@ -33,6 +33,7 @@ class KickRewardsParsingTest {
         assertEquals(0L, challenge.remainingMinutes)
         assertEquals("Blue Emote", challenge.winnerName)
         assertEquals("rare", challenge.winnerRarity)
+        assertEquals("https://ext.cdn.kick.com/card.png", challenge.winnerCardUrl)
         assertEquals(KickRewardsParsing.parseIsoTimestampMs("2026-08-27T00:02:00.000Z"), challenge.endsAtEpochMs)
     }
 
@@ -57,6 +58,31 @@ class KickRewardsParsingTest {
         val challenges = KickRewardsParsing.parseChallenges(root)
 
         assertEquals(listOf("42"), challenges.map { it.id })
+    }
+
+    @Test
+    fun parsesDailyClaimRouletteWinnerAndStreak() {
+        val claimRoot = json.parseToJsonElement(
+            """
+            {"data":{"challenge_id":"daily-1","roulette":[
+              {"id":"badge-1","item_url":"https://ext.cdn.kick.com/badge.png"},
+              {"id":"emote-2","item_url":"https://ext.cdn.kick.com/emote.png"}],
+              "winner":{"id":"emote-2","card_url":"https://ext.cdn.kick.com/card.png","rarity":"rare"}},
+             "message":"success"}
+            """.trimIndent(),
+        )
+
+        val result = KickRewardsParsing.parseDailyClaim(claimRoot)
+
+        assertEquals("daily-1", result.challengeId)
+        assertEquals(listOf("badge-1", "emote-2"), result.roulette.map { it.id })
+        assertEquals("https://ext.cdn.kick.com/emote.png", result.roulette[1].itemUrl)
+        assertEquals("emote-2", result.winner?.id)
+        assertEquals("https://ext.cdn.kick.com/card.png", result.winner?.cardUrl)
+        assertEquals("rare", result.winner?.rarity)
+
+        val streakRoot = json.parseToJsonElement("""{"data":{"length_days":2},"message":"success"}""")
+        assertEquals(2L, KickRewardsParsing.parseStreakLengthDays(streakRoot))
     }
 
     @Test

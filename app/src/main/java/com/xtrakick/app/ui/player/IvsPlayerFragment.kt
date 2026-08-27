@@ -87,6 +87,14 @@ class IvsPlayerFragment : PlayerFragment() {
                 val binder = service as IvsPlayerService.ServiceBinder
                 val boundService = binder.getService()
                 playbackService = boundService
+                boundService.setKickViewerMetadata(
+                    channelId = requireArguments().getString(KEY_CHANNEL_ID)
+                        .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
+                    livestreamId = requireArguments().getString(KEY_STREAM_ID)
+                        .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
+                    channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)
+                        .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
+                )
                 currentUrl = currentUrl ?: boundService.currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL)
                 boundService.setBackgroundPlaybackEnabled(false)
                 if (surfaceCreated) {
@@ -306,7 +314,13 @@ class IvsPlayerFragment : PlayerFragment() {
             title = requireArguments().getString(KEY_TITLE),
             channelName = requireArguments().getString(KEY_CHANNEL_NAME),
             channelLogo = requireArguments().getString(KEY_CHANNEL_LOGO),
-            streamStartedAtMs = requireArguments().getString(KEY_STARTED_AT)?.let { KickApiHelper.parseIso8601DateUTC(it) }
+            streamStartedAtMs = requireArguments().getString(KEY_STARTED_AT)?.let { KickApiHelper.parseIso8601DateUTC(it) },
+            channelId = requireArguments().getString(KEY_CHANNEL_ID)
+                .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
+            livestreamId = requireArguments().getString(KEY_STREAM_ID)
+                .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
+            channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)
+                .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
         )
         updatePlayingState()
     }

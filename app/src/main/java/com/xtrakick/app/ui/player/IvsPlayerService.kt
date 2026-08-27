@@ -39,14 +39,33 @@ import com.xtrakick.app.BuildConfig
 import com.amazonaws.ivs.player.Player
 import com.amazonaws.ivs.player.PlayerException
 import com.xtrakick.app.R
+import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
+import com.xtrakick.app.util.chat.KickViewerWatchWebSocket
 import com.google.common.util.concurrent.FutureCallback
 import com.google.common.util.concurrent.Futures
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+import javax.net.ssl.X509TrustManager
 
 @OptIn(UnstableApi::class)
+@AndroidEntryPoint
 class IvsPlayerService : Service() {
+
+    @Inject
+    lateinit var kickRepository: KickRepository
+
+    @Inject
+    @JvmField
+    var trustManager: X509TrustManager? = null
 
     private fun playerDebugLog(message: String) {
         if (BuildConfig.DEBUG && prefs().getBoolean(AppConstants.DEBUG_PLAYER_BUFFER_LOGS, false)) {
@@ -87,6 +106,47 @@ class IvsPlayerService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var dynamicsProcessing: DynamicsProcessing? = null
+    private val kickViewerWatchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var kickViewerWatch: KickViewerWatchWebSocket? = null
+    private var kickViewerWatchJob: Job? = null
+    private var activeKickChannelId: String? = null
+    private var activeKickLivestreamId: String? = null
+    private var activeKickChannelLogin: String? = null
+
+    private fun startKickViewerWatchIfNeeded() {
+        val channelId = activeKickChannelId?.takeIf { it.isNotBlank() }
+        val livestreamId = activeKickLivestreamId?.takeIf { it.isNotBlank() }
+        val channelLogin = activeKickChannelLogin?.takeIf { it.isNotBlank() }
+        Log.i(TAG, "viewer metadata channelId=$channelId livestreamId=$livestreamId channelLogin=$channelLogin")
+        if (channelId == null || (livestreamId == null && channelLogin == null)) return
+        if (kickViewerWatchJob?.isActive == true) return
+        kickViewerWatch = KickViewerWatchWebSocket(
+            kickRepository,
+            channelId,
+            livestreamId,
+            channelLogin,
+            trustManager,
+            debugLogging = BuildConfig.DEBUG,
+        ).also { kickViewerWatchJob = it.start(kickViewerWatchScope) }
+    }
+
+    private fun stopKickViewerWatch() {
+        val watch = kickViewerWatch ?: return
+        kickViewerWatch = null
+        kickViewerWatchJob?.cancel()
+        kickViewerWatchJob = null
+        kickViewerWatchScope.launch { watch.stop() }
+    }
+
+    fun setKickViewerMetadata(channelId: String?, livestreamId: String?, channelLogin: String?) {
+        stopKickViewerWatch()
+        activeKickChannelId = channelId
+        activeKickLivestreamId = livestreamId
+        activeKickChannelLogin = channelLogin
+        if (player?.state == Player.State.PLAYING) {
+            startKickViewerWatchIfNeeded()
+        }
+    }
     private var dynamicsProcessingAudioSessionId: Int? = null
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: AudioFocusRequest? = null
@@ -207,7 +267,10 @@ class IvsPlayerService : Service() {
                 override fun onStateChanged(state: Player.State) {
                     if (state == Player.State.PLAYING) {
                         hasStablePlayback = true
+                        startKickViewerWatchIfNeeded()
                         requestAudioFocus()
+                    } else {
+                        stopKickViewerWatch()
                     }
                     syncLocksWithState(state)
                     if (state == Player.State.READY || state == Player.State.PLAYING) {
@@ -346,13 +409,23 @@ class IvsPlayerService : Service() {
         playerDebugLog("service created")
     }
 
-    fun playStream(url: String, title: String?, channelName: String?, channelLogo: String?, streamStartedAtMs: Long? = null) {
+    fun playStream(
+        url: String,
+        title: String?,
+        channelName: String?,
+        channelLogo: String?,
+        streamStartedAtMs: Long? = null,
+        channelId: String? = null,
+        livestreamId: String? = null,
+        channelLogin: String? = null,
+    ) {
         this.currentUrl = url
         this.title = title
         this.channelName = channelName
         this.channelLogo = channelLogo
+        setKickViewerMetadata(channelId, livestreamId, channelLogin)
         this.startedAtMs = streamStartedAtMs ?: 0L
-        saveLastPlaybackRequest(url, title, channelName, channelLogo, startedAtMs)
+        saveLastPlaybackRequest(url, title, channelName, channelLogo, startedAtMs, channelId, livestreamId, channelLogin)
         hasStablePlayback = false
         retryCount = 0
         releaseDynamicsProcessing()
@@ -373,7 +446,16 @@ class IvsPlayerService : Service() {
         updateNotification()
     }
 
-    private fun saveLastPlaybackRequest(url: String, title: String?, channelName: String?, channelLogo: String?, startedAtMs: Long) {
+    private fun saveLastPlaybackRequest(
+        url: String,
+        title: String?,
+        channelName: String?,
+        channelLogo: String?,
+        startedAtMs: Long,
+        channelId: String?,
+        livestreamId: String?,
+        channelLogin: String?,
+    ) {
         try {
             prefs().edit {
                 putString(AppConstants.LAST_PLAYBACK_ENGINE, "ivs")
@@ -382,6 +464,9 @@ class IvsPlayerService : Service() {
                 putString(AppConstants.LAST_PLAYBACK_CHANNEL_NAME, channelName)
                 putString(AppConstants.LAST_PLAYBACK_CHANNEL_LOGO, channelLogo)
                 putLong(AppConstants.LAST_PLAYBACK_STARTED_AT_MS, startedAtMs)
+                putString(LAST_PLAYBACK_CHANNEL_ID, channelId)
+                putString(LAST_PLAYBACK_LIVESTREAM_ID, livestreamId)
+                putString(LAST_PLAYBACK_CHANNEL_LOGIN, channelLogin)
             }
         } catch (_: Exception) {
         }
@@ -396,6 +481,9 @@ class IvsPlayerService : Service() {
                     remove(AppConstants.LAST_PLAYBACK_CHANNEL_NAME)
                     remove(AppConstants.LAST_PLAYBACK_CHANNEL_LOGO)
                     remove(AppConstants.LAST_PLAYBACK_STARTED_AT_MS)
+                    remove(LAST_PLAYBACK_CHANNEL_ID)
+                    remove(LAST_PLAYBACK_LIVESTREAM_ID)
+                    remove(LAST_PLAYBACK_CHANNEL_LOGIN)
                 }
             } catch (_: Exception) {
             }
@@ -421,6 +509,9 @@ class IvsPlayerService : Service() {
             } else {
                 null
             },
+            channelId = prefs.getString(LAST_PLAYBACK_CHANNEL_ID, null),
+            livestreamId = prefs.getString(LAST_PLAYBACK_LIVESTREAM_ID, null),
+            channelLogin = prefs.getString(LAST_PLAYBACK_CHANNEL_LOGIN, null),
         )
         return true
     }
@@ -504,6 +595,10 @@ class IvsPlayerService : Service() {
     }
 
     fun stopPlayback() {
+        stopKickViewerWatch()
+        activeKickChannelId = null
+        activeKickLivestreamId = null
+        activeKickChannelLogin = null
         backgroundPlaybackEnabled = false
         playbackRequested = false
         surfaceAttached = false
@@ -865,6 +960,10 @@ class IvsPlayerService : Service() {
     }
 
     override fun onDestroy() {
+        kickViewerWatchJob?.cancel()
+        kickViewerWatchJob = null
+        kickViewerWatch = null
+        kickViewerWatchScope.cancel()
         metadataBitmapCallback = null
         notificationBitmapCallback = null
         applicationHandler?.removeCallbacksAndMessages(null)
@@ -886,6 +985,9 @@ class IvsPlayerService : Service() {
         private const val REQUEST_CODE_RESUME = 0
         private const val REQUEST_CODE_PLAY_PAUSE = 1
         private const val INTENT_PLAY_PAUSE = "com.xtrakick.app.IVS_PLAY_PAUSE"
+        private const val LAST_PLAYBACK_CHANNEL_ID = "last_playback_channel_id"
+        private const val LAST_PLAYBACK_LIVESTREAM_ID = "last_playback_livestream_id"
+        private const val LAST_PLAYBACK_CHANNEL_LOGIN = "last_playback_channel_login"
 
         /** Safety timeout — locks are explicitly released on pause/stop, this is fallback only. */
         private const val WAKE_LOCK_TIMEOUT_MS = 10L * 60L * 1000L

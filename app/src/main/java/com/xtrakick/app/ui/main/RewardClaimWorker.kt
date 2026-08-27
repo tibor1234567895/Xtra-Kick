@@ -79,6 +79,7 @@ class RewardClaimWorker @AssistedInject constructor(
             putLong(AppConstants.REWARD_DAILY_CLAIMED_UNTIL, reset)
             challenge.winnerName?.let { putString(AppConstants.REWARD_LAST_DAILY_NAME, it) }
             challenge.winnerRarity?.let { putString(AppConstants.REWARD_LAST_DAILY_RARITY, it) }
+            challenge.winnerCardUrl?.let { putString(AppConstants.REWARD_LAST_DAILY_CARD_URL, it) }
         }
         Log.i(TAG, "daily already claimed, sleeping until $reset")
         RewardClaimScheduler.followUp(applicationContext, reset - System.currentTimeMillis())
@@ -87,19 +88,21 @@ class RewardClaimWorker @AssistedInject constructor(
     private suspend fun claimDailyNow(prefs: SharedPreferences, challenge: KickDailyChallenge) {
         delay(Random.nextLong(CLAIM_JITTER_MIN_MS, CLAIM_JITTER_MAX_MS))
         if (!applicationContext.prefs().getBoolean(AppConstants.REWARD_AUTO_CLAIM_ENABLED, false)) return
-        try {
+        val claimResult = try {
             rewardsRepository.claimDailyChallenge(challenge.id)
         } catch (e: Exception) {
             Log.w(TAG, "daily claim failed: ${e.message}")
             enterBackoff(prefs, AppConstants.REWARD_DAILY_BACKOFF_UNTIL)
             return
         }
-        // The winner is only exposed on a fresh GET after claiming, never in the POST response.
+        // Refresh for the reset window and human-readable winner name. The POST carries the
+        // authoritative roulette winner and rarity.
         val refreshed = runCatching { rewardsRepository.getDailyChallenges() }.getOrNull()
             ?.let { KickRewardsPolicy.selectDaily(it) }
         val outcome = refreshed ?: challenge
         val name = outcome.winnerName?.takeIf { it.isNotBlank() }
-        val rarity = outcome.winnerRarity?.takeIf { it.isNotBlank() }
+        val rarity = claimResult.winner?.rarity?.takeIf { it.isNotBlank() }
+            ?: outcome.winnerRarity?.takeIf { it.isNotBlank() }
         val reset = KickRewardsPolicy.resetTimeMs(outcome, System.currentTimeMillis())
         prefs.edit {
             putLong(AppConstants.REWARD_DAILY_CLAIMED_UNTIL, reset)
@@ -107,6 +110,7 @@ class RewardClaimWorker @AssistedInject constructor(
             remove(AppConstants.REWARD_DAILY_BACKOFF_UNTIL)
             putString(AppConstants.REWARD_LAST_DAILY_NAME, name)
             rarity?.let { putString(AppConstants.REWARD_LAST_DAILY_RARITY, it) }
+            claimResult.winner?.cardUrl?.let { putString(AppConstants.REWARD_LAST_DAILY_CARD_URL, it) }
         }
         Log.i(TAG, "daily reward claimed name=$name rarity=$rarity reset=$reset")
         RewardClaimNotifier.dailyClaimed(applicationContext, name, rarity)

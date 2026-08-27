@@ -26,6 +26,7 @@ import com.xtrakick.app.ui.common.FragmentHost
 import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.common.Sortable
 import com.xtrakick.app.ui.login.LoginActivity
+import com.xtrakick.app.ui.main.KickDailyRewardDialog
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.ui.search.SearchPagerFragmentDirections
 import com.xtrakick.app.util.AppConstants
@@ -111,6 +112,7 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
             toolbar.setupWithNavController(navController, appBarConfiguration)
             toolbar.menu.findItem(R.id.login).title = if (isLoggedIn) getString(R.string.log_out) else getString(R.string.log_in)
             toolbar.menu.findItem(R.id.importKickFollowed)?.isVisible = isLoggedIn
+            toolbar.menu.findItem(R.id.dailyReward)?.isVisible = isLoggedIn
             toolbar.setOnMenuItemClickListener { menuItem ->
                 when (menuItem.itemId) {
                     R.id.search -> {
@@ -136,6 +138,10 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
                     }
                     R.id.importKickFollowed -> {
                         KickFollowImportDialog().show(childFragmentManager, "kick_follow_import")
+                        true
+                    }
+                    R.id.dailyReward -> {
+                        KickDailyRewardDialog.show(parentFragmentManager)
                         true
                     }
                     else -> false

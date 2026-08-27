@@ -48,15 +48,23 @@ import com.xtrakick.app.player.lowlatency.HttpEngineDataSource
 import com.xtrakick.app.player.lowlatency.OkHttpDataSource
 import com.xtrakick.app.repository.OfflineRepository
 import com.xtrakick.app.repository.PlayerRepository
+import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.prefs
+import com.xtrakick.app.util.chat.KickViewerWatchWebSocket
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import dagger.Lazy
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import org.chromium.net.CronetEngine
@@ -108,6 +116,13 @@ class PlaybackService : MediaSessionService() {
     @Inject
     lateinit var offlineRepository: OfflineRepository
 
+    @Inject
+    lateinit var kickRepository: KickRepository
+
+    @Inject
+    @JvmField
+    var trustManager: javax.net.ssl.X509TrustManager? = null
+
     private var mediaSession: MediaSession? = null
     private var dynamicsProcessing: DynamicsProcessing? = null
     private var background = false
@@ -119,6 +134,38 @@ class PlaybackService : MediaSessionService() {
     private var lastSavedPosition: Long? = null
     private var savePositionTimer: Timer? = null
     private var idleStopTimer: Timer? = null
+    private val kickViewerWatchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var kickViewerWatch: KickViewerWatchWebSocket? = null
+    private var kickViewerWatchJob: Job? = null
+    private var activeKickChannelId: String? = null
+    private var activeKickLivestreamId: String? = null
+    private var activeKickChannelLogin: String? = null
+
+    private fun startKickViewerWatchIfNeeded() {
+        val channelId = activeKickChannelId?.takeIf { it.isNotBlank() } ?: return
+        val livestreamId = activeKickLivestreamId?.takeIf { it.isNotBlank() }
+        val channelLogin = activeKickChannelLogin?.takeIf { it.isNotBlank() }
+        if (livestreamId == null && channelLogin == null) return
+        if (kickViewerWatchJob?.isActive == true) return
+        kickViewerWatch = KickViewerWatchWebSocket(
+            kickRepository = kickRepository,
+            channelId = channelId,
+            livestreamId = livestreamId,
+            channelLogin = channelLogin,
+            trustManager = trustManager,
+            debugLogging = BuildConfig.DEBUG,
+        ).also { watch ->
+            kickViewerWatchJob = watch.start(kickViewerWatchScope)
+        }
+    }
+
+    private fun stopKickViewerWatch() {
+        val watch = kickViewerWatch ?: return
+        kickViewerWatch = null
+        kickViewerWatchJob?.cancel()
+        kickViewerWatchJob = null
+        kickViewerWatchScope.launch { watch.stop() }
+    }
 
     /**
      * Stops the service when it has been left paused/idle for 10 minutes with no
@@ -191,6 +238,7 @@ class PlaybackService : MediaSessionService() {
                             "currentPosition=${player.currentPosition}"
                     )
                     if (isPlaying) {
+                        startKickViewerWatchIfNeeded()
                         stopIdleTimer()
                         if (savePositionTimer == null && (videoId != null || offlineVideoId != null)) {
                             savePositionTimer = Timer().apply {
@@ -202,6 +250,7 @@ class PlaybackService : MediaSessionService() {
                             }
                         }
                     } else {
+                        stopKickViewerWatch()
                         savePositionTimer?.cancel()
                         savePositionTimer = null
                         updateSavedPosition()
@@ -321,6 +370,13 @@ class PlaybackService : MediaSessionService() {
                                 val title = customCommand.customExtras.getString(TITLE)
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
+                                stopKickViewerWatch()
+                                activeKickChannelId = customCommand.customExtras.getString(CHANNEL_ID)
+                                    ?.takeIf { customCommand.customExtras.getBoolean(IS_KICK_STREAM, false) }
+                                activeKickLivestreamId = customCommand.customExtras.getString(LIVESTREAM_ID)
+                                    ?.takeIf { customCommand.customExtras.getBoolean(IS_KICK_STREAM, false) }
+                                activeKickChannelLogin = customCommand.customExtras.getString(CHANNEL_LOGIN)
+                                    ?.takeIf { customCommand.customExtras.getBoolean(IS_KICK_STREAM, false) }
                                 logBufferDebug(
                                     "START_STREAM received channel=$channelName uriPresent=${!uri.isNullOrBlank()}"
                                 )
@@ -442,6 +498,10 @@ class PlaybackService : MediaSessionService() {
                                 val title = customCommand.customExtras.getString(TITLE)
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
+                                stopKickViewerWatch()
+                                activeKickChannelId = null
+                                activeKickLivestreamId = null
+                                activeKickChannelLogin = null
                                 val newId = customCommand.customExtras.getLong(VIDEO_ID).takeIf { it != 0L }
                                 val position = if (videoId == newId && session.player.currentMediaItem != null) {
                                     session.player.currentPosition
@@ -498,6 +558,10 @@ class PlaybackService : MediaSessionService() {
                                 val title = customCommand.customExtras.getString(TITLE)
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
+                                stopKickViewerWatch()
+                                activeKickChannelId = null
+                                activeKickLivestreamId = null
+                                activeKickChannelLogin = null
                                 videoId = null
                                 offlineVideoId = null
                                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
@@ -547,6 +611,10 @@ class PlaybackService : MediaSessionService() {
                                 val title = customCommand.customExtras.getString(TITLE)
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
+                                stopKickViewerWatch()
+                                activeKickChannelId = null
+                                activeKickLivestreamId = null
+                                activeKickChannelLogin = null
                                 val newId = customCommand.customExtras.getInt(VIDEO_ID).takeIf { it != 0 }
                                 val position = if (offlineVideoId == newId && session.player.currentMediaItem != null) {
                                     session.player.currentPosition
@@ -764,6 +832,10 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        kickViewerWatchJob?.cancel()
+        kickViewerWatchJob = null
+        kickViewerWatch = null
+        kickViewerWatchScope.cancel()
         sleepTimer?.cancel()
         sleepTimer = null
         savePositionTimer?.cancel()
@@ -865,6 +937,10 @@ class PlaybackService : MediaSessionService() {
         const val TITLE = "title"
         const val CHANNEL_NAME = "channelName"
         const val CHANNEL_LOGO = "channelLogo"
+        const val CHANNEL_ID = "channelId"
+        const val CHANNEL_LOGIN = "channelLogin"
+        const val LIVESTREAM_ID = "livestreamId"
+        const val IS_KICK_STREAM = "isKickStream"
         const val DURATION = "duration"
         const val NAMES = "names"
         const val CODECS = "codecs"

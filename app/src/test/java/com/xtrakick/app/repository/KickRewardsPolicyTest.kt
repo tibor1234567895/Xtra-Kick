@@ -28,6 +28,7 @@ class KickRewardsPolicyTest {
         endsAtEpochMs = endsAtEpochMs,
         winnerName = null,
         winnerRarity = null,
+        winnerCardUrl = null,
     )
 
     private fun utcCalendar(year: Int, month: Int, day: Int, hour: Int, minute: Int): Calendar =

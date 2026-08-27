@@ -530,6 +530,11 @@ class Media3Fragment : PlayerFragment() {
                     PlaybackService.TITLE to requireArguments().getString(KEY_TITLE),
                     PlaybackService.CHANNEL_NAME to requireArguments().getString(KEY_CHANNEL_NAME),
                     PlaybackService.CHANNEL_LOGO to requireArguments().getString(KEY_CHANNEL_LOGO),
+                    PlaybackService.CHANNEL_ID to requireArguments().getString(KEY_CHANNEL_ID),
+                    PlaybackService.CHANNEL_LOGIN to requireArguments().getString(KEY_CHANNEL_LOGIN),
+                    PlaybackService.LIVESTREAM_ID to requireArguments().getString(KEY_STREAM_ID),
+                    PlaybackService.IS_KICK_STREAM to requireArguments().getString(KEY_STREAM_SOURCE)
+                        .equals(AppConstants.KICK, ignoreCase = true),
                 )
             ), Bundle.EMPTY
         )

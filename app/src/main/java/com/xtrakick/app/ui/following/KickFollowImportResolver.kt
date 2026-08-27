@@ -106,8 +106,7 @@ internal object KickFollowImportResolver {
     }
 
     fun isKickImportUrl(url: String): Boolean {
-        return url.startsWith("https://kick.com", ignoreCase = true) ||
-            url.startsWith("https://id.kick.com/", ignoreCase = true)
+        return isAllowedImportOrigin(url)
     }
 
     /**

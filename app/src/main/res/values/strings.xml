@@ -724,6 +724,27 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="reward_claim_channel_title">Reward claims</string>
     <string name="reward_claim_daily_title">Daily reward claimed</string>
     <string name="reward_claim_drops_title">Drops claimed</string>
+    <string name="daily_reward_title">Daily reward</string>
+    <string name="daily_reward_claim_title">Claim your daily reward</string>
+    <string name="daily_reward_description">Claim your daily reward for a chance to win Kick emotes and badges.</string>
+    <string name="daily_reward_claim">Claim reward</string>
+    <string name="daily_reward_claiming">Picking your reward...</string>
+    <string name="daily_reward_ready">Your daily reward is ready.</string>
+    <string name="daily_reward_claimed">Reward claimed.</string>
+    <string name="daily_reward_already_claimed">Today\'s reward has already been claimed.</string>
+    <string name="daily_reward_watch_progress">%1$d of %2$d watch minutes</string>
+    <string name="daily_reward_watch_remaining">Watch %d more minutes to unlock today\'s reward.</string>
+    <string name="daily_reward_unavailable">A daily reward is not available right now.</string>
+    <string name="daily_reward_login_required">Open Kick login in the app once to enable daily rewards.</string>
+    <string name="daily_reward_load_failed">Couldn\'t load the daily reward. Try again.</string>
+    <string name="daily_reward_claim_failed">Couldn\'t claim the reward. It may already have been claimed.</string>
+    <string name="daily_reward_reset">Daily reward resets at %s</string>
+    <string name="daily_reward_winner">Daily reward winner</string>
+    <string name="daily_reward_rarity">%s reward</string>
+    <plurals name="daily_reward_streak">
+        <item quantity="one">%d day streak</item>
+        <item quantity="other">%d day streak</item>
+    </plurals>
     <string name="sleep_timer_lock_screen">Lock screen after sleep timer is done</string>
     <string name="sleep_timer_time_picker">Use Material time picker for sleep timer</string>
     <string name="stop_sleep_timer_message">Stop sleep timer?</string>

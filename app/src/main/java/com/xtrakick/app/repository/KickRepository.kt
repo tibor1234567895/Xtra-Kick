@@ -1619,6 +1619,16 @@ class KickRepository @Inject constructor(
         return AuthStateHelper.extractKickSessionToken(cookies)?.isNotBlank() == true
     }
 
+    /** Fetches the short-lived bearer used by Kick's viewer watch WebSocket. */
+    internal suspend fun getKickViewerSocketToken(): String {
+        val raw = executeKickWebSessionRequest("https://websockets.kick.com/viewer/v1/token")
+        return JSONObject(raw)
+            .optJSONObject("data")
+            ?.optString("token")
+            ?.takeIf { it.isNotBlank() }
+            ?: throw IOException("Kick viewer socket token was missing from the response")
+    }
+
     suspend fun redeemKickWebReward(
         channelSlug: String,
         rewardId: String,

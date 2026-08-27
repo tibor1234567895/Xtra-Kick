@@ -223,30 +223,43 @@ object ChatAdapterUtils {
     }
 
     internal fun splitConcatenatedThirdPartyEmotes(token: String, emotes: List<Emote>): List<Emote>? {
-        if (token.isBlank() || emotes.isEmpty()) return null
-        val emotesByName = emotes
-            .mapNotNull { emote -> emote.name?.takeIf(String::isNotBlank)?.let { it to emote } }
-            .groupBy({ it.first }, { it.second })
-        if (emotesByName.isEmpty()) return null
-        val names = emotesByName.keys.sortedByDescending { it.length }
-        val memo = HashMap<Int, List<Emote>?>()
+        return ConcatenatedEmoteMatcher(emotes).split(token)
+    }
 
-        fun resolve(index: Int): List<Emote>? {
-            if (index == token.length) return emptyList()
-            memo[index]?.let { return it }
-            for (name in names) {
-                if (!token.startsWith(name, index)) continue
-                val match = emotesByName[name]?.firstOrNull() ?: continue
-                val suffix = resolve(index + name.length)
-                if (suffix != null) {
-                    return listOf(match) + suffix
+    private class ConcatenatedEmoteMatcher(emotes: List<Emote>) {
+        private val emoteByName = LinkedHashMap<String, Emote>()
+        private val names: List<String>
+
+        init {
+            emotes.forEach { emote ->
+                emote.name?.takeIf(String::isNotBlank)?.let { name ->
+                    emoteByName.putIfAbsent(name, emote)
                 }
             }
-            memo[index] = null
-            return null
+            names = emoteByName.keys.sortedByDescending(String::length)
         }
 
-        return resolve(0)?.takeIf { it.size > 1 }
+        fun split(token: String): List<Emote>? {
+            if (token.isBlank() || names.isEmpty()) return null
+            val memo = HashMap<Int, List<Emote>?>()
+
+            fun resolve(index: Int): List<Emote>? {
+                if (index == token.length) return emptyList()
+                if (memo.containsKey(index)) return memo[index]
+                for (name in names) {
+                    if (!token.startsWith(name, index)) continue
+                    val match = emoteByName.getValue(name)
+                    val suffix = resolve(index + name.length)
+                    if (suffix != null) {
+                        return (listOf(match) + suffix).also { memo[index] = it }
+                    }
+                }
+                memo[index] = null
+                return null
+            }
+
+            return resolve(0)?.takeIf { it.size > 1 }
+        }
     }
 
     private val chatNameColors = intArrayOf(-65536, -16776961, -16744448, -5103070, -32944, -6632142, -47872, -13726889, -2448096, -2987746, -10510688, -14774017, -38476, -7722014, -16711809)
@@ -886,6 +899,7 @@ object ChatAdapterUtils {
                 addAll(personalEmotes.orEmpty())
                 addAll(synchronized(thirdPartyEmotes) { thirdPartyEmotes.toList() })
             }.distinctBy { it.name }
+            val concatenatedEmoteMatcher = ConcatenatedEmoteMatcher(availableThirdPartyEmotes)
             for (value in split) {
                 if (chatMessage.bits != null) {
                     val bitsCount = value.takeLastWhile { it.isDigit() }
@@ -1002,7 +1016,7 @@ object ChatAdapterUtils {
                         continue
                     }
                 }
-                val concatenatedEmotes = splitConcatenatedThirdPartyEmotes(value, availableThirdPartyEmotes)
+                val concatenatedEmotes = concatenatedEmoteMatcher.split(value)
                 if (!concatenatedEmotes.isNullOrEmpty()) {
                     val nonOverlayCount = concatenatedEmotes.count { !(it.isOverlayEmote && enableOverlayEmotes && previousImage != null) }
                     val replacement = ".".repeat(nonOverlayCount.coerceAtLeast(1))

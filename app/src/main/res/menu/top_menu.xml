@@ -17,6 +17,14 @@
         app:iconTint="?attr/colorControlNormal"
         app:showAsAction="ifRoom" />
     <item
+        android:id="@+id/dailyReward"
+        android:icon="@drawable/baseline_card_giftcard_black_24"
+        android:title="@string/daily_reward_title"
+        android:visible="false"
+        app:iconTint="?attr/colorControlNormal"
+        app:showAsAction="ifRoom"
+        tools:visible="true" />
+    <item
         android:id="@+id/settings"
         android:title="@string/settings" />
     <item

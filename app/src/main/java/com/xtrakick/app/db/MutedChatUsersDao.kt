@@ -14,9 +14,6 @@ interface MutedChatUsersDao {
     @Query("SELECT * FROM muted_chat_users")
     fun getAllFlow(): Flow<List<MutedChatUser>>
 
-    @Query("SELECT * FROM muted_chat_users")
-    fun getAll(): List<MutedChatUser>
-
     @Query(
         """
         SELECT * FROM muted_chat_users

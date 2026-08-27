@@ -14,10 +14,6 @@ class MutedChatUsersRepository @Inject constructor(
 
     fun loadUsersFlow() = mutedChatUsersDao.getAllFlow()
 
-    suspend fun loadUsers() = withContext(Dispatchers.IO) {
-        dedupeUsers(mutedChatUsersDao.getAll())
-    }
-
     suspend fun getMutedUser(userId: String?, userLogin: String?, userName: String?) = withContext(Dispatchers.IO) {
         findExistingUser(userId, userLogin, userName)
     }

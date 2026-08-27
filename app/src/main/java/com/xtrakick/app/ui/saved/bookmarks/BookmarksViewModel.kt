@@ -90,8 +90,10 @@ class BookmarksViewModel @Inject internal constructor(
             viewModelScope.launch {
                 val bookmarks = bookmarksRepository.loadBookmarks()
                 val ignored = vodBookmarkIgnoredUsersRepository.loadUsers()
+                val ignoredUserIds = ignored.mapTo(HashSet(ignored.size)) { it.userId }
+                val bookmarksByUserId = bookmarks.groupBy { it.userId }
                 bookmarks.mapNotNull { bookmark ->
-                    bookmark.userId?.takeIf { ignored.find { it.userId == bookmark.userId } == null }
+                    bookmark.userId?.takeUnless(ignoredUserIds::contains)
                 }.chunked(100).forEach { ids ->
                     if (!kickPublicApiHeaders[AppConstants.HEADER_TOKEN].isNullOrBlank()) {
                         try {
@@ -102,7 +104,7 @@ class BookmarksViewModel @Inject internal constructor(
                             ).data
                             users.forEach { user ->
                                 user.channelId?.let { id ->
-                                    bookmarks.filter { it.userId == id }
+                                    bookmarksByUserId[id]
                                 }?.forEach { bookmark ->
                                     if (user.type != bookmark.userType || user.broadcasterType != bookmark.userBroadcasterType) {
                                         bookmarksRepository.updateBookmark(bookmark.apply {
@@ -235,6 +237,9 @@ class BookmarksViewModel @Inject internal constructor(
         if (!updatedVideos) {
             viewModelScope.launch {
                 val bookmarks = bookmarksRepository.loadBookmarks()
+                val bookmarksByVideoId = LinkedHashMap<String?, Bookmark>(bookmarks.size).apply {
+                    bookmarks.forEach { bookmark -> putIfAbsent(bookmark.videoId, bookmark) }
+                }
                 bookmarks.mapNotNull { it.videoId }.chunked(100).forEach { ids ->
                     kickPublicApiRepository.getVideos(
                         networkLibrary = networkLibrary,
@@ -253,9 +258,9 @@ class BookmarksViewModel @Inject internal constructor(
                             thumbnailUrl = it.thumbnailUrl,
                         )
                     }.forEach { video ->
-                        video.id.takeIf { !it.isNullOrBlank() }?.let { id ->
-                            bookmarks.find { it.videoId == id }
-                        }?.let { bookmark ->
+                        video.id?.takeIf { it.isNotBlank() }
+                            ?.let(bookmarksByVideoId::get)
+                            ?.let { bookmark ->
                             if (bookmark.userId != video.channelId ||
                                 bookmark.userLogin != video.channelLogin ||
                                 bookmark.userName != video.channelName ||

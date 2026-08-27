@@ -144,4 +144,10 @@ class KickFollowImportResolverTest {
         assertFalse(KickFollowImportResolver.isAllowedImportOrigin(""))
         assertFalse(KickFollowImportResolver.isAllowedImportOrigin(null))
     }
+
+    @Test
+    fun rejectsLookalikeImportUrlsBeforeResolvingState() {
+        assertFalse(KickFollowImportResolver.isKickImportUrl("https://kick.com.evil.test/following/channels"))
+        assertFalse(KickFollowImportResolver.isKickImportUrl("http://kick.com/following/channels"))
+    }
 }

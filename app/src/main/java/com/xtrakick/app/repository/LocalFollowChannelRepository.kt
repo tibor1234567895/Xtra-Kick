@@ -31,10 +31,6 @@ class LocalFollowChannelRepository @Inject constructor(
         findExistingFollow(userId, userLogin)
     }
 
-    suspend fun getFollowByUserId(id: String) = withContext(Dispatchers.IO) {
-        findExistingFollow(id, id)
-    }
-
     suspend fun saveFollow(item: LocalFollowChannel) = withContext(Dispatchers.IO) {
         upsertLocalFollow(item.userId, item.userLogin, item.userName, item.channelLogo)
     }

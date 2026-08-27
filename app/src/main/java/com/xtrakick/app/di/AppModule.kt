@@ -4,7 +4,6 @@ import android.app.Application
 import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
-import android.util.Log
 import androidx.annotation.OptIn
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
@@ -20,7 +19,6 @@ import okhttp3.logging.HttpLoggingInterceptor
 import org.chromium.net.CronetEngine
 import org.chromium.net.CronetProvider
 import org.chromium.net.QuicOptions
-import org.chromium.net.RequestFinishedInfo
 import org.conscrypt.Conscrypt
 import java.security.KeyStore
 import java.security.Security
@@ -60,20 +58,7 @@ class AppModule {
                 setQuicOptions(QuicOptions.builder().setHandshakeUserAgent(userAgent).build())
                 addQuicHint("7tv.io", 443, 443)
                 addQuicHint("cdn.7tv.app", 443, 443)
-            }.build().also {
-                if (BuildConfig.DEBUG && application.prefs().getBoolean(AppConstants.DEBUG_NETWORK_LOGS, false)) {
-                    it.addRequestFinishedListener(object : RequestFinishedInfo.Listener(Executors.newSingleThreadExecutor()) {
-                        override fun onRequestFinished(requestInfo: RequestFinishedInfo) {
-                            requestInfo.responseInfo?.let {
-                                Log.i("Cronet", "${it.httpStatusCode} ${it.negotiatedProtocol} ${it.url}")
-                                it.allHeadersAsList?.forEach {
-                                    Log.i("Cronet", "${it.key}: ${it.value}")
-                                }
-                            }
-                        }
-                    })
-                }
-            }
+            }.build()
         } else {
             null
         }
