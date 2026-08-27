@@ -44,8 +44,8 @@ jobs:
     - name: Decode release keystore
       run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > app/release-keystore.jks
 
-    - name: Validate with Gradle
-      run: ./gradlew testDebugUnitTest lintDebug
+    - name: Test, lint, and build with Gradle
+      run: ./gradlew testDebugUnitTest lintDebug assembleRelease
 
     - name: Upload reports
       if: always()
@@ -55,9 +55,6 @@ jobs:
         path: |
           app/build/reports/tests/
           app/build/reports/lint-results-debug.html
-
-    - name: Build with Gradle
-      run: ./gradlew assembleRelease
 
     - name: Verify release signature
       run: |
