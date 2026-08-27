@@ -13,37 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Tests and lint. All 163 unit tests pass and lint reports 0 issues, so this gates `build`.
-  #
-  # Lint is clean (0 errors, 0 warnings) after the cleanup wave removed all unused resources
-  # and the Kotlin compiler reports 0 warnings in release builds.
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v7
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6.3.0
-      - name: Unit tests
-        run: ./gradlew testDebugUnitTest
-      - name: Lint
-        run: ./gradlew lintDebug
-      - name: Upload reports
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: check-reports
-          path: |
-            app/build/reports/tests/
-            app/build/reports/lint-results-debug.html
-
   build:
-    needs: check
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -73,6 +43,18 @@ jobs:
     # design, rather than silently falling back to the debug key as it used to.
     - name: Decode release keystore
       run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > app/release-keystore.jks
+
+    - name: Validate with Gradle
+      run: ./gradlew testDebugUnitTest lintDebug
+
+    - name: Upload reports
+      if: always()
+      uses: actions/upload-artifact@v6
+      with:
+        name: check-reports
+        path: |
+          app/build/reports/tests/
+          app/build/reports/lint-results-debug.html
 
     - name: Build with Gradle
       run: ./gradlew assembleRelease
