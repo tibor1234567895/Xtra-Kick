@@ -5,7 +5,6 @@ import com.xtrakick.app.model.kick.KickOfficialChatMessageSentEvent
 import com.xtrakick.app.model.kick.KickOfficialChannel
 import com.xtrakick.app.model.kick.KickOfficialCategory
 import com.xtrakick.app.model.kick.KickOfficialKicksGiftedEvent
-import com.xtrakick.app.model.kick.KickOfficialLivestream
 import com.xtrakick.app.model.kick.KickOfficialModerationBannedEvent
 import com.xtrakick.app.model.kick.KickOfficialRewardRedemptionUpdatedEvent
 import com.xtrakick.app.model.kick.KickOfficialUser
@@ -236,23 +235,10 @@ class KickOfficialClientModelsParsingTest {
             }
             """.trimIndent()
         )
-        val livestream = json.decodeFromString<KickOfficialLivestream>(
-            """
-            {
-              "broadcaster_user_id": 55,
-              "channel_id": 99,
-              "slug": "streamer",
-              "stream_title": "Road to Radiant",
-              "viewer_count": 1337,
-              "custom_tags": ["english", "competitive"]
-            }
-            """.trimIndent()
-        )
 
         assertEquals(listOf("fps", "ranked"), category.tags)
         assertEquals(4200, category.viewerCount)
         assertEquals("https://example.com/thumb.jpg", channel.thumbnail)
         assertEquals(listOf("english", "competitive"), channel.customTags)
-        assertEquals(listOf("english", "competitive"), livestream.customTags)
     }
 }

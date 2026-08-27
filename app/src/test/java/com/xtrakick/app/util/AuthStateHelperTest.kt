@@ -91,4 +91,22 @@ class AuthStateHelperTest {
 
         assertEquals("Bearer access-token", bearer)
     }
+
+    @Test
+    fun sessionTokenIsDecodedFromCookieHeader() {
+        assertEquals(
+            "420708377|token-value",
+            AuthStateHelper.extractKickSessionToken("kick_session=opaque; session_token=420708377%7Ctoken-value"),
+        )
+    }
+
+    @Test
+    fun cookieSelectionPrefersHeaderWithUsableSessionToken() {
+        val selected = AuthStateHelper.selectKickWebsiteCookieHeader(
+            "auth-token=oauth-token; kick_session=opaque",
+            "session_token=420708377%7Ctoken-value; XSRF-TOKEN=xsrf",
+        )
+
+        assertEquals("session_token=420708377%7Ctoken-value; XSRF-TOKEN=xsrf", selected)
+    }
 }

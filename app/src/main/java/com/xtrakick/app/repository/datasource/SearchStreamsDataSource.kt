@@ -79,8 +79,6 @@ class SearchStreamsDataSource(
                         networkLibrary = networkLibrary,
                         headers = kickPublicApiHeaders,
                         broadcasterUserIds = batch,
-                        limit = batch.size,
-                        sort = "viewer_count",
                     )
                     response.data.forEach { item ->
                         val broadcasterId = item.broadcasterUserId?.toString() ?: return@forEach

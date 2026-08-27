@@ -16,17 +16,6 @@ data class KickOfficialUser(
 )
 
 @Serializable
-data class KickOfficialTokenIntrospect(
-    val active: Boolean? = null,
-    @SerialName("client_id")
-    val clientId: String? = null,
-    val exp: Long? = null,
-    val scope: String? = null,
-    @SerialName("token_type")
-    val tokenType: String? = null,
-)
-
-@Serializable
 data class KickOfficialCategory(
     val id: Long? = null,
     val name: String? = null,
@@ -71,34 +60,6 @@ data class KickOfficialChannel(
 )
 
 @Serializable
-data class KickOfficialLivestream(
-    @SerialName("broadcaster_user_id")
-    val broadcasterUserId: Long? = null,
-    val category: KickOfficialCategory? = null,
-    @SerialName("channel_id")
-    val channelId: Long? = null,
-    @SerialName("has_mature_content")
-    val hasMatureContent: Boolean? = null,
-    val language: String? = null,
-    val slug: String? = null,
-    @SerialName("started_at")
-    val startedAt: String? = null,
-    @SerialName("stream_title")
-    val streamTitle: String? = null,
-    val thumbnail: String? = null,
-    @SerialName("viewer_count")
-    val viewerCount: Int? = null,
-    @SerialName("custom_tags")
-    val customTags: List<String> = emptyList(),
-)
-
-@Serializable
-data class KickOfficialLivestreamStats(
-    @SerialName("total_count")
-    val totalCount: Int? = null,
-)
-
-@Serializable
 data class KickOfficialUpdateChannelRequest(
     @SerialName("category_id")
     val categoryId: Long? = null,
@@ -134,16 +95,6 @@ data class KickOfficialModerationDeleteBanRequest(
     val broadcasterUserId: Long,
     @SerialName("user_id")
     val userId: Long,
-)
-
-@Serializable
-data class KickOfficialGetLivestreamsRequest(
-    @SerialName("broadcaster_user_id")
-    val broadcasterUserIds: List<Long>? = null,
-    val category: Long? = null,
-    val language: String? = null,
-    val limit: Int? = null,
-    val sort: String? = null,
 )
 
 @Serializable

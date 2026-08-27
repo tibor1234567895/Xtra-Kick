@@ -24,6 +24,7 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.ByteArrayInputStream
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -216,13 +217,14 @@ class KickFollowImportDialog : DialogFragment() {
         val networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         Log.i(logTag, "starting direct Kick follow import")
         lifecycleScope.launch {
-            runCatching {
-                importer.importStoredKickFollows(networkLibrary)
-            }.onSuccess { importedCount ->
+            try {
+                val importedCount = importer.importAuthenticatedKickFollows(networkLibrary)
                 Log.i(logTag, "direct Kick follow import succeeded count=$importedCount")
                 debugLogI("direct stored-auth import succeeded count=$importedCount")
                 completeImport(importedCount)
-            }.onFailure { error ->
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
                 Log.i(logTag, "direct Kick follow import fell back to website flow: ${error.message}")
                 debugLogW("direct stored-auth import unavailable: ${error.message}")
                 startWebsiteImportFlow()

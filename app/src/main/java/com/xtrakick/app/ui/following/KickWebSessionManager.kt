@@ -12,6 +12,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -36,13 +37,10 @@ class KickWebSessionManager @Inject constructor(
 
     fun getKickCookieHeader(): String? {
         val kickCookie = CookieManager.getInstance().getCookie("https://kick.com")?.takeIf { it.isNotBlank() }
-        if (!kickCookie.isNullOrBlank()) {
-            debugLogI("getKickCookieHeader: using kick.com cookies")
-            return kickCookie
-        }
         val webCookie = CookieManager.getInstance().getCookie("https://web.kick.com")?.takeIf { it.isNotBlank() }
-        debugLogI("getKickCookieHeader: using web.kick.com cookies=${!webCookie.isNullOrBlank()}")
-        return webCookie
+        val selected = AuthStateHelper.selectKickWebsiteCookieHeader(kickCookie, webCookie)
+        debugLogI("getKickCookieHeader: session cookies=${AuthStateHelper.extractKickSessionToken(selected) != null}")
+        return selected
     }
 
     fun hasKickWebsiteSession(): Boolean {

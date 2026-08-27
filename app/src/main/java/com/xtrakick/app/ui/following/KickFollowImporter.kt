@@ -8,6 +8,7 @@ import com.xtrakick.app.R
 import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowChannelRepository
+import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
@@ -18,7 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -135,52 +136,33 @@ class KickFollowImporter @Inject constructor(
     }
 
     suspend fun importPayload(payload: String): Int {
-        val follows = KickFollowImportPayloadParser.parse(payload)
-        return importFollows(follows)
-    }
-
-    suspend fun importStoredKickFollows(
-        networkLibrary: String?,
-        onProgress: ((count: Int) -> Unit)? = null,
-    ): Int {
-        val collected = LinkedHashMap<String, KickImportedFollow>()
-        var cursor: String? = null
-        Log.i(LOG_TAG, "Kick follow import pagination started")
-        _importState.value = KickFollowImportState.Importing(0)
-        do {
-            val response = kickRepository.getFollowedChannelsWebPage(cursor)
-            response.channels.forEach { follow ->
-                val login = follow.login.trim().takeIf { it.isNotBlank() } ?: return@forEach
-                collected[login.lowercase()] = KickImportedFollow(
-                    login = login,
-                    name = follow.name,
-                    profilePicture = follow.profilePicture,
-                )
-            }
-            _importState.value = KickFollowImportState.Importing(collected.size)
-            onProgress?.invoke(collected.size)
-            val nextCursor = response.nextCursor?.takeIf { it.isNotBlank() }
-            cursor = nextCursor?.takeIf { it != cursor }
-        } while (!cursor.isNullOrBlank())
-        Log.i(LOG_TAG, "Kick follow import pagination finished total=${collected.size}")
-        val follows = collected.values.map { channel ->
-            KickImportedFollow(
-                login = channel.login,
-                name = channel.name,
-                profilePicture = channel.profilePicture,
-            )
+        return runImport {
+            importFollows(KickFollowImportPayloadParser.parse(payload))
         }
-        val storedCount = importFollows(follows)
-        _importState.value = KickFollowImportState.Success(storedCount)
-        return storedCount
     }
 
-    /**
-     * Fetches the logged-in user's followed channels from Kick using stored website session cookies
-     * and stores them locally.
-     */
+    /** Fetches followed channels with OAuth fallback, then stores them locally. */
     suspend fun importAuthenticatedKickFollows(networkLibrary: String?): Int {
-        return importStoredKickFollows(networkLibrary)
+        return runImport {
+            val channels = kickRepository.getFollowedChannelsWithStoredAuth(networkLibrary)
+            importFollows(channels.map { channel ->
+                KickImportedFollow(channel.login, channel.name, channel.profilePicture)
+            })
+        }
+    }
+
+    private suspend fun runImport(block: suspend () -> Int): Int {
+        _importState.value = KickFollowImportState.Importing(0)
+        return try {
+            val count = block()
+            _importState.value = KickFollowImportState.Success(count)
+            count
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            _importState.value = KickFollowImportState.Error(error.message)
+            throw error
+        }
     }
 
     /**
@@ -191,13 +173,9 @@ class KickFollowImporter @Inject constructor(
      */
     fun schedulePostLoginImport(networkLibrary: String?) {
         postLoginImportScope.launch {
-            _importState.value = KickFollowImportState.Importing(0)
-            val result = runCatching {
-                importStoredKickFollows(networkLibrary)
-            }
-            result.onSuccess { count ->
+            try {
+                val count = importAuthenticatedKickFollows(networkLibrary)
                 Log.i(LOG_TAG, "Post-login Kick follow import succeeded count=$count")
-                _importState.value = KickFollowImportState.Success(count)
                 if (count > 0) {
                     Toast.makeText(
                         context,
@@ -205,9 +183,10 @@ class KickFollowImporter @Inject constructor(
                         Toast.LENGTH_SHORT,
                     ).show()
                 }
-            }.onFailure { error ->
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
                 Log.i(LOG_TAG, "Post-login Kick follow import skipped or unavailable: ${error.message}")
-                _importState.value = KickFollowImportState.Error(error.message)
             }
         }
     }
@@ -221,14 +200,14 @@ class KickFollowImporter @Inject constructor(
             }
             .distinctBy { it.login.lowercase() }
             .toList()
-        dedupedFollows.forEach { follow ->
-            localFollowsChannel.upsertLocalFollow(
+        localFollowsChannel.upsertLocalFollows(dedupedFollows.map { follow ->
+            LocalFollowChannel(
                 userId = null,
                 userLogin = follow.login,
                 userName = follow.name,
                 channelLogo = follow.profilePicture,
             )
-        }
+        })
         Log.i(LOG_TAG, "Kick follow import stored follows count=${dedupedFollows.size}")
         enqueueImportedFollowEnrichment(dedupedFollows.map { it.login })
         return dedupedFollows.size
@@ -265,13 +244,14 @@ class KickFollowImporter @Inject constructor(
                 headers = headers,
                 logins = chunk,
             )
-            response.data.forEach { user ->
-                val login = user.channelLogin?.takeIf { it.isNotBlank() } ?: return@forEach
+            val enrichedFollows = response.data.mapNotNull { user ->
+                val login = user.channelLogin?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 val channelId = user.channelId?.takeIf { it.isNotBlank() }
                 val name = user.channelName?.takeIf { it.isNotBlank() }
                 val profileImageUrl = user.profileImageUrl?.takeIf { it.isNotBlank() }
-                localFollowsChannel.upsertLocalFollow(channelId, login, name, profileImageUrl)
+                LocalFollowChannel(channelId, login, name, profileImageUrl)
             }
+            localFollowsChannel.upsertLocalFollows(enrichedFollows)
         }
         debugLogI("enriched imported follows with broadcaster ids count=${normalizedLogins.size}")
     }

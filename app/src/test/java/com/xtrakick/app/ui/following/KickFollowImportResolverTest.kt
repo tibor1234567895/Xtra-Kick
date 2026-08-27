@@ -66,7 +66,7 @@ class KickFollowImportResolverTest {
             waitingForManualLogin = false,
             importAttempted = false,
             importCompleted = false,
-            kickCookieHeader = "auth-token=abc123; XSRF-TOKEN=token; kick_session=session",
+            kickCookieHeader = "auth-token=abc123; XSRF-TOKEN=token; kick_session=session; session_token=user%7Ctoken",
         )
 
         assertEquals(
@@ -85,7 +85,7 @@ class KickFollowImportResolverTest {
             waitingForManualLogin = true,
             importAttempted = false,
             importCompleted = false,
-            kickCookieHeader = "XSRF-TOKEN=token; kick_session=session",
+            kickCookieHeader = "XSRF-TOKEN=token; kick_session=session; session_token=user%7Ctoken",
         )
 
         assertEquals(
@@ -113,7 +113,9 @@ class KickFollowImportResolverTest {
     @Test
     fun websiteSessionRequiresMoreThanAuthToken() {
         assertFalse(KickFollowImportResolver.hasKickWebsiteSession("auth-token=abc123"))
-        assertTrue(KickFollowImportResolver.hasKickWebsiteSession("auth-token=abc123; XSRF-TOKEN=token"))
+        assertFalse(KickFollowImportResolver.hasKickWebsiteSession("auth-token=abc123; XSRF-TOKEN=token"))
+        assertFalse(KickFollowImportResolver.hasKickWebsiteSession("auth-token=abc123; XSRF-TOKEN=token; kick_session=session"))
+        assertTrue(KickFollowImportResolver.hasKickWebsiteSession("kick_session=session; session_token=user%7Ctoken"))
     }
 
     @Test

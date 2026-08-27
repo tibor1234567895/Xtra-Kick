@@ -4,6 +4,7 @@ import android.content.Context
 import android.webkit.CookieManager
 import android.webkit.WebStorage
 import androidx.core.content.edit
+import java.net.URLDecoder
 
 object AuthStateHelper {
 
@@ -61,6 +62,40 @@ object AuthStateHelper {
             expiresAt = context.tokenPrefs().getLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L),
             nowEpochSeconds = nowEpochSeconds,
         )
+    }
+
+    /** Flushes the WebView jar after login and reports whether Kick issued a session bearer. */
+    fun captureKickWebsiteSession(): Boolean {
+        val cookieManager = CookieManager.getInstance()
+        runCatching { cookieManager.flush() }
+        val cookieHeader = sequenceOf("https://kick.com", "https://web.kick.com")
+            .mapNotNull { url -> runCatching { cookieManager.getCookie(url) }.getOrNull() }
+            .firstOrNull { header -> extractKickSessionToken(header) != null }
+        return cookieHeader?.let(::extractKickSessionToken) != null
+    }
+
+    internal fun extractKickSessionToken(cookieHeader: String?): String? {
+        val rawValue = cookieHeader
+            ?.split(';')
+            ?: return null
+        val encodedToken = rawValue
+            .asSequence()
+            .map { it.trim() }
+            .firstOrNull { cookie ->
+                cookie.substringBefore('=').trim().equals("session_token", ignoreCase = true)
+            }
+            ?.substringAfter('=')
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return runCatching { URLDecoder.decode(encodedToken, Charsets.UTF_8.name()) }
+            .getOrDefault(encodedToken)
+            .takeIf { it.isNotBlank() && it.contains('|') }
+    }
+
+    internal fun selectKickWebsiteCookieHeader(vararg cookieHeaders: String?): String? {
+        val availableHeaders = cookieHeaders.mapNotNull { it?.takeIf(String::isNotBlank) }
+        return availableHeaders.firstOrNull { extractKickSessionToken(it) != null }
+            ?: availableHeaders.firstOrNull()
     }
 
     fun hasPendingUnexpectedLogoutNotice(context: Context): Boolean {

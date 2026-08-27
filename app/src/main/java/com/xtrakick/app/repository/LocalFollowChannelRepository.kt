@@ -59,9 +59,28 @@ class LocalFollowChannelRepository @Inject constructor(
         userName: String?,
         channelLogo: String? = null,
     ) = withContext(Dispatchers.IO) {
+        upsertLocalFollowInternal(userId, userLogin, userName, channelLogo)
+        notifyFollowsChanged()
+    }
+
+    suspend fun upsertLocalFollows(items: List<LocalFollowChannel>) = withContext(Dispatchers.IO) {
+        items.forEach { item ->
+            upsertLocalFollowInternal(item.userId, item.userLogin, item.userName, item.channelLogo)
+        }
+        if (items.isNotEmpty()) {
+            notifyFollowsChanged()
+        }
+    }
+
+    private fun upsertLocalFollowInternal(
+        userId: String?,
+        userLogin: String?,
+        userName: String?,
+        channelLogo: String? = null,
+    ) {
         val normalizedUserId = userId?.takeIf { it.isNotBlank() }
         val normalizedUserLogin = userLogin?.takeIf { it.isNotBlank() }
-        if (normalizedUserId == null && normalizedUserLogin == null) return@withContext
+        if (normalizedUserId == null && normalizedUserLogin == null) return
         val existing = findExistingFollow(normalizedUserId, normalizedUserLogin)
         if (existing == null) {
             localFollowsChannelDao.insert(
@@ -81,7 +100,6 @@ class LocalFollowChannelRepository @Inject constructor(
             existing.sourceMask = existing.sourceMask or AppConstants.FOLLOW_SOURCE_MASK_LOCAL
             localFollowsChannelDao.update(existing)
         }
-        notifyFollowsChanged()
     }
 
     suspend fun removeLocalFollow(userId: String?, userLogin: String?) = withContext(Dispatchers.IO) {

@@ -14,9 +14,14 @@ import com.bumptech.glide.load.model.GlideUrl
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.model.chat.Emote
+import java.util.WeakHashMap
 
 object EmoteImageLoader {
-    private const val BOUND_STATE_TAG_KEY = R.id.emotes
+    // Bind-state memoization uses a WeakHashMap instead of View.setTag(key, ...) because this
+    // platform throws "The key must be an application-specific resource id." for keyed tags
+    // even when the key is a dedicated ids.xml id. Weak keys drop entries automatically when
+    // a recycled/forgotten ImageView is collected, so nothing leaks.
+    private val boundStates = WeakHashMap<ImageView, String>()
 
     fun bind(
         imageView: ImageView,
@@ -39,7 +44,7 @@ object EmoteImageLoader {
         } else {
             "loaded:${item.name}:${url.orEmpty()}"
         }
-        if (imageView.getTag(BOUND_STATE_TAG_KEY) == nextState) {
+        if (boundStates[imageView] == nextState) {
             if (item != null) {
                 imageView.setOnClickListener { clickListener(item) }
             } else {
@@ -51,7 +56,7 @@ object EmoteImageLoader {
         imageView.setImageDrawable(null)
         if (item == null) {
             imageView.background = fragment.requireContext().getDrawable(R.drawable.bg_emote_placeholder)
-            imageView.setTag(BOUND_STATE_TAG_KEY, nextState)
+            boundStates[imageView] = nextState
             imageView.setOnClickListener(null)
             return
         }
@@ -85,7 +90,7 @@ object EmoteImageLoader {
                 .diskCacheStrategy(DiskCacheStrategy.DATA)
                 .into(imageView)
         }
-        imageView.setTag(BOUND_STATE_TAG_KEY, nextState)
+        boundStates[imageView] = nextState
         imageView.setOnClickListener { clickListener(item) }
     }
 }

@@ -418,6 +418,8 @@ class LoginActivity : AppCompatActivity() {
                 val loginName = user?.name ?: user?.channelSlug ?: userId
 
                 AuthStateHelper.clearLegacyWebAuth(this@LoginActivity)
+                val websiteSessionCaptured = AuthStateHelper.captureKickWebsiteSession()
+                Log.i(TAG, "Kick website session after OAuth callback present=$websiteSessionCaptured")
                 tokenPrefs().edit {
                     putString(AppConstants.KICK_ACCESS_TOKEN, accessToken)
                     putString(AppConstants.KICK_REFRESH_TOKEN, refreshToken)

@@ -13,6 +13,8 @@ import com.xtrakick.app.model.kick.api.clip.ClipsResponse
 import com.xtrakick.app.model.kick.api.follows.FollowsResponse
 import com.xtrakick.app.model.kick.api.game.GamesResponse
 import com.xtrakick.app.model.kick.api.livestream.LivestreamsResponse
+import com.xtrakick.app.model.kick.api.livestream.UsersLivestreamsResponse
+import com.xtrakick.app.model.kick.api.livestream.toLegacyLivestream
 import com.xtrakick.app.model.kick.api.stream.StreamsResponse
 import com.xtrakick.app.model.kick.api.user.UsersResponse
 import com.xtrakick.app.model.kick.api.video.VideosResponse
@@ -187,50 +189,66 @@ class KickPublicApiRepository @Inject constructor(
         }
     }
 
-    suspend fun getLivestreams(networkLibrary: String?, headers: Map<String, String>, broadcasterUserIds: List<String>? = null, categoryId: String? = null, language: String? = null, limit: Int? = null, sort: String? = null): LivestreamsResponse = withContext(Dispatchers.IO) {
-        val queryParams = mutableListOf<String>().apply {
-            broadcasterUserIds?.forEach { add("broadcaster_user_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            categoryId?.let { add("category_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            language?.let { add("language=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            limit?.let { add("limit=${URLEncoder.encode(it.toString(), Charsets.UTF_8.name())}") }
-            sort?.let { add("sort=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-        }
-        val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
-        when {
+    suspend fun getLivestreams(networkLibrary: String?, headers: Map<String, String>, broadcasterUserIds: List<String>? = null): LivestreamsResponse = withContext(Dispatchers.IO) {
+        // /public/v1/livestreams was deprecated 23/06/2026; the per-id lookup now lives on
+        // /public/v1/users/livestreams (max 100 user_id params). Items arrive in the LivestreamV2
+        // shape — broadcaster nested under broadcaster_user, no channel_id, renamed fields — so
+        // they are mapped back onto the legacy parse model the callers rely on.
+        val query = broadcasterUserIds.orEmpty()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("&") { "user_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}" }
+            .takeIf { it.isNotEmpty() }
+            ?.let { "?$it" }
+            .orEmpty()
+        val payload: UsersLivestreamsResponse = when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                 val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/livestreams$query", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/users/livestreams$query", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
                         headers.forEach { addHeader(it.key, it.value) }
                     }.build().start()
                 }
-                json.decodeFromString<LivestreamsResponse>(String(response.second))
+                require(response.first.httpStatusCode in 200..299) {
+                    "Kick users livestreams request failed (${response.first.httpStatusCode})"
+                }
+                json.decodeFromString<UsersLivestreamsResponse>(String(response.second))
             }
             networkLibrary == "Cronet" && cronetEngine != null -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/livestreams$query", request.callback, cronetExecutor).apply {
+                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/users/livestreams$query", request.callback, cronetExecutor).apply {
                         headers.forEach { addHeader(it.key, it.value) }
                     }.build().start()
                     val response = request.future.get().responseBody as String
-                    json.decodeFromString<LivestreamsResponse>(response)
+                    json.decodeFromString<UsersLivestreamsResponse>(response)
                 } else {
                     val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/livestreams$query", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
+                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/users/livestreams$query", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
                             headers.forEach { addHeader(it.key, it.value) }
                         }.build().start()
                     }
-                    json.decodeFromString<LivestreamsResponse>(String(response.second))
+                    require(response.first.httpStatusCode in 200..299) {
+                        "Kick users livestreams request failed (${response.first.httpStatusCode})"
+                    }
+                    json.decodeFromString<UsersLivestreamsResponse>(String(response.second))
                 }
             }
             else -> {
                 okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/livestreams$query")
+                    url("https://api.kick.com/public/v1/users/livestreams$query")
                     headers(headers.toHeaders())
                 }.build()).execute().use { response ->
-                    json.decodeFromString<LivestreamsResponse>(response.body.string())
+                    if (!response.isSuccessful) {
+                        throw java.io.IOException("Kick users livestreams request failed (${response.code})")
+                    }
+                    json.decodeFromString<UsersLivestreamsResponse>(response.body.string())
                 }
             }
         }
+        LivestreamsResponse(
+            data = payload.data.map { it.toLegacyLivestream() },
+            message = payload.message,
+        )
     }
 
     suspend fun getFollowedStreams(networkLibrary: String?, headers: Map<String, String>, userId: String?, limit: Int?, offset: String?): StreamsResponse = withContext(Dispatchers.IO) {

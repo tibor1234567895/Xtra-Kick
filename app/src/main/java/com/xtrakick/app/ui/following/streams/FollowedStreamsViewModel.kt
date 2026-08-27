@@ -27,12 +27,15 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.json.JSONObject
 
 @HiltViewModel
+@OptIn(FlowPreview::class)
 class FollowedStreamsViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
     private val localFollowsChannel: LocalFollowChannelRepository,
@@ -124,6 +127,10 @@ class FollowedStreamsViewModel @Inject constructor(
     private var refreshJob: Job? = null
     private var refreshGeneration = 0L
 
+    private fun isRateLimitMessage(message: String?): Boolean =
+        message?.contains("429", ignoreCase = true) == true
+
+
     private fun isNetworkDebugEnabled(): Boolean {
         return applicationContext.prefs().getBoolean(AppConstants.DEBUG_NETWORK_LOGS, false)
     }
@@ -142,9 +149,9 @@ class FollowedStreamsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            localFollowsChannel.followsChanged.collect {
-                refresh()
-            }
+            localFollowsChannel.followsChanged
+                .debounce(250L)
+                .collect { refresh() }
         }
     }
 
@@ -217,9 +224,16 @@ class FollowedStreamsViewModel @Inject constructor(
                     return@launch
                 }
 
-                val fastResult = runCatching { loadStreamsFromPublicApi(follows) }
-                    .onFailure { error -> logFollowedStreamsWarn("Fast followed-live path failed, using fallback: ${error.message}") }
-                    .getOrNull()
+                var sawRateLimit = false
+                val fastResult = try {
+                    loadStreamsFromPublicApi(follows)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    if (isRateLimitMessage(error.message)) sawRateLimit = true
+                    logFollowedStreamsWarn("Fast followed-live path failed, using fallback: ${error.message}")
+                    null
+                }
 
                 fastResult?.items?.forEach { stream ->
                     resolved[stream.cacheKey()] = stream
@@ -242,9 +256,15 @@ class FollowedStreamsViewModel @Inject constructor(
 
                 val followsForFallback = fastResult?.unresolvedFollows ?: follows
 
-                val bulkFallbackResult = runCatching { loadStreamsFromBulkFallback(followsForFallback) }
-                    .onFailure { error -> logFollowedStreamsWarn("Bulk followed-live fallback failed, using per-channel fallback: ${error.message}") }
-                    .getOrNull()
+                val bulkFallbackResult = try {
+                    loadStreamsFromBulkFallback(followsForFallback)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    if (isRateLimitMessage(error.message)) sawRateLimit = true
+                    logFollowedStreamsWarn("Bulk followed-live fallback failed, using per-channel fallback: ${error.message}")
+                    null
+                }
 
                 bulkFallbackResult?.items?.forEach { stream ->
                     resolved[stream.cacheKey()] = stream
@@ -266,7 +286,9 @@ class FollowedStreamsViewModel @Inject constructor(
 
                 val followsForPerChannelFallback = bulkFallbackResult?.unresolvedFollows ?: followsForFallback
 
-                followsForPerChannelFallback.chunked(FOLLOWED_STREAMS_BATCH_SIZE).forEach { batch ->
+                if (sawRateLimit) {
+                    logFollowedStreamsWarn("Skipping per-channel fallback: kick API is rate limiting")
+                } else followsForPerChannelFallback.chunked(FOLLOWED_STREAMS_BATCH_SIZE).forEach { batch ->
                     ensureActive()
                     val batchResults = coroutineScope {
                         batch.map { follow ->
@@ -363,10 +385,6 @@ class FollowedStreamsViewModel @Inject constructor(
                                 networkLibrary = networkLibrary,
                                 headers = headers,
                                 broadcasterUserIds = ids,
-                                categoryId = null,
-                                language = null,
-                                limit = ids.size,
-                                sort = "viewer_count",
                             )
                         }
                     }.awaitAll().forEach { response ->
@@ -465,10 +483,6 @@ class FollowedStreamsViewModel @Inject constructor(
                                 networkLibrary = networkLibrary,
                                 headers = headers,
                                 broadcasterUserIds = ids,
-                                categoryId = null,
-                                language = null,
-                                limit = ids.size,
-                                sort = "viewer_count",
                             )
                         }
                     }.awaitAll().forEach { response ->

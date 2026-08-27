@@ -86,9 +86,17 @@ class KickPusherChatWebSocket(
             }
             webSocket?.write(payload.toString())
         }
+        var privateAuthFailed = false
         privateChannelNames.forEach { channelName ->
+            if (privateAuthFailed) {
+                if (debugLogging) {
+                    Log.w(tag, "private subscribe skipped after auth failure channel=$channelName")
+                }
+                return@forEach
+            }
             val auth = socketId?.let { authorizePrivateChannel?.invoke(channelName, it) }
             if (auth.isNullOrBlank()) {
+                privateAuthFailed = true
                 // Private channel names embed the account id (private-userfeed.<id>), so this
                 // is gated too.
                 if (debugLogging) {

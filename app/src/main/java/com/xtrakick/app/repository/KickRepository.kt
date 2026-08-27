@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Base64
 import android.util.Log
 import android.webkit.CookieManager
+import android.webkit.WebSettings
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.xtrakick.app.R
@@ -67,15 +68,20 @@ import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.KickApiHelper
+import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
+import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -93,6 +99,8 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.chromium.net.CronetEngine
+import org.chromium.net.apihelpers.UploadDataProviders
 import org.json.JSONObject
 import java.util.Collections
 import java.io.IOException
@@ -103,6 +111,7 @@ import java.security.SecureRandom
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -110,6 +119,8 @@ import javax.inject.Singleton
 class KickRepository @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val okHttpClient: OkHttpClient,
+    private val cronetEngine: Lazy<CronetEngine>?,
+    private val cronetExecutor: ExecutorService,
     private val json: Json,
     private val authRepository: AuthRepository,
     private val kickOfficialApiClient: KickOfficialApiClient,
@@ -186,6 +197,18 @@ class KickRepository @Inject constructor(
     private val featureDebugTag = "KickFeatureDebug"
     private val pointsDebugTag = "KickPointsDebug"
     private val pinnedDebugTag = "KickPinnedDebug"
+    private val kickWebUserAgent by lazy {
+        runCatching { WebSettings.getDefaultUserAgent(context) }
+            .getOrNull()
+            ?.replace(Regex(";\\s*wv"), "")
+            ?.replace(Regex("Version/[0-9.]+\\s*"), "")
+            ?.replace(Regex(";\\s*\\)"), ")")
+            ?.takeIf { it.isNotBlank() }
+            ?: "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36"
+    }
+    private val kickWebChromiumMajor by lazy {
+        Regex("Chrome/(\\d+)").find(kickWebUserAgent)?.groupValues?.getOrNull(1) ?: "145"
+    }
     private val emoteRegex = Regex("\\[emote:(\\d+):([^\\]]+)]")
     private val kickLegacyBadgeFallbackBaseUrl = "https://www.kickdatabase.com/kickBadges/"
     private val kickBadgeCacheKey = "kick_badge_url_cache_v1"
@@ -453,8 +476,6 @@ class KickRepository @Inject constructor(
     }
 
     suspend fun getFollowedChannelsWebPage(cursor: String? = null): KickFollowedChannelsPage = withContext(Dispatchers.IO) {
-        val cookieHeader = getKickCookieHeader()
-            ?: throw IOException("missing kick web cookies")
         val url = buildString {
             append("https://kick.com/api/v2/channels/followed-page")
             if (!cursor.isNullOrBlank()) {
@@ -462,49 +483,26 @@ class KickRepository @Inject constructor(
                 append(urlEncode(cursor))
             }
         }
-        val requestBuilder = Request.Builder()
-            .url(url)
-            .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36")
-            .header("Origin", "https://kick.com")
-            .header("Referer", "https://kick.com/following/channels")
-            .header("Accept", "application/json, text/plain, */*")
-            .header("x-app-platform", "web")
-            .header("x-kick-platform", "web")
-            .header("Cookie", cookieHeader)
-        extractKickWebAuthToken(cookieHeader)?.let { authToken ->
-            requestBuilder.header(AppConstants.HEADER_TOKEN, "Bearer $authToken")
-        }
-        extractKickXsrfToken(cookieHeader)?.let { xsrfToken ->
-            requestBuilder.header("X-XSRF-TOKEN", xsrfToken)
-        }
         Log.i(tag, "Kick follow import request url=$url cursor=${cursor ?: "<initial>"}")
-        okHttpClient.newCall(
-            requestBuilder.build()
-        ).execute().use { response ->
-            val body = response.body.string()
-            if (!response.isSuccessful) {
-                throw IOException("Kick followed request failed (${response.code}) for $url: ${body.take(200)}")
-            }
-            val root = json.parseToJsonElement(body) as? JsonObject
-                ?: throw IOException("Invalid Kick followed response")
-            val channels = root.arrayOrNull("channels").orEmpty().mapNotNull { element ->
-                val item = element as? JsonObject ?: return@mapNotNull null
-                val login = item.primitiveOrNull("channel_slug")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                KickFollowedChannel(
-                    login = login,
-                    name = item.primitiveOrNull("user_username")?.takeIf { it.isNotBlank() },
-                    profilePicture = item.primitiveOrNull("profile_picture")?.takeIf { it.isNotBlank() },
-                )
-            }
-            KickFollowedChannelsPage(
-                channels = channels,
-                nextCursor = root.primitiveOrNull("nextCursor"),
-            ).also { page ->
-                Log.i(
-                    tag,
-                    "Kick follow import response url=$url channels=${page.channels.size} nextCursor=${page.nextCursor ?: "<end>"}",
-                )
-            }
+        val root = json.parseToJsonElement(executeKickWebSessionRequest(url)) as? JsonObject
+            ?: throw IOException("Invalid Kick followed response")
+        val channels = root.arrayOrNull("channels").orEmpty().mapNotNull { element ->
+            val item = element as? JsonObject ?: return@mapNotNull null
+            val login = item.primitiveOrNull("channel_slug")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            KickFollowedChannel(
+                login = login,
+                name = item.primitiveOrNull("user_username")?.takeIf { it.isNotBlank() },
+                profilePicture = item.primitiveOrNull("profile_picture")?.takeIf { it.isNotBlank() },
+            )
+        }
+        KickFollowedChannelsPage(
+            channels = channels,
+            nextCursor = root.primitiveOrNull("nextCursor"),
+        ).also { page ->
+            Log.i(
+                tag,
+                "Kick follow import response url=$url channels=${page.channels.size} nextCursor=${page.nextCursor ?: "<end>"}",
+            )
         }
     }
 
@@ -512,12 +510,14 @@ class KickRepository @Inject constructor(
         val collected = LinkedHashMap<String, KickFollowedChannel>()
         var cursor: String? = null
         do {
-            val page = runCatching {
+            val page = try {
                 getFollowedChannelsWebPage(cursor)
-            }.getOrElse {
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
                 val authHeader = getKickPublicApiHeadersWithRefresh(networkLibrary)[AppConstants.HEADER_TOKEN]
                     ?.takeIf { it.isNotBlank() }
-                    ?: throw it
+                    ?: throw error
                 getFollowedChannelsAuthorizedPage(authHeader = authHeader, cursor = cursor)
             }
             page.channels.forEach { channel ->
@@ -688,7 +688,7 @@ class KickRepository @Inject constructor(
         }
         val root = runCatching {
             json.parseToJsonElement(
-                getRaw("https://kick.com/api/v2/channels/${urlEncode(normalizedSlug)}/me", isKickWeb = true)
+                executeKickWebSessionRequest("https://kick.com/api/v2/channels/${urlEncode(normalizedSlug)}/me")
             )
         }.getOrNull() ?: return@withContext false
         val canAccess = findBooleanRecursive(
@@ -801,35 +801,20 @@ class KickRepository @Inject constructor(
             }
         }
         val hasKickWebsiteSession = hasKickWebsiteSessionCookie()
+        // Reading the user's points balance requires a genuine kick.com website session
+        // (a session_token cookie set by an actual kick.com login, e.g. via
+        // Follow-import or a dedicated login). A cookie presence alone is not enough — and an
+        // OAuth/integrity `auth-token` cookie is NOT a session and always 401s /points: /me and
+        // /points. Gate balance probes on the real-session check so we never spam anonymous 401s.
+        val hasRealSession = hasKickWebsiteSession
         val normalizedChannelSlug = channelSlug?.trim()?.takeIf { it.isNotBlank() }
         val normalizedChannelId = channelId?.trim()?.takeIf { it.isNotBlank() }
-        val candidates = buildList {
-            normalizedChannelSlug?.let { value ->
-                if (hasKickWebsiteSession) {
-                    add("https://kick.com/api/v2/channels/${urlEncode(value)}/points")
-                }
-                add("https://kick.com/api/v2/channels/${urlEncode(value)}/rewards")
-                add("https://kick.com/api/v1/channels/${urlEncode(value)}/rewards")
-                add("https://kick.com/api/v2/channels/${urlEncode(value)}/community-points/rewards")
-                add("https://kick.com/api/v1/channels/${urlEncode(value)}/community-points/rewards")
-                if (hasKickWebsiteSession) {
-                    add("https://kick.com/api/v2/channels/${urlEncode(value)}/me")
-                }
-            }
-            normalizedChannelId?.let { value ->
-                if (hasKickWebsiteSession && normalizedChannelSlug == null) {
-                    add("https://kick.com/api/v2/channels/${urlEncode(value)}/points")
-                }
-                if (normalizedChannelSlug == null) {
-                    add("https://kick.com/api/v2/channels/${urlEncode(value)}/rewards")
-                }
-                add("https://kick.com/api/v2/channels/${urlEncode(value)}/community-points/rewards")
-                add("https://kick.com/api/v1/channels/${urlEncode(value)}/community-points/rewards")
-                if (hasKickWebsiteSession && normalizedChannelSlug == null) {
-                    add("https://kick.com/api/v2/channels/${urlEncode(value)}/me")
-                }
-            }
-        }
+        val candidates = KickApiCandidateUtils.buildChannelPointRewardCandidates(
+            channelSlug = normalizedChannelSlug,
+            channelId = normalizedChannelId,
+            hasKickWebsiteSession = hasRealSession,
+            privateWebAuthUsable = hasRealSession,
+        )
         Log.i(
             pointsDebugTag,
             "channel points fetch started slug=${normalizedChannelSlug ?: "<none>"} id=${normalizedChannelId ?: "<none>"} websiteSession=$hasKickWebsiteSession candidates=${candidates.size}",
@@ -837,8 +822,19 @@ class KickRepository @Inject constructor(
         var best = ChannelPointRewardsResult()
         for (url in candidates) {
             Log.i(pointsDebugTag, "channel points trying url=$url")
+            if (isKickFeatureDebugEnabled()) {
+                val cookieHeader = getKickCookieHeader()
+                val cookieNames = cookieHeader
+                    ?.split(';')
+                    ?.map { it.substringBefore('=').trim() }
+                    ?.joinToString(",")
+                    .orEmpty()
+                val auth = cookieHeader?.let { extractKickWebAuthToken(it) }?.takeIf { it.isNotBlank() } != null
+                val xsrf = cookieHeader?.let { extractKickXsrfToken(it) }?.takeIf { it.isNotBlank() } != null
+                Log.d(pointsDebugTag, "probe-auth url=$url cookies=[$cookieNames] auth=$auth xsrf=$xsrf")
+            }
             val rawResult = runCatching {
-                getRaw(url, isKickWeb = true)
+                executeKickWebSessionRequest(url)
             }
             val raw = rawResult.getOrNull()
             if (raw == null) {
@@ -873,7 +869,7 @@ class KickRepository @Inject constructor(
                 )
             }
             best = best.merge(result)
-            if (best.balance != null && (best.available || best.rewards.isNotEmpty())) {
+            if (KickApiCandidateUtils.shouldStopChannelPointFetch(best.rewards.size, best.available)) {
                 break
             }
         }
@@ -1496,18 +1492,7 @@ class KickRepository @Inject constructor(
         val body = buildJsonObject {
             put("id", JsonPrimitive(choiceId))
         }.toString()
-        okHttpClient.newCall(
-            createRequestBuilder(url, isKickWeb = true)
-                .header("Content-Type", "application/json")
-                .post(body.toRequestBody("application/json".toMediaTypeOrNull()))
-                .build()
-        ).execute().use { response ->
-            val raw = response.body.string()
-            if (!response.isSuccessful) {
-                throw IOException("Kick poll vote failed (${response.code}) for $url: ${raw.take(200)}")
-            }
-            parseKickWebPollResponse(raw)
-        }
+        parseKickWebPollResponse(executeKickWebSessionRequest(url, body, post = true))
     }
 
     suspend fun voteKickWebPrediction(
@@ -1525,35 +1510,14 @@ class KickRepository @Inject constructor(
             put("amount", JsonPrimitive(amount))
             put("outcome_id", JsonPrimitive(normalizedOutcomeId))
         }.toString()
-        okHttpClient.newCall(
-            createRequestBuilder(url, isKickWeb = true)
-                .header("Content-Type", "application/json")
-                .post(body.toRequestBody("application/json".toMediaTypeOrNull()))
-                .build()
-        ).execute().use { response ->
-            val raw = response.body.string()
-            if (!response.isSuccessful) {
-                throw IOException("Kick prediction vote failed (${response.code}) for $url: ${raw.take(200)}")
-            }
-            parseKickWebPredictionResponse(raw)
-        }
+        parseKickWebPredictionResponse(executeKickWebSessionRequest(url, body, post = true))
     }
 
     suspend fun getLatestKickPrediction(channelSlug: String): Prediction? = withContext(Dispatchers.IO) {
         val normalizedChannelSlug = channelSlug.trim().takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("channel slug is required")
         val url = "https://kick.com/api/v2/channels/${urlEncode(normalizedChannelSlug)}/predictions/latest"
-        okHttpClient.newCall(
-            createRequestBuilder(url, isKickWeb = true)
-                .get()
-                .build()
-        ).execute().use { response ->
-            val raw = response.body.string()
-            if (!response.isSuccessful) {
-                throw IOException("Kick latest prediction fetch failed (${response.code}) for $url: ${raw.take(200)}")
-            }
-            parseKickWebPredictionResponse(raw)
-        }
+        parseKickWebPredictionResponse(executeKickWebSessionRequest(url))
     }
 
     private fun parseKickPollObject(pollObject: JsonObject): Poll {
@@ -1642,21 +1606,17 @@ class KickRepository @Inject constructor(
             put("channel_name", channelName)
         }.toString()
         runCatching {
-            okHttpClient.newCall(
-                createRequestBuilder(url, isKickWeb = true)
-                    .header("Content-Type", "application/json")
-                    .post(body.toRequestBody("application/json".toMediaTypeOrNull()))
-                    .build()
-            ).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw IOException("Kick private channel auth failed (${response.code}) for $channelName")
-                }
-                val raw = response.body.string()
-                JSONObject(raw).optString("auth").takeIf { it.isNotBlank() }
-            }
+            val raw = executeKickWebSessionRequest(url, body, post = true)
+            JSONObject(raw).optString("auth").takeIf { it.isNotBlank() }
         }.onFailure {
             Log.w(tag, "kick pusher auth failed channel=$channelName message=${it.message}")
         }.getOrNull()
+    }
+
+    /** True only when the WebView cookie jar contains a usable website session bearer. */
+    fun hasUsableKickWebsiteSession(): Boolean {
+        val cookies = getKickCookieHeader() ?: return false
+        return AuthStateHelper.extractKickSessionToken(cookies)?.isNotBlank() == true
     }
 
     suspend fun redeemKickWebReward(
@@ -1676,22 +1636,8 @@ class KickRepository @Inject constructor(
         }.toString()
         val url = "https://kick.com/api/v2/channels/${urlEncode(normalizedChannelSlug)}/rewards/${urlEncode(normalizedRewardId)}/redeem"
         Log.i(pointsDebugTag, "channel points redeem started slug=$normalizedChannelSlug rewardId=$normalizedRewardId transactionId=$transactionId")
-        okHttpClient.newCall(
-            createRequestBuilder(url, isKickWeb = true)
-                .header("Content-Type", "application/json")
-                .post(body.toRequestBody("application/json".toMediaTypeOrNull()))
-                .build()
-        ).execute().use { response ->
-            val raw = response.body.string()
-            if (!response.isSuccessful) {
-                Log.i(
-                    pointsDebugTag,
-                    "channel points redeem failed slug=$normalizedChannelSlug rewardId=$normalizedRewardId code=${response.code} body=${raw.take(200)}",
-                )
-                throw IOException("Kick reward redeem failed (${response.code}) for $url: ${raw.take(200)}")
-            }
-            Log.i(pointsDebugTag, "channel points redeem succeeded slug=$normalizedChannelSlug rewardId=$normalizedRewardId")
-        }
+        executeKickWebSessionRequest(url, body, post = true)
+        Log.i(pointsDebugTag, "channel points redeem succeeded slug=$normalizedChannelSlug rewardId=$normalizedRewardId")
     }
 
     private inline fun <reified T> decodeKickOfficialRealtimePayload(messageJson: String): T? {
@@ -4529,7 +4475,95 @@ class KickRepository @Inject constructor(
             if (!response.isSuccessful) {
                 throw IOException("Kick request failed (${response.code}) for $url")
             }
+            // Kick issues XSRF-TOKEN / auth cookies via Set-Cookie on web responses. Our OkHttp
+            // client has its own cookie handling and does NOT write back into the WebView's
+            // CookieManager, so without this the XSRF-TOKEN cookie never lands in the jar —
+            // and session-gated endpoints (e.g. /points, /me) reject the request (401). Harvest
+            // and persist them so the next kick.com web call carries the full session.
+            if (isKickWeb) {
+                persistWebResponseCookies(response.headers("Set-Cookie"))
+            }
             response.body.string()
+        }
+    }
+
+    internal suspend fun executeKickWebSessionRequest(
+        url: String,
+        body: String? = null,
+        post: Boolean = body != null,
+    ): String {
+        val cookies = getKickCookieHeader()
+            ?: throw IOException("Kick website login is required.")
+        val bearer = AuthStateHelper.extractKickSessionToken(cookies)?.let { "Bearer $it" }
+            ?: throw IOException("Kick website login is required.")
+        val engine = cronetEngine?.get()
+            ?: return executeKickWebSessionRequestWithOkHttp(url, body, post)
+        val response = withTimeout(15_000L) {
+            suspendCancellableCoroutine { continuation ->
+                val builder = engine.newUrlRequestBuilder(
+                    url,
+                    getByteArrayCronetCallback(continuation),
+                    cronetExecutor,
+                )
+                    .addHeader("User-Agent", kickWebUserAgent)
+                    .addHeader("Accept", "application/json, text/plain, */*")
+                    .addHeader("Origin", "https://kick.com")
+                    .addHeader("Referer", buildKickWebReferer(url))
+                    .addHeader("x-app-platform", "web")
+                    .addHeader("Authorization", bearer)
+                    .addHeader("Cookie", cookies)
+                extractKickXsrfToken(cookies)?.let { builder.addHeader("X-XSRF-TOKEN", it) }
+                if (post) {
+                    builder
+                        .setHttpMethod("POST")
+                        .addHeader("Content-Type", "application/json")
+                        .setUploadDataProvider(UploadDataProviders.create(body.orEmpty().toByteArray()), cronetExecutor)
+                }
+                val request = builder.build()
+                continuation.invokeOnCancellation { request.cancel() }
+                request.start()
+            }
+        }
+        val raw = String(response.second, Charsets.UTF_8)
+        if (response.first.httpStatusCode !in 200..299) {
+            throw IOException("Kick request failed (${response.first.httpStatusCode}) for $url")
+        }
+        return raw
+    }
+
+    private suspend fun executeKickWebSessionRequestWithOkHttp(url: String, body: String?, post: Boolean): String {
+        if (!post) return getRaw(url, isKickWeb = true)
+        return withContext(Dispatchers.IO) {
+            okHttpClient.newCall(
+                createRequestBuilder(url, isKickWeb = true)
+                    .header("Content-Type", "application/json")
+                    .post(body.orEmpty().toRequestBody("application/json".toMediaTypeOrNull()))
+                    .build()
+            ).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("Kick request failed (${response.code}) for $url")
+                }
+                response.body.string()
+            }
+        }
+    }
+
+    private fun persistWebResponseCookies(setCookies: List<String>) {
+        if (setCookies.isEmpty()) return
+        val cookieManager = CookieManager.getInstance()
+        setCookies.forEach { raw ->
+            val entry = raw
+                .substringBefore(';')
+                .trim()
+                .takeIf { it.contains('=') && it.isNotBlank() }
+                ?: return@forEach
+            val name = entry.substringBefore('=').trim()
+            if (name.isBlank() || name.equals("path", true)) return@forEach
+            try {
+                cookieManager.setCookie("https://kick.com", raw)
+            } catch (_: Exception) {
+                // best-effort; a failed write here should never break the response
+            }
         }
     }
 
@@ -4556,34 +4590,6 @@ class KickRepository @Inject constructor(
             ?: throw IOException("Kick login is required.")
     }
 
-    private suspend fun getRawAuthenticated(
-        url: String,
-        accessToken: String,
-        isKickWeb: Boolean = false,
-        kickPlatformWeb: Boolean = false,
-    ): String = withContext(Dispatchers.IO) {
-        val clientId = KickOAuthConfig.getClientId(context)
-        okHttpClient.newCall(
-            createRequestBuilder(url, isKickWeb)
-                .header("Authorization", "Bearer $accessToken")
-                .apply {
-                    if (url.contains("api.kick.com/") && !clientId.isNullOrBlank()) {
-                        header("Client-Id", clientId)
-                    }
-                    if (kickPlatformWeb) {
-                        header("x-kick-platform", "web")
-                        header("Accept", "application/json, text/plain, */*")
-                    }
-                }
-                .build()
-        ).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("Kick request failed (${response.code}) for $url")
-            }
-            response.body.string()
-        }
-    }
-
     private fun createRequestBuilder(url: String, isKickWeb: Boolean = false): Request.Builder {
         return Request.Builder()
             .url(url)
@@ -4591,41 +4597,43 @@ class KickRepository @Inject constructor(
             .header("Accept", "application/json")
             .apply {
                 if (isKickWeb) {
+                    header("User-Agent", kickWebUserAgent)
+                    header("sec-ch-ua", "\"Android WebView\";v=\"$kickWebChromiumMajor\", \"Not_A Brand\";v=\"8\", \"Chromium\";v=\"$kickWebChromiumMajor\"")
+                    header("sec-ch-ua-mobile", "?1")
+                    header("sec-ch-ua-platform", "\"Android\"")
                     header("Origin", "https://kick.com")
                     header("Referer", buildKickWebReferer(url))
                     header("Accept", "application/json, text/plain, */*")
                     header("x-app-platform", "web")
-                    header("x-kick-platform", "web")
                     getKickCookieHeader()?.let { cookies ->
                         header("Cookie", cookies)
-                        extractKickWebAuthToken(cookies)?.let { webAuthToken ->
-                            header("Authorization", "Bearer $webAuthToken")
-                        }
+                        // Kick's private web endpoints require the composite bearer from the
+                        // session_token cookie. OAuth access tokens are only a fallback when the
+                        // WebView has no usable website session.
+                        val bearer = AuthStateHelper.extractKickSessionToken(cookies)?.let { "Bearer $it" }
+                            ?: AuthStateHelper.getKickBearerToken(context)
+                            ?: extractKickWebAuthToken(cookies)?.let { "Bearer $it" }
+                        bearer?.let { header("Authorization", it) }
                         extractKickXsrfToken(cookies)?.let { xsrfToken ->
                             header("X-XSRF-TOKEN", xsrfToken)
                         }
                     } ?: AuthStateHelper.getKickBearerToken(context)?.let { bearer ->
-                        header("Authorization", bearer)
+                        header("Authorization", bearer.trim().let { if (it.startsWith("Bearer ", true)) it else "Bearer $it" })
                     }
                 }
             }
     }
 
     private fun getKickCookieHeader(): String? {
-        return CookieManager.getInstance().getCookie("https://kick.com")?.takeIf { it.isNotBlank() }
-            ?: CookieManager.getInstance().getCookie("https://web.kick.com")?.takeIf { it.isNotBlank() }
+        val cookieManager = CookieManager.getInstance()
+        val headers = sequenceOf("https://kick.com", "https://web.kick.com")
+            .mapNotNull { url -> cookieManager.getCookie(url)?.takeIf { it.isNotBlank() } }
+            .toList()
+        return AuthStateHelper.selectKickWebsiteCookieHeader(*headers.toTypedArray())
     }
 
     private fun hasKickWebsiteSessionCookie(): Boolean {
-        val cookieHeader = getKickCookieHeader() ?: return false
-        val cookieNames = cookieHeader
-            .split(';')
-            .asSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .map { it.substringBefore('=').trim().lowercase(Locale.ROOT) }
-            .toSet()
-        return cookieNames.any { it == "xsrf-token" || it == "session_token" || it.endsWith("_session") }
+        return hasUsableKickWebsiteSession()
     }
 
     private fun extractKickXsrfToken(cookieHeader: String): String? {
@@ -4646,12 +4654,10 @@ class KickRepository @Inject constructor(
             .split(';')
             .asSequence()
             .map { it.trim() }
-            .firstOrNull {
-                it.startsWith("auth-token=", ignoreCase = true) ||
-                    it.startsWith("session_token=", ignoreCase = true)
-            }
+            .firstOrNull { it.startsWith("auth-token=", ignoreCase = true) }
             ?.substringAfter('=')
             ?.takeIf { it.isNotBlank() }
+            ?: AuthStateHelper.extractKickSessionToken(cookieHeader)
             ?: return null
         val decoded = runCatching { URLDecoder.decode(rawCookieValue, Charsets.UTF_8.name()) }.getOrDefault(rawCookieValue)
         return decoded.takeIf { it.isNotBlank() }

@@ -136,7 +136,7 @@ internal object KickFollowImportResolver {
             .filter { it.isNotBlank() }
             .map { it.substringBefore('=').trim().lowercase() }
             .toSet()
-        val hasSessionCookie = cookieNames.any { it == "xsrf-token" || it.endsWith("_session") }
+        val hasSessionCookie = "session_token" in cookieNames
         debugLog(debugLogging, "hasKickWebsiteSession: cookieNames=$cookieNames hasSessionCookie=$hasSessionCookie")
         return hasSessionCookie
     }

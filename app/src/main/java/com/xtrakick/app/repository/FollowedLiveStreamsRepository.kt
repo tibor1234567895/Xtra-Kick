@@ -8,6 +8,7 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -42,7 +43,8 @@ class FollowedLiveStreamsRepository @Inject constructor(
         const val CACHE_KEY = "followed_streams_cache_v1"
         private const val BROADCASTER_ID_CACHE_KEY = "kick_broadcaster_id_cache_v1"
         const val CACHE_TTL_MS = 45_000L
-        private const val LIVESTREAM_BATCH_SIZE = 50
+        // /public/v1/users/livestreams accepts up to 100 user_id params per request.
+        private const val LIVESTREAM_BATCH_SIZE = 100
         private const val USER_LOOKUP_BATCH_SIZE = 100
         private const val PUBLIC_API_PARALLELISM = 3
         private const val PER_CHANNEL_BATCH_SIZE = 12
@@ -121,18 +123,33 @@ class FollowedLiveStreamsRepository @Inject constructor(
 
         val resolved = LinkedHashMap<String, Stream>()
 
-        val fast = runCatching { loadFromPublicApi(follows) }
-            .onFailure { debugWarn("Fast followed-live path failed: ${it.message}") }
-            .getOrNull()
+        var sawRateLimit = false
+        val isRateLimitMessage = { message: String? -> message?.contains("429", ignoreCase = true) == true }
+
+        val fast = try {
+            loadFromPublicApi(follows)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            if (isRateLimitMessage(error.message)) sawRateLimit = true
+            debugWarn("Fast followed-live path failed: ${error.message}")
+            null
+        }
         fast?.items?.forEach { resolved[it.cacheKey()] = it }
         if (fast != null && resolved.isNotEmpty()) {
             onPartial(resolved.values.toList().sortedByViewersDesc())
         }
 
         val unresolvedAfterFast = fast?.unresolved ?: follows
-        val bulk = runCatching { loadFromBulkFallback(unresolvedAfterFast) }
-            .onFailure { debugWarn("Bulk followed-live fallback failed: ${it.message}") }
-            .getOrNull()
+        val bulk = try {
+            loadFromBulkFallback(unresolvedAfterFast)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            if (isRateLimitMessage(error.message)) sawRateLimit = true
+            debugWarn("Bulk followed-live fallback failed: ${error.message}")
+            null
+        }
         bulk?.items?.forEach { resolved[it.cacheKey()] = it }
         if (bulk != null && bulk.items.isNotEmpty()) {
             onPartial(resolved.values.toList().sortedByViewersDesc())
@@ -140,16 +157,20 @@ class FollowedLiveStreamsRepository @Inject constructor(
 
         val unresolvedAfterBulk = bulk?.unresolved ?: unresolvedAfterFast
         if (allowPerChannelFallback && unresolvedAfterBulk.isNotEmpty()) {
-            unresolvedAfterBulk.chunked(PER_CHANNEL_BATCH_SIZE).forEach { batch ->
-                currentCoroutineContext().ensureActive()
-                val batchResults = coroutineScope {
-                    batch.map { follow ->
-                        async { loadStreamForFollow(follow) }
-                    }.awaitAll()
-                }.filterNotNull()
-                batchResults.forEach { resolved[it.cacheKey()] = it }
-                if (batchResults.isNotEmpty()) {
-                    onPartial(resolved.values.toList().sortedByViewersDesc())
+            if (sawRateLimit) {
+                debugWarn("Skipping per-channel fallback: kick API is rate limiting")
+            } else {
+                unresolvedAfterBulk.chunked(PER_CHANNEL_BATCH_SIZE).forEach { batch ->
+                    currentCoroutineContext().ensureActive()
+                    val batchResults = coroutineScope {
+                        batch.map { follow ->
+                            async { loadStreamForFollow(follow) }
+                        }.awaitAll()
+                    }.filterNotNull()
+                    batchResults.forEach { resolved[it.cacheKey()] = it }
+                    if (batchResults.isNotEmpty()) {
+                        onPartial(resolved.values.toList().sortedByViewersDesc())
+                    }
                 }
             }
         }
@@ -211,10 +232,6 @@ class FollowedLiveStreamsRepository @Inject constructor(
                                 networkLibrary = networkLibrary,
                                 headers = headers,
                                 broadcasterUserIds = ids,
-                                categoryId = null,
-                                language = null,
-                                limit = ids.size,
-                                sort = "viewer_count",
                             )
                         }
                     }.awaitAll().forEach { response ->
@@ -305,10 +322,6 @@ class FollowedLiveStreamsRepository @Inject constructor(
                                 networkLibrary = networkLibrary,
                                 headers = headers,
                                 broadcasterUserIds = ids,
-                                categoryId = null,
-                                language = null,
-                                limit = ids.size,
-                                sort = "viewer_count",
                             )
                         }
                     }.awaitAll().forEach { response ->

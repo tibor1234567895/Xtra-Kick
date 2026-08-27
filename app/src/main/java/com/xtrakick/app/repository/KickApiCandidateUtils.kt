@@ -64,20 +64,11 @@ object KickApiCandidateUtils {
         privateWebAuthUsable: Boolean,
     ): Boolean = hasKickWebsiteSession && privateWebAuthUsable
 
-    /**
-     * Stop walking further candidates once rewards are usable.
-     * Do not continue solely to hunt a missing balance across dead endpoints.
-     */
+    /** Stop once reward details are usable; a balance-only response is still incomplete. */
     fun shouldStopChannelPointFetch(
         rewardsCount: Int,
         available: Boolean,
-        balance: Int?,
-    ): Boolean {
-        if (available || rewardsCount > 0) {
-            return true
-        }
-        return balance != null
-    }
+    ): Boolean = available || rewardsCount > 0
 
     /**
      * Extract only dedicated chatroom ids from a chatroom JSON payload.

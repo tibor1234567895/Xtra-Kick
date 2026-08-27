@@ -93,34 +93,29 @@ class KickApiCandidateUtilsTest {
     }
 
     @Test
-    fun `stop channel points fetch after usable rewards without balance`() {
-        // Log: rewards=5 available=true balance=null → must stop (no cascade for balance).
+    fun `stop channel points fetch after usable rewards but not balance-only response`() {
         assertTrue(
             KickApiCandidateUtils.shouldStopChannelPointFetch(
                 rewardsCount = 5,
                 available = true,
-                balance = null,
             ),
         )
         assertTrue(
             KickApiCandidateUtils.shouldStopChannelPointFetch(
                 rewardsCount = 1,
                 available = false,
-                balance = null,
             ),
         )
         assertFalse(
             KickApiCandidateUtils.shouldStopChannelPointFetch(
                 rewardsCount = 0,
                 available = false,
-                balance = null,
             ),
         )
-        assertTrue(
+        assertFalse(
             KickApiCandidateUtils.shouldStopChannelPointFetch(
                 rewardsCount = 0,
                 available = false,
-                balance = 100,
             ),
         )
     }

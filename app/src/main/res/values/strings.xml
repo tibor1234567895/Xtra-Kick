@@ -717,6 +717,13 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="notification_live_channel_title">Live notifications</string>
     <string name="live_notification">%s is live</string>
     <string name="live_notifications">Live notifications</string>
+    <string name="reward_auto_claim">Auto-claim Kick rewards</string>
+    <string name="reward_auto_claim_summary">Automatically claims your daily reward and finished drops. Requires a kick.com login done inside the app.</string>
+    <string name="reward_claim_notifications">Notify about claimed rewards</string>
+    <string name="reward_claim_channel_id">reward_claims</string>
+    <string name="reward_claim_channel_title">Reward claims</string>
+    <string name="reward_claim_daily_title">Daily reward claimed</string>
+    <string name="reward_claim_drops_title">Drops claimed</string>
     <string name="sleep_timer_lock_screen">Lock screen after sleep timer is done</string>
     <string name="sleep_timer_time_picker">Use Material time picker for sleep timer</string>
     <string name="stop_sleep_timer_message">Stop sleep timer?</string>

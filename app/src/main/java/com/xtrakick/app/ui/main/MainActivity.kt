@@ -60,7 +60,9 @@ import androidx.navigation.ui.NavigationUI
 import androidx.navigation.ui.setupWithNavController
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.xtrakick.app.R
@@ -524,6 +526,11 @@ class MainActivity : AppCompatActivity() {
                     )
                     .build()
             )
+        }
+        if (prefs.getBoolean(AppConstants.REWARD_AUTO_CLAIM_ENABLED, false)) {
+            RewardClaimScheduler.enable(this)
+        } else {
+            RewardClaimScheduler.disable(this)
         }
     }
 

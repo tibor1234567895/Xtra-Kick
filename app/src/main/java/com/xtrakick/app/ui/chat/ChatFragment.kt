@@ -1415,11 +1415,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             .setView(dialogContent)
         if (rewards.isEmpty()) {
             rewardsContainer.addView(TextView(context).apply {
-                text = buildString {
-                    append(balanceText)
-                    append("\n\n")
-                    append(getString(R.string.channel_points_rewards_unavailable))
-                }
+                text = getString(R.string.channel_points_rewards_unavailable)
                 setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
                 setTextColor(MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.LTGRAY))
                 layoutParams = GridLayout.LayoutParams().apply {

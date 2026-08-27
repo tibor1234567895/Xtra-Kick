@@ -4,18 +4,13 @@ import android.content.Context
 import com.xtrakick.app.model.kick.KickEventSubscription
 import com.xtrakick.app.model.kick.KickEventSubscriptionCreateResult
 import com.xtrakick.app.model.kick.KickEventSubscriptionRequestItem
-import com.xtrakick.app.model.kick.KickOfficialCategory
 import com.xtrakick.app.model.kick.KickOfficialChannel
-import com.xtrakick.app.model.kick.KickOfficialGetLivestreamsRequest
-import com.xtrakick.app.model.kick.KickOfficialLivestream
-import com.xtrakick.app.model.kick.KickOfficialLivestreamStats
 import com.xtrakick.app.model.kick.KickOfficialModerationBanRequest
 import com.xtrakick.app.model.kick.KickOfficialModerationDeleteBanRequest
 import com.xtrakick.app.model.kick.KickOfficialPostChatMessageRequest
 import com.xtrakick.app.model.kick.KickOfficialReward
 import com.xtrakick.app.model.kick.KickOfficialRewardCreateRequest
 import com.xtrakick.app.model.kick.KickOfficialRewardUpdateRequest
-import com.xtrakick.app.model.kick.KickOfficialTokenIntrospect
 import com.xtrakick.app.model.kick.KickOfficialUpdateChannelRequest
 import com.xtrakick.app.model.kick.KickOfficialUser
 import com.xtrakick.app.model.kick.KickRewardRedemptionActionFailure
@@ -61,15 +56,6 @@ class KickOfficialApiClient @Inject constructor(
             query = buildMap {
                 ids?.takeIf { it.isNotEmpty() }?.let { put("id", it) }
             }
-        )
-    }
-
-    suspend fun introspectToken(accessToken: String): KickOfficialTokenIntrospect {
-        return requestData(
-            path = "/token/introspect",
-            accessToken = accessToken,
-            method = "POST",
-            body = ""
         )
     }
 
@@ -129,45 +115,6 @@ class KickOfficialApiClient @Inject constructor(
             accessToken = accessToken,
             method = "DELETE",
             body = json.encodeToString(request)
-        )
-    }
-
-    suspend fun getLivestreams(accessToken: String, request: KickOfficialGetLivestreamsRequest): List<KickOfficialLivestream> {
-        return requestData(
-            path = "/livestreams",
-            accessToken = accessToken,
-            query = buildMap {
-                request.broadcasterUserIds?.takeIf { it.isNotEmpty() }?.let { put("broadcaster_user_id", it) }
-                request.category?.let { put("category", it) }
-                request.language?.takeIf { it.isNotBlank() }?.let { put("language", it) }
-                request.limit?.let { put("limit", it) }
-                request.sort?.takeIf { it.isNotBlank() }?.let { put("sort", it) }
-            }
-        )
-    }
-
-    suspend fun getLivestreamStats(accessToken: String): KickOfficialLivestreamStats {
-        return requestData(
-            path = "/livestreams/stats",
-            accessToken = accessToken,
-        )
-    }
-
-    suspend fun getCategories(accessToken: String, query: String, page: Int = 1): List<KickOfficialCategory> {
-        return requestData(
-            path = "/categories",
-            accessToken = accessToken,
-            query = mapOf(
-                "q" to query,
-                "page" to page,
-            )
-        )
-    }
-
-    suspend fun getCategory(accessToken: String, categoryId: Long): KickOfficialCategory {
-        return requestData(
-            path = "/categories/$categoryId",
-            accessToken = accessToken,
         )
     }
 

@@ -138,6 +138,8 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         }
         collectCookies("https://kick.com")
         collectCookies("https://stream.kick.com")
+        val cookieHeader = cookies.joinToString("; ")
+        val sessionToken = AuthStateHelper.extractKickSessionToken(cookieHeader)
         val authCookie = cookies.firstOrNull { it.startsWith("auth-token=", ignoreCase = true) }
             ?.substringAfter('=', "")
             ?.takeIf { it.isNotBlank() }
@@ -146,9 +148,10 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
             put("Origin", "https://kick.com")
             put("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36")
             if (cookies.isNotEmpty()) {
-                put("Cookie", cookies.joinToString("; "))
+                put("Cookie", cookieHeader)
             }
-            authCookie?.let { put("Authorization", "Bearer $it") }
+            sessionToken?.let { put("Authorization", "Bearer $it") }
+                ?: authCookie?.let { put("Authorization", "Bearer $it") }
                 ?: AuthStateHelper.getKickBearerToken(this@KickApp)?.let { put("Authorization", it) }
         }
     }

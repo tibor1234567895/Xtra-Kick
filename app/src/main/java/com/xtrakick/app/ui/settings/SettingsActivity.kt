@@ -62,6 +62,12 @@ import androidx.preference.forEach
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.SettingsNavGraphDirections
@@ -75,6 +81,7 @@ import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.repository.NotificationUsersRepository
 import com.xtrakick.app.repository.ShownNotificationsRepository
+import com.xtrakick.app.ui.main.RewardClaimScheduler
 import com.xtrakick.app.ui.player.IvsPlayerService
 import com.xtrakick.app.ui.player.LiveLatencySettings
 import com.xtrakick.app.ui.player.PlaybackService
@@ -414,6 +421,24 @@ class SettingsActivity : AppCompatActivity() {
                     kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), true),
                     kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext())
                 )
+                (requireActivity() as? SettingsActivity)?.setResult()
+                true
+            }
+            findPreference<SwitchPreferenceCompat>(AppConstants.REWARD_AUTO_CLAIM_ENABLED)?.setOnPreferenceChangeListener { _, newValue ->
+                if (newValue == true) {
+                    RewardClaimScheduler.enable(requireContext().applicationContext)
+                } else {
+                    RewardClaimScheduler.disable(requireContext().applicationContext)
+                }
+                (requireActivity() as? SettingsActivity)?.setResult()
+                true
+            }
+            findPreference<SwitchPreferenceCompat>(AppConstants.REWARD_CLAIM_NOTIFICATIONS_ENABLED)?.setOnPreferenceChangeListener { _, _ ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    ActivityCompat.checkSelfPermission(requireActivity(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    ActivityCompat.requestPermissions(requireActivity(), arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+                }
                 (requireActivity() as? SettingsActivity)?.setResult()
                 true
             }

@@ -2340,17 +2340,22 @@ class ChatViewModel @Inject constructor(
             if (!isActive) {
                 return@launch
             }
+            val hasKickWebsiteSession = kickRepository.hasUsableKickWebsiteSession()
             kickPusherChatWebSocket = KickPusherChatWebSocket(
                 chatroomId = kickChatroomId,
                 channelId = effectiveChannelId,
                 publicChannelNames = buildList {
                     categoryId?.let { add("drops_category_$it") }
                 },
-                privateChannelNames = buildList {
-                    accountId?.takeIf { it.isNotBlank() }?.let { add("private-channelpoints-$it") }
-                    accountId?.takeIf { it.isNotBlank() }?.let { add("private-userfeed.$it") }
-                    accountId?.takeIf { it.isNotBlank() }?.let { add("private-$it") }
-                    livestreamId?.let { add("private-livestream.$it") }
+                privateChannelNames = if (hasKickWebsiteSession) {
+                    buildList {
+                        accountId?.takeIf { it.isNotBlank() }?.let { add("private-channelpoints-$it") }
+                        accountId?.takeIf { it.isNotBlank() }?.let { add("private-userfeed.$it") }
+                        accountId?.takeIf { it.isNotBlank() }?.let { add("private-$it") }
+                        livestreamId?.let { add("private-livestream.$it") }
+                    }
+                } else {
+                    emptyList()
                 },
                 authorizePrivateChannel = { privateChannelName, socketId ->
                     kickRepository.authorizeKickPusherPrivateChannel(socketId, privateChannelName)
