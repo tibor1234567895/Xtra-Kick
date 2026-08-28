@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "177303911377",
+    "project_id": "xtra-kick",
+    "storage_bucket": "xtra-kick.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:177303911377:android:77331c2298e785cab53ef0",
+        "android_client_info": {
+          "package_name": "com.github.andreyasadchy.xtrakick"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYMa2xcwBbPP_8IaCfH5l6Ag9Ame6nVaU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:177303911377:android:77331c2298e785cab53ef0",
+        "android_client_info": {
+          "package_name": "com.github.andreyasadchy.xtrakick.test"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYMa2xcwBbPP_8IaCfH5l6Ag9Ame6nVaU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

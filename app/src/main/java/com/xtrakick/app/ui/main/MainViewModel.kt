@@ -49,6 +49,7 @@ import com.xtrakick.app.util.NetworkUtils
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
+import com.xtrakick.app.util.FcmSyncManager
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -99,7 +100,14 @@ class MainViewModel @Inject constructor(
     private val cronetExecutor: ExecutorService,
     private val okHttpClient: OkHttpClient,
     private val json: Json,
+    private val fcmSyncManager: Lazy<FcmSyncManager>,
 ) : ViewModel() {
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { fcmSyncManager.get().syncSubscriptions() }
+        }
+    }
 
     enum class KickValidationState {
         IDLE,
@@ -139,8 +147,14 @@ class MainViewModel @Inject constructor(
     val updateUrl = MutableSharedFlow<String?>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     var updateSize: Long? = null
     var updateJob: Job? = null
-    val updateProgress = MutableSharedFlow<Int>()
+    val updateProgress = MutableSharedFlow<Int>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val closeUpdateDialog = MutableSharedFlow<Boolean>()
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun consumeUpdateInfo() {
+        updateInfo.resetReplayCache()
+        updateUrl.resetReplayCache()
+    }
 
     private fun markKickValidationComplete() {
         _kickValidationState.value = KickValidationState.COMPLETE
@@ -1003,9 +1017,7 @@ class MainViewModel @Inject constructor(
         updateJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val progressListener = NetworkUtils.ProgressListener { bytesRead ->
-                    runBlocking {
-                        updateProgress.emit(bytesRead)
-                    }
+                    updateProgress.tryEmit(bytesRead)
                 }
                 val response = when {
                     networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {

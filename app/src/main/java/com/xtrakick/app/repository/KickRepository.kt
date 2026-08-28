@@ -22,6 +22,7 @@ import com.xtrakick.app.model.chat.RoomState
 import com.xtrakick.app.model.kick.KickCategory
 import com.xtrakick.app.model.kick.KickChannelResponse
 import com.xtrakick.app.model.kick.KickChannelLivestream
+import com.xtrakick.app.model.kick.KickLiveNotificationEvent
 import com.xtrakick.app.model.kick.KickLivestream
 import com.xtrakick.app.model.kick.KickLivestreamsResponse
 import com.xtrakick.app.model.kick.KickMessage
@@ -57,6 +58,10 @@ import com.xtrakick.app.model.kick.KickSubcategoriesResponse
 import com.xtrakick.app.model.kick.KickSubcategory
 import com.xtrakick.app.model.kick.KickThumbnail
 import com.xtrakick.app.model.kick.KickWebsiteSearchResponse
+import com.xtrakick.app.model.kick.KickMultiSearchRequest
+import com.xtrakick.app.model.kick.KickMultiSearchResponse
+import com.xtrakick.app.model.kick.KickTypesenseQuery
+import com.xtrakick.app.model.kick.KickTypesenseResult
 import com.xtrakick.app.model.kick.auth.KickChatSendResponse
 import com.xtrakick.app.model.kick.auth.KickBackendRefreshRequest
 import com.xtrakick.app.model.ui.Clip
@@ -223,6 +228,7 @@ class KickRepository @Inject constructor(
     private val channelCache = ConcurrentHashMap<String, Pair<Long, KickChannelResponse>>()
     private val channelLivestreamCache = ConcurrentHashMap<String, Pair<Long, KickChannelLivestream?>>()
     private val websiteSearchCache = ConcurrentHashMap<String, Pair<Long, KickWebsiteSearchResponse>>()
+    private val typesenseSearchCache = ConcurrentHashMap<String, Pair<Long, KickTypesenseResult>>()
     private val kickSubscriberAccessCache = ConcurrentHashMap<String, Pair<Long, Boolean>>()
     private val kickEmoteGroupsCache = ConcurrentHashMap<String, Pair<Long, List<KickEmoteGroup>>>()
     private val kickInlineBadgeSanitizedCache = ConcurrentHashMap<String, String>()
@@ -472,6 +478,73 @@ class KickRepository @Inject constructor(
             isKickWeb = true
         ).also { response ->
             websiteSearchCache[cacheKey] = System.currentTimeMillis() to response
+        }
+    }
+
+    suspend fun searchTypesenseChannels(
+        query: String,
+        page: Int = 1,
+        perPage: Int = 20,
+    ): KickTypesenseResult {
+        return searchTypesense(preset = "channel_search", query = query, page = page, perPage = perPage)
+    }
+
+    suspend fun searchTypesenseCategories(
+        query: String,
+        page: Int = 1,
+        perPage: Int = 20,
+    ): KickTypesenseResult {
+        return searchTypesense(preset = "category_search", query = query, page = page, perPage = perPage)
+    }
+
+    private suspend fun searchTypesense(
+        preset: String,
+        query: String,
+        page: Int,
+        perPage: Int,
+    ): KickTypesenseResult {
+        val normalizedQuery = query.trim()
+        if (normalizedQuery.isBlank()) {
+            return KickTypesenseResult()
+        }
+        val cacheKey = "$preset:$page:$perPage:${normalizedQuery.lowercase(Locale.ROOT)}"
+        val now = System.currentTimeMillis()
+        typesenseSearchCache[cacheKey]?.let { (cachedAt, cachedResult) ->
+            if (now - cachedAt <= searchCacheTtlMs) {
+                return cachedResult
+            }
+        }
+        val request = KickMultiSearchRequest(
+            searches = listOf(
+                KickTypesenseQuery(
+                    preset = preset,
+                    q = normalizedQuery,
+                    page = page,
+                    perPage = perPage
+                )
+            )
+        )
+        val bodyJson = json.encodeToString(KickMultiSearchRequest.serializer(), request)
+        val response = executeTypesenseMultiSearch(bodyJson)
+        val result = response.results.firstOrNull() ?: KickTypesenseResult()
+        typesenseSearchCache[cacheKey] = System.currentTimeMillis() to result
+        return result
+    }
+
+    private suspend fun executeTypesenseMultiSearch(bodyJson: String): KickMultiSearchResponse = withContext(Dispatchers.IO) {
+        val url = "https://search.kick.com/multi_search"
+        val request = Request.Builder()
+            .url(url)
+            .header("X-Typesense-Api-Key", "nXIMW0iEN6sMujFYjFuhdrSwVow3pDQu")
+            .header("Content-Type", "application/json")
+            .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
+            .build()
+        okHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("Typesense search failed (${response.code})")
+            }
+            val raw = response.body.string()
+            json.decodeFromString(KickMultiSearchResponse.serializer(), raw)
         }
     }
 
@@ -1458,6 +1531,18 @@ class KickRepository @Inject constructor(
         val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull() ?: return null
         val pollObject = root.objOrNull("poll") ?: root
         return parseKickPollObject(pollObject)
+    }
+
+    fun parseKickLiveNotificationEvent(eventName: String?, messageJson: String): KickLiveNotificationEvent? {
+        val normalized = eventName?.trim().orEmpty()
+        if (!normalized.equals("NotifyFollowersStreamHasStarted", ignoreCase = true) &&
+            !normalized.equals("App\\Events\\NotifyFollowersStreamHasStarted", ignoreCase = true)
+        ) {
+            return null
+        }
+        return runCatching {
+            json.decodeFromString<KickLiveNotificationEvent>(messageJson)
+        }.getOrNull()
     }
 
     fun parseKickWebPollResponse(raw: String): Poll? {
@@ -3789,6 +3874,80 @@ class KickRepository @Inject constructor(
 
     fun getPlayableUrl(channel: KickChannelResponse): String? {
         return channel.livestream?.playbackUrl ?: channel.playbackUrl
+    }
+
+    suspend fun getChannelPlaybackUrl(channelSlug: String): String? {
+        val normalizedSlug = channelSlug.trim().lowercase(Locale.ROOT)
+        if (normalizedSlug.isBlank()) return null
+        val url = "https://kick.com/api/v2/channels/${urlEncode(normalizedSlug)}/playback-url"
+        val raw = try {
+            executeKickWebSessionRequest(url)
+        } catch (t: Throwable) {
+            runCatching {
+                getRaw(url, isKickWeb = true)
+            }.getOrNull()
+        } ?: return null
+        return parsePlaybackUrlResponse(raw)
+    }
+
+    suspend fun getPlaybackUrl(channelSlug: String, forceRefresh: Boolean = false): String? {
+        val normalizedSlug = channelSlug.trim().lowercase(Locale.ROOT)
+        if (normalizedSlug.isBlank()) return null
+        if (hasUsableKickWebsiteSession()) {
+            val authenticatedUrl = runCatching {
+                getChannelPlaybackUrl(normalizedSlug)
+            }.getOrNull()
+            if (!authenticatedUrl.isNullOrBlank()) {
+                return authenticatedUrl
+            }
+        }
+        val livestream = runCatching {
+            getChannelLivestream(normalizedSlug, forceRefresh = forceRefresh)
+        }.getOrNull()
+        return livestream?.playbackUrl?.takeIf { it.isNotBlank() }
+            ?: runCatching { getChannel(normalizedSlug, forceRefresh = forceRefresh) }.getOrNull()?.let { getPlayableUrl(it) }
+    }
+
+    suspend fun pingCurrentViewers(livestreamId: String): String? {
+        val normalizedId = livestreamId.trim()
+        if (normalizedId.isBlank()) return null
+        val url = "https://kick.com/current-viewers?ids[]=${urlEncode(normalizedId)}"
+        return runCatching {
+            executeKickWebSessionRequest(url)
+        }.getOrElse {
+            runCatching {
+                getRaw(url, isKickWeb = true)
+            }.getOrNull()
+        }
+    }
+
+    companion object {
+        fun parsePlaybackUrlResponse(rawJson: String): String? {
+            if (rawJson.isBlank()) return null
+            return runCatching {
+                val root = JSONObject(rawJson)
+                fun candidate(value: String?): String? {
+                    val trimmed = value?.trim().orEmpty()
+                    return if (trimmed.isNotBlank() && trimmed != "null" && (trimmed.startsWith("http://") || trimmed.startsWith("https://"))) {
+                        trimmed
+                    } else {
+                        null
+                    }
+                }
+                val dataObj = root.optJSONObject("data")
+                candidate(root.optString("playback_url"))
+                    ?: candidate(dataObj?.optString("playback_url"))
+                    ?: candidate(root.optString("url"))
+                    ?: candidate(dataObj?.optString("url"))
+                    ?: candidate(root.optString("playlist_url"))
+                    ?: candidate(dataObj?.optString("playlist_url"))
+                    ?: candidate(root.optString("hls_url"))
+                    ?: candidate(dataObj?.optString("hls_url"))
+                    ?: candidate(root.optString("playbackUrl"))
+                    ?: candidate(dataObj?.optString("playbackUrl"))
+                    ?: candidate(root.optString("data"))
+            }.getOrNull()
+        }
     }
 
     fun getChatroomId(channel: KickChannelResponse): String? {

@@ -116,28 +116,14 @@ class PlayerViewModel @Inject constructor(
         if (forceRefresh || streamResult.value == null) {
             viewModelScope.launch {
                 try {
-                    val livestreamPlaybackUrl = kickRepository
-                        .getChannelLivestream(channelLogin, forceRefresh = forceRefresh)
-                        ?.playbackUrl
-                        ?.takeIf { it.isNotBlank() }
-                    val playbackUrl = if (forceRefresh && livestreamPlaybackUrl != null && livestreamPlaybackUrl == stalePlaybackUrl) {
-                        kickRepository
-                            .getChannel(channelLogin, forceRefresh = forceRefresh)
-                            .let { kickRepository.getPlayableUrl(it) }
-                            ?.takeIf { it.isNotBlank() && it != stalePlaybackUrl }
-                            ?: livestreamPlaybackUrl
-                    } else {
-                        livestreamPlaybackUrl
-                    } ?: kickRepository
-                        .getChannel(channelLogin, forceRefresh = forceRefresh)
-                        .let { kickRepository.getPlayableUrl(it) }
+                    val playbackUrl = kickRepository.getPlaybackUrl(channelLogin, forceRefresh = forceRefresh)
                         ?.takeIf { it.isNotBlank() }
                         ?: throw Exception("Kick playback URL unavailable")
                     if (forceRefresh) {
                         // Successful URL resolution is routine recovery noise; keep failures as ERROR.
                         DiagnosticLogger.i(
                             "PlayerViewModel",
-                            "Kick stream force refresh resolved channel=$channelLogin source=${if (playbackUrl == livestreamPlaybackUrl) "livestream" else "channel"} " +
+                            "Kick stream force refresh resolved channel=$channelLogin " +
                                 "${summarizePlaybackUrl(playbackUrl)} expired=${summarizePlaybackUrl(stalePlaybackUrl)} sameAsExpired=${playbackUrl == stalePlaybackUrl}"
                         )
                     }

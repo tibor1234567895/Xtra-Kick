@@ -198,4 +198,82 @@ class KickWebsiteSearchTest {
         assertTrue(KickSearchLoadStrategy.shouldTryNextApi(AppConstants.GQL, false, emptyResult))
         assertFalse(KickSearchLoadStrategy.shouldTryNextApi(AppConstants.GQL, false, nonEmptyResult))
     }
+
+    @Test
+    fun typesenseMultiSearchResponseParsesChannelsAndCategories() {
+        val jsonString = """
+        {
+          "results": [
+            {
+              "found": 13,
+              "out_of": 119657385,
+              "page": 1,
+              "search_time_ms": 2,
+              "hits": [
+                {
+                  "document": {
+                    "followers_count": 18740,
+                    "id": "121900",
+                    "is_banned": false,
+                    "is_live": false,
+                    "slug": "ming",
+                    "username": "Ming",
+                    "verified": true
+                  }
+                },
+                {
+                  "document": {
+                    "category_id": 1,
+                    "id": "1344",
+                    "is_live": true,
+                    "name": "Grand Prix World",
+                    "slug": "grand-prix-world",
+                    "src": "https://files.kick.com/banner.webp"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+        """.trimIndent()
+
+        val response = json.decodeFromString<com.xtrakick.app.model.kick.KickMultiSearchResponse>(jsonString)
+        assertEquals(1, response.results.size)
+        val result = response.results.first()
+        assertEquals(13, result.found)
+        assertEquals(1, result.page)
+        assertEquals(2, result.hits.size)
+
+        val user = KickWebsiteSearchMapper.toUser(result.hits[0].document)
+        assertEquals("121900", user.channelId)
+        assertEquals("ming", user.channelLogin)
+        assertEquals("Ming", user.channelName)
+        assertEquals(18740, user.followersCount)
+        assertFalse(user.isLive == true)
+
+        val game = KickWebsiteSearchMapper.toGame(result.hits[1].document)
+        assertEquals("1344", game.gameId)
+        assertEquals("grand-prix-world", game.gameSlug)
+        assertEquals("Grand Prix World", game.gameName)
+        assertEquals("https://files.kick.com/banner.webp", game.boxArtUrl)
+    }
+
+    @Test
+    fun typesenseMultiSearchRequestEncodesValidJson() {
+        val request = com.xtrakick.app.model.kick.KickMultiSearchRequest(
+            searches = listOf(
+                com.xtrakick.app.model.kick.KickTypesenseQuery(
+                    preset = "channel_search",
+                    q = "ming",
+                    page = 2,
+                    perPage = 20
+                )
+            )
+        )
+        val encoded = json.encodeToString(com.xtrakick.app.model.kick.KickMultiSearchRequest.serializer(), request)
+        assertTrue(encoded.contains("\"preset\":\"channel_search\""))
+        assertTrue(encoded.contains("\"q\":\"ming\""))
+        assertTrue(encoded.contains("\"page\":2"))
+        assertTrue(encoded.contains("\"per_page\":20"))
+    }
 }

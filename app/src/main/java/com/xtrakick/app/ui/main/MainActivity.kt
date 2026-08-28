@@ -346,6 +346,7 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.updateInfo.collectLatest { updateInfo ->
                     if (updateInfo != null) {
+                        viewModel.consumeUpdateInfo()
                         AppUpdateDialogHelper.showUpdateDialog(
                             context = this@MainActivity,
                             updateInfo = updateInfo,
@@ -529,7 +530,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        if (prefs.getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)) {
+        if (prefs.getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false) &&
+            prefs.getBoolean(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP, false)
+        ) {
             WorkManager.getInstance(this).enqueueUniquePeriodicWork(
                 "live_notifications",
                 ExistingPeriodicWorkPolicy.KEEP,
@@ -541,6 +544,8 @@ class MainActivity : AppCompatActivity() {
                     )
                     .build()
             )
+        } else {
+            WorkManager.getInstance(this).cancelUniqueWork("live_notifications")
         }
         if (prefs.getBoolean(AppConstants.REWARD_AUTO_CLAIM_ENABLED, false)) {
             RewardClaimScheduler.enable(this)

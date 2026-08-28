@@ -13,8 +13,13 @@ class SearchChannelsDataSource(
 ) : PagingSource<Int, User>() {
     private var offset: String? = null
 
+    companion object {
+        private const val KEY_WEBSITE_SEARCH = 10000
+    }
+
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, User> {
-        return if (query.isBlank()) {
+        val trimmedQuery = query.trim()
+        return if (trimmedQuery.isBlank()) {
             LoadResult.Page(
                 data = emptyList(),
                 prevKey = null,
@@ -22,17 +27,20 @@ class SearchChannelsDataSource(
             )
         } else {
             try {
-                if (params.key != null && !offset.isNullOrBlank() && useLegacyKickSearch) {
+                val key = params.key ?: 1
+                if (key == KEY_WEBSITE_SEARCH) {
+                    loadWebsiteSearchResults()
+                } else if (params.key != null && !offset.isNullOrBlank() && useLegacyKickSearch) {
                     kickLegacyLoad(params)
                 } else if (useLegacyKickSearch) {
                     val result = kickLegacyLoad(params)
                     if (result is LoadResult.Page && KickSearchLoadStrategy.shouldTryNextApi("kick", useLegacyKickSearch, result)) {
-                        kickWebsiteLoad()
+                        kickTypesenseLoad(params)
                     } else {
                         result
                     }
                 } else {
-                    kickWebsiteLoad()
+                    kickTypesenseLoad(params)
                 }
             } catch (e: Exception) {
                 LoadResult.Error(e)
@@ -40,11 +48,56 @@ class SearchChannelsDataSource(
         }
     }
 
-    private suspend fun kickWebsiteLoad(): LoadResult<Int, User> {
+    private suspend fun kickTypesenseLoad(params: LoadParams<Int>): LoadResult<Int, User> {
+        val page = params.key ?: 1
+        val pageSize = params.loadSize.coerceIn(10, 50)
+        return try {
+            val result = kickRepository.searchTypesenseChannels(
+                query = query,
+                page = page,
+                perPage = pageSize
+            )
+            val users = result.hits.map { KickWebsiteSearchMapper.toUser(it.document) }
+            val totalFound = result.found ?: 0
+            val hasMore = (page * pageSize) < totalFound && users.isNotEmpty()
+            val nextKey = if (hasMore) {
+                page + 1
+            } else {
+                KEY_WEBSITE_SEARCH
+            }
+            val prevKey = if (page > 1) page - 1 else null
+            LoadResult.Page(
+                data = users,
+                prevKey = prevKey,
+                nextKey = nextKey
+            )
+        } catch (e: Exception) {
+            if (page == 1) {
+                loadWebsiteSearchResults()
+            } else {
+                LoadResult.Error(e)
+            }
+        }
+    }
+
+    private suspend fun loadWebsiteSearchResults(): LoadResult<Int, User> {
         offset = null
-        val response = kickRepository.searchWebsite(query)
+        val typesenseSlugs = runCatching {
+            kickRepository.searchTypesenseChannels(query, page = 1, perPage = 50).hits
+                .mapNotNull { it.document.slug?.lowercase() }
+                .toSet()
+        }.getOrDefault(emptySet())
+
+        val response = runCatching { kickRepository.searchWebsite(query) }.getOrNull()
+        val websiteChannels = response?.channels.orEmpty()
+            .filter { ch ->
+                val slug = ch.slug?.lowercase() ?: return@filter true
+                !typesenseSlugs.contains(slug)
+            }
+            .map { KickWebsiteSearchMapper.toUser(it) }
+
         return LoadResult.Page(
-            data = response.channels.map { KickWebsiteSearchMapper.toUser(it) },
+            data = websiteChannels,
             prevKey = null,
             nextKey = null
         )

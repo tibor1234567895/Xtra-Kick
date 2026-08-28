@@ -3,6 +3,8 @@ package com.xtrakick.app.repository.datasource
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import android.util.Log
+import com.xtrakick.app.model.kick.KickSearchChannel
+import com.xtrakick.app.model.kick.KickUser
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
@@ -39,9 +41,9 @@ class SearchStreamsDataSource(
     }
 
     private suspend fun kickWebsiteLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val kickResponse = kickRepository.searchWebsite(query)
+        val kickResponse = runCatching { kickRepository.searchWebsite(query) }.getOrNull()
         val streamsByChannel = linkedMapOf<String, Stream>()
-        kickResponse.livestreams.tags
+        kickResponse?.livestreams?.tags.orEmpty()
             .map { KickWebsiteSearchMapper.toStream(it) }
             .forEach { stream ->
                 streamIdentity(
@@ -54,7 +56,29 @@ class SearchStreamsDataSource(
                     }
                 }
             }
-        val liveChannels = kickResponse.channels
+        val typesenseLiveChannels = runCatching {
+            kickRepository.searchTypesenseChannels(query, page = 1, perPage = 20).hits
+                .map { it.document }
+                .filter { it.isLive == true && !it.slug.isNullOrBlank() }
+                .map { doc ->
+                    KickSearchChannel(
+                        id = doc.id?.toLongOrNull(),
+                        slug = doc.slug,
+                        followersCount = doc.followersCount,
+                        isLive = true,
+                        user = KickUser(
+                            id = doc.id?.toLongOrNull(),
+                            username = doc.username ?: doc.name,
+                            profilePic = doc.profileImage ?: doc.profilePic,
+                        )
+                    )
+                }
+        }.getOrDefault(emptyList())
+
+        val combinedChannels = (typesenseLiveChannels + kickResponse?.channels.orEmpty())
+            .distinctBy { it.slug?.lowercase() ?: it.id?.toString() }
+
+        val liveChannels = combinedChannels
             .asSequence()
             .filter { it.isLive == true }
             .filter { !it.slug.isNullOrBlank() }

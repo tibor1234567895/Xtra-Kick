@@ -32,46 +32,114 @@ class KickViewerWatchWebSocket(
     private var webSocket: WebSocket? = null
     private var socketJob: Job? = null
     private var heartbeatJob: Job? = null
+    private var currentViewersHeartbeatJob: Job? = null
+    private var rewardsPollJob: Job? = null
     private var parentScope: CoroutineScope? = null
     private var resolvedLivestreamId: String? = null
 
     fun start(scope: CoroutineScope): Job {
         parentScope = scope
         val job = scope.launch(Dispatchers.IO) {
-            runCatching {
-                resolvedLivestreamId = livestreamId?.takeIf { it.isNotBlank() }
+            val activeLivestreamId = runCatching {
+                livestreamId?.takeIf { it.isNotBlank() }
                     ?: channelLogin?.takeIf { it.isNotBlank() }?.let {
                         kickRepository.getChannelLivestream(it, forceRefresh = true)?.id?.toString()
                     }
-                    ?: throw IOException("Kick numeric livestream id could not be resolved")
-                val token = kickRepository.getKickViewerSocketToken()
-                val socketUrl = "wss://websockets.kick.com/viewer/v1/connect?token=${Uri.encode(token)}"
-                val socket = WebSocket(
-                    socketUrl,
-                    trustManager,
-                    ViewerListener(),
-                    headers = mapOf("Origin" to "https://kick.com"),
-                    sendPings = false,
-                )
-                webSocket = socket
-                socket.start()
-            }.onFailure {
-                if (it !is CancellationException) {
-                    Log.w(tag, "viewer socket stopped before connect: ${it.message}")
+            }.getOrNull()?.takeIf { it.isNotBlank() }
+
+            if (activeLivestreamId.isNullOrBlank()) {
+                Log.w(tag, "Kick numeric livestream id could not be resolved")
+                return@launch
+            }
+
+            resolvedLivestreamId = activeLivestreamId
+            startCurrentViewersHeartbeat(activeLivestreamId)
+            startRewardsPolling()
+
+            if (kickRepository.hasUsableKickWebsiteSession()) {
+                val socket = runCatching {
+                    val token = kickRepository.getKickViewerSocketToken()
+                    val socketUrl = "wss://websockets.kick.com/viewer/v1/connect?token=${Uri.encode(token)}"
+                    WebSocket(
+                        socketUrl,
+                        trustManager,
+                        ViewerListener(),
+                        headers = mapOf("Origin" to "https://kick.com"),
+                        sendPings = false,
+                    )
+                }.onFailure {
+                    if (it !is CancellationException) {
+                        Log.w(tag, "viewer socket failed to initialize: ${it.message}")
+                    }
+                }.getOrNull()
+
+                if (socket != null) {
+                    webSocket = socket
+                    runCatching { socket.start() }
+                } else {
+                    while (isActive) {
+                        delay(60_000L)
+                    }
+                }
+            } else {
+                while (isActive) {
+                    delay(60_000L)
                 }
             }
+        }
+        job.invokeOnCompletion {
+            currentViewersHeartbeatJob?.cancel()
+            currentViewersHeartbeatJob = null
+            rewardsPollJob?.cancel()
+            rewardsPollJob = null
+            heartbeatJob?.cancel()
+            heartbeatJob = null
         }
         socketJob = job
         return job
     }
 
     suspend fun stop() = withContext(Dispatchers.IO) {
+        currentViewersHeartbeatJob?.cancel()
+        currentViewersHeartbeatJob = null
+        rewardsPollJob?.cancel()
+        rewardsPollJob = null
         heartbeatJob?.cancel()
         heartbeatJob = null
         socketJob?.cancel()
+        socketJob = null
         webSocket?.disconnect()
         webSocket = null
-        socketJob = null
+    }
+
+    private fun startCurrentViewersHeartbeat(livestreamId: String) {
+        currentViewersHeartbeatJob?.cancel()
+        currentViewersHeartbeatJob = parentScope?.launch(Dispatchers.IO) {
+            while (isActive) {
+                runCatching {
+                    kickRepository.pingCurrentViewers(livestreamId)
+                }.onFailure {
+                    if (debugLogging) Log.w(tag, "current-viewers ping failed: ${it.message}")
+                }
+                delay(CURRENT_VIEWERS_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun startRewardsPolling() {
+        if (!kickRepository.hasUsableKickWebsiteSession()) return
+        rewardsPollJob?.cancel()
+        rewardsPollJob = parentScope?.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(REWARDS_POLL_INTERVAL_MS)
+                if (!kickRepository.hasUsableKickWebsiteSession()) break
+                runCatching {
+                    kickRepository.executeKickWebSessionRequest("https://web.kick.com/api/v1/gamification/challenges")
+                }.onFailure {
+                    if (debugLogging) Log.w(tag, "rewards cadence poll failed: ${it.message}")
+                }
+            }
+        }
     }
 
     private suspend fun send(socket: WebSocket, payload: String) {
@@ -140,6 +208,8 @@ class KickViewerWatchWebSocket(
         private const val HEARTBEAT_INTERVAL_MS = 15_000L
         private const val PING_INTERVAL_MS = 30_000L
         private const val WATCH_EVENT_INTERVAL_MS = 120_000L
+        const val CURRENT_VIEWERS_INTERVAL_MS = 60_000L
+        const val REWARDS_POLL_INTERVAL_MS = 120_000L
         private const val PING = "{\"type\":\"ping\"}"
         private const val PONG = "{\"type\":\"pong\"}"
 

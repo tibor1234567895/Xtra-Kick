@@ -88,6 +88,12 @@ class SettingsViewModel @Inject constructor(
     val updateInfo = MutableSharedFlow<AppUpdateInfo?>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val updateUrl = MutableSharedFlow<String?>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun consumeUpdateInfo() {
+        updateInfo.resetReplayCache()
+        updateUrl.resetReplayCache()
+    }
+
     /** Result of scanning app storage for download files with no matching library entry. */
     data class LeftoverFiles(val count: Int, val bytes: Long) {
         val isEmpty get() = count == 0
@@ -570,21 +576,39 @@ class SettingsViewModel @Inject constructor(
                 if (newStreams.isNotEmpty()) {
                     shownNotificationsRepository.showLiveNotifications(applicationContext, newStreams)
                 }
-                WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
-                    "live_notifications",
-                    ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
-                    PeriodicWorkRequestBuilder<LiveNotificationWorker>(15, TimeUnit.MINUTES)
-                        .setInitialDelay(1, TimeUnit.MINUTES)
-                        .setConstraints(
-                            Constraints.Builder()
-                                .setRequiredNetworkType(NetworkType.CONNECTED)
-                                .build()
-                        )
-                        .build()
-                )
+                if (applicationContext.prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP, false)) {
+                    schedulePollingBackup()
+                } else {
+                    WorkManager.getInstance(applicationContext).cancelUniqueWork("live_notifications")
+                }
             } else {
                 WorkManager.getInstance(applicationContext).cancelUniqueWork("live_notifications")
             }
         }
+    }
+
+    fun togglePollingBackup(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (enabled && applicationContext.prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)) {
+                schedulePollingBackup()
+            } else {
+                WorkManager.getInstance(applicationContext).cancelUniqueWork("live_notifications")
+            }
+        }
+    }
+
+    private fun schedulePollingBackup() {
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+            "live_notifications",
+            ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
+            PeriodicWorkRequestBuilder<LiveNotificationWorker>(15, TimeUnit.MINUTES)
+                .setInitialDelay(1, TimeUnit.MINUTES)
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                )
+                .build()
+        )
     }
 }

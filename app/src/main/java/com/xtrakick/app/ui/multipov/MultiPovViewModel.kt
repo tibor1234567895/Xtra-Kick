@@ -523,25 +523,9 @@ class MultiPovViewModel @Inject constructor(
      * Avoid chaining channel + livestream + force channel (was 2–3 calls per resolve).
      */
     private suspend fun resolveKickLiveUrl(channelLogin: String, forceRefresh: Boolean): String? {
-        val fromChannel = runCatching {
-            kickRepository
-                .getChannel(
-                    channelSlug = channelLogin,
-                    prefetchBadgeCatalog = false,
-                    forceRefresh = forceRefresh,
-                )
-                .let { kickRepository.getPlayableUrl(it) }
-                ?.takeIf { it.isNotBlank() }
-        }.getOrNull()
-        if (fromChannel != null) return fromChannel
-
-        // Fallback only if channel payload had no playable URL.
         return runCatching {
-            kickRepository
-                .getChannelLivestream(channelLogin, forceRefresh = forceRefresh)
-                ?.playbackUrl
-                ?.takeIf { it.isNotBlank() }
-        }.getOrNull()
+            kickRepository.getPlaybackUrl(channelLogin, forceRefresh = forceRefresh)
+        }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 
     override fun onCleared() {

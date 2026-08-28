@@ -56,6 +56,7 @@ import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
+import androidx.preference.PreferenceGroup
 import androidx.preference.PreferenceManager
 import androidx.preference.SeekBarPreference
 import androidx.preference.SwitchPreferenceCompat
@@ -430,6 +431,11 @@ class SettingsActivity : AppCompatActivity() {
                 (requireActivity() as? SettingsActivity)?.setResult()
                 true
             }
+            findPreference<SwitchPreferenceCompat>(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP)?.setOnPreferenceChangeListener { _, newValue ->
+                viewModel.togglePollingBackup(enabled = newValue as Boolean)
+                (requireActivity() as? SettingsActivity)?.setResult()
+                true
+            }
             findPreference<SwitchPreferenceCompat>(AppConstants.REWARD_AUTO_CLAIM_ENABLED)?.setOnPreferenceChangeListener { _, newValue ->
                 if (newValue == true) {
                     RewardClaimScheduler.enable(requireContext().applicationContext)
@@ -506,6 +512,7 @@ class SettingsActivity : AppCompatActivity() {
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
                     viewModel.updateInfo.collectLatest { updateInfo ->
+                        viewModel.consumeUpdateInfo()
                         if (updateInfo != null) {
                             if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
                                 !requireContext().prefs().getBoolean(AppConstants.UPDATE_USE_BROWSER, false) &&
@@ -2236,47 +2243,55 @@ class SettingsActivity : AppCompatActivity() {
                     searchSources.add(Triple(R.xml.debug_preferences, SettingsNavGraphDirections.actionGlobalDebugSettingsFragment(), getString(R.string.debug_settings)))
                     searchSources.add(Triple(R.xml.debug_log_preferences, SettingsNavGraphDirections.actionGlobalDebugLogSettingsFragment(), getString(R.string.customize_debug_logs)))
                 }
+                fun collectPreferences(pref: Preference, navDirections: androidx.navigation.NavDirections, location: String) {
+                    if (!BuildConfig.DEBUG && pref.key == "nav_debug_settings") {
+                        return
+                    }
+                    if (pref is PreferenceGroup) {
+                        pref.forEach { child ->
+                            collectPreferences(child, navDirections, location)
+                        }
+                        return
+                    }
+                    when (pref) {
+                        is SwitchPreferenceCompat -> {
+                            list.add(SettingsSearchItem(
+                                navDirections = navDirections,
+                                location = location,
+                                key = pref.key,
+                                title = pref.title,
+                                summary = pref.summary,
+                                value = if (pref.isChecked) {
+                                    getString(R.string.enabled_setting)
+                                } else {
+                                    getString(R.string.disabled_setting)
+                                }
+                            ))
+                        }
+                        is SeekBarPreference -> {
+                            list.add(SettingsSearchItem(
+                                navDirections = navDirections,
+                                location = location,
+                                key = pref.key,
+                                title = pref.title,
+                                summary = pref.summary,
+                                value = pref.value.toString()
+                            ))
+                        }
+                        else -> {
+                            list.add(SettingsSearchItem(
+                                navDirections = navDirections,
+                                location = location,
+                                key = pref.key,
+                                title = pref.title,
+                                summary = pref.summary,
+                            ))
+                        }
+                    }
+                }
                 searchSources.forEach { item ->
-                    preferenceManager.inflateFromResource(requireContext(), item.first, null).forEach {
-                        if (!BuildConfig.DEBUG && it.key == "nav_debug_settings") {
-                            return@forEach
-                        }
-                        when (it) {
-                            is SwitchPreferenceCompat -> {
-                                list.add(SettingsSearchItem(
-                                    navDirections = item.second,
-                                    location = item.third,
-                                    key = it.key,
-                                    title = it.title,
-                                    summary = it.summary,
-                                    value = if (it.isChecked) {
-                                        getString(R.string.enabled_setting)
-                                    } else {
-                                        getString(R.string.disabled_setting)
-                                    }
-                                ))
-                            }
-                            is SeekBarPreference -> {
-                                list.add(SettingsSearchItem(
-                                    navDirections = item.second,
-                                    location = item.third,
-                                    key = it.key,
-                                    title = it.title,
-                                    summary = it.summary,
-                                    value = it.value.toString()
-                                ))
-                            }
-                            is PreferenceCategory -> {}
-                            else -> {
-                                list.add(SettingsSearchItem(
-                                    navDirections = item.second,
-                                    location = item.third,
-                                    key = it.key,
-                                    title = it.title,
-                                    summary = it.summary,
-                                ))
-                            }
-                        }
+                    preferenceManager.inflateFromResource(requireContext(), item.first, null).let { root ->
+                        collectPreferences(root, item.second, item.third)
                     }
                 }
                 preferences = list

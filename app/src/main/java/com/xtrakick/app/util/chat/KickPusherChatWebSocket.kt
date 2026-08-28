@@ -41,6 +41,20 @@ class KickPusherChatWebSocket(
             }
             addAll(publicChannelNames)
         }
+
+        fun buildPrivateChannelNames(
+            accountId: String?,
+            livestreamId: String?,
+        ): List<String> = buildList {
+            accountId?.takeIf { it.isNotBlank() }?.let {
+                add("private-channelpoints-$it")
+                add("private-userfeed.$it")
+                add("private-$it")
+            }
+            livestreamId?.takeIf { it.isNotBlank() }?.let {
+                add("private-livestream.$it")
+            }
+        }
     }
 
     interface Listener {
@@ -86,21 +100,17 @@ class KickPusherChatWebSocket(
             }
             webSocket?.write(payload.toString())
         }
-        var privateAuthFailed = false
-        privateChannelNames.forEach { channelName ->
-            if (privateAuthFailed) {
-                if (debugLogging) {
-                    Log.w(tag, "private subscribe skipped after auth failure channel=$channelName")
-                }
-                return@forEach
+        if (socketId.isNullOrBlank()) {
+            if (debugLogging && privateChannelNames.isNotEmpty()) {
+                Log.w(tag, "private subscribe skipped: socketId is missing")
             }
-            val auth = socketId?.let { authorizePrivateChannel?.invoke(channelName, it) }
+            return@withContext
+        }
+        privateChannelNames.forEach { channelName ->
+            val auth = runCatching { authorizePrivateChannel?.invoke(channelName, socketId) }.getOrNull()
             if (auth.isNullOrBlank()) {
-                privateAuthFailed = true
-                // Private channel names embed the account id (private-userfeed.<id>), so this
-                // is gated too.
                 if (debugLogging) {
-                    Log.w(tag, "private subscribe skipped channel=$channelName hasSocketId=${!socketId.isNullOrBlank()}")
+                    Log.w(tag, "private subscribe skipped channel=$channelName hasSocketId=true")
                 }
                 return@forEach
             }

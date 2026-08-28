@@ -2,7 +2,9 @@ package com.xtrakick.app.repository
 
 import com.xtrakick.app.db.NotificationUsersDao
 import com.xtrakick.app.model.NotificationUser
+import com.xtrakick.app.util.FcmSyncManager
 import android.util.Log
+import dagger.Lazy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -12,6 +14,7 @@ import javax.inject.Singleton
 class NotificationUsersRepository @Inject constructor(
     private val notificationUsersDao: NotificationUsersDao,
     private val kickRepository: KickRepository,
+    private val fcmSyncManager: Lazy<FcmSyncManager>,
 ) {
 
     suspend fun loadUsers() = withContext(Dispatchers.IO) {
@@ -24,14 +27,17 @@ class NotificationUsersRepository @Inject constructor(
 
     suspend fun saveUser(item: NotificationUser) = withContext(Dispatchers.IO) {
         notificationUsersDao.insert(item)
+        runCatching { fcmSyncManager.get().syncSubscriptions() }
     }
 
     suspend fun deleteAllUsers() = withContext(Dispatchers.IO) {
         notificationUsersDao.deleteAll()
+        runCatching { fcmSyncManager.get().syncSubscriptions() }
     }
 
     suspend fun deleteUser(item: NotificationUser) = withContext(Dispatchers.IO) {
         notificationUsersDao.delete(item)
+        runCatching { fcmSyncManager.get().syncSubscriptions() }
     }
 
     /**

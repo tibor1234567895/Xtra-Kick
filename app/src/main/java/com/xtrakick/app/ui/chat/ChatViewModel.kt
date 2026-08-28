@@ -40,6 +40,7 @@ import com.xtrakick.app.repository.KickAuthRequestException
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.MutedChatUsersRepository
 import com.xtrakick.app.repository.PlayerRepository
+import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
@@ -96,6 +97,7 @@ class ChatViewModel @Inject constructor(
     private val kickRepository: KickRepository,
     private val mutedChatUsersRepository: MutedChatUsersRepository,
     private val playerRepository: PlayerRepository,
+    private val shownNotificationsRepository: ShownNotificationsRepository,
     private val trustManager: X509TrustManager?,
     private val json: Json,
 ) : ViewModel() {
@@ -2334,6 +2336,7 @@ class ChatViewModel @Inject constructor(
             val effectiveChannelId = resolvedChannel?.id?.toString()?.takeIf { it.isNotBlank() }
                 ?: channelId?.takeIf { it.isNotBlank() }
             val livestreamId = resolvedChannel?.livestream?.id?.toString()?.takeIf { it.isNotBlank() }
+                ?: runCatching { kickRepository.getChannelLivestream(channelLogin)?.id?.toString() }.getOrNull()?.takeIf { it.isNotBlank() }
             val categoryId = resolvedChannel?.livestream?.category?.id?.toString()?.takeIf { it.isNotBlank() }
             val fallbackId = effectiveChannelId ?: channelLogin
             val kickChatroomId = if (!effectiveChannelId.isNullOrBlank()) {
@@ -2355,12 +2358,7 @@ class ChatViewModel @Inject constructor(
                     categoryId?.let { add("drops_category_$it") }
                 },
                 privateChannelNames = if (hasKickWebsiteSession) {
-                    buildList {
-                        accountId?.takeIf { it.isNotBlank() }?.let { add("private-channelpoints-$it") }
-                        accountId?.takeIf { it.isNotBlank() }?.let { add("private-userfeed.$it") }
-                        accountId?.takeIf { it.isNotBlank() }?.let { add("private-$it") }
-                        livestreamId?.let { add("private-livestream.$it") }
-                    }
+                    KickPusherChatWebSocket.buildPrivateChannelNames(accountId, livestreamId)
                 } else {
                     emptyList()
                 },
@@ -2597,6 +2595,15 @@ class ChatViewModel @Inject constructor(
                 poll.value = null
                 if (!hidePoll.value) {
                     hidePoll.value = true
+                }
+                return
+            }
+            kickRepository.parseKickLiveNotificationEvent(eventName, messageJson)?.let { liveEvent ->
+                viewModelScope.launch {
+                    shownNotificationsRepository.showLiveNotificationFromEvent(
+                        context = applicationContext,
+                        event = liveEvent,
+                    )
                 }
                 return
             }

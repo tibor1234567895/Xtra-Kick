@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.text.HtmlCompat
 import com.xtrakick.app.db.ShownNotificationsDao
 import com.xtrakick.app.model.ShownNotification
 import com.xtrakick.app.model.ui.Stream
@@ -158,6 +159,34 @@ class ShownNotificationsRepository @Inject constructor(
                 setGroupSummary(true)
             }.build()
             notificationManager.notify(SUMMARY_NOTIFICATION_ID, summaryNotification)
+        }
+    }
+
+    suspend fun showLiveNotificationFromEvent(
+        context: Context,
+        event: com.xtrakick.app.model.kick.KickLiveNotificationEvent,
+    ) = withContext(Dispatchers.IO) {
+        val userIdStr = event.userId?.toString() ?: return@withContext
+        val cleanSlug = event.path?.trim()
+            ?.trimStart('/')
+            ?.substringBefore('?')
+            ?.substringBefore('/')
+            ?.takeIf { it.isNotBlank() }
+            ?: userIdStr
+        val cleanTitle = event.description?.trim()?.takeIf { it.isNotBlank() }
+            ?: event.title?.let { HtmlCompat.fromHtml(it, HtmlCompat.FROM_HTML_MODE_LEGACY).toString().trim() }
+        val secureAvatar = event.profilePicture?.takeIf { it.startsWith("https://", ignoreCase = true) }
+        val stream = Stream(
+            source = AppConstants.KICK,
+            channelId = userIdStr,
+            channelLogin = cleanSlug,
+            channelName = cleanSlug,
+            title = cleanTitle,
+            profileImageUrl = secureAvatar,
+        )
+        shownNotificationsDao.insertList(listOf(ShownNotification(userIdStr, System.currentTimeMillis())))
+        withContext(Dispatchers.Main) {
+            showLiveNotifications(context, listOf(stream))
         }
     }
 

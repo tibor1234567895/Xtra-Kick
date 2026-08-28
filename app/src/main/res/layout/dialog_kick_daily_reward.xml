@@ -11,7 +11,9 @@
         android:layout_height="wrap_content"
         android:background="?attr/colorSurface"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:paddingHorizontal="20dp"
+        android:paddingTop="20dp"
+        android:paddingBottom="16dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -49,7 +51,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="10dp"
             android:text="@string/daily_reward_description"
             android:textAppearance="?attr/textAppearanceBodyMedium"
             android:textColor="?android:attr/textColorSecondary" />
@@ -59,14 +61,14 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="20dp"
             android:indeterminate="true" />
 
         <LinearLayout
             android:id="@+id/contentGroup"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="14dp"
             android:orientation="vertical"
             android:visibility="gone"
             tools:visibility="visible">
@@ -85,7 +87,7 @@
                 android:id="@+id/watchProgress"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="10dp"
                 android:indeterminate="false"
                 android:max="60"
                 android:progress="30" />
@@ -94,7 +96,7 @@
                 android:id="@+id/progressText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="4dp"
                 android:textAppearance="?attr/textAppearanceBodySmall"
                 android:textColor="?android:attr/textColorSecondary"
                 tools:text="30 of 60 watch minutes" />
@@ -102,8 +104,8 @@
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/rewardCard"
                 android:layout_width="match_parent"
-                android:layout_height="280dp"
-                android:layout_marginTop="18dp"
+                android:layout_height="210dp"
+                android:layout_marginTop="12dp"
                 android:visibility="gone"
                 app:cardBackgroundColor="@android:color/black"
                 app:cardCornerRadius="8dp"
@@ -116,7 +118,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:contentDescription="@string/daily_reward_winner"
-                    android:padding="16dp"
+                    android:padding="12dp"
                     android:scaleType="centerInside"
                     tools:src="@tools:sample/avatars" />
             </com.google.android.material.card.MaterialCardView>

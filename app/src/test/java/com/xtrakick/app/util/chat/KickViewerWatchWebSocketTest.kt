@@ -22,4 +22,10 @@ class KickViewerWatchWebSocketTest {
         assertEquals("channel_handshake", message.getString("type"))
         assertEquals("114586", message.getJSONObject("data").getJSONObject("message").getString("channelId"))
     }
+
+    @Test
+    fun verifiesConfiguredHeartbeatAndPollingIntervals() {
+        assertEquals(60_000L, KickViewerWatchWebSocket.CURRENT_VIEWERS_INTERVAL_MS)
+        assertEquals(120_000L, KickViewerWatchWebSocket.REWARDS_POLL_INTERVAL_MS)
+    }
 }

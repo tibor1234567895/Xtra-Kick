@@ -12,8 +12,13 @@ class SearchGamesDataSource(
     private val useLegacyKickSearch: Boolean,
 ) : PagingSource<Int, Game>() {
 
+    companion object {
+        private const val KEY_WEBSITE_SEARCH = 10000
+    }
+
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Game> {
-        return if (query.isBlank()) {
+        val trimmedQuery = query.trim()
+        return if (trimmedQuery.isBlank()) {
             LoadResult.Page(
                 data = emptyList(),
                 prevKey = null,
@@ -21,17 +26,69 @@ class SearchGamesDataSource(
             )
         } else {
             try {
-                if (KickSearchLoadStrategy.useLegacySearch(useLegacyKickSearch)) kickLegacyLoad(params) else kickWebsiteLoad()
+                val key = params.key ?: 1
+                if (key == KEY_WEBSITE_SEARCH) {
+                    loadWebsiteSearchResults()
+                } else if (KickSearchLoadStrategy.useLegacySearch(useLegacyKickSearch)) {
+                    kickLegacyLoad(params)
+                } else {
+                    kickTypesenseLoad(params)
+                }
             } catch (e: Exception) {
                 LoadResult.Error(e)
             }
         }
     }
 
-    private suspend fun kickWebsiteLoad(): LoadResult<Int, Game> {
-        val response = kickRepository.searchWebsite(query)
+    private suspend fun kickTypesenseLoad(params: LoadParams<Int>): LoadResult<Int, Game> {
+        val page = params.key ?: 1
+        val pageSize = params.loadSize.coerceIn(10, 50)
+        return try {
+            val result = kickRepository.searchTypesenseCategories(
+                query = query,
+                page = page,
+                perPage = pageSize
+            )
+            val games = result.hits.map { KickWebsiteSearchMapper.toGame(it.document) }
+            val totalFound = result.found ?: 0
+            val hasMore = (page * pageSize) < totalFound && games.isNotEmpty()
+            val nextKey = if (hasMore) {
+                page + 1
+            } else {
+                KEY_WEBSITE_SEARCH
+            }
+            val prevKey = if (page > 1) page - 1 else null
+            LoadResult.Page(
+                data = games,
+                prevKey = prevKey,
+                nextKey = nextKey
+            )
+        } catch (e: Exception) {
+            if (page == 1) {
+                loadWebsiteSearchResults()
+            } else {
+                LoadResult.Error(e)
+            }
+        }
+    }
+
+    private suspend fun loadWebsiteSearchResults(): LoadResult<Int, Game> {
+        val typesenseSlugs = runCatching {
+            kickRepository.searchTypesenseCategories(query, page = 1, perPage = 50).hits
+                .mapNotNull { it.document.slug?.lowercase() }
+                .toSet()
+        }.getOrDefault(emptySet())
+
+        val response = runCatching { kickRepository.searchWebsite(query) }.getOrNull()
+        val websiteGames = response?.categories.orEmpty()
+            .filter { cat ->
+                val slug = cat.slug?.lowercase() ?: return@filter true
+                !typesenseSlugs.contains(slug)
+            }
+            .map { KickWebsiteSearchMapper.toGame(it) }
+
         return LoadResult.Page(
-            data = response.categories.map { KickWebsiteSearchMapper.toGame(it) },
+            data = websiteGames,
             prevKey = null,
             nextKey = null
         )

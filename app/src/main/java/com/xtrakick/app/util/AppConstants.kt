@@ -313,6 +313,7 @@ object AppConstants {
     const val UPDATE_CHECK_FREQUENCY = "update_check_frequency"
     const val UPDATE_USE_BROWSER = "update_use_browser"
     const val LIVE_NOTIFICATIONS_ENABLED = "live_notifications_enabled"
+    const val LIVE_NOTIFICATIONS_POLLING_BACKUP = "live_notifications_polling_backup"
     const val LIVE_NOTIFICATIONS_LAST_SUCCESS = "live_notifications_last_success"
     const val BATTERY_OPT_PROMPT_SHOWN = "battery_opt_prompt_shown"
 

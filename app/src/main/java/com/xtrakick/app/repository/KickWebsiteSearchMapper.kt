@@ -4,6 +4,7 @@ import com.xtrakick.app.model.kick.KickLivestream
 import com.xtrakick.app.model.kick.KickChannelLivestream
 import com.xtrakick.app.model.kick.KickSearchChannel
 import com.xtrakick.app.model.kick.KickSubcategory
+import com.xtrakick.app.model.kick.KickTypesenseDocument
 import com.xtrakick.app.model.ui.Game
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.model.ui.User
@@ -11,6 +12,27 @@ import com.xtrakick.app.util.AppConstants
 import java.util.Locale
 
 internal object KickWebsiteSearchMapper {
+
+    fun toUser(item: KickTypesenseDocument): User {
+        return User(
+            channelId = item.id,
+            channelLogin = item.slug,
+            channelName = item.username ?: item.name,
+            profileImageUrl = item.profileImage ?: item.profilePic,
+            followersCount = item.followersCount,
+            isLive = item.isLive == true
+        )
+    }
+
+    fun toGame(item: KickTypesenseDocument): Game {
+        return Game(
+            gameId = item.id,
+            gameSlug = item.slug,
+            gameName = item.name,
+            boxArtUrl = item.src,
+            viewersCount = 0
+        )
+    }
 
     fun toUser(item: KickSearchChannel): User {
         return User(

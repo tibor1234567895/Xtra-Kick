@@ -140,7 +140,6 @@
     <string name="ascending">Ascending</string>
     <string name="logout_title">Log out?</string>
     <string name="logout_msg">Logged in as %s</string>
-    <string name="login_success_toast">Logged in as %s</string>
     <string name="logout_success_toast">Logged out</string>
     <string name="logout_revoke_failed_toast">Logged out on this device, but revoking the token with Kick failed</string>
     <string name="not_logged_in">Not logged in</string>
@@ -710,14 +709,12 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="update_category_automatic">Automatic updates</string>
     <string name="update_category_advanced">Installation &amp; advanced</string>
     <string name="update_available">Update available</string>
-    <string name="update_message">Download latest update?</string>
     <string name="update_url">Update check URL</string>
     <string name="update_using_browser">Open update link in browser</string>
     <string name="update_using_browser_summary">Download and install manually via external web browser</string>
     <string name="auto_check_updates">Check for updates automatically</string>
     <string name="auto_check_updates_summary">Automatically look for new releases on app startup</string>
     <string name="update_check_frequency">Check frequency</string>
-    <string name="update_check_frequency_summary">Every %s days</string>
     <string name="update_check_frequency_every_startup">On every startup</string>
     <string name="update_check_frequency_daily">Daily (once a day)</string>
     <string name="update_check_frequency_weekly">Weekly (every 7 days)</string>
@@ -727,10 +724,11 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="update_action_update">Update</string>
     <string name="update_whats_new">What’s new</string>
     <string name="update_dialog_default_description">A new version of Xtra is ready to install with bug fixes and performance improvements.</string>
-    <string name="release_notes">Release notes</string>
     <string name="notification_live_channel_title">Live notifications</string>
     <string name="live_notification">%s is live</string>
     <string name="live_notifications">Live notifications</string>
+    <string name="live_notifications_polling_backup">Background polling backup</string>
+    <string name="live_notifications_polling_backup_summary">Periodically check for live streams in the background as a fallback if push notifications are delayed. Uses slightly more battery.</string>
     <string name="reward_auto_claim">Auto-claim Kick rewards</string>
     <string name="reward_auto_claim_summary">Automatically claims your daily reward and finished drops. Requires a kick.com login done inside the app.</string>
     <string name="reward_claim_notifications">Notify about claimed rewards</string>

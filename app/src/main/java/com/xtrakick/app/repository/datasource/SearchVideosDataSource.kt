@@ -27,18 +27,31 @@ class SearchVideosDataSource(
     }
 
     private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
-        val response = kickRepository.searchWebsite(query)
+        val candidateChannelSlugs = linkedSetOf<Pair<String, String?>>()
+        runCatching {
+            kickRepository.searchTypesenseChannels(query, page = 1, perPage = 10).hits.map { it.document }
+        }.getOrNull()?.forEach { doc ->
+            val slug = doc.slug?.takeIf { it.isNotBlank() } ?: return@forEach
+            candidateChannelSlugs.add(slug to doc.id)
+        }
+
+        if (candidateChannelSlugs.isEmpty()) {
+            val response = runCatching { kickRepository.searchWebsite(query) }.getOrNull()
+            response?.channels.orEmpty().forEach { channel ->
+                val slug = channel.slug?.takeIf { it.isNotBlank() } ?: return@forEach
+                candidateChannelSlugs.add(slug to (channel.id?.toString() ?: channel.userId?.toString()))
+            }
+        }
+
         val videosById = linkedMapOf<String, Video>()
         val perChannelLimit = params.loadSize.coerceAtMost(15).coerceAtLeast(10)
-        response.channels
-            .asSequence()
-            .filter { !it.slug.isNullOrBlank() }
+        candidateChannelSlugs
             .take(5)
-            .forEach { channel ->
+            .forEach { (slug, id) ->
                 val videos = runCatching {
                     kickRepository.getChannelVideosPage(
-                        channelSlug = channel.slug.orEmpty(),
-                        channelId = channel.id?.toString() ?: channel.userId?.toString(),
+                        channelSlug = slug,
+                        channelId = id,
                         limit = perChannelLimit
                     )
                 }.getOrNull()?.videos.orEmpty()

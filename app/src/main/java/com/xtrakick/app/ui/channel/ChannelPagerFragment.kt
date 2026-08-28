@@ -214,18 +214,20 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                 }
                                 BatteryOptimizationHelper.maybePrompt(requireContext())
                                 viewModel.updateNotifications(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), KickApiHelper.getKickPublicApiHeaders(requireContext()))
-                                WorkManager.getInstance(requireContext()).enqueueUniquePeriodicWork(
-                                    "live_notifications",
-                                    ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
-                                    PeriodicWorkRequestBuilder<LiveNotificationWorker>(15, TimeUnit.MINUTES)
-                                        .setInitialDelay(1, TimeUnit.MINUTES)
-                                        .setConstraints(
-                                            Constraints.Builder()
-                                                .setRequiredNetworkType(NetworkType.CONNECTED)
-                                                .build()
-                                        )
-                                        .build()
-                                )
+                                if (requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP, false)) {
+                                    WorkManager.getInstance(requireContext()).enqueueUniquePeriodicWork(
+                                        "live_notifications",
+                                        ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
+                                        PeriodicWorkRequestBuilder<LiveNotificationWorker>(15, TimeUnit.MINUTES)
+                                            .setInitialDelay(1, TimeUnit.MINUTES)
+                                            .setConstraints(
+                                                Constraints.Builder()
+                                                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                                                    .build()
+                                            )
+                                            .build()
+                                    )
+                                }
                                 requireContext().prefs().edit { putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, true) }
                             }
                         }

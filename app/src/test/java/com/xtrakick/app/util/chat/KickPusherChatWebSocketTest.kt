@@ -39,4 +39,51 @@ class KickPusherChatWebSocketTest {
         assertEquals(listOf("chatrooms.123.v2"), channels)
         assertTrue(channels.none { it.startsWith("channel.") || it.startsWith("predictions-channel-") })
     }
+
+    @Test
+    fun buildsPrivateLivestreamAndAccountChannelsWhenIdsPresent() {
+        val privateChannels = KickPusherChatWebSocket.buildPrivateChannelNames(
+            accountId = "98765",
+            livestreamId = "124297944"
+        )
+
+        assertEquals(
+            listOf(
+                "private-channelpoints-98765",
+                "private-userfeed.98765",
+                "private-98765",
+                "private-livestream.124297944"
+            ),
+            privateChannels
+        )
+        assertTrue(privateChannels.contains("private-livestream.124297944"))
+    }
+
+    @Test
+    fun omitsMissingIdsInPrivateSubscriptions() {
+        val onlyLivestream = KickPusherChatWebSocket.buildPrivateChannelNames(
+            accountId = null,
+            livestreamId = "124297944"
+        )
+        assertEquals(listOf("private-livestream.124297944"), onlyLivestream)
+
+        val onlyAccount = KickPusherChatWebSocket.buildPrivateChannelNames(
+            accountId = "98765",
+            livestreamId = null
+        )
+        assertEquals(
+            listOf(
+                "private-channelpoints-98765",
+                "private-userfeed.98765",
+                "private-98765"
+            ),
+            onlyAccount
+        )
+
+        val empty = KickPusherChatWebSocket.buildPrivateChannelNames(
+            accountId = "",
+            livestreamId = ""
+        )
+        assertTrue(empty.isEmpty())
+    }
 }

@@ -20,6 +20,15 @@
 
     <SwitchPreferenceCompat
         android:defaultValue="false"
+        android:dependency="live_notifications_enabled"
+        android:key="live_notifications_polling_backup"
+        android:summary="@string/live_notifications_polling_backup_summary"
+        android:title="@string/live_notifications_polling_backup"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="false"
         android:key="reward_auto_claim_enabled"
         android:summary="@string/reward_auto_claim_summary"
         android:title="@string/reward_auto_claim"
