@@ -31,6 +31,7 @@ jobs:
       with:
         fetch-depth: 50
         filter: blob:none
+        fetch-tags: true
     - name: Setup Java
       uses: actions/setup-java@v5
       with:
@@ -54,10 +55,12 @@ jobs:
 
     - name: Generate release notes
       run: |
+        git fetch --tags --force
         if git rev-parse refs/tags/latest >/dev/null 2>&1; then
-          git log refs/tags/latest..HEAD --oneline --decorate=no > notes.txt
-        else
-          git log -n 50 --oneline --decorate=no > notes.txt
+          git log refs/tags/latest..HEAD --format="%s%n%b" > notes.txt
+        fi
+        if [ ! -s notes.txt ]; then
+          git log -n 1 --format="%s%n%b" > notes.txt
         fi
         [ -s notes.txt ] || echo "Release build $(date -u +'%Y-%m-%d %H:%M:%S UTC')" > notes.txt
         echo "" >> notes.txt
