@@ -16,7 +16,7 @@ object ChatUtils {
     const val ACTION = "\u0001ACTION"
 
     fun parseChatMessage(message: String, userNotice: Boolean): ChatMessage {
-        val parts = message.substring(1).split(" ".toRegex(), 2)
+        val parts = message.substring(1).split(" ", limit = 2)
         val prefixes = splitAndMakeMap(parts[0], ";", "=")
         val messageInfo = parts[1] //:<user>!<user>@<user>.kick.com PRIVMSG #<channelName> :<message>
         val userLogin = prefixes["login"] ?: try {
@@ -98,7 +98,7 @@ object ChatUtils {
     }
 
     fun parseClearMessage(message: String): Pair<ChatMessage, String?> {
-        val parts = message.substring(1).split(" ".toRegex(), 2)
+        val parts = message.substring(1).split(" ", limit = 2)
         val prefixes = splitAndMakeMap(parts[0], ";", "=")
         val login = prefixes["login"]
         val messageInfo = parts[1]
@@ -116,7 +116,7 @@ object ChatUtils {
     }
 
     fun parseClearChat(context: Context, message: String): ChatMessage {
-        val parts = message.substring(1).split(" ".toRegex(), 2)
+        val parts = message.substring(1).split(" ", limit = 2)
         val prefixes = splitAndMakeMap(parts[0], ";", "=")
         val duration = prefixes["ban-duration"]
         val messageInfo = parts[1]
@@ -141,7 +141,7 @@ object ChatUtils {
     }
 
     fun parseNotice(context: Context, message: String): Pair<ChatMessage, String?> {
-        val parts = message.substring(1).split(" ".toRegex(), 2)
+        val parts = message.substring(1).split(" ", limit = 2)
         val prefixes = splitAndMakeMap(parts[0], ";", "=")
         val messageInfo = parts[1]
         val msgId = prefixes["msg-id"]
@@ -156,7 +156,7 @@ object ChatUtils {
     }
 
     fun parseRoomState(message: String): RoomState {
-        val parts = message.substring(1).split(" ".toRegex(), 2)
+        val parts = message.substring(1).split(" ", limit = 2)
         val prefixes = splitAndMakeMap(parts[0], ";", "=")
         return RoomState(
             emote = prefixes["emote-only"],
@@ -168,7 +168,7 @@ object ChatUtils {
     }
 
     fun parseEmoteSets(message: String): List<String>? {
-        val parts = message.substring(1).split(" ".toRegex(), 2)
+        val parts = message.substring(1).split(" ", limit = 2)
         val prefixes = splitAndMakeMap(parts[0], ";", "=")
         val sets = prefixes["emote-sets"]
         return sets?.split(",")?.dropLastWhile { it.isEmpty() }

@@ -33,13 +33,13 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.Headers.Companion.toHeaders
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.chromium.net.CronetEngine
-import org.chromium.net.apihelpers.RedirectHandlers
 import org.chromium.net.apihelpers.UploadDataProviders
-import org.chromium.net.apihelpers.UrlRequestCallbacks
+import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
@@ -55,833 +55,283 @@ class KickPublicApiRepository @Inject constructor(
     private val json: Json,
 ) {
 
-    suspend fun getGames(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, names: List<String>? = null): GamesResponse = withContext(Dispatchers.IO) {
-        val queryParams = mutableListOf<String>().apply {
-            ids?.forEach { add("id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            names?.forEach { add("name=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-        }
-        val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
+    private suspend fun executePublicApiRaw(
+        networkLibrary: String?,
+        path: String,
+        headers: Map<String, String>,
+        method: String = "GET",
+        query: String = "",
+        bodyJson: String? = null,
+    ): Pair<Int, String> = withContext(Dispatchers.IO) {
+        val url = "https://api.kick.com$path$query"
         when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                 val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/games${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                    httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                        setHttpMethod(method)
                         headers.forEach { addHeader(it.key, it.value) }
+                        if (bodyJson != null) {
+                            addHeader("Content-Type", "application/json")
+                            val bytes = bodyJson.toByteArray(Charsets.UTF_8)
+                            setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(bytes), cronetExecutor)
+                        }
                     }.build().start()
                 }
-                json.decodeFromString<GamesResponse>(String(response.second))
+                Pair(response.first.httpStatusCode, String(response.second))
             }
             networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/games${query}", request.callback, cronetExecutor).apply {
+                val response = suspendCoroutine { continuation ->
+                    cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
+                        setHttpMethod(method)
                         headers.forEach { addHeader(it.key, it.value) }
+                        if (bodyJson != null) {
+                            addHeader("Content-Type", "application/json")
+                            val bytes = bodyJson.toByteArray(Charsets.UTF_8)
+                            setUploadDataProvider(UploadDataProviders.create(bytes), cronetExecutor)
+                        }
                     }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<GamesResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/games${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<GamesResponse>(String(response.second))
                 }
+                Pair(response.first.httpStatusCode, String(response.second))
             }
             else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/games${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<GamesResponse>(response.body.string())
+                val requestBuilder = Request.Builder().url(url).headers(headers.toHeaders())
+                if (bodyJson != null) {
+                    requestBuilder.header("Content-Type", "application/json")
+                    requestBuilder.method(method, bodyJson.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
+                } else if (method == "DELETE") {
+                    requestBuilder.method("DELETE", null)
+                } else if (method != "GET") {
+                    requestBuilder.method(method, "".toRequestBody(null))
+                }
+                okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+                    Pair(response.code, response.body.string())
                 }
             }
         }
     }
 
-    suspend fun getTopGames(networkLibrary: String?, headers: Map<String, String>, limit: Int?, offset: String?): GamesResponse = withContext(Dispatchers.IO) {
+    private suspend inline fun <reified T> executePublicApi(
+        networkLibrary: String?,
+        path: String,
+        headers: Map<String, String>,
+        method: String = "GET",
+        query: String = "",
+        bodyJson: String? = null,
+    ): T {
+        val (statusCode, rawBody) = executePublicApiRaw(networkLibrary, path, headers, method, query, bodyJson)
+        if (statusCode !in 200..299) {
+            if (statusCode == 401) {
+                throw KickAuthRequestException.HttpFailure(statusCode)
+            }
+            throw IOException("Kick Public API request failed ($statusCode): $rawBody")
+        }
+        return json.decodeFromString<T>(rawBody)
+    }
+
+    private suspend fun executePublicApiMutation(
+        networkLibrary: String?,
+        path: String,
+        headers: Map<String, String>,
+        method: String = "POST",
+        query: String = "",
+        bodyJson: String? = null,
+    ): String? {
+        val (statusCode, rawBody) = executePublicApiRaw(networkLibrary, path, headers, method, query, bodyJson)
+        return if (statusCode in 200..299) null else rawBody
+    }
+
+    private fun encodeParam(v: String): String = URLEncoder.encode(v, Charsets.UTF_8.name())
+
+    suspend fun getGames(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, names: List<String>? = null): GamesResponse {
+        val queryParams = mutableListOf<String>().apply {
+            ids?.forEach { add("id=${encodeParam(it)}") }
+            names?.forEach { add("name=${encodeParam(it)}") }
+        }
+        val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
+        return executePublicApi(networkLibrary, "/public/v1/games", headers, query = query)
+    }
+
+    suspend fun getTopGames(networkLibrary: String?, headers: Map<String, String>, limit: Int?, offset: String?): GamesResponse {
         val query = mutableMapOf<String, String>().apply {
             limit?.let { put("first", it.toString()) }
             offset?.let { put("after", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/games/top${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<GamesResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/games/top${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<GamesResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/games/top${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<GamesResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/games/top${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<GamesResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/games/top", headers, query = query)
     }
 
-    suspend fun getStreams(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, logins: List<String>? = null, gameId: String? = null, languages: List<String>? = null, limit: Int? = null, offset: String? = null): StreamsResponse = withContext(Dispatchers.IO) {
+    suspend fun getStreams(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, logins: List<String>? = null, gameId: String? = null, languages: List<String>? = null, limit: Int? = null, offset: String? = null): StreamsResponse {
         val queryParams = mutableListOf<String>().apply {
-            ids?.forEach { add("user_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            logins?.forEach { add("user_login=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            gameId?.let { add("game_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            languages?.forEach { add("language=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            limit?.let { add("first=${URLEncoder.encode(it.toString(), Charsets.UTF_8.name())}") }
-            offset?.let { add("after=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            ids?.forEach { add("user_id=${encodeParam(it)}") }
+            logins?.forEach { add("user_login=${encodeParam(it)}") }
+            gameId?.let { add("game_id=${encodeParam(it)}") }
+            languages?.forEach { add("language=${encodeParam(it)}") }
+            limit?.let { add("first=${encodeParam(it.toString())}") }
+            offset?.let { add("after=${encodeParam(it)}") }
         }
         val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/streams${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<StreamsResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/streams${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<StreamsResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/streams${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<StreamsResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/streams${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<StreamsResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/streams", headers, query = query)
     }
 
-    suspend fun getLivestreams(networkLibrary: String?, headers: Map<String, String>, broadcasterUserIds: List<String>? = null): LivestreamsResponse = withContext(Dispatchers.IO) {
-        // /public/v1/livestreams was deprecated 23/06/2026; the per-id lookup now lives on
-        // /public/v1/users/livestreams (max 100 user_id params). Items arrive in the LivestreamV2
-        // shape — broadcaster nested under broadcaster_user, no channel_id, renamed fields — so
-        // they are mapped back onto the legacy parse model the callers rely on.
+    suspend fun getLivestreams(networkLibrary: String?, headers: Map<String, String>, broadcasterUserIds: List<String>? = null): LivestreamsResponse {
         val query = broadcasterUserIds.orEmpty()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .joinToString("&") { "user_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}" }
+            .joinToString("&") { "user_id=${encodeParam(it)}" }
             .takeIf { it.isNotEmpty() }
             ?.let { "?$it" }
             .orEmpty()
-        val payload: UsersLivestreamsResponse = when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/users/livestreams$query", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                require(response.first.httpStatusCode in 200..299) {
-                    "Kick users livestreams request failed (${response.first.httpStatusCode})"
-                }
-                json.decodeFromString<UsersLivestreamsResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/users/livestreams$query", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<UsersLivestreamsResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/users/livestreams$query", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    require(response.first.httpStatusCode in 200..299) {
-                        "Kick users livestreams request failed (${response.first.httpStatusCode})"
-                    }
-                    json.decodeFromString<UsersLivestreamsResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/users/livestreams$query")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        throw java.io.IOException("Kick users livestreams request failed (${response.code})")
-                    }
-                    json.decodeFromString<UsersLivestreamsResponse>(response.body.string())
-                }
-            }
-        }
-        LivestreamsResponse(
+        val payload: UsersLivestreamsResponse = executePublicApi(networkLibrary, "/public/v1/users/livestreams", headers, query = query)
+        return LivestreamsResponse(
             data = payload.data.map { it.toLegacyLivestream() },
             message = payload.message,
         )
     }
 
-    suspend fun getFollowedStreams(networkLibrary: String?, headers: Map<String, String>, userId: String?, limit: Int?, offset: String?): StreamsResponse = withContext(Dispatchers.IO) {
+    suspend fun getFollowedStreams(networkLibrary: String?, headers: Map<String, String>, userId: String?, limit: Int?, offset: String?): StreamsResponse {
         val query = mutableMapOf<String, String>().apply {
             userId?.let { put("user_id", it) }
             limit?.let { put("first", it.toString()) }
             offset?.let { put("after", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/streams/followed${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<StreamsResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/streams/followed${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<StreamsResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/streams/followed${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<StreamsResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/streams/followed${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<StreamsResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/channels/followed", headers, query = query)
     }
 
-    suspend fun getClips(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, channelId: String? = null, gameId: String? = null, startedAt: String? = null, endedAt: String? = null, limit: Int? = null, offset: String? = null): ClipsResponse = withContext(Dispatchers.IO) {
-        // A Map<String, String> collapsed repeated `id` params to the last one, so a request
-        // for N clips fetched exactly 1. Mirrors the list-based builder in getGames/getUsers/
-        // getStreams, which already do this correctly.
+    suspend fun getClips(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, channelId: String? = null, gameId: String? = null, startedAt: String? = null, endedAt: String? = null, limit: Int? = null, offset: String? = null): ClipsResponse {
         val queryParams = mutableListOf<String>().apply {
-            ids?.forEach { add("id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            channelId?.let { add("broadcaster_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            gameId?.let { add("game_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            startedAt?.let { add("started_at=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            endedAt?.let { add("ended_at=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            limit?.let { add("first=${URLEncoder.encode(it.toString(), Charsets.UTF_8.name())}") }
-            offset?.let { add("after=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            ids?.forEach { add("id=${encodeParam(it)}") }
+            channelId?.let { add("broadcaster_id=${encodeParam(it)}") }
+            gameId?.let { add("game_id=${encodeParam(it)}") }
+            startedAt?.let { add("started_at=${encodeParam(it)}") }
+            endedAt?.let { add("ended_at=${encodeParam(it)}") }
+            limit?.let { add("first=${encodeParam(it.toString())}") }
+            offset?.let { add("after=${encodeParam(it)}") }
         }
         val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/clips${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<ClipsResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/clips${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<ClipsResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/clips${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<ClipsResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/clips${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<ClipsResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/clips", headers, query = query)
     }
 
-    suspend fun getVideos(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, gameId: String? = null, channelId: String? = null, period: String? = null, broadcastType: String? = null, sort: String? = null, language: String? = null, limit: Int? = null, offset: String? = null): VideosResponse = withContext(Dispatchers.IO) {
-        // See getClips: a Map collapsed repeated `id` params to the last one.
+    suspend fun getVideos(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, gameId: String? = null, channelId: String? = null, period: String? = null, broadcastType: String? = null, sort: String? = null, language: String? = null, limit: Int? = null, offset: String? = null): VideosResponse {
         val queryParams = mutableListOf<String>().apply {
-            ids?.forEach { add("id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            gameId?.let { add("game_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            channelId?.let { add("user_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            period?.let { add("period=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            broadcastType?.let { add("type=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            sort?.let { add("sort=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            language?.let { add("language=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            limit?.let { add("first=${URLEncoder.encode(it.toString(), Charsets.UTF_8.name())}") }
-            offset?.let { add("after=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            ids?.forEach { add("id=${encodeParam(it)}") }
+            gameId?.let { add("game_id=${encodeParam(it)}") }
+            channelId?.let { add("broadcaster_id=${encodeParam(it)}") }
+            period?.let { add("period=${encodeParam(it)}") }
+            broadcastType?.let { add("type=${encodeParam(it)}") }
+            sort?.let { add("sort=${encodeParam(it)}") }
+            language?.let { add("language=${encodeParam(it)}") }
+            limit?.let { add("first=${encodeParam(it.toString())}") }
+            offset?.let { add("after=${encodeParam(it)}") }
         }
         val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/videos${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<VideosResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/videos${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<VideosResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/videos${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<VideosResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/videos${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<VideosResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/videos", headers, query = query)
     }
 
-    suspend fun getUsers(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, logins: List<String>? = null): UsersResponse = withContext(Dispatchers.IO) {
+    suspend fun getUsers(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, logins: List<String>? = null): UsersResponse {
         val queryParams = mutableListOf<String>().apply {
-            ids?.forEach { add("id=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
-            logins?.forEach { add("login=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+            ids?.forEach { add("id=${encodeParam(it)}") }
+            logins?.forEach { add("login=${encodeParam(it)}") }
         }
         val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/users${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<UsersResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/users${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<UsersResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/users${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<UsersResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/users${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<UsersResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/users", headers, query = query)
     }
 
-    suspend fun getSearchGames(networkLibrary: String?, headers: Map<String, String>, query: String?, limit: Int?, offset: String?): GamesResponse = withContext(Dispatchers.IO) {
-        val query = mutableMapOf<String, String>().apply {
+    suspend fun getSearchGames(networkLibrary: String?, headers: Map<String, String>, query: String?, limit: Int?, offset: String?): GamesResponse {
+        val queryString = mutableMapOf<String, String>().apply {
             query?.let { put("query", it) }
             limit?.let { put("first", it.toString()) }
             offset?.let { put("after", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/search/categories${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<GamesResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/search/categories${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<GamesResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/search/categories${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<GamesResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/search/categories${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<GamesResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/categories", headers, query = queryString)
     }
 
-    suspend fun getSearchChannels(networkLibrary: String?, headers: Map<String, String>, query: String?, limit: Int?, offset: String?, live: Boolean? = null): ChannelSearchResponse = withContext(Dispatchers.IO) {
-        val query = mutableMapOf<String, String>().apply {
+    suspend fun getSearchChannels(networkLibrary: String?, headers: Map<String, String>, query: String?, limit: Int?, offset: String?, live: Boolean? = null): ChannelSearchResponse {
+        val queryString = mutableMapOf<String, String>().apply {
             query?.let { put("query", it) }
             limit?.let { put("first", it.toString()) }
             offset?.let { put("after", it) }
-            live?.let { put("live_only", it.toString()) }
+            live?.let { put("live", it.toString()) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/search/channels${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<ChannelSearchResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/search/channels${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<ChannelSearchResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/search/channels${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<ChannelSearchResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/search/channels${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<ChannelSearchResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/channels", headers, query = queryString)
     }
 
-    suspend fun getUserFollows(networkLibrary: String?, headers: Map<String, String>, userId: String?, targetId: String? = null, limit: Int? = null, offset: String? = null): FollowsResponse = withContext(Dispatchers.IO) {
+    suspend fun getUserFollows(networkLibrary: String?, headers: Map<String, String>, userId: String?, targetId: String? = null, limit: Int? = null, offset: String? = null): FollowsResponse {
         val query = mutableMapOf<String, String>().apply {
             userId?.let { put("user_id", it) }
             targetId?.let { put("broadcaster_id", it) }
             limit?.let { put("first", it.toString()) }
             offset?.let { put("after", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/followed${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<FollowsResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/followed${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<FollowsResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/followed${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<FollowsResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/channels/followed${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<FollowsResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/users/following", headers, query = query)
     }
 
-    suspend fun getUserFollowers(networkLibrary: String?, headers: Map<String, String>, userId: String?, targetId: String? = null, limit: Int? = null, offset: String? = null): FollowsResponse = withContext(Dispatchers.IO) {
+    suspend fun getUserFollowers(networkLibrary: String?, headers: Map<String, String>, userId: String?, targetId: String? = null, limit: Int? = null, offset: String? = null): FollowsResponse {
         val query = mutableMapOf<String, String>().apply {
-            targetId?.let { put("user_id", it) }
             userId?.let { put("broadcaster_id", it) }
+            targetId?.let { put("user_id", it) }
             limit?.let { put("first", it.toString()) }
             offset?.let { put("after", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/followers${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<FollowsResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/followers${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<FollowsResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/followers${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<FollowsResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/channels/followers${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<FollowsResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/channels/followers", headers, query = query)
     }
 
-    suspend fun getUserEmotes(networkLibrary: String?, headers: Map<String, String>, userId: String?, channelId: String?, offset: String?): UserEmotesResponse = withContext(Dispatchers.IO) {
+    suspend fun getUserEmotes(networkLibrary: String?, headers: Map<String, String>, userId: String?, channelId: String?, offset: String?): UserEmotesResponse {
         val query = mutableMapOf<String, String>().apply {
             userId?.let { put("user_id", it) }
             channelId?.let { put("broadcaster_id", it) }
             offset?.let { put("after", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/emotes/user${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<UserEmotesResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/emotes/user${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<UserEmotesResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/emotes/user${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<UserEmotesResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/chat/emotes/user${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<UserEmotesResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/emotes", headers, query = query)
     }
 
-    suspend fun getEmotesFromSet(networkLibrary: String?, headers: Map<String, String>, setIds: List<String>): EmoteSetsResponse = withContext(Dispatchers.IO) {
-        // See getClips: a Map collapsed repeated `emote_set_id` params to the last one, so a
-        // request for N emote sets fetched exactly 1.
-        val queryParams = setIds.map { "emote_set_id=${URLEncoder.encode(it, Charsets.UTF_8.name())}" }
-        val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/emotes/set${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<EmoteSetsResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/emotes/set${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<EmoteSetsResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/emotes/set${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<EmoteSetsResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/chat/emotes/set${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<EmoteSetsResponse>(response.body.string())
-                }
-            }
-        }
+    suspend fun getEmotesFromSet(networkLibrary: String?, headers: Map<String, String>, setIds: List<String>): EmoteSetsResponse {
+        val query = setIds.joinToString("&") { "set_id=${encodeParam(it)}" }
+            .takeIf { it.isNotEmpty() }
+            ?.let { "?$it" }
+            .orEmpty()
+        return executePublicApi(networkLibrary, "/public/v1/emotes/sets", headers, query = query)
     }
 
-    suspend fun getGlobalBadges(networkLibrary: String?, headers: Map<String, String>): BadgesResponse = withContext(Dispatchers.IO) {
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/badges/global", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<BadgesResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/badges/global", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<BadgesResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/badges/global", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<BadgesResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/chat/badges/global")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<BadgesResponse>(response.body.string())
-                }
-            }
-        }
+    suspend fun getGlobalBadges(networkLibrary: String?, headers: Map<String, String>): BadgesResponse {
+        return executePublicApi(networkLibrary, "/public/v1/badges", headers)
     }
 
-    suspend fun getChannelBadges(networkLibrary: String?, headers: Map<String, String>, userId: String?): BadgesResponse = withContext(Dispatchers.IO) {
-        val query = mutableMapOf<String, String>().apply {
-            userId?.let { put("broadcaster_id", it) }
-        }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
-        } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/badges${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<BadgesResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/badges${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<BadgesResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/badges${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<BadgesResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/chat/badges${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<BadgesResponse>(response.body.string())
-                }
-            }
-        }
+    suspend fun getChannelBadges(networkLibrary: String?, headers: Map<String, String>, userId: String?): BadgesResponse {
+        val query = userId?.let { "?broadcaster_id=${encodeParam(it)}" } ?: ""
+        return executePublicApi(networkLibrary, "/public/v1/badges/channel", headers, query = query)
     }
 
-    suspend fun getCheerEmotes(networkLibrary: String?, headers: Map<String, String>, userId: String?): CheerEmotesResponse = withContext(Dispatchers.IO) {
-        val query = mutableMapOf<String, String>().apply {
-            userId?.let { put("broadcaster_id", it) }
-        }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
-        } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/bits/cheermotes${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<CheerEmotesResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/bits/cheermotes${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<CheerEmotesResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/bits/cheermotes${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<CheerEmotesResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/bits/cheermotes${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<CheerEmotesResponse>(response.body.string())
-                }
-            }
-        }
+    suspend fun getCheerEmotes(networkLibrary: String?, headers: Map<String, String>, userId: String?): CheerEmotesResponse {
+        val query = userId?.let { "?broadcaster_id=${encodeParam(it)}" } ?: ""
+        return executePublicApi(networkLibrary, "/public/v1/bits/actions", headers, query = query)
     }
 
-    suspend fun getChatters(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, limit: Int? = null, offset: String? = null): ChatUsersResponse = withContext(Dispatchers.IO) {
+    suspend fun getChatters(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, limit: Int? = null, offset: String? = null): ChatUsersResponse {
         val query = mutableMapOf<String, String>().apply {
             channelId?.let { put("broadcaster_id", it) }
-            userId?.let { put("moderator_id", it) }
+            userId?.let { put("user_id", it) }
             limit?.let { put("first", it.toString()) }
             offset?.let { put("after", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/chatters${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                json.decodeFromString<ChatUsersResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/chatters${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<ChatUsersResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/chatters${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    json.decodeFromString<ChatUsersResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/chat/chatters${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    json.decodeFromString<ChatUsersResponse>(response.body.string())
-                }
-            }
-        }
+        return executePublicApi(networkLibrary, "/public/v1/chat/users", headers, query = query)
     }
 
-    suspend fun createEventSubSubscription(networkLibrary: String?, headers: Map<String, String>, userId: String?, channelId: String?, type: String?, sessionId: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun createEventSubSubscription(networkLibrary: String?, headers: Map<String, String>, userId: String?, channelId: String?, type: String?, sessionId: String?): String? {
         val body = buildJsonObject {
             put("type", type)
             put("version", "1")
@@ -894,213 +344,39 @@ class KickPublicApiRepository @Inject constructor(
                 put("session_id", sessionId)
             }
         }.toString()
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/eventsub/subscriptions", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/eventsub/subscriptions", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/eventsub/subscriptions", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            addHeader("Content-Type", "application/json")
-                            setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/eventsub/subscriptions")
-                    headers(headers.toHeaders())
-                    header("Content-Type", "application/json")
-                    post(body.toRequestBody())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/eventsub/subscriptions", headers, method = "POST", bodyJson = body)
     }
 
-    suspend fun sendMessage(networkLibrary: String?, headers: Map<String, String>, userId: String?, channelId: String?, message: String?, replyId: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun sendMessage(networkLibrary: String?, headers: Map<String, String>, userId: String?, channelId: String?, message: String?, replyId: String?): String? {
         val body = buildJsonObject {
             put("broadcaster_id", channelId)
             put("sender_id", userId)
             put("message", message)
             replyId?.let { put("reply_parent_message_id", it) }
         }.toString()
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/messages", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/messages", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/messages", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            addHeader("Content-Type", "application/json")
-                            setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/chat/messages")
-                    headers(headers.toHeaders())
-                    header("Content-Type", "application/json")
-                    post(body.toRequestBody())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/chat/messages", headers, method = "POST", bodyJson = body)
     }
 
-    suspend fun sendAnnouncement(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, message: String?, color: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun sendAnnouncement(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, message: String?, color: String?): String? {
         val query = mutableMapOf<String, String>().apply {
             channelId?.let { put("broadcaster_id", it) }
             userId?.let { put("moderator_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
         val body = buildJsonObject {
             put("message", message)
             color?.let { put("color", it) }
         }.toString()
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/announcements${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/announcements${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/announcements${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            addHeader("Content-Type", "application/json")
-                            setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/chat/announcements${query}")
-                    headers(headers.toHeaders())
-                    header("Content-Type", "application/json")
-                    post(body.toRequestBody())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/chat/announcements", headers, method = "POST", query = query, bodyJson = body)
     }
 
-    suspend fun banUser(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, targetId: String?, duration: String? = null, reason: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun banUser(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, targetId: String?, duration: String? = null, reason: String?): String? {
         val query = mutableMapOf<String, String>().apply {
             channelId?.let { put("broadcaster_id", it) }
             userId?.let { put("moderator_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
         val body = buildJsonObject {
             putJsonObject("data") {
@@ -1109,392 +385,74 @@ class KickPublicApiRepository @Inject constructor(
                 put("user_id", targetId)
             }
         }.toString()
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/bans${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/bans${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/bans${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            addHeader("Content-Type", "application/json")
-                            setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/moderation/bans${query}")
-                    headers(headers.toHeaders())
-                    header("Content-Type", "application/json")
-                    post(body.toRequestBody())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/moderation/bans", headers, method = "POST", query = query, bodyJson = body)
     }
 
-    suspend fun unbanUser(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, targetId: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun unbanUser(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, targetId: String?): String? {
         val query = mutableMapOf<String, String>().apply {
             channelId?.let { put("broadcaster_id", it) }
             userId?.let { put("moderator_id", it) }
             targetId?.let { put("user_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/bans${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("DELETE")
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/bans${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("DELETE")
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/bans${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            setHttpMethod("DELETE")
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/moderation/bans${query}")
-                    headers(headers.toHeaders())
-                    method("DELETE", null)
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/moderation/bans", headers, method = "DELETE", query = query)
     }
 
-    suspend fun deleteMessages(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, messageId: String? = null): String? = withContext(Dispatchers.IO) {
+    suspend fun deleteMessages(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, messageId: String? = null): String? {
         val query = mutableMapOf<String, String>().apply {
             channelId?.let { put("broadcaster_id", it) }
             userId?.let { put("moderator_id", it) }
             messageId?.let { put("message_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/chat${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("DELETE")
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/chat${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("DELETE")
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/chat${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            setHttpMethod("DELETE")
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/moderation/chat${query}")
-                    headers(headers.toHeaders())
-                    method("DELETE", null)
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
+        return executePublicApiMutation(networkLibrary, "/public/v1/moderation/chat", headers, method = "DELETE", query = query)
+    }
+
+    suspend fun getChatColor(networkLibrary: String?, headers: Map<String, String>, userId: String?): String? {
+        val query = userId?.let { "?user_id=${encodeParam(it)}" } ?: ""
+        val (statusCode, rawBody) = executePublicApiRaw(networkLibrary, "/public/v1/chat/color", headers, query = query)
+        return if (statusCode in 200..299) {
+            runCatching {
+                json.decodeFromString<JsonElement>(rawBody).jsonObject["data"]?.jsonArray?.firstOrNull()?.jsonObject?.get("color")?.jsonPrimitive?.contentOrNull
+            }.getOrNull()
+        } else {
+            rawBody
         }
     }
 
-    suspend fun getChatColor(networkLibrary: String?, headers: Map<String, String>, userId: String?): String? = withContext(Dispatchers.IO) {
-        val query = mutableMapOf<String, String>().apply {
-            userId?.let { put("user_id", it) }
-        }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
-        } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/color${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/color${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        json.decodeFromString<JsonElement>(response.responseBody as String).jsonObject["data"]?.jsonArray?.firstOrNull()?.jsonObject?.get("color")?.jsonPrimitive?.contentOrNull
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/color${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/chat/color${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        json.decodeFromString<JsonElement>(response.body.string()).jsonObject["data"]?.jsonArray?.firstOrNull()?.jsonObject?.get("color")?.jsonPrimitive?.contentOrNull
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
-    }
-
-    suspend fun updateChatColor(networkLibrary: String?, headers: Map<String, String>, userId: String?, color: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun updateChatColor(networkLibrary: String?, headers: Map<String, String>, userId: String?, color: String?): String? {
         val query = mutableMapOf<String, String>().apply {
             userId?.let { put("user_id", it) }
             color?.let { put("color", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/color${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("PUT")
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/color${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("PUT")
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/color${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            setHttpMethod("PUT")
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/chat/color${query}")
-                    headers(headers.toHeaders())
-                    method("PUT", null)
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/chat/color", headers, method = "PUT", query = query)
     }
 
-    suspend fun startCommercial(networkLibrary: String?, headers: Map<String, String>, channelId: String?, length: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun startCommercial(networkLibrary: String?, headers: Map<String, String>, channelId: String?, length: String?): String? {
         val body = buildJsonObject {
             put("broadcaster_id", channelId)
             put("length", length?.toIntOrNull())
         }.toString()
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/commercial", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/commercial", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        json.decodeFromString<JsonElement>(response.responseBody as String).jsonObject["data"]?.jsonArray?.firstOrNull()?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/commercial", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            addHeader("Content-Type", "application/json")
-                            setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/channels/commercial")
-                    headers(headers.toHeaders())
-                    header("Content-Type", "application/json")
-                    post(body.toRequestBody())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        json.decodeFromString<JsonElement>(response.body.string()).jsonObject["data"]?.jsonArray?.firstOrNull()?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
+        val (statusCode, rawBody) = executePublicApiRaw(networkLibrary, "/public/v1/channels/commercial", headers, method = "POST", bodyJson = body)
+        return if (statusCode in 200..299) {
+            runCatching {
+                json.decodeFromString<JsonElement>(rawBody).jsonObject["data"]?.jsonArray?.firstOrNull()?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
+            }.getOrNull()
+        } else {
+            rawBody
         }
     }
 
-    suspend fun updateChatSettings(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, emote: Boolean? = null, followers: Boolean? = null, followersDuration: Int? = null, slow: Boolean? = null, slowDuration: Int? = null, subs: Boolean? = null, unique: Boolean? = null): String? = withContext(Dispatchers.IO) {
+    suspend fun updateChatSettings(networkLibrary: String?, headers: Map<String, String>, channelId: String?, userId: String?, emote: Boolean? = null, followers: Boolean? = null, followersDuration: Int? = null, slow: Boolean? = null, slowDuration: Int? = null, subs: Boolean? = null, unique: Boolean? = null): String? {
         val query = mutableMapOf<String, String>().apply {
             channelId?.let { put("broadcaster_id", it) }
             userId?.let { put("moderator_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
         val body = buildJsonObject {
             emote?.let { put("emote_mode", it) }
@@ -1505,575 +463,86 @@ class KickPublicApiRepository @Inject constructor(
             subs?.let { put("subscriber_mode", it) }
             unique?.let { put("unique_chat_mode", it) }
         }.toString()
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/settings${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
-                        setHttpMethod("PATCH")
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/settings${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                        setHttpMethod("PATCH")
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/chat/settings${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            addHeader("Content-Type", "application/json")
-                            setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                            setHttpMethod("PATCH")
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/chat/settings${query}")
-                    headers(headers.toHeaders())
-                    header("Content-Type", "application/json")
-                    method("PATCH", body.toRequestBody())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/chat/settings", headers, method = "PATCH", query = query, bodyJson = body)
     }
 
-    suspend fun createStreamMarker(networkLibrary: String?, headers: Map<String, String>, channelId: String?, description: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun createStreamMarker(networkLibrary: String?, headers: Map<String, String>, channelId: String?, description: String?): String? {
         val body = buildJsonObject {
             put("user_id", channelId)
             description?.let { put("description", it) }
         }.toString()
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/streams/markers", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/streams/markers", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/streams/markers", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            addHeader("Content-Type", "application/json")
-                            setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/streams/markers")
-                    headers(headers.toHeaders())
-                    header("Content-Type", "application/json")
-                    post(body.toRequestBody())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/streams/markers", headers, method = "POST", bodyJson = body)
     }
 
-    suspend fun addModerator(networkLibrary: String?, headers: Map<String, String>, channelId: String?, targetId: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun addModerator(networkLibrary: String?, headers: Map<String, String>, channelId: String?, targetId: String?): String? {
         val query = mutableMapOf<String, String>().apply {
             channelId?.let { put("broadcaster_id", it) }
             targetId?.let { put("user_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/moderators${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/moderators${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/moderators${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/moderation/moderators${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/moderation/moderators", headers, method = "POST", query = query)
     }
 
-    suspend fun removeModerator(networkLibrary: String?, headers: Map<String, String>, channelId: String?, targetId: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun removeModerator(networkLibrary: String?, headers: Map<String, String>, channelId: String?, targetId: String?): String? {
         val query = mutableMapOf<String, String>().apply {
             channelId?.let { put("broadcaster_id", it) }
             targetId?.let { put("user_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/moderators${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("DELETE")
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/moderators${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("DELETE")
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/moderation/moderators${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            setHttpMethod("DELETE")
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/moderation/moderators${query}")
-                    headers(headers.toHeaders())
-                    method("DELETE", null)
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/moderation/moderators", headers, method = "DELETE", query = query)
     }
 
-    suspend fun startRaid(networkLibrary: String?, headers: Map<String, String>, channelId: String?, targetId: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun startRaid(networkLibrary: String?, headers: Map<String, String>, channelId: String?, targetId: String?): String? {
         val query = mutableMapOf<String, String>().apply {
             channelId?.let { put("from_broadcaster_id", it) }
             targetId?.let { put("to_broadcaster_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/raids${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/raids${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/raids${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/raids${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/raids", headers, method = "POST", query = query)
     }
 
-    suspend fun cancelRaid(networkLibrary: String?, headers: Map<String, String>, channelId: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun cancelRaid(networkLibrary: String?, headers: Map<String, String>, channelId: String?): String? {
         val query = mutableMapOf<String, String>().apply {
-            channelId?.let { put("broadcaster_id", it) }
+            channelId?.let { put("from_broadcaster_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/raids${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("DELETE")
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/raids${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("DELETE")
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/raids${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            setHttpMethod("DELETE")
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/raids${query}")
-                    headers(headers.toHeaders())
-                    method("DELETE", null)
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/raids", headers, method = "DELETE", query = query)
     }
 
-    suspend fun addVip(networkLibrary: String?, headers: Map<String, String>, channelId: String?, targetId: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun addVip(networkLibrary: String?, headers: Map<String, String>, channelId: String?, targetId: String?): String? {
         val query = mutableMapOf<String, String>().apply {
             channelId?.let { put("broadcaster_id", it) }
             targetId?.let { put("user_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/vips${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/vips${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/vips${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/channels/vips${query}")
-                    headers(headers.toHeaders())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/channels/vips", headers, method = "POST", query = query)
     }
 
-    suspend fun removeVip(networkLibrary: String?, headers: Map<String, String>, channelId: String?, targetId: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun removeVip(networkLibrary: String?, headers: Map<String, String>, channelId: String?, targetId: String?): String? {
         val query = mutableMapOf<String, String>().apply {
             channelId?.let { put("broadcaster_id", it) }
             targetId?.let { put("user_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/vips${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("DELETE")
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/vips${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        setHttpMethod("DELETE")
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/channels/vips${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            setHttpMethod("DELETE")
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/channels/vips${query}")
-                    headers(headers.toHeaders())
-                    method("DELETE", null)
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/channels/vips", headers, method = "DELETE", query = query)
     }
 
-    suspend fun sendWhisper(networkLibrary: String?, headers: Map<String, String>, userId: String?, targetId: String?, message: String?): String? = withContext(Dispatchers.IO) {
+    suspend fun sendWhisper(networkLibrary: String?, headers: Map<String, String>, userId: String?, targetId: String?, message: String?): String? {
         val query = mutableMapOf<String, String>().apply {
             userId?.let { put("from_user_id", it) }
             targetId?.let { put("to_user_id", it) }
         }.takeIf { it.isNotEmpty() }?.let {
-            it.map { "${it.key}=${URLEncoder.encode(it.value, Charsets.UTF_8.name())}" }.joinToString("&", "?")
+            it.map { entry -> "${entry.key}=${encodeParam(entry.value)}" }.joinToString("&", "?")
         } ?: ""
         val body = buildJsonObject {
             put("message", message)
         }.toString()
-        when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/whispers${query}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                }
-                if (response.first.httpStatusCode in 200..299) {
-                    null
-                } else {
-                    String(response.second)
-                }
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/whispers${query}", request.callback, cronetExecutor).apply {
-                        headers.forEach { addHeader(it.key, it.value) }
-                        addHeader("Content-Type", "application/json")
-                        setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        response.responseBody as String
-                    }
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://api.kick.com/public/v1/whispers${query}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            headers.forEach { addHeader(it.key, it.value) }
-                            addHeader("Content-Type", "application/json")
-                            setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                        }.build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        null
-                    } else {
-                        String(response.second)
-                    }
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://api.kick.com/public/v1/whispers${query}")
-                    headers(headers.toHeaders())
-                    header("Content-Type", "application/json")
-                    post(body.toRequestBody())
-                }.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        null
-                    } else {
-                        response.body.string()
-                    }
-                }
-            }
-        }
+        return executePublicApiMutation(networkLibrary, "/public/v1/whispers", headers, method = "POST", query = query, bodyJson = body)
     }
 }

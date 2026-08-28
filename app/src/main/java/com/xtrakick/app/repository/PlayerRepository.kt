@@ -54,6 +54,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.suspendCoroutine
 
+private val SETTINGS_URL_REGEX = Regex("https://[\\w.]+/config/settings\\..+?\\.js")
+private val SPADE_URL_REGEX = Regex("\"(?:beacon_url|spade_url)\":\"(.*?)\"")
+private val EMOTE_SMILIE_PAREN_REGEX = Regex("\\((.)\\|.\\)")
+private val EMOTE_SMILIE_BRACKET_REGEX = Regex("\\[(.).*?]")
+
 @Singleton
 class PlayerRepository @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -182,7 +187,7 @@ class PlayerRepository @Inject constructor(
                 }
             }
             if (!settingsResponse.isNullOrBlank()) {
-                val spadeRegex = Regex("\"(?:beacon_url|spade_url)\":\"(.*?)\"")
+                val spadeRegex = SPADE_URL_REGEX
                 val spadeUrl = spadeRegex.find(settingsResponse)?.groups?.get(1)?.value
                 if (!spadeUrl.isNullOrBlank()) {
                     val body = buildJsonObject {
@@ -716,8 +721,8 @@ class PlayerRepository @Inject constructor(
                             name = if (emote.type == "smilies") {
                                 name.replace("\\", "").replace("?", "")
                                     .replace("&lt;", "<").replace("&gt;", ">")
-                                    .replace(Regex("\\((.)\\|.\\)")) { it.groups[1]?.value ?: "" }
-                                    .replace(Regex("\\[(.).*?]")) { it.groups[1]?.value ?: "" }
+                                    .replace(EMOTE_SMILIE_PAREN_REGEX) { it.groups[1]?.value ?: "" }
+                                    .replace(EMOTE_SMILIE_BRACKET_REGEX) { it.groups[1]?.value ?: "" }
                             } else name,
                             url1x = url.replaceFirst("{{scale}}", scale1x),
                             url2x = url.replaceFirst("{{scale}}", scale2x),

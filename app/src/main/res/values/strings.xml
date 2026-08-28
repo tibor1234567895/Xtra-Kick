@@ -752,6 +752,11 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="disable_notifications">Turn off notifications</string>
     <string name="enabled_notifications">Enabled notifications</string>
     <string name="disabled_notifications">Disabled notifications</string>
+    <string name="bell_unavailable">Channel information is still loading — try again in a moment</string>
+    <string name="battery_optimization_title">Battery optimization</string>
+    <string name="battery_optimization_message">Some devices delay or stop background checks after a few days, so live notifications stop arriving. Exclude Xtra Kick from battery optimization to keep them reliable?</string>
+    <string name="battery_optimization_open_settings">Open settings</string>
+    <string name="battery_optimization_later">Not now</string>
     <string name="name_display">Username display</string>
     <string name="name_display_summary">Shown name when display name is different from login</string>
     <string name="name_display_entry1">Show display name and login</string>

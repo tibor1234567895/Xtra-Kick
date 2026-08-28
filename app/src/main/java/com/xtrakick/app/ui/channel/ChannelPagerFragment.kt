@@ -59,6 +59,7 @@ import com.xtrakick.app.ui.main.LiveNotificationWorker
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.ui.search.SearchPagerFragmentDirections
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.BatteryOptimizationHelper
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
@@ -175,36 +176,57 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
             toolbar.setOnMenuItemClickListener { menuItem ->
                 when (menuItem.itemId) {
                     R.id.toggleNotifications -> {
-                        viewModel.notificationsEnabled.value?.let {
-                            if (it) {
-                                args.channelId?.let {
-                                    viewModel.disableNotifications(requireContext().tokenPrefs().getString(AppConstants.USER_ID, null), it, setting, requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false))
+                        // Accept either identifier: on login-only entry points (deep links,
+                        // history) channelId is null and the old code silently no-opped —
+                        // the "locked bell" of issues #44/#58.
+                        val canonicalKey = args.channelId?.trim()?.takeIf { it.isNotBlank() }
+                            ?: args.channelLogin?.trim()?.takeIf { it.isNotBlank() }
+                        if (canonicalKey == null) {
+                            Toast.makeText(requireContext(), R.string.bell_unavailable, Toast.LENGTH_SHORT).show()
+                            return@setOnMenuItemClickListener true
+                        }
+                        if (viewModel.notificationsEnabled.value) {
+                            viewModel.disableNotifications(
+                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
+                                args.channelId,
+                                args.channelLogin,
+                                setting,
+                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false)
+                            )
+                        } else {
+                            val notificationsEnabled = requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)
+                            viewModel.enableNotifications(
+                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
+                                args.channelId,
+                                args.channelLogin,
+                                setting,
+                                notificationsEnabled,
+                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false)
+                            )
+                            if (!notificationsEnabled) {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                    ActivityCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                                    ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
                                 }
-                            } else {
-                                args.channelId?.let {
-                                    val notificationsEnabled = requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)
-                                    viewModel.enableNotifications(requireContext().tokenPrefs().getString(AppConstants.USER_ID, null), it, setting, notificationsEnabled, requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false))
-                                    if (!notificationsEnabled) {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                                            ActivityCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                                            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-                                        }
-                                        viewModel.updateNotifications(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), KickApiHelper.getKickPublicApiHeaders(requireContext()))
-                                        WorkManager.getInstance(requireContext()).enqueueUniquePeriodicWork(
-                                            "live_notifications",
-                                            ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
-                                            PeriodicWorkRequestBuilder<LiveNotificationWorker>(15, TimeUnit.MINUTES)
-                                                .setInitialDelay(1, TimeUnit.MINUTES)
-                                                .setConstraints(
-                                                    Constraints.Builder()
-                                                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                                                        .build()
-                                                )
+                                BatteryOptimizationHelper.maybePrompt(requireContext())
+                                viewModel.updateNotifications(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), KickApiHelper.getKickPublicApiHeaders(requireContext()))
+                                WorkManager.getInstance(requireContext()).enqueueUniquePeriodicWork(
+                                    "live_notifications",
+                                    ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
+                                    PeriodicWorkRequestBuilder<LiveNotificationWorker>(15, TimeUnit.MINUTES)
+                                        .setInitialDelay(1, TimeUnit.MINUTES)
+                                        .setConstraints(
+                                            Constraints.Builder()
+                                                .setRequiredNetworkType(NetworkType.CONNECTED)
                                                 .build()
                                         )
-                                        requireContext().prefs().edit { putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, true) }
-                                    }
-                                }
+                                        .build()
+                                )
+                                requireContext().prefs().edit { putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, true) }
                             }
                         }
                         true
@@ -308,16 +330,14 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
             }
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    viewModel.notificationsEnabled.collectLatest {
-                        if (it != null) {
-                            toolbar.menu.findItem(R.id.toggleNotifications)?.apply {
-                                if (it) {
-                                    icon = ContextCompat.getDrawable(requireContext(), R.drawable.baseline_notifications_black_24)
-                                    title = getString(R.string.disable_notifications)
-                                } else {
-                                    icon = ContextCompat.getDrawable(requireContext(), R.drawable.baseline_notifications_none_black_24)
-                                    title = getString(R.string.enable_notifications)
-                                }
+                    viewModel.notificationsEnabled.collectLatest { enabled ->
+                        toolbar.menu.findItem(R.id.toggleNotifications)?.apply {
+                            if (enabled) {
+                                icon = ContextCompat.getDrawable(requireContext(), R.drawable.baseline_notifications_black_24)
+                                title = getString(R.string.disable_notifications)
+                            } else {
+                                icon = ContextCompat.getDrawable(requireContext(), R.drawable.baseline_notifications_none_black_24)
+                                title = getString(R.string.enable_notifications)
                             }
                         }
                     }
@@ -817,10 +837,11 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                             KickApiHelper.getKickWebHeaders(requireContext(), true),
                             requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
                         )
-                        "enableNotifications" -> args.channelId?.let {
+                        "enableNotifications" -> {
                             viewModel.enableNotifications(
                                 requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                it,
+                                args.channelId,
+                                args.channelLogin,
                                 requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                                 requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false),
                                 requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
@@ -828,10 +849,11 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                 requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
                             )
                         }
-                        "disableNotifications" -> args.channelId?.let {
+                        "disableNotifications" -> {
                             viewModel.disableNotifications(
                                 requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                it,
+                                args.channelId,
+                                args.channelLogin,
                                 requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
                                 requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
                                 KickApiHelper.getKickWebHeaders(requireContext(), true),

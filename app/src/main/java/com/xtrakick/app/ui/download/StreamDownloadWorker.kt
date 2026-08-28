@@ -76,7 +76,11 @@ import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import javax.net.ssl.X509TrustManager
 import kotlin.coroutines.suspendCoroutine
+
 import kotlin.math.max
+
+private val IVS_NAME_REGEX = Regex("IVS-NAME=\"(.+?)\"")
+private val M3U8_URL_REGEX = Regex("https://.*\\.m3u8")
 
 @HiltWorker
 class StreamDownloadWorker @AssistedInject constructor(
@@ -183,8 +187,8 @@ class StreamDownloadWorker @AssistedInject constructor(
                 }
             }
             if (!playlist.isNullOrBlank()) {
-                val names = Regex("IVS-NAME=\"(.+?)\"").findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList()
-                val urls = Regex("https://.*\\.m3u8").findAll(playlist).map(MatchResult::value).toMutableList()
+                val names = IVS_NAME_REGEX.findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList()
+                val urls = M3U8_URL_REGEX.findAll(playlist).map(MatchResult::value).toMutableList()
                 val map = names.zip(urls)
                     .sortedByDescending {
                         it.first.substringAfter("p", "").takeWhile { it.isDigit() }.toIntOrNull()
@@ -249,8 +253,8 @@ class StreamDownloadWorker @AssistedInject constructor(
                                 }
                             }
                         }
-                        val newNames = Regex("IVS-NAME=\"(.+?)\"").findAll(newPlaylist).mapNotNull { it.groups[1]?.value }.toMutableList()
-                        val newUrls = Regex("https://.*\\.m3u8").findAll(newPlaylist).map(MatchResult::value).toMutableList()
+                        val newNames = IVS_NAME_REGEX.findAll(newPlaylist).mapNotNull { it.groups[1]?.value }.toMutableList()
+                        val newUrls = M3U8_URL_REGEX.findAll(newPlaylist).map(MatchResult::value).toMutableList()
                         val newMap = newNames.zip(newUrls)
                             .sortedByDescending {
                                 it.first.substringAfter("p", "").takeWhile { it.isDigit() }.toIntOrNull()

@@ -32,6 +32,8 @@ import java.util.TimeZone
 
 object KickApiHelper {
 
+    private val DIMENSION_PATTERN = Regex("""-\d+x\d+\.""")
+
     var checkedValidation = false
     var checkedUpdates = false
 
@@ -56,10 +58,10 @@ object KickApiHelper {
             else -> ""
         }
         return when {
-            type == "clip" -> url.replace(Regex("-\\d+x\\d+."), ".")
+            type == "clip" -> url.replace(DIMENSION_PATTERN, ".")
             url.contains("%{width}") -> url.replace("%{width}", width).replace("%{height}", height)
             url.contains("{width}") -> url.replace("{width}", width).replace("{height}", height)
-            else -> url.replace(Regex("-\\d+x\\d+."), "-${width}x${height}.")
+            else -> url.replace(DIMENSION_PATTERN, "-${width}x${height}.")
         }
     }
 

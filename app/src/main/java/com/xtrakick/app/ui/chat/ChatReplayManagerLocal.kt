@@ -27,7 +27,7 @@ class ChatReplayManagerLocal(
 
     private var messages: List<ChatMessage> = emptyList()
     private var startTime = 0L
-    private val list = mutableListOf<ChatMessage>()
+    private val list = ArrayDeque<ChatMessage>()
     private var started = false
     private var isLoading = false
     private var loadJob: Job? = null
@@ -122,6 +122,7 @@ class ChatReplayManagerLocal(
                     } == true
                 }
                 messageJob?.cancel()
+                list.clear()
                 list.addAll(queuedMessages)
                 isLoading = false
                 if (preloadMessages.isNotEmpty()) {
@@ -189,7 +190,7 @@ class ChatReplayManagerLocal(
                     // included - that is what [advanceStagger] expects.
                     spreadStaggerMs = ChatReplayPacing.advanceStagger(stagger, queuedInBucket(message.timestamp))
                 } else if (!isActive) break
-                list.remove(message)
+                if (list.isNotEmpty() && list.first() == message) list.removeFirst() else list.remove(message)
             }
         }
     }

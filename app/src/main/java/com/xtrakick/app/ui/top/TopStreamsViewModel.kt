@@ -58,6 +58,8 @@ class TopStreamsViewModel @Inject constructor(
                     StreamsSortDialog.Companion.RECENT -> "RECENT"
                     else -> "VIEWER_COUNT"
                 },
+                tags = tags,
+                languages = languages,
                 kickRepository = kickRepository,
                 apiPref = listOf(AppConstants.KICK),
             )

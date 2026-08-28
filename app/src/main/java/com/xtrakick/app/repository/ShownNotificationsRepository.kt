@@ -42,7 +42,7 @@ class ShownNotificationsRepository @Inject constructor(
             return@withContext emptyList()
         }
         val semaphore = Semaphore(8)
-        val list = coroutineScope {
+        val results = coroutineScope {
             channelIds.map { channelId ->
                 async {
                     semaphore.withPermit {
@@ -52,12 +52,22 @@ class ShownNotificationsRepository @Inject constructor(
                         // 100+ requests. FollowedLiveStreamsRepository already passes false.
                         val channel = runCatching {
                             this@ShownNotificationsRepository.kickRepository.getChannel(channelId, prefetchBadgeCatalog = false)
-                        }.getOrNull() ?: return@withPermit null
-                        channel.livestream?.let { this@ShownNotificationsRepository.kickRepository.toStream(channel) }
+                        }.getOrNull()
+                        // The Boolean records whether the fetch itself succeeded, so failed
+                        // fetches never wipe a channel's dedupe row (which used to re-notify
+                        // currently-live streams on the next healthy poll).
+                        channel?.let { this@ShownNotificationsRepository.kickRepository.toStream(it) } to (channel != null)
                     }
                 }
             }.awaitAll()
-        }.filterNotNull()
+        }
+        val fetchedKeys = channelIds.filterIndexed { index, _ -> results[index].second }.toSet()
+        if (fetchedKeys.isEmpty()) {
+            // Every fetch failed (Kick 429, offline). Keep the dedupe table untouched and
+            // try again next window instead of treating everything as new.
+            return@withContext emptyList()
+        }
+        val list = results.mapNotNull { it.first }
             .distinctBy { it.channelId ?: it.channelLogin ?: it.id }
 
         val liveList = list.mapNotNull { stream ->
@@ -70,7 +80,9 @@ class ShownNotificationsRepository @Inject constructor(
         val oldList = shownNotificationsDao.getAll()
         val oldByChannelId = oldList.associateBy { it.channelId }
         val liveByChannelId = liveList.associateBy { it.channelId }
-        oldList.filter { item -> !liveByChannelId.containsKey(item.channelId) }.let {
+        // Only sync dedupe rows of channels this poll actually fetched: a transient failure
+        // for one channel must not delete its row.
+        oldList.filter { item -> item.channelId in fetchedKeys && !liveByChannelId.containsKey(item.channelId) }.let {
             shownNotificationsDao.deleteList(it)
         }
         shownNotificationsDao.insertList(liveList)

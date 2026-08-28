@@ -26,6 +26,57 @@ object KickFeatureParsingUtils {
         "pinned_by"
     )
 
+    private val STATIC_CHUNK_URLS_REGEX = Regex(
+        """(?:https?:\\?/\\?/[^"'\\\s>]+/_next/static/chunks/[^"'\\\s>]+|/_next/static/chunks/[^"'\\\s>]+|_next/static/chunks/[^"'\\\s>]+|static/chunks/[^"'\\\s>]+)"""
+    )
+    private val NEXT_DATA_REGEX = Regex(
+        """<script[^>]*id=[\"']__NEXT_DATA__[\"'][^>]*>([\s\S]*?)</script>""",
+        setOf(RegexOption.IGNORE_CASE)
+    )
+    private val CHUNK_SCRIPT_REGEX = Regex(
+        """<script[^>]+src=[\"']([^\"']*_next/static/chunks/[^\"']+)[\"'][^>]*>""",
+        setOf(RegexOption.IGNORE_CASE)
+    )
+    private val PUSH_REGEX = Regex("""self\.__next_f\.push\((.*?)\);""", setOf(RegexOption.DOT_MATCHES_ALL))
+    private val ESCAPED_STRING_REGEX = Regex("\"((?:\\\\.|[^\"\\\\])+)\"")
+    private val BUILD_ID_REGEX = Regex("""[\"']buildId[\"']\s*:\s*[\"']([^\"']+)[\"']""")
+
+    private val CHUNK_BADGE_TYPE_REGEX = Regex(
+        """(?is)\"badge_type\"\s*:\s*\"([^\"]+)\"[\s\S]{0,260}?\"(?:badge_image_url|image_url|icon_url|url|src)\"\s*:\s*\"([^\"]+)\""""
+    )
+    private val CHUNK_KNOWN_BADGE_REGEX = Regex(
+        """(?is)\"(moderator|vip|verified|founder|subscriber|sub[_-]?gifter|staff|broadcaster|og)\"\s*:\s*\{[\s\S]{0,260}?\"(?:badge_image_url|image_url|icon_url|url|src)\"\s*:\s*\"([^\"]+)\""""
+    )
+    private val CHUNK_URL_PATTERN_REGEX = Regex(
+        """(?is)(moderator|vip|verified|founder|subscriber|sub[_-]?gifter|staff|broadcaster|og)[^\n\r]{0,240}?(https?:\\/\\/[^\"'\s)]+\.(?:svg|png|webp))"""
+    )
+
+    private val IMAGE_URL_KEYS = listOf(
+        "4x", "4", "3x", "3", "2x", "2", "1x", "1",
+        "fullsize", "medium", "small", "large", "thumbnail", "thumb", "original",
+        "src", "url", "image_url", "badge_image_url", "icon", "icon_url"
+    )
+    private val REWARD_BALANCE_KEYS = listOf("balance", "current_balance", "viewer_balance", "points_balance", "community_points_balance", "points")
+    private val REWARD_ID_KEYS = listOf("id", "reward_id", "uuid")
+    private val REWARD_TITLE_KEYS = listOf("title", "name")
+    private val REWARD_COST_KEYS = listOf("cost", "value", "points_cost")
+    private val REWARD_IMAGE_URL_KEYS = listOf("image_url", "icon_url", "url")
+    private val REWARD_INPUT_REQUIRED_KEYS = listOf("is_user_input_required", "requires_user_input")
+    private val REWARD_ENABLED_KEYS = listOf("is_enabled", "enabled", "active")
+    private val REWARD_BG_COLOR_KEYS = listOf("background_color", "color")
+    private val REWARD_PROMPT_KEYS = listOf("prompt", "description")
+
+    private val PREFERRED_TEXT_KEYS = listOf(
+        "content", "message", "text", "body", "plain_text", "display_text", "value", "comment"
+    )
+    private val IGNORED_TEXT_KEYS = setOf(
+        "id", "uuid", "user_id", "sender_id", "slug", "login", "username", "name",
+        "avatar", "avatar_url", "profile_image", "profile_picture", "image", "icon",
+        "badge", "color", "type", "created_at", "updated_at", "timestamp", "duration"
+    )
+    private val PINNED_CONTENT_KEYS = listOf("content", "text", "body", "plain_text", "display_text", "comment")
+    private val PINNED_MESSAGE_CONTAINER_KEYS = listOf("message", "chat_message", "pinned_message", "current_pinned_message", "data")
+
     data class KickWebBadgeSnapshot(
         val jsonPayloads: List<JsonElement> = emptyList(),
         val chunkUrls: List<String> = emptyList(),
@@ -55,17 +106,7 @@ object KickFeatureParsingUtils {
 
         fun collectChunkUrls(raw: String?) {
             if (raw.isNullOrBlank()) return
-            // The class must exclude backslash AND whitespace: `[^"'\\\s>]`.
-            // It previously read `[^"'\\s>]`, which in a raw string is "backslash or the
-            // letter s" with no whitespace class at all — so URLs were truncated at their
-            // first `s` (".../3787-page.js" -> ".../3787-page.j"). Dropping the `\\` instead
-            // lets the trailing backslash of an escaped `\"` be swallowed
-            // (".../3787-page.js\"). Both are needed.
-            // `\\?/` is deliberate: __next_f payloads carry JSON-escaped `https:\/\/`, and the
-            // `?` keeps plain URLs matching too.
-            Regex(
-                """(?:https?:\\?/\\?/[^"'\\\s>]+/_next/static/chunks/[^"'\\\s>]+|/_next/static/chunks/[^"'\\\s>]+|_next/static/chunks/[^"'\\\s>]+|static/chunks/[^"'\\\s>]+)"""
-            ).findAll(raw).forEach { match ->
+            STATIC_CHUNK_URLS_REGEX.findAll(raw).forEach { match ->
                 resolveChunkUrl(cleanWebUrl(match.value) ?: match.value)?.let(chunkUrls::add)
             }
         }
@@ -79,17 +120,10 @@ object KickFeatureParsingUtils {
                 ?.let { payloads.putIfAbsent(it.toString(), it) }
         }
 
-        val nextDataMatch = Regex(
-            """<script[^>]*id=[\"']__NEXT_DATA__[\"'][^>]*>([\s\S]*?)</script>""",
-            setOf(RegexOption.IGNORE_CASE)
-        ).find(html)
+        val nextDataMatch = NEXT_DATA_REGEX.find(html)
         addPayload(nextDataMatch?.groupValues?.getOrNull(1))
 
-        val chunkRegex = Regex(
-            """<script[^>]+src=[\"']([^\"']*_next/static/chunks/[^\"']+)[\"'][^>]*>""",
-            setOf(RegexOption.IGNORE_CASE)
-        )
-        chunkRegex.findAll(html).forEach { match ->
+        CHUNK_SCRIPT_REGEX.findAll(html).forEach { match ->
             val src = match.groupValues.getOrElse(1) { "" }
             normalizeScriptSrc(src, pageUrl)?.let { normalized ->
                 chunkUrls += normalized
@@ -104,13 +138,11 @@ object KickFeatureParsingUtils {
         }
         collectChunkUrls(html)
 
-        val pushRegex = Regex("""self\.__next_f\.push\((.*?)\);""", setOf(RegexOption.DOT_MATCHES_ALL))
-        pushRegex.findAll(html).forEach { match ->
+        PUSH_REGEX.findAll(html).forEach { match ->
             val pushArg = match.groupValues.getOrNull(1)
             addPayload(pushArg)
             collectChunkUrls(pushArg)
-            Regex("\"((?:\\\\.|[^\"\\\\])+)\"")
-                .findAll(pushArg.orEmpty()).forEach { stringMatch ->
+            ESCAPED_STRING_REGEX.findAll(pushArg.orEmpty()).forEach { stringMatch ->
                 val decoded = decodeJsString(stringMatch.groupValues.getOrElse(1) { "" })
                 if (decoded.startsWith("{") || decoded.startsWith("[")) {
                     addPayload(decoded)
@@ -119,8 +151,7 @@ object KickFeatureParsingUtils {
             }
         }
 
-        val buildId = Regex("""[\"']buildId[\"']\s*:\s*[\"']([^\"']+)[\"']"""
-        ).find(html)?.groupValues?.getOrNull(1)
+        val buildId = BUILD_ID_REGEX.find(html)?.groupValues?.getOrNull(1)
 
         return KickWebBadgeSnapshot(
             jsonPayloads = payloads.values.toList(),
@@ -142,21 +173,15 @@ object KickFeatureParsingUtils {
             results.putIfAbsent(normalizedType, cleanedUrl)
         }
 
-        Regex(
-            """(?is)\"badge_type\"\s*:\s*\"([^\"]+)\"[\s\S]{0,260}?\"(?:badge_image_url|image_url|icon_url|url|src)\"\s*:\s*\"([^\"]+)\""""
-        ).findAll(normalizedBody).forEach { match ->
+        CHUNK_BADGE_TYPE_REGEX.findAll(normalizedBody).forEach { match ->
             store(match.groupValues.getOrNull(1), match.groupValues.getOrNull(2))
         }
 
-        Regex(
-            """(?is)\"(moderator|vip|verified|founder|subscriber|sub[_-]?gifter|staff|broadcaster|og)\"\s*:\s*\{[\s\S]{0,260}?\"(?:badge_image_url|image_url|icon_url|url|src)\"\s*:\s*\"([^\"]+)\""""
-        ).findAll(normalizedBody).forEach { match ->
+        CHUNK_KNOWN_BADGE_REGEX.findAll(normalizedBody).forEach { match ->
             store(match.groupValues.getOrNull(1), match.groupValues.getOrNull(2))
         }
 
-        Regex(
-            """(?is)(moderator|vip|verified|founder|subscriber|sub[_-]?gifter|staff|broadcaster|og)[^\n\r]{0,240}?(https?:\\/\\/[^\"'\s)]+\.(?:svg|png|webp))"""
-        ).findAll(normalizedBody).forEach { match ->
+        CHUNK_URL_PATTERN_REGEX.findAll(normalizedBody).forEach { match ->
             store(match.groupValues.getOrNull(1), match.groupValues.getOrNull(2))
         }
 
@@ -373,19 +398,19 @@ object KickFeatureParsingUtils {
                         available = true
                     }
                     if (balance == null) {
-                        balance = intValue(element, listOf("balance", "current_balance", "viewer_balance", "points_balance", "community_points_balance", "points"))
+                        balance = intValue(element, REWARD_BALANCE_KEYS)
                     }
-                    val rewardId = stringValue(element, listOf("id", "reward_id", "uuid"))
-                    val rewardTitle = stringValue(element, listOf("title", "name"))
-                    val cost = intValue(element, listOf("cost", "value", "points_cost"))
-                    val imageUrl = stringValue(element, listOf("image_url", "icon_url", "url"))
+                    val rewardId = stringValue(element, REWARD_ID_KEYS)
+                    val rewardTitle = stringValue(element, REWARD_TITLE_KEYS)
+                    val cost = intValue(element, REWARD_COST_KEYS)
+                    val imageUrl = stringValue(element, REWARD_IMAGE_URL_KEYS)
                         ?: extractImageUrl(element["image"])
                         ?: extractImageUrl(element["icon"])
                         ?: extractImageUrl(element["default_image"])
-                    val userInputRequired = booleanValue(element, listOf("is_user_input_required", "requires_user_input"))
-                    val isEnabled = booleanValue(element, listOf("is_enabled", "enabled", "active"))
-                    val backgroundColor = stringValue(element, listOf("background_color", "color"))
-                    val prompt = stringValue(element, listOf("prompt", "description"))
+                    val userInputRequired = booleanValue(element, REWARD_INPUT_REQUIRED_KEYS)
+                    val isEnabled = booleanValue(element, REWARD_ENABLED_KEYS)
+                    val backgroundColor = stringValue(element, REWARD_BG_COLOR_KEYS)
+                    val prompt = stringValue(element, REWARD_PROMPT_KEYS)
                     val hasRewardShape = !rewardId.isNullOrBlank() || (!rewardTitle.isNullOrBlank() && cost != null) || userInputRequired != null
                     if (hasRewardShape) {
                         available = true
@@ -426,7 +451,7 @@ object KickFeatureParsingUtils {
         if (normalizedEventName.contains("gift") && findIntRecursive(root, setOf("pinned_time_seconds", "pin_duration", "pin_duration_seconds", "duration")) != null) {
             return true
         }
-        return containsKeyRecursive(root, explicitPinnedKeys)
+        return containsKeyNormalized(root, explicitPinnedKeys)
     }
 
     private fun isPinnedGiftCleared(eventName: String?, root: JsonElement): Boolean {
@@ -443,19 +468,23 @@ object KickFeatureParsingUtils {
 
     private fun containsKeyRecursive(root: JsonElement, targetKeys: Set<String>): Boolean {
         val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
+        return containsKeyNormalized(root, normalizedKeys)
+    }
+
+    private fun containsKeyNormalized(root: JsonElement, normalizedKeys: Set<String>): Boolean {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
                     if (key.lowercase(Locale.ROOT) in normalizedKeys) {
                         return true
                     }
-                    if (containsKeyRecursive(value, normalizedKeys)) {
+                    if (containsKeyNormalized(value, normalizedKeys)) {
                         return true
                     }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                if (containsKeyRecursive(child, normalizedKeys)) return true
+                if (containsKeyNormalized(child, normalizedKeys)) return true
             }
             else -> Unit
         }
@@ -464,6 +493,10 @@ object KickFeatureParsingUtils {
 
     private fun findStringRecursive(root: JsonElement, targetKeys: Set<String>): String? {
         val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
+        return findStringNormalized(root, normalizedKeys)
+    }
+
+    private fun findStringNormalized(root: JsonElement, normalizedKeys: Set<String>): String? {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
@@ -475,11 +508,11 @@ object KickFeatureParsingUtils {
                             else -> Unit
                         }
                     }
-                    findStringRecursive(value, normalizedKeys)?.let { return it }
+                    findStringNormalized(value, normalizedKeys)?.let { return it }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                findStringRecursive(child, normalizedKeys)?.let { return it }
+                findStringNormalized(child, normalizedKeys)?.let { return it }
             }
             is JsonPrimitive -> Unit
         }
@@ -488,6 +521,10 @@ object KickFeatureParsingUtils {
 
     private fun findIntRecursive(root: JsonElement, targetKeys: Set<String>): Int? {
         val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
+        return findIntNormalized(root, normalizedKeys)
+    }
+
+    private fun findIntNormalized(root: JsonElement, normalizedKeys: Set<String>): Int? {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
@@ -500,11 +537,11 @@ object KickFeatureParsingUtils {
                             else -> Unit
                         }
                     }
-                    findIntRecursive(value, normalizedKeys)?.let { return it }
+                    findIntNormalized(value, normalizedKeys)?.let { return it }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                findIntRecursive(child, normalizedKeys)?.let { return it }
+                findIntNormalized(child, normalizedKeys)?.let { return it }
             }
             else -> Unit
         }
@@ -513,6 +550,10 @@ object KickFeatureParsingUtils {
 
     private fun findBooleanRecursive(root: JsonElement, targetKeys: Set<String>): Boolean? {
         val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
+        return findBooleanNormalized(root, normalizedKeys)
+    }
+
+    private fun findBooleanNormalized(root: JsonElement, normalizedKeys: Set<String>): Boolean? {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
@@ -525,11 +566,11 @@ object KickFeatureParsingUtils {
                             else -> Unit
                         }
                     }
-                    findBooleanRecursive(value, normalizedKeys)?.let { return it }
+                    findBooleanNormalized(value, normalizedKeys)?.let { return it }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                findBooleanRecursive(child, normalizedKeys)?.let { return it }
+                findBooleanNormalized(child, normalizedKeys)?.let { return it }
             }
             else -> Unit
         }
@@ -538,17 +579,21 @@ object KickFeatureParsingUtils {
 
     private fun findObjectRecursive(root: JsonElement, targetKeys: Set<String>): JsonObject? {
         val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
+        return findObjectNormalized(root, normalizedKeys)
+    }
+
+    private fun findObjectNormalized(root: JsonElement, normalizedKeys: Set<String>): JsonObject? {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
                     if (key.lowercase(Locale.ROOT) in normalizedKeys) {
                         (value as? JsonObject)?.let { return it }
                     }
-                    findObjectRecursive(value, normalizedKeys)?.let { return it }
+                    findObjectNormalized(value, normalizedKeys)?.let { return it }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                findObjectRecursive(child, normalizedKeys)?.let { return it }
+                findObjectNormalized(child, normalizedKeys)?.let { return it }
             }
             else -> Unit
         }
@@ -557,17 +602,21 @@ object KickFeatureParsingUtils {
 
     private fun findElementRecursive(root: JsonElement, targetKeys: Set<String>): JsonElement? {
         val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
+        return findElementNormalized(root, normalizedKeys)
+    }
+
+    private fun findElementNormalized(root: JsonElement, normalizedKeys: Set<String>): JsonElement? {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
                     if (key.lowercase(Locale.ROOT) in normalizedKeys) {
                         return value
                     }
-                    findElementRecursive(value, normalizedKeys)?.let { return it }
+                    findElementNormalized(value, normalizedKeys)?.let { return it }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                findElementRecursive(child, normalizedKeys)?.let { return it }
+                findElementNormalized(child, normalizedKeys)?.let { return it }
             }
             else -> Unit
         }
@@ -606,11 +655,7 @@ object KickFeatureParsingUtils {
             null -> null
             is JsonPrimitive -> element.contentOrNull?.takeIf { it.isNotBlank() }
             is JsonObject -> {
-                listOf(
-                    "4x", "4", "3x", "3", "2x", "2", "1x", "1",
-                    "fullsize", "medium", "small", "large", "thumbnail", "thumb", "original",
-                    "src", "url", "image_url", "badge_image_url", "icon", "icon_url"
-                ).forEach { key ->
+                IMAGE_URL_KEYS.forEach { key ->
                     val value = (element[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
                     if (!value.isNullOrBlank()) {
                         return value
@@ -649,20 +694,12 @@ object KickFeatureParsingUtils {
                 }
             }
             is JsonObject -> {
-                val preferredKeys = listOf(
-                    "content", "message", "text", "body", "plain_text", "display_text", "value", "comment"
-                )
-                preferredKeys.forEach { key ->
+                PREFERRED_TEXT_KEYS.forEach { key ->
                     extractReadableText(element[key])?.let { return it }
                 }
-                val ignoredKeys = setOf(
-                    "id", "uuid", "user_id", "sender_id", "slug", "login", "username", "name",
-                    "avatar", "avatar_url", "profile_image", "profile_picture", "image", "icon",
-                    "badge", "color", "type", "created_at", "updated_at", "timestamp", "duration"
-                )
                 val parts = element.entries.mapNotNull { (key, value) ->
                     key.lowercase(Locale.ROOT)
-                        .takeIf { it !in ignoredKeys }
+                        .takeIf { it !in IGNORED_TEXT_KEYS }
                         ?.let { extractReadableText(value) }
                 }.distinct()
                 when {
@@ -682,11 +719,11 @@ object KickFeatureParsingUtils {
             is JsonPrimitive -> element.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
             is JsonArray -> element.firstNotNullOfOrNull { extractPinnedMessageContent(it) }
             is JsonObject -> {
-                listOf("content", "text", "body", "plain_text", "display_text", "comment").forEach { key ->
+                PINNED_CONTENT_KEYS.forEach { key ->
                     (element[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
                 }
                 (element["message"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
-                listOf("message", "chat_message", "pinned_message", "current_pinned_message", "data").forEach { key ->
+                PINNED_MESSAGE_CONTAINER_KEYS.forEach { key ->
                     extractPinnedMessageContent(element[key])?.let { return it }
                 }
                 null

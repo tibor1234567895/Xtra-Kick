@@ -204,4 +204,16 @@ class ChatAdapterUtilsTest {
         assertEquals(2, loaderCalls.get())
         assertEquals(listOf(null, "loaded"), callbacks)
     }
+
+    @Test
+    fun shortTokenDoesNotSplitConcatenatedEmotes() {
+        val emotes = listOf(Emote(name = "a"), Emote(name = "b"))
+        assertNull(ChatAdapterUtils.splitConcatenatedThirdPartyEmotes("a", emotes))
+        assertNull(ChatAdapterUtils.splitConcatenatedThirdPartyEmotes("", emotes))
+    }
+
+    @Test
+    fun emptyEmotesListDoesNotSplit() {
+        assertNull(ChatAdapterUtils.splitConcatenatedThirdPartyEmotes("testemote", emptyList()))
+    }
 }

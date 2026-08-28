@@ -29,6 +29,33 @@ fun Context.prefs(): SharedPreferences = PreferenceManager.getDefaultSharedPrefe
 
 fun Context.tokenPrefs(): SharedPreferences = getSharedPreferences("prefs2", Context.MODE_PRIVATE)
 
+private val MATERIAL3_THEMES = arrayOf(
+    // Dark (0)
+    arrayOf(
+        intArrayOf(R.style.DarkThemeSmallCornersReducedPaddingCompactText, R.style.DarkThemeSmallCornersReducedPadding, R.style.DarkThemeSmallCornersCompactText, R.style.DarkThemeSmallCorners),
+        intArrayOf(R.style.DarkThemeNoCornersReducedPaddingCompactText, R.style.DarkThemeNoCornersReducedPadding, R.style.DarkThemeNoCornersCompactText, R.style.DarkThemeNoCorners),
+        intArrayOf(R.style.DarkThemeReducedPaddingCompactText, R.style.DarkThemeReducedPadding, R.style.DarkThemeCompactText, R.style.DarkTheme),
+    ),
+    // Amoled (1)
+    arrayOf(
+        intArrayOf(R.style.AmoledThemeSmallCornersReducedPaddingCompactText, R.style.AmoledThemeSmallCornersReducedPadding, R.style.AmoledThemeSmallCornersCompactText, R.style.AmoledThemeSmallCorners),
+        intArrayOf(R.style.AmoledThemeNoCornersReducedPaddingCompactText, R.style.AmoledThemeNoCornersReducedPadding, R.style.AmoledThemeNoCornersCompactText, R.style.AmoledThemeNoCorners),
+        intArrayOf(R.style.AmoledThemeReducedPaddingCompactText, R.style.AmoledThemeReducedPadding, R.style.AmoledThemeCompactText, R.style.AmoledTheme),
+    ),
+    // Light (2)
+    arrayOf(
+        intArrayOf(R.style.LightThemeSmallCornersReducedPaddingCompactText, R.style.LightThemeSmallCornersReducedPadding, R.style.LightThemeSmallCornersCompactText, R.style.LightThemeSmallCorners),
+        intArrayOf(R.style.LightThemeNoCornersReducedPaddingCompactText, R.style.LightThemeNoCornersReducedPadding, R.style.LightThemeNoCornersCompactText, R.style.LightThemeNoCorners),
+        intArrayOf(R.style.LightThemeReducedPaddingCompactText, R.style.LightThemeReducedPadding, R.style.LightThemeCompactText, R.style.LightTheme),
+    ),
+    // Blue (3)
+    arrayOf(
+        intArrayOf(R.style.BlueThemeSmallCornersReducedPaddingCompactText, R.style.BlueThemeSmallCornersReducedPadding, R.style.BlueThemeSmallCornersCompactText, R.style.BlueThemeSmallCorners),
+        intArrayOf(R.style.BlueThemeNoCornersReducedPaddingCompactText, R.style.BlueThemeNoCornersReducedPadding, R.style.BlueThemeNoCornersCompactText, R.style.BlueThemeNoCorners),
+        intArrayOf(R.style.BlueThemeReducedPaddingCompactText, R.style.BlueThemeReducedPadding, R.style.BlueThemeCompactText, R.style.BlueTheme),
+    ),
+)
+
 fun Activity.applyTheme() {
     // On Android 15, wrong language is used when multiple languages are set in device settings
     if (Build.VERSION.SDK_INT == Build.VERSION_CODES.VANILLA_ICE_CREAM) {
@@ -52,176 +79,24 @@ fun Activity.applyTheme() {
     if (prefs().getBoolean(AppConstants.UI_THEME_MATERIAL3, true)) {
         val reducedPadding = prefs().getBoolean(AppConstants.UI_THEME_REDUCED_PADDING, false)
         val compactText = prefs().getBoolean(AppConstants.UI_THEME_COMPACT_TEXT, false)
-        when (prefs().getString(AppConstants.UI_THEME_ROUNDED_CORNERS, "0")) {
-            "1" -> {
-                when {
-                    reducedPadding && compactText -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkThemeSmallCornersReducedPaddingCompactText
-                                "6" -> R.style.AmoledThemeSmallCornersReducedPaddingCompactText
-                                "5" -> R.style.LightThemeSmallCornersReducedPaddingCompactText
-                                "1" -> R.style.AmoledThemeSmallCornersReducedPaddingCompactText
-                                "2" -> R.style.LightThemeSmallCornersReducedPaddingCompactText
-                                "3" -> R.style.BlueThemeSmallCornersReducedPaddingCompactText
-                                else -> R.style.DarkThemeSmallCornersReducedPaddingCompactText
-                            }
-                        )
-                    }
-                    reducedPadding -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkThemeSmallCornersReducedPadding
-                                "6" -> R.style.AmoledThemeSmallCornersReducedPadding
-                                "5" -> R.style.LightThemeSmallCornersReducedPadding
-                                "1" -> R.style.AmoledThemeSmallCornersReducedPadding
-                                "2" -> R.style.LightThemeSmallCornersReducedPadding
-                                "3" -> R.style.BlueThemeSmallCornersReducedPadding
-                                else -> R.style.DarkThemeSmallCornersReducedPadding
-                            }
-                        )
-                    }
-                    compactText -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkThemeSmallCornersCompactText
-                                "6" -> R.style.AmoledThemeSmallCornersCompactText
-                                "5" -> R.style.LightThemeSmallCornersCompactText
-                                "1" -> R.style.AmoledThemeSmallCornersCompactText
-                                "2" -> R.style.LightThemeSmallCornersCompactText
-                                "3" -> R.style.BlueThemeSmallCornersCompactText
-                                else -> R.style.DarkThemeSmallCornersCompactText
-                            }
-                        )
-                    }
-                    else -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkThemeSmallCorners
-                                "6" -> R.style.AmoledThemeSmallCorners
-                                "5" -> R.style.LightThemeSmallCorners
-                                "1" -> R.style.AmoledThemeSmallCorners
-                                "2" -> R.style.LightThemeSmallCorners
-                                "3" -> R.style.BlueThemeSmallCorners
-                                else -> R.style.DarkThemeSmallCorners
-                            }
-                        )
-                    }
-                }
-            }
-            "2" -> {
-                when {
-                    reducedPadding && compactText -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkThemeNoCornersReducedPaddingCompactText
-                                "6" -> R.style.AmoledThemeNoCornersReducedPaddingCompactText
-                                "5" -> R.style.LightThemeNoCornersReducedPaddingCompactText
-                                "1" -> R.style.AmoledThemeNoCornersReducedPaddingCompactText
-                                "2" -> R.style.LightThemeNoCornersReducedPaddingCompactText
-                                "3" -> R.style.BlueThemeNoCornersReducedPaddingCompactText
-                                else -> R.style.DarkThemeNoCornersReducedPaddingCompactText
-                            }
-                        )
-                    }
-                    reducedPadding -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkThemeNoCornersReducedPadding
-                                "6" -> R.style.AmoledThemeNoCornersReducedPadding
-                                "5" -> R.style.LightThemeNoCornersReducedPadding
-                                "1" -> R.style.AmoledThemeNoCornersReducedPadding
-                                "2" -> R.style.LightThemeNoCornersReducedPadding
-                                "3" -> R.style.BlueThemeNoCornersReducedPadding
-                                else -> R.style.DarkThemeNoCornersReducedPadding
-                            }
-                        )
-                    }
-                    compactText -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkThemeNoCornersCompactText
-                                "6" -> R.style.AmoledThemeNoCornersCompactText
-                                "5" -> R.style.LightThemeNoCornersCompactText
-                                "1" -> R.style.AmoledThemeNoCornersCompactText
-                                "2" -> R.style.LightThemeNoCornersCompactText
-                                "3" -> R.style.BlueThemeNoCornersCompactText
-                                else -> R.style.DarkThemeNoCornersCompactText
-                            }
-                        )
-                    }
-                    else -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkThemeNoCorners
-                                "6" -> R.style.AmoledThemeNoCorners
-                                "5" -> R.style.LightThemeNoCorners
-                                "1" -> R.style.AmoledThemeNoCorners
-                                "2" -> R.style.LightThemeNoCorners
-                                "3" -> R.style.BlueThemeNoCorners
-                                else -> R.style.DarkThemeNoCorners
-                            }
-                        )
-                    }
-                }
-            }
-            else -> {
-                when {
-                    reducedPadding && compactText -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkThemeReducedPaddingCompactText
-                                "6" -> R.style.AmoledThemeReducedPaddingCompactText
-                                "5" -> R.style.LightThemeReducedPaddingCompactText
-                                "1" -> R.style.AmoledThemeReducedPaddingCompactText
-                                "2" -> R.style.LightThemeReducedPaddingCompactText
-                                "3" -> R.style.BlueThemeReducedPaddingCompactText
-                                else -> R.style.DarkThemeReducedPaddingCompactText
-                            }
-                        )
-                    }
-                    reducedPadding -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkThemeReducedPadding
-                                "6" -> R.style.AmoledThemeReducedPadding
-                                "5" -> R.style.LightThemeReducedPadding
-                                "1" -> R.style.AmoledThemeReducedPadding
-                                "2" -> R.style.LightThemeReducedPadding
-                                "3" -> R.style.BlueThemeReducedPadding
-                                else -> R.style.DarkThemeReducedPadding
-                            }
-                        )
-                    }
-                    compactText -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkThemeCompactText
-                                "6" -> R.style.AmoledThemeCompactText
-                                "5" -> R.style.LightThemeCompactText
-                                "1" -> R.style.AmoledThemeCompactText
-                                "2" -> R.style.LightThemeCompactText
-                                "3" -> R.style.BlueThemeCompactText
-                                else -> R.style.DarkThemeCompactText
-                            }
-                        )
-                    }
-                    else -> {
-                        setTheme(
-                            when (theme) {
-                                "4" -> R.style.DarkTheme
-                                "6" -> R.style.AmoledTheme
-                                "5" -> R.style.LightTheme
-                                "1" -> R.style.AmoledTheme
-                                "2" -> R.style.LightTheme
-                                "3" -> R.style.BlueTheme
-                                else -> R.style.DarkTheme
-                            }
-                        )
-                    }
-                }
-            }
+        val themeIndex = when (theme) {
+            "1", "6" -> 1
+            "2", "5" -> 2
+            "3" -> 3
+            else -> 0
         }
+        val cornerIndex = when (prefs().getString(AppConstants.UI_THEME_ROUNDED_CORNERS, "0")) {
+            "1" -> 0
+            "2" -> 1
+            else -> 2
+        }
+        val modifierIndex = when {
+            reducedPadding && compactText -> 0
+            reducedPadding -> 1
+            compactText -> 2
+            else -> 3
+        }
+        setTheme(MATERIAL3_THEMES[themeIndex][cornerIndex][modifierIndex])
         if (theme == "4" || theme == "6" || theme == "5") {
             DynamicColors.applyToActivityIfAvailable(
                 this,

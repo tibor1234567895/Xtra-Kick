@@ -4,6 +4,7 @@ import android.content.Context
 import com.xtrakick.app.BuildConfig
 
 object KickOAuthConfig {
+    private val WHITESPACE_REGEX = Regex("\\s+")
 
     const val DEFAULT_REDIRECT_URI = "https://localhost/callback"
     private const val DEFAULT_SCOPES = "user:read chat:write events:subscribe"
@@ -64,7 +65,7 @@ object KickOAuthConfig {
     private fun parseScopes(scopes: String?): Set<String> {
         return scopes
             ?.trim()
-            ?.split(Regex("\\s+"))
+            ?.split(WHITESPACE_REGEX)
             ?.mapNotNull { it.trim().takeIf(String::isNotBlank) }
             ?.toSet()
             ?: emptySet()

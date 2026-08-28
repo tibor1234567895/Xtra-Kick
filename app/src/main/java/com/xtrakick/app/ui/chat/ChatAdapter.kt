@@ -132,38 +132,38 @@ class ChatAdapter(
     )
 
     private fun renderConfigSignature(): Long {
-        return listOf(
-            enableTimestamps,
-            timestampFormat,
-            firstMsgVisibility,
-            firstChatMsg,
-            redeemedChatMsg,
-            redeemedNoMsg,
-            rewardChatMsg,
-            replyMessage,
-            useRandomColors,
-            useReadableColors,
-            isLightTheme,
-            nameDisplay,
-            useBoldNames,
-            showNamePaints,
-            showStvBadges,
-            showKickBadges,
-            showPersonalEmotes,
-            showSystemMessageEmotes,
-            chatUrl,
-            loggedInUser,
-            imageLibrary,
-            messageTextSize,
-            emoteSize,
-            badgeSize,
-            emoteQuality,
-            animateGifs,
-            animatedEmoteFps,
-            enableOverlayEmotes,
-            enableAlternatingLineShadows,
-            alternatingLineShadowStrength
-        ).joinToString("|").hashCode().toLong()
+        var result = 1L
+        result = 31L * result + (if (enableTimestamps) 1 else 0)
+        result = 31L * result + (timestampFormat?.hashCode() ?: 0)
+        result = 31L * result + firstMsgVisibility
+        result = 31L * result + firstChatMsg.hashCode()
+        result = 31L * result + redeemedChatMsg.hashCode()
+        result = 31L * result + redeemedNoMsg.hashCode()
+        result = 31L * result + rewardChatMsg.hashCode()
+        result = 31L * result + replyMessage.hashCode()
+        result = 31L * result + (if (useRandomColors) 1 else 0)
+        result = 31L * result + (if (useReadableColors) 1 else 0)
+        result = 31L * result + (if (isLightTheme) 1 else 0)
+        result = 31L * result + (nameDisplay?.hashCode() ?: 0)
+        result = 31L * result + (if (useBoldNames) 1 else 0)
+        result = 31L * result + (if (showNamePaints) 1 else 0)
+        result = 31L * result + (if (showStvBadges) 1 else 0)
+        result = 31L * result + (if (showKickBadges) 1 else 0)
+        result = 31L * result + (if (showPersonalEmotes) 1 else 0)
+        result = 31L * result + (if (showSystemMessageEmotes) 1 else 0)
+        result = 31L * result + (chatUrl?.hashCode() ?: 0)
+        result = 31L * result + (loggedInUser?.hashCode() ?: 0)
+        result = 31L * result + (imageLibrary?.hashCode() ?: 0)
+        result = 31L * result + java.lang.Float.floatToIntBits(messageTextSize)
+        result = 31L * result + emoteSize
+        result = 31L * result + badgeSize
+        result = 31L * result + emoteQuality.hashCode()
+        result = 31L * result + (if (animateGifs) 1 else 0)
+        result = 31L * result + animatedEmoteFps
+        result = 31L * result + (if (enableOverlayEmotes) 1 else 0)
+        result = 31L * result + (if (enableAlternatingLineShadows) 1 else 0)
+        result = 31L * result + alternatingLineShadowStrength
+        return result
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -252,16 +252,9 @@ class ChatAdapter(
      * changed, dropping their pending emote updates on the floor.
      */
     private fun messageBindKey(chatMessage: ChatMessage): String {
-        return listOfNotNull(
-            chatMessage.id,
-            chatMessage.timestamp?.toString(),
-            chatMessage.userId,
-            chatMessage.userLogin,
-            chatMessage.userName,
-            chatMessage.message,
-            chatMessage.systemMsg,
-            chatMessage.fullMsg
-        ).joinToString("|")
+        return chatMessage.id
+            ?: chatMessage.fullMsg
+            ?: "${chatMessage.timestamp ?: 0L}:${chatMessage.userId.orEmpty()}:${chatMessage.message.orEmpty()}"
     }
 
     private fun bindMessage(holder: ViewHolder, position: Int) {

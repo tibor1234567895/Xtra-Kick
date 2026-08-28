@@ -87,6 +87,7 @@ import com.xtrakick.app.ui.player.LiveLatencySettings
 import com.xtrakick.app.ui.player.PlaybackService
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.BatteryOptimizationHelper
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.KickOAuthConfig
@@ -421,6 +422,9 @@ class SettingsActivity : AppCompatActivity() {
                     kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), true),
                     kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext())
                 )
+                if (newValue == true) {
+                    BatteryOptimizationHelper.maybePrompt(requireActivity())
+                }
                 (requireActivity() as? SettingsActivity)?.setResult()
                 true
             }

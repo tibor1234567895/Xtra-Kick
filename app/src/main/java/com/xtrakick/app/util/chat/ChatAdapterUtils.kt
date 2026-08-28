@@ -239,14 +239,18 @@ object ChatAdapterUtils {
             names = emoteByName.keys.sortedByDescending(String::length)
         }
 
+        fun getExactEmote(name: String): Emote? = emoteByName[name]
+
         fun split(token: String): List<Emote>? {
-            if (token.isBlank() || names.isEmpty()) return null
+            if (token.length < 2 || names.isEmpty()) return null
             val memo = HashMap<Int, List<Emote>?>()
 
             fun resolve(index: Int): List<Emote>? {
                 if (index == token.length) return emptyList()
                 if (memo.containsKey(index)) return memo[index]
+                val remainingLen = token.length - index
                 for (name in names) {
+                    if (name.length > remainingLen) continue
                     if (!token.startsWith(name, index)) continue
                     val match = emoteByName.getValue(name)
                     val suffix = resolve(index + name.length)
@@ -411,7 +415,7 @@ object ChatAdapterUtils {
         return textToInspect
             .split(" ")
             .any { token ->
-                !Patterns.WEB_URL.matcher(token).matches() && token.contains(loggedInUser, true)
+                token.contains(loggedInUser, true) && !Patterns.WEB_URL.matcher(token).matches()
             }
     }
 
@@ -900,6 +904,7 @@ object ChatAdapterUtils {
                 addAll(synchronized(thirdPartyEmotes) { thirdPartyEmotes.toList() })
             }.distinctBy { it.name }
             val concatenatedEmoteMatcher = ConcatenatedEmoteMatcher(availableThirdPartyEmotes)
+            val personalEmotesByName = personalEmotes?.filter { !it.name.isNullOrBlank() }?.associateBy { it.name!! }
             for (value in split) {
                 if (chatMessage.bits != null) {
                     val bitsCount = value.takeLastWhile { it.isDigit() }
@@ -949,9 +954,7 @@ object ChatAdapterUtils {
                         }
                     }
                 }
-                val emote = personalEmotes?.find {
-                    it.name == value
-                } ?: availableThirdPartyEmotes.find { it.name == value }
+                val emote = personalEmotesByName?.get(value) ?: concatenatedEmoteMatcher.getExactEmote(value)
                 if (emote != null) {
                     if (emote.isOverlayEmote && enableOverlayEmotes && previousImage != null) {
                         builder.replace(builderIndex - 1, builderIndex + value.length, "")
@@ -1146,12 +1149,15 @@ object ChatAdapterUtils {
                     builderIndex += 2
                     continue
                 }
-                if (Patterns.WEB_URL.matcher(value).matches()) {
-                    val url = if (value.startsWith("http")) value else "https://$value"
-                    builder.setSpan(URLSpan(url), builderIndex, builderIndex + value.length, SPAN_EXCLUSIVE_EXCLUSIVE)
-                    previousImage = null
-                    builderIndex += value.length + 1
-                    continue
+                if ((value.startsWith("http://", true) || value.startsWith("https://", true) || (value.length > 3 && value.contains('.'))) && Patterns.WEB_URL.matcher(value).matches()) {
+                    val url = if (value.startsWith("http://", true) || value.startsWith("https://", true)) value else "https://$value"
+                    val scheme = android.net.Uri.parse(url).scheme?.lowercase(java.util.Locale.ROOT)
+                    if (scheme == "http" || scheme == "https") {
+                        builder.setSpan(URLSpan(url), builderIndex, builderIndex + value.length, SPAN_EXCLUSIVE_EXCLUSIVE)
+                        previousImage = null
+                        builderIndex += value.length + 1
+                        continue
+                    }
                 }
                 if (value.startsWith('@') && useBoldNames) {
                     builder.setSpan(StyleSpan(Typeface.BOLD), builderIndex, builderIndex + value.length, SPAN_EXCLUSIVE_EXCLUSIVE)

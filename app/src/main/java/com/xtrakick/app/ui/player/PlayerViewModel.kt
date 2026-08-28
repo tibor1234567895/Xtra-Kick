@@ -503,8 +503,8 @@ class PlayerViewModel @Inject constructor(
     fun saveFollowChannel(userId: String?, channelId: String?, channelLogin: String?, channelName: String?, setting: Int, notificationsEnabled: Boolean, startedAt: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                val followId = channelId ?: channelLogin
-                if (!followId.isNullOrBlank()) {
+                val followId = (channelId ?: channelLogin)?.trim()?.takeIf { it.isNotBlank() }
+                if (followId != null) {
                     localFollowsChannel.saveFollow(LocalFollowChannel(followId, channelLogin, channelName))
                     _isFollowing.value = true
                     follow.value = Pair(true, null)
@@ -524,8 +524,8 @@ class PlayerViewModel @Inject constructor(
     fun deleteFollowChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                val followId = channelId ?: channelLogin
-                if (!followId.isNullOrBlank()) {
+                val followId = (channelId ?: channelLogin)?.trim()?.takeIf { it.isNotBlank() }
+                if (followId != null) {
                     localFollowsChannel.getFollow(channelId, channelLogin)?.let { localFollowsChannel.deleteFollow(it) }
                     _isFollowing.value = false
                     follow.value = Pair(false, null)

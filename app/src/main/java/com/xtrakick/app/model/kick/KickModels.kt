@@ -18,6 +18,7 @@ class KickLivestream(
     val id: Long? = null,
     @SerialName("channel_id")
     val channelId: Long? = null,
+    val language: String? = null,
     @SerialName("created_at")
     val createdAt: String? = null,
     @SerialName("session_title")

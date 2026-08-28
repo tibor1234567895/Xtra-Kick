@@ -2679,7 +2679,7 @@ class KickRepository @Inject constructor(
             nestedMessages != null -> KickMessagesData(messages = nestedMessages, cursor = cursor)
             directMessages != null -> KickMessagesData(messages = directMessages, cursor = cursor)
             else -> runCatching {
-                dataObject?.let { json.decodeFromString<KickMessagesData>(it.toString()) }
+                dataObject?.let { json.decodeFromJsonElement<KickMessagesData>(it) }
                     ?: json.decodeFromString<KickMessagesEnvelope>(raw).data
                     ?: KickMessagesData()
             }.getOrElse {

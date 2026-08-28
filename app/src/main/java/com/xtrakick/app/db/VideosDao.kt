@@ -29,6 +29,9 @@ interface VideosDao {
     @Query("SELECT * FROM videos WHERE channel_id = :id")
     fun getByUserId(id: String): List<OfflineVideo>
 
+    @Query("SELECT DISTINCT channel_id FROM videos WHERE channel_id IS NOT NULL")
+    fun getAllChannelIds(): List<String>
+
     @Query("SELECT * FROM videos WHERE lower(url) LIKE '%.m3u8'")
     fun getPlaylists(): List<OfflineVideo>
 

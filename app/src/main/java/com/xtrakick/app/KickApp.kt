@@ -29,6 +29,7 @@ import com.xtrakick.app.util.coil.CacheControlCacheStrategy
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.UsagePing
 import com.xtrakick.app.util.prefs
+import com.xtrakick.app.repository.NotificationUsersRepository
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.OkHttpClient
@@ -43,6 +44,9 @@ import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 
 @HiltAndroidApp
@@ -74,6 +78,12 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
             androidx.media3.common.util.Log.setLogLevel(media3LogLevel)
         }
         showUnexpectedLogoutNoticeThisProcess = AuthStateHelper.hasPendingUnexpectedLogoutNotice(this)
+        // One-time re-key of legacy login-keyed notification rows (issues #44/#58); no-op
+        // when there is nothing to migrate. Fire-and-forget: must not delay cold start.
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching { notificationUsersRepository.get().migrateLegacyKeys() }
+                .onFailure { android.util.Log.w("KickApp", "notification key migration failed", it) }
+        }
         UsagePing.maybeSend(this, delayMillis = 15_000L)
         var startedActivities = 0
         registerActivityLifecycleCallbacks(
@@ -106,6 +116,9 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
+
+    @Inject
+    lateinit var notificationUsersRepository: Lazy<NotificationUsersRepository>
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()

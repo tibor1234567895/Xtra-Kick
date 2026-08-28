@@ -3,6 +3,7 @@ package com.xtrakick.app.db
 import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.xtrakick.app.model.NotificationUser
 
@@ -15,7 +16,7 @@ interface NotificationUsersDao {
     @Query("SELECT * FROM notifications WHERE channelId = :id")
     fun getByUserId(id: String): NotificationUser?
 
-    @Insert()
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insert(item: NotificationUser)
 
     @Query("DELETE FROM notifications")

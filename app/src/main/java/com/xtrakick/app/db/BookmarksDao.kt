@@ -17,6 +17,9 @@ interface BookmarksDao {
     @Query("SELECT * FROM bookmarks")
     fun getAll(): List<Bookmark>
 
+    @Query("SELECT DISTINCT userId FROM bookmarks WHERE userId IS NOT NULL")
+    fun getAllUserIds(): List<String>
+
     @Query("SELECT * FROM bookmarks WHERE videoId = :id")
     fun getByVideoId(id: String): Bookmark?
 

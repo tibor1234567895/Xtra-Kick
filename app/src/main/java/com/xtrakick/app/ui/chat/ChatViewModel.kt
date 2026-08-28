@@ -213,7 +213,10 @@ class ChatViewModel @Inject constructor(
     private var currentPrediction: Prediction? = null
     var predictionClosed = false
     val predictionSecondsLeft = MutableStateFlow<Int?>(null)
-    var predictionTimer: Timer? = null
+    var predictionTimerJob: Job? = null
+    var predictionTimer: Job?
+        get() = predictionTimerJob
+        set(value) { predictionTimerJob = value }
     var streamId: String? = null
     private val rewardList = mutableListOf<ChatMessage>()
     private var lastPinnedGiftId: String? = null
@@ -486,7 +489,7 @@ class ChatViewModel @Inject constructor(
         currentPrediction = null
         latestPrediction.value = null
         predictionSecondsLeft.value = null
-        predictionTimer?.cancel()
+        predictionTimerJob?.cancel()
     }
 
     private fun loadEmotes(channelId: String?, channelLogin: String?) {
@@ -1106,8 +1109,10 @@ class ChatViewModel @Inject constructor(
         if (parsed.isEmpty()) return false
         val added = mutableListOf<Emote>()
         synchronized(thirdPartyEmotes) {
+            val existingNames = thirdPartyEmotes.mapNotNull { it.name }.toHashSet()
             parsed.forEach { emote ->
-                if (thirdPartyEmotes.none { it.name == emote.name }) {
+                val name = emote.name
+                if (name != null && existingNames.add(name)) {
                     thirdPartyEmotes.add(emote)
                     added.add(emote)
                 }
@@ -1115,10 +1120,12 @@ class ChatViewModel @Inject constructor(
         }
         if (added.isEmpty()) return false
         synchronized(autoCompleteList) {
-            autoCompleteList.addAll(added.filter { it !in autoCompleteList })
+            val existingAutocomplete = autoCompleteList.toHashSet()
+            added.forEach { if (existingAutocomplete.add(it)) autoCompleteList.add(it) }
         }
         synchronized(allEmotes) {
-            allEmotes.addAll(added.mapNotNull { it.name }.filter { it !in allEmotes })
+            val existingAll = allEmotes.toHashSet()
+            added.forEach { it.name?.let { name -> if (existingAll.add(name)) allEmotes.add(name) } }
         }
         return true
     }
@@ -2534,7 +2541,7 @@ class ChatViewModel @Inject constructor(
         latestPrediction.value = null
         predictionClosed = true
         predictionSecondsLeft.value = null
-        predictionTimer?.cancel()
+        predictionTimerJob?.cancel()
         viewModelScope.launch {
             synchronized(chatMessages) {
                 val size = chatMessages.size
@@ -2822,18 +2829,14 @@ class ChatViewModel @Inject constructor(
                 val secondsLeft = ((((mergedPrediction.createdAt + (mergedPrediction.predictionWindowSeconds * 1000)) - System.currentTimeMillis())) / 1000).toInt()
                 if (secondsLeft > 0) {
                     predictionSecondsLeft.value = secondsLeft
-                    predictionTimer?.cancel()
-                    predictionTimer = Timer().apply {
-                        scheduleAtFixedRate(1000, 1000) {
-                            val seconds = predictionSecondsLeft.value
-                            if (seconds != null) {
-                                predictionSecondsLeft.value = seconds - 1
-                                if (seconds <= 1) {
-                                    this@apply.cancel()
-                                }
-                            } else {
-                                this@apply.cancel()
-                            }
+                    predictionTimerJob?.cancel()
+                    predictionTimerJob = viewModelScope.launch {
+                        while (isActive) {
+                            delay(1000L)
+                            val seconds = predictionSecondsLeft.value ?: break
+                            val next = seconds - 1
+                            predictionSecondsLeft.value = next
+                            if (next <= 0) break
                         }
                     }
                 }

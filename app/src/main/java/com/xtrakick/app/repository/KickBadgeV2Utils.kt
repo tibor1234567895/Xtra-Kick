@@ -7,6 +7,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 
+private val DIGITS_REGEX = Regex("""(\d{1,3})""")
+
 internal fun selectedKickIdentityBadges(identity: KickMessageIdentity?): List<KickMessageBadge> {
     if (identity == null) return emptyList()
     return buildList {
@@ -26,7 +28,7 @@ internal fun kickMessageBadgeType(badge: KickMessageBadge): String? {
 
 internal fun kickMessageBadgeVersion(badge: KickMessageBadge): String {
     val parsedFromText = badge.text
-        ?.let { Regex("""(\d{1,3})""").find(it) }
+        ?.let { DIGITS_REGEX.find(it) }
         ?.groupValues
         ?.getOrNull(1)
         ?.toIntOrNull()
@@ -47,7 +49,7 @@ internal fun kickMessageBadgeSpecificityValue(badge: KickMessageBadge): Int {
         ?: metadataInt(badge, "level")
         ?: badge.tier
         ?: badge.version
-        ?: Regex("""(\d{1,3})""").find(badge.text.orEmpty())?.groupValues?.getOrNull(1)?.toIntOrNull()
+        ?: DIGITS_REGEX.find(badge.text.orEmpty())?.groupValues?.getOrNull(1)?.toIntOrNull()
         ?: 1
 }
 

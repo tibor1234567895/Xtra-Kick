@@ -65,8 +65,13 @@ class ChannelPagerViewModel @Inject constructor(
     val integrity = MutableStateFlow<String?>(null)
 
     private val args = ChannelPagerFragmentArgs.fromSavedStateHandle(savedStateHandle)
-    private val _notificationsEnabled = MutableStateFlow<Boolean?>(null)
-    val notificationsEnabled: StateFlow<Boolean?> = _notificationsEnabled
+    private val _notificationsEnabled = MutableStateFlow(false)
+    val notificationsEnabled: StateFlow<Boolean> = _notificationsEnabled
+
+    // Single canonical poll key for the notifications table. Channel page and player both
+    // derive it the same way, so a row written on one screen is visible on the other.
+    private fun canonicalKey(channelId: String?, channelLogin: String?): String? =
+        (channelId ?: channelLogin)?.trim()?.takeIf { it.isNotBlank() }
     val notifications = MutableStateFlow<Pair<Boolean, String?>?>(null)
     private val _isFollowing = MutableStateFlow<Boolean?>(null)
     val isFollowing: StateFlow<Boolean?> = _isFollowing
@@ -194,15 +199,16 @@ class ChannelPagerViewModel @Inject constructor(
         }
     }
 
-    fun enableNotifications(userId: String?, channelId: String, setting: Int, notificationsEnabled: Boolean, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun enableNotifications(userId: String?, channelId: String?, channelLogin: String?, setting: Int, notificationsEnabled: Boolean, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
+            val key = canonicalKey(channelId, channelLogin) ?: return@launch
             try {
-                notificationUsersRepository.saveUser(NotificationUser(channelId))
+                notificationUsersRepository.saveUser(NotificationUser(key))
                 _notificationsEnabled.value = true
                 notifications.value = Pair(true, null)
                 if (notificationsEnabled) {
                     _stream.value?.startedAt.takeUnless { it.isNullOrBlank() }?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let {
-                        shownNotificationsRepository.saveList(listOf(ShownNotification(channelId, it)))
+                        shownNotificationsRepository.saveList(listOf(ShownNotification(key, it)))
                     }
                 }
                 if (notificationsEnabled) {
@@ -218,19 +224,24 @@ class ChannelPagerViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
-
+                // Never swallow silently: an empty catch here left _notificationsEnabled
+                // stale and the bell unresponsive (issues #44/#58).
+                Log.e(TAG, "enableNotifications failed", e)
+                notifications.value = Pair(false, e.message)
             }
         }
     }
 
-    fun disableNotifications(userId: String?, channelId: String, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun disableNotifications(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
+            val key = canonicalKey(channelId, channelLogin) ?: return@launch
             try {
-                notificationUsersRepository.deleteUser(NotificationUser(channelId))
+                notificationUsersRepository.deleteUser(NotificationUser(key))
                 _notificationsEnabled.value = false
                 notifications.value = Pair(false, null)
             } catch (e: Exception) {
-
+                Log.e(TAG, "disableNotifications failed", e)
+                notifications.value = Pair(false, e.message)
             }
         }
     }
@@ -244,14 +255,18 @@ class ChannelPagerViewModel @Inject constructor(
     fun isFollowingChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         if (_isFollowing.value == null) {
             viewModelScope.launch {
+                val followKey = canonicalKey(channelId, channelLogin)
+                if (followKey == null) {
+                    // Fail to a tappable "off" instead of a locked null state.
+                    _notificationsEnabled.value = false
+                    return@launch
+                }
                 try {
-                    val followKey = channelId ?: channelLogin
-                    if (!followKey.isNullOrBlank()) {
-                        _isFollowing.value = localFollowsChannel.getFollow(channelId, channelLogin) != null
-                        _notificationsEnabled.value = notificationUsersRepository.getByUserId(followKey) != null
-                    }
+                    _isFollowing.value = localFollowsChannel.getFollow(channelId, channelLogin) != null
+                    _notificationsEnabled.value = notificationUsersRepository.getByUserId(followKey) != null
                 } catch (e: Exception) {
-
+                    Log.e(TAG, "isFollowingChannel failed", e)
+                    _notificationsEnabled.value = false
                 }
             }
         }
@@ -260,8 +275,8 @@ class ChannelPagerViewModel @Inject constructor(
     fun saveFollowChannel(userId: String?, channelId: String?, channelLogin: String?, channelName: String?, setting: Int, notificationsEnabled: Boolean, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                val followId = channelId ?: channelLogin
-                if (!followId.isNullOrBlank()) {
+                val followId = canonicalKey(channelId, channelLogin)
+                if (followId != null) {
                     localFollowsChannel.saveFollow(LocalFollowChannel(followId, channelLogin, channelName))
                     _isFollowing.value = true
                     follow.value = Pair(true, null)
@@ -282,8 +297,8 @@ class ChannelPagerViewModel @Inject constructor(
     fun deleteFollowChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                val followId = channelId ?: channelLogin
-                if (!followId.isNullOrBlank()) {
+                val followId = canonicalKey(channelId, channelLogin)
+                if (followId != null) {
                     localFollowsChannel.getFollow(channelId, channelLogin)?.let { localFollowsChannel.deleteFollow(it) }
                     _isFollowing.value = false
                     follow.value = Pair(false, null)
