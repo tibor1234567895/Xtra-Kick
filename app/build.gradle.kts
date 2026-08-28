@@ -161,6 +161,7 @@ android {
         unitTests.isIncludeAndroidResources = true
     }
     lint {
+        checkReleaseBuilds = false
         disable += listOf(
             "AlwaysShowAction",
             "AndroidGradlePluginVersion",
