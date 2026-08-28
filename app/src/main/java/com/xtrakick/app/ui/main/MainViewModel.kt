@@ -19,7 +19,9 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
+import com.xtrakick.app.model.AppUpdateInfo
 import com.xtrakick.app.model.VideoPosition
 import com.xtrakick.app.model.kick.auth.KickBackendIntrospectRequest
 import com.xtrakick.app.model.kick.auth.KickBackendRefreshRequest
@@ -52,6 +54,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -132,7 +135,8 @@ class MainViewModel @Inject constructor(
     val user = MutableStateFlow<User?>(null)
     val game = MutableStateFlow<Pair<Game?, String?>?>(null)
 
-    val updateUrl = MutableSharedFlow<String?>()
+    val updateInfo = MutableSharedFlow<AppUpdateInfo?>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val updateUrl = MutableSharedFlow<String?>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     var updateSize: Long? = null
     var updateJob: Job? = null
     val updateProgress = MutableSharedFlow<Int>()
@@ -918,50 +922,79 @@ class MainViewModel @Inject constructor(
 
     fun checkUpdates(networkLibrary: String?, url: String, lastChecked: Long) {
         viewModelScope.launch(Dispatchers.IO) {
-            updateUrl.emit(
-                try {
-                    val response = when {
-                        networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+            if (BuildConfig.DEBUG && applicationContext.prefs().getBoolean(AppConstants.DEBUG_MOCK_UPDATE_AVAILABLE, false)) {
+                val mockTime = System.currentTimeMillis() + 86_400_000L
+                if (mockTime > lastChecked) {
+                    val mockInfo = AppUpdateInfo(
+                        downloadUrl = "https://github.com/tibor1234567895/Xtra-Kick/releases/latest",
+                        size = 25_000_000L,
+                        updatedAt = mockTime,
+                        releaseTitle = "v99.0.0 (Debug Test Update)",
+                        releaseNotes = "### Simulated Release Notes\n- Verified in-app updater startup checks\n- Verified Remind Me Later and Skip actions"
+                    )
+                    updateSize = mockInfo.size
+                    updateInfo.emit(mockInfo)
+                    updateUrl.emit(mockInfo.downloadUrl)
+                    KickApiHelper.checkedUpdates = true
+                    return@launch
+                }
+            }
+            val updateInfoResult: AppUpdateInfo? = try {
+                val response = when {
+                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                        val response = suspendCoroutine { continuation ->
+                            httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
+                        }
+                        json.decodeFromString<JsonObject>(String(response.second))
+                    }
+                    networkLibrary == "Cronet" && cronetEngine != null -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                            val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
+                            cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
+                            val response = request.future.get().responseBody as String
+                            json.decodeFromString<JsonObject>(response)
+                        } else {
                             val response = suspendCoroutine { continuation ->
-                                httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
+                                cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
                             }
                             json.decodeFromString<JsonObject>(String(response.second))
                         }
-                        networkLibrary == "Cronet" && cronetEngine != null -> {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                                cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                                val response = request.future.get().responseBody as String
-                                json.decodeFromString<JsonObject>(response)
-                            } else {
-                                val response = suspendCoroutine { continuation ->
-                                    cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                }
-                                json.decodeFromString<JsonObject>(String(response.second))
-                            }
-                        }
-                        else -> {
-                            okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                                json.decodeFromString<JsonObject>(response.body.string())
-                            }
+                    }
+                    else -> {
+                        okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                            json.decodeFromString<JsonObject>(response.body.string())
                         }
                     }
-                    response["assets"]?.jsonArray?.find {
-                        val asset = it.jsonObject
-                        asset.getValue("content_type").jsonPrimitive.contentOrNull == "application/vnd.android.package-archive" ||
-                            (asset["name"]?.jsonPrimitive?.contentOrNull)?.endsWith(".apk") == true
-                    }?.jsonObject?.let { obj ->
-                        obj.getValue("updated_at").jsonPrimitive.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let {
-                            if (it > lastChecked) {
-                                updateSize = obj["size"]?.jsonPrimitive?.longOrNull
-                                obj.getValue("browser_download_url").jsonPrimitive.contentOrNull
-                            } else null
-                        }
-                    }
-                } catch (e: Exception) {
-                    null
                 }
-            )
+                val releaseNotes = response["body"]?.jsonPrimitive?.contentOrNull
+                val releaseTitle = response["name"]?.jsonPrimitive?.contentOrNull ?: response["tag_name"]?.jsonPrimitive?.contentOrNull
+                response["assets"]?.jsonArray?.find {
+                    val asset = it.jsonObject
+                    asset["content_type"]?.jsonPrimitive?.contentOrNull == "application/vnd.android.package-archive" ||
+                        (asset["name"]?.jsonPrimitive?.contentOrNull)?.endsWith(".apk") == true
+                }?.jsonObject?.let { obj ->
+                    val updatedAt = obj["updated_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
+                        ?: response["published_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
+                        ?: response["created_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
+                    val downloadUrl = obj["browser_download_url"]?.jsonPrimitive?.contentOrNull
+                    val size = obj["size"]?.jsonPrimitive?.longOrNull
+                    if (updatedAt != null && downloadUrl != null && updatedAt > lastChecked) {
+                        updateSize = size
+                        AppUpdateInfo(
+                            downloadUrl = downloadUrl,
+                            size = size,
+                            updatedAt = updatedAt,
+                            releaseTitle = releaseTitle,
+                            releaseNotes = releaseNotes
+                        )
+                    } else null
+                }
+            } catch (e: Exception) {
+                DiagnosticLogger.e("MainViewModel", "checkUpdates failed", e)
+                null
+            }
+            updateInfo.emit(updateInfoResult)
+            updateUrl.emit(updateInfoResult?.downloadUrl)
         }
         KickApiHelper.checkedUpdates = true
     }

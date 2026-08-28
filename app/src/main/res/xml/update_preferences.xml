@@ -17,7 +17,7 @@
         app:singleLineTitle="false" />
 
     <EditTextPreference
-        android:defaultValue="7"
+        android:defaultValue="0"
         android:key="update_check_frequency"
         android:title="@string/update_check_frequency"
         app:iconSpaceReserved="false"

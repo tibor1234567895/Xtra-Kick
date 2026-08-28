@@ -28,6 +28,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.SearchView
+import com.xtrakick.app.model.AppUpdateInfo
 import androidx.core.app.ActivityCompat
 import androidx.core.content.edit
 import androidx.core.content.FileProvider
@@ -447,10 +448,11 @@ class SettingsActivity : AppCompatActivity() {
                 true
             }
             findPreference<Preference>("action_check_updates")?.setOnPreferenceClickListener {
+                val lastInstallTime = requireContext().tokenPrefs().getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
                 viewModel.checkUpdates(
                     requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
                     requireContext().prefs().getString(AppConstants.UPDATE_URL, null) ?: "https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest",
-                    requireContext().tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECKED, 0)
+                    lastInstallTime
                 )
                 true
             }
@@ -502,8 +504,8 @@ class SettingsActivity : AppCompatActivity() {
             (requireActivity() as? SettingsActivity)?.getSelectedSearchItem()?.let { scrollToPreference(it) }
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    viewModel.updateUrl.collectLatest { updateUrl ->
-                        if (updateUrl != null) {
+                    viewModel.updateInfo.collectLatest { updateInfo ->
+                        if (updateInfo != null) {
                             if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
                                 !requireContext().prefs().getBoolean(AppConstants.UPDATE_USE_BROWSER, false) &&
                                 !requireContext().packageManager.canRequestPackageInstalls()
@@ -518,27 +520,39 @@ class SettingsActivity : AppCompatActivity() {
 
                                 }
                             }
+                            val message = buildString {
+                                if (!updateInfo.releaseNotes.isNullOrBlank()) {
+                                    append(updateInfo.releaseNotes.trim())
+                                    append("\n\n")
+                                }
+                                append(getString(R.string.update_message))
+                            }
+                            val title = updateInfo.releaseTitle?.takeIf { it.isNotBlank() } ?: getString(R.string.update_available)
+
                             requireActivity().getAlertDialogBuilder()
-                                .setTitle(getString(R.string.update_available))
-                                .setMessage(getString(R.string.update_message))
-                                .setPositiveButton(getString(R.string.yes)) { _, _ ->
+                                .setTitle(title)
+                                .setMessage(message)
+                                .setPositiveButton(getString(R.string.update_action_update)) { _, _ ->
                                     if (BuildConfig.DEBUG || requireContext().prefs().getBoolean(AppConstants.UPDATE_USE_BROWSER, false)) {
                                         try {
-                                            val intent = Intent(Intent.ACTION_VIEW, updateUrl.toUri()).apply {
+                                            val intent = Intent(Intent.ACTION_VIEW, updateInfo.downloadUrl.toUri()).apply {
                                                 addCategory(Intent.CATEGORY_BROWSABLE)
                                             }
                                             startActivity(intent)
-                                            requireContext().tokenPrefs().edit {
-                                                putLong(AppConstants.UPDATE_LAST_CHECKED, System.currentTimeMillis())
-                                            }
                                         } catch (e: ActivityNotFoundException) {
                                             Toast.makeText(requireContext(), R.string.no_browser_found, Toast.LENGTH_LONG).show()
                                         }
                                     } else {
-                                        viewModel.downloadUpdate(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), updateUrl)
+                                        viewModel.downloadUpdate(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), updateInfo.downloadUrl)
                                     }
                                 }
-                                .setNegativeButton(getString(R.string.no), null)
+                                .setNeutralButton(getString(R.string.update_remind_later), null)
+                                .setNegativeButton(getString(R.string.update_skip_version)) { _, _ ->
+                                    requireContext().tokenPrefs().edit {
+                                        putLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, updateInfo.updatedAt)
+                                        putLong(AppConstants.UPDATE_LAST_CHECKED, updateInfo.updatedAt)
+                                    }
+                                }
                                 .show()
                         } else {
                             Toast.makeText(requireContext(), R.string.no_updates_found, Toast.LENGTH_LONG).show()
@@ -1818,9 +1832,17 @@ class SettingsActivity : AppCompatActivity() {
                 true
             }
             findPreference<EditTextPreference>("update_check_frequency")?.apply {
-                summary = getString(R.string.update_check_frequency_summary, text)
+                fun updateSummary(value: String?) {
+                    val days = value?.toIntOrNull() ?: 0
+                    summary = when {
+                        days <= 0 -> getString(R.string.update_check_frequency_every_startup)
+                        days == 1 -> getString(R.string.update_check_frequency_daily)
+                        else -> getString(R.string.update_check_frequency_summary, days.toString())
+                    }
+                }
+                updateSummary(text)
                 setOnPreferenceChangeListener { _, newValue ->
-                    summary = getString(R.string.update_check_frequency_summary, newValue)
+                    updateSummary(newValue as? String)
                     true
                 }
             }
@@ -1896,6 +1918,16 @@ class SettingsActivity : AppCompatActivity() {
                     putLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, (System.currentTimeMillis() / 1000L) - 3600L)
                 }
                 Toast.makeText(requireContext(), R.string.debug_force_kick_token_expiry_done, Toast.LENGTH_LONG).show()
+                true
+            }
+            findPreference<Preference>("action_reset_update_timestamps")?.setOnPreferenceClickListener {
+                requireContext().tokenPrefs().edit {
+                    putLong(AppConstants.UPDATE_LAST_CHECKED, 0L)
+                    putLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
+                    putLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, 0L)
+                    putLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, 0L)
+                }
+                Toast.makeText(requireContext(), R.string.debug_reset_update_timestamps_success, Toast.LENGTH_SHORT).show()
                 true
             }
             findPreference<Preference>("action_api_settings")?.setOnPreferenceClickListener { preference ->

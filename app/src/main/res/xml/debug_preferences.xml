@@ -31,6 +31,13 @@
             android:title="@string/debug_force_kick_token_expiry"
             app:iconSpaceReserved="false"
             app:singleLineTitle="false" />
+
+        <Preference
+            android:key="action_reset_update_timestamps"
+            android:summary="@string/debug_reset_update_timestamps_summary"
+            android:title="@string/debug_reset_update_timestamps"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
     </PreferenceCategory>
 
     <PreferenceCategory
@@ -125,6 +132,14 @@
             android:defaultValue="false"
             android:key="debug_player_menu_playlist_tags"
             android:title="@string/show_playlist_tags"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="debug_mock_update_available"
+            android:summary="@string/debug_mock_update_available_summary"
+            android:title="@string/debug_mock_update_available"
             app:iconSpaceReserved="false"
             app:singleLineTitle="false" />
 

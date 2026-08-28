@@ -714,6 +714,12 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="auto_check_updates">Check for updates on startup</string>
     <string name="update_check_frequency">Update check frequency</string>
     <string name="update_check_frequency_summary">Every %s days</string>
+    <string name="update_check_frequency_every_startup">On every startup</string>
+    <string name="update_check_frequency_daily">Daily</string>
+    <string name="update_remind_later">Remind me later</string>
+    <string name="update_skip_version">Skip this update</string>
+    <string name="update_action_update">Update</string>
+    <string name="release_notes">Release notes</string>
     <string name="notification_live_channel_title">Live notifications</string>
     <string name="live_notification">%s is live</string>
     <string name="live_notifications">Live notifications</string>
@@ -1003,4 +1009,9 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="multipov_badge">×%d</string>
     <string name="multipov_stream_count">%1$d/%2$d</string>
     <string name="multipov_latency_approx">~%1$.1fs</string>
+    <string name="debug_mock_update_available">Mock update available</string>
+    <string name="debug_mock_update_available_summary">Simulate an available newer update for testing dialogs and startup checks</string>
+    <string name="debug_reset_update_timestamps">Reset update check history</string>
+    <string name="debug_reset_update_timestamps_summary">Clear all update check and skip timestamps to simulate a fresh install</string>
+    <string name="debug_reset_update_timestamps_success">Update check history reset</string>
 </resources>

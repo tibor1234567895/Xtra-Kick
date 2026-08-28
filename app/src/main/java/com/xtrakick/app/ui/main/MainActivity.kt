@@ -70,6 +70,7 @@ import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.KickApp
 import com.xtrakick.app.databinding.ActivityMainBinding
 import com.xtrakick.app.databinding.DialogUpdateDownloadBinding
+import com.xtrakick.app.model.AppUpdateInfo
 import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.model.ui.Stream
@@ -161,6 +162,7 @@ class MainActivity : AppCompatActivity() {
     lateinit var localFollowChannelRepository: LocalFollowChannelRepository
 
     private lateinit var prefs: SharedPreferences
+    private var checkedUpdatesOnLaunch = false
     private var updateDownloadDialogBinding: DialogUpdateDownloadBinding? = null
     private var updateDownloadDialog: AlertDialog? = null
     var settingsResultLauncher: ActivityResultLauncher<Intent>? = null
@@ -275,14 +277,27 @@ class MainActivity : AppCompatActivity() {
                 && networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         viewModel.isNetworkAvailable.value = isNetworkAvailableOnCreate
         fun checkUpdatesIfNeeded() {
-            if (!KickApiHelper.checkedUpdates &&
-                prefs.getBoolean(AppConstants.UPDATE_CHECK_ENABLED, false) &&
-                (prefs.getString(AppConstants.UPDATE_CHECK_FREQUENCY, "7")?.toIntOrNull() ?: 7) * 86400000 + tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECKED, 0) < System.currentTimeMillis()
-            ) {
+            if (checkedUpdatesOnLaunch) return
+            if (!prefs.getBoolean(AppConstants.UPDATE_CHECK_ENABLED, false)) return
+
+            val frequencyDays = prefs.getString(AppConstants.UPDATE_CHECK_FREQUENCY, "0")?.toLongOrNull() ?: 0L
+            val frequencyMs = frequencyDays * 86_400_000L
+            val lastCheckTimestamp = tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, 0L)
+            val now = System.currentTimeMillis()
+
+            if (frequencyDays <= 0L || lastCheckTimestamp + frequencyMs < now) {
+                checkedUpdatesOnLaunch = true
+                tokenPrefs().edit {
+                    putLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, now)
+                }
+                val skippedReleaseTime = tokenPrefs().getLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, 0L)
+                val lastInstallTime = tokenPrefs().getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
+                val cutoff = maxOf(skippedReleaseTime, lastInstallTime)
+
                 viewModel.checkUpdates(
                     prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
                     prefs.getString(AppConstants.UPDATE_URL, null) ?: "https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest",
-                    tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECKED, 0)
+                    cutoff
                 )
             }
         }
@@ -328,28 +343,34 @@ class MainActivity : AppCompatActivity() {
         }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.updateUrl.collectLatest {
-                    if (it != null) {
+                viewModel.updateInfo.collectLatest { updateInfo ->
+                    if (updateInfo != null) {
+                        val message = buildString {
+                            if (!updateInfo.releaseNotes.isNullOrBlank()) {
+                                append(updateInfo.releaseNotes.trim())
+                                append("\n\n")
+                            }
+                            append(getString(R.string.update_message))
+                        }
+                        val title = updateInfo.releaseTitle?.takeIf { it.isNotBlank() } ?: getString(R.string.update_available)
+
                         getAlertDialogBuilder()
-                            .setTitle(getString(R.string.update_available))
-                            .setMessage(getString(R.string.update_message))
-                            .setPositiveButton(getString(R.string.yes)) { _, _ ->
+                            .setTitle(title)
+                            .setMessage(message)
+                            .setPositiveButton(getString(R.string.update_action_update)) { _, _ ->
                                 if (BuildConfig.DEBUG || prefs.getBoolean(AppConstants.UPDATE_USE_BROWSER, false)) {
                                     try {
-                                        val intent = Intent(Intent.ACTION_VIEW, it.toUri()).apply {
+                                        val intent = Intent(Intent.ACTION_VIEW, updateInfo.downloadUrl.toUri()).apply {
                                             addCategory(Intent.CATEGORY_BROWSABLE)
                                         }
                                         startActivity(intent)
-                                        tokenPrefs().edit {
-                                            putLong(AppConstants.UPDATE_LAST_CHECKED, System.currentTimeMillis())
-                                        }
                                     } catch (e: ActivityNotFoundException) {
                                         Toast.makeText(this@MainActivity, R.string.no_browser_found, Toast.LENGTH_LONG).show()
                                     }
                                 } else {
                                     val binding = DialogUpdateDownloadBinding.inflate(layoutInflater)
                                     updateDownloadDialogBinding = binding
-                                    val size = viewModel.updateSize
+                                    val size = updateInfo.size ?: viewModel.updateSize
                                     if (size != null) {
                                         binding.textView.text = getString(
                                             R.string.downloading_update_progress,
@@ -360,7 +381,7 @@ class MainActivity : AppCompatActivity() {
                                         binding.textView.text = getString(R.string.downloading_update)
                                         binding.progressBar.visibility = View.GONE
                                     }
-                                    viewModel.downloadUpdate(prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), it)
+                                    viewModel.downloadUpdate(prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), updateInfo.downloadUrl)
                                     val dialog = getAlertDialogBuilder()
                                         .setView(binding.root)
                                         .setNegativeButton(getString(android.R.string.cancel), null)
@@ -373,9 +394,11 @@ class MainActivity : AppCompatActivity() {
                                     updateDownloadDialog = dialog
                                 }
                             }
-                            .setNegativeButton(getString(R.string.no)) { _, _ ->
+                            .setNeutralButton(getString(R.string.update_remind_later), null)
+                            .setNegativeButton(getString(R.string.update_skip_version)) { _, _ ->
                                 tokenPrefs().edit {
-                                    putLong(AppConstants.UPDATE_LAST_CHECKED, System.currentTimeMillis())
+                                    putLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, updateInfo.updatedAt)
+                                    putLong(AppConstants.UPDATE_LAST_CHECKED, updateInfo.updatedAt)
                                 }
                             }
                             .show()
