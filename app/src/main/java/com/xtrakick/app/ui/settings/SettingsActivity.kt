@@ -72,6 +72,7 @@ import androidx.work.WorkManager
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.SettingsNavGraphDirections
+import com.xtrakick.app.util.AppUpdateDialogHelper
 import com.xtrakick.app.databinding.ActivitySettingsBinding
 import com.xtrakick.app.model.kick.KickEventSubscription
 import com.xtrakick.app.model.kick.KickEventSubscriptionRequestItem
@@ -520,19 +521,10 @@ class SettingsActivity : AppCompatActivity() {
 
                                 }
                             }
-                            val message = buildString {
-                                if (!updateInfo.releaseNotes.isNullOrBlank()) {
-                                    append(updateInfo.releaseNotes.trim())
-                                    append("\n\n")
-                                }
-                                append(getString(R.string.update_message))
-                            }
-                            val title = updateInfo.releaseTitle?.takeIf { it.isNotBlank() } ?: getString(R.string.update_available)
-
-                            requireActivity().getAlertDialogBuilder()
-                                .setTitle(title)
-                                .setMessage(message)
-                                .setPositiveButton(getString(R.string.update_action_update)) { _, _ ->
+                            AppUpdateDialogHelper.showUpdateDialog(
+                                context = requireContext(),
+                                updateInfo = updateInfo,
+                                onUpdate = {
                                     if (BuildConfig.DEBUG || requireContext().prefs().getBoolean(AppConstants.UPDATE_USE_BROWSER, false)) {
                                         try {
                                             val intent = Intent(Intent.ACTION_VIEW, updateInfo.downloadUrl.toUri()).apply {
@@ -545,15 +537,15 @@ class SettingsActivity : AppCompatActivity() {
                                     } else {
                                         viewModel.downloadUpdate(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), updateInfo.downloadUrl)
                                     }
-                                }
-                                .setNeutralButton(getString(R.string.update_remind_later), null)
-                                .setNegativeButton(getString(R.string.update_skip_version)) { _, _ ->
+                                },
+                                onRemindLater = {},
+                                onSkip = {
                                     requireContext().tokenPrefs().edit {
                                         putLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, updateInfo.updatedAt)
                                         putLong(AppConstants.UPDATE_LAST_CHECKED, updateInfo.updatedAt)
                                     }
                                 }
-                                .show()
+                            )
                         } else {
                             Toast.makeText(requireContext(), R.string.no_updates_found, Toast.LENGTH_LONG).show()
                         }
@@ -1831,19 +1823,9 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 true
             }
-            findPreference<EditTextPreference>("update_check_frequency")?.apply {
-                fun updateSummary(value: String?) {
-                    val days = value?.toIntOrNull() ?: 0
-                    summary = when {
-                        days <= 0 -> getString(R.string.update_check_frequency_every_startup)
-                        days == 1 -> getString(R.string.update_check_frequency_daily)
-                        else -> getString(R.string.update_check_frequency_summary, days.toString())
-                    }
-                }
-                updateSummary(text)
-                setOnPreferenceChangeListener { _, newValue ->
-                    updateSummary(newValue as? String)
-                    true
+            findPreference<ListPreference>("update_check_frequency")?.apply {
+                if (value == null) {
+                    value = "0"
                 }
             }
             findPreference<SwitchPreferenceCompat>("update_use_browser")?.setOnPreferenceChangeListener { _, newValue ->

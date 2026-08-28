@@ -68,6 +68,7 @@ import androidx.work.WorkManager
 import com.xtrakick.app.R
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.KickApp
+import com.xtrakick.app.util.AppUpdateDialogHelper
 import com.xtrakick.app.databinding.ActivityMainBinding
 import com.xtrakick.app.databinding.DialogUpdateDownloadBinding
 import com.xtrakick.app.model.AppUpdateInfo
@@ -278,9 +279,9 @@ class MainActivity : AppCompatActivity() {
         viewModel.isNetworkAvailable.value = isNetworkAvailableOnCreate
         fun checkUpdatesIfNeeded() {
             if (checkedUpdatesOnLaunch) return
-            if (!prefs.getBoolean(AppConstants.UPDATE_CHECK_ENABLED, false)) return
+            if (!prefs.getBoolean(AppConstants.UPDATE_CHECK_ENABLED, true)) return
 
-            val frequencyDays = prefs.getString(AppConstants.UPDATE_CHECK_FREQUENCY, "0")?.toLongOrNull() ?: 0L
+            val frequencyDays = prefs.getString(AppConstants.UPDATE_CHECK_FREQUENCY, "7")?.toLongOrNull() ?: 7L
             val frequencyMs = frequencyDays * 86_400_000L
             val lastCheckTimestamp = tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, 0L)
             val now = System.currentTimeMillis()
@@ -345,19 +346,10 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.updateInfo.collectLatest { updateInfo ->
                     if (updateInfo != null) {
-                        val message = buildString {
-                            if (!updateInfo.releaseNotes.isNullOrBlank()) {
-                                append(updateInfo.releaseNotes.trim())
-                                append("\n\n")
-                            }
-                            append(getString(R.string.update_message))
-                        }
-                        val title = updateInfo.releaseTitle?.takeIf { it.isNotBlank() } ?: getString(R.string.update_available)
-
-                        getAlertDialogBuilder()
-                            .setTitle(title)
-                            .setMessage(message)
-                            .setPositiveButton(getString(R.string.update_action_update)) { _, _ ->
+                        AppUpdateDialogHelper.showUpdateDialog(
+                            context = this@MainActivity,
+                            updateInfo = updateInfo,
+                            onUpdate = {
                                 if (BuildConfig.DEBUG || prefs.getBoolean(AppConstants.UPDATE_USE_BROWSER, false)) {
                                     try {
                                         val intent = Intent(Intent.ACTION_VIEW, updateInfo.downloadUrl.toUri()).apply {
@@ -393,15 +385,15 @@ class MainActivity : AppCompatActivity() {
                                         .show()
                                     updateDownloadDialog = dialog
                                 }
-                            }
-                            .setNeutralButton(getString(R.string.update_remind_later), null)
-                            .setNegativeButton(getString(R.string.update_skip_version)) { _, _ ->
+                            },
+                            onRemindLater = {},
+                            onSkip = {
                                 tokenPrefs().edit {
                                     putLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, updateInfo.updatedAt)
                                     putLong(AppConstants.UPDATE_LAST_CHECKED, updateInfo.updatedAt)
                                 }
                             }
-                            .show()
+                        )
                     }
                 }
             }

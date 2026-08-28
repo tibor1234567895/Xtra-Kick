@@ -165,4 +165,35 @@ class AppUpdateParsingTest {
         assertEquals("v99.0.0 (Debug Test Update)", mockInfo.releaseTitle)
         assertTrue(mockInfo.updatedAt > lastChecked)
     }
+
+    @Test
+    fun formatChangelogFiltersNoiseAndFormatsBullets() {
+        val raw = """
+            e781408 chore: clean compiler warnings
+            8583ae6 build: compile against Android SDK 37
+            08f17da Merge branch 'validate-pr-54'
+            1623e86 Merge branch 'validate-pr-49' into integrate-dependabot
+            Active Changelog: https://github.com/tibor1234567895/Xtra-Kick/commits/main
+            Release build 2026-08-28 11:19:59 UTC
+        """.trimIndent()
+
+        val formatted = AppUpdateDialogHelper.formatChangelog(raw, "Default Description")
+        val expected = "• chore: clean compiler warnings\n• build: compile against Android SDK 37"
+
+        assertEquals(expected, formatted)
+    }
+
+    @Test
+    fun formatChangelogFallsBackWhenEmptyOrOnlyNoise() {
+        val noiseOnly = """
+            08f17da Merge branch 'validate-pr-54'
+            Active Changelog: https://github.com/tibor1234567895/Xtra-Kick/commits/main
+        """.trimIndent()
+
+        val fallback = AppUpdateDialogHelper.formatChangelog(noiseOnly, "Default Description")
+        assertEquals("Default Description", fallback)
+
+        val nullFallback = AppUpdateDialogHelper.formatChangelog(null, "Default Description")
+        assertEquals("Default Description", nullFallback)
+    }
 }

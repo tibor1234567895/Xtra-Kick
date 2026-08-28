@@ -1,33 +1,52 @@
 <androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
-    <EditTextPreference
-        android:defaultValue="https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest"
-        android:key="update_url"
-        android:title="@string/update_url"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false"
-        app:useSimpleSummaryProvider="true" />
+    <PreferenceCategory
+        android:title="@string/update_category_automatic"
+        app:iconSpaceReserved="false">
 
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="update_check_enabled"
-        android:title="@string/auto_check_updates"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="update_check_enabled"
+            android:summary="@string/auto_check_updates_summary"
+            android:title="@string/auto_check_updates"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
 
-    <EditTextPreference
-        android:defaultValue="0"
-        android:key="update_check_frequency"
-        android:title="@string/update_check_frequency"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
+        <ListPreference
+            android:defaultValue="7"
+            android:dialogTitle="@string/update_check_frequency"
+            android:entries="@array/updateFrequencyEntries"
+            android:entryValues="@array/updateFrequencyValues"
+            android:key="update_check_frequency"
+            android:title="@string/update_check_frequency"
+            app:dependency="update_check_enabled"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false"
+            app:useSimpleSummaryProvider="true" />
 
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="update_use_browser"
-        android:title="@string/update_using_browser"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:title="@string/update_category_advanced"
+        app:iconSpaceReserved="false">
+
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="update_use_browser"
+            android:summary="@string/update_using_browser_summary"
+            android:title="@string/update_using_browser"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <EditTextPreference
+            android:defaultValue="https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest"
+            android:key="update_url"
+            android:title="@string/update_url"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false"
+            app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
 
 </androidx.preference.PreferenceScreen>

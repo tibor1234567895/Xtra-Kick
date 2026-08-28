@@ -428,4 +428,18 @@
         <item>15</item>
         <item>30</item>
     </string-array>
+
+    <string-array name="updateFrequencyEntries">
+        <item>@string/update_check_frequency_every_startup</item>
+        <item>@string/update_check_frequency_daily</item>
+        <item>@string/update_check_frequency_weekly</item>
+        <item>@string/update_check_frequency_monthly</item>
+    </string-array>
+
+    <string-array name="updateFrequencyValues">
+        <item>0</item>
+        <item>1</item>
+        <item>7</item>
+        <item>30</item>
+    </string-array>
 </resources>
