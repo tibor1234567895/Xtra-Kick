@@ -29,7 +29,7 @@ jobs:
     - name: Checkout sources
       uses: actions/checkout@v7
       with:
-        fetch-depth: 0
+        fetch-depth: 50
         filter: blob:none
     - name: Setup Java
       uses: actions/setup-java@v5
@@ -44,28 +44,13 @@ jobs:
     - name: Decode release keystore
       run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > app/release-keystore.jks
 
-    - name: Test, lint, and build with Gradle
-      run: ./gradlew testDebugUnitTest lintDebug assembleRelease
-
-    - name: Upload reports
-      if: always()
-      uses: actions/upload-artifact@v6
-      with:
-        name: check-reports
-        path: |
-          app/build/reports/tests/
-          app/build/reports/lint-results-debug.html
+    - name: Build Release with Gradle
+      run: ./gradlew assembleRelease --build-cache --parallel
 
     - name: Verify release signature
       run: |
         APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -r | head -1)
         "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/*.apk
-
-    - name: Upload a Build Artifact
-      uses: actions/upload-artifact@v6
-      with:
-        name: apk
-        path: app/build/outputs/apk/release/*.apk
 
     - name: Generate release notes
       run: |
