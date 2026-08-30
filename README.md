@@ -2,7 +2,7 @@
 
 An unofficial Android app for browsing and watching Kick streams. Forked from Xtra (a Twitch client) and rebuilt around Kick.
 
-This is a small personal project maintained by one developer in occasional spare time, primarily for personal use. It is pre-alpha software: it may be unstable, break at any time, or stop working entirely if Kick changes their service. You are welcome to use it, but please keep in mind there are no plans for scheduled updates or new features. Use it at your own risk. The maintainer is not responsible for damage, data loss, account issues, or any other problems caused by using this app.
+This is a small personal project maintained by one developer in occasional spare time, primarily for personal use. It is alpha software: it may be unstable, break at any time, or stop working entirely if Kick changes their service. You are welcome to use it, but please keep in mind there are no plans for scheduled updates or new features. Use it at your own risk. The maintainer is not responsible for damage, data loss, account issues, or any other problems caused by using this app.
 
 ## What it can do
 
@@ -27,17 +27,17 @@ This is a small personal project maintained by one developer in occasional spare
 
 - Live streams, categories, and clips browsing with sorting and language filters.
 - Search across streams, channels, categories, and videos with recent search history.
-- Channel pages with VODs, clips, about info, panels, and social links.
-- Team pages.
+- Channel pages with VODs, clips, about info, follower counts, verified badges, and social links.
 
 ### Follows and notifications
 
 - Local follows for channels and categories stored on your device, not on Kick.
-- Import your existing follows from kick.com through the app.
+- Automatic follow import from kick.com upon login, with manual import dialog fallback.
 - Notifications when followed channels go live.
 
 ### Downloads and extras
 
+- Kick daily reward challenges, streaks, and watch time tracking.
 - Download live streams, VODs, and clips for offline viewing, with resume support.
 - Bookmarks for VODs.
 - Multi-view: watch several streams at once in a grid.
@@ -46,7 +46,7 @@ This is a small personal project maintained by one developer in occasional spare
 ## Limitations
 
 - Unofficial. Everything relies on Kick's public API, website endpoints, and undocumented interfaces. Any of these can change or break without notice.
-- Logging in with your Kick account (email and password) works out of the box in the signed release APK. When building from source yourself, you need to configure your own OAuth client ID and backend URL. Without login you cannot send chat or use authenticated features.
+- Logging in with your Kick account via official OAuth 2.0 PKCE web authorization works out of the box in the signed release APK. When building from source yourself, you need to configure your own OAuth client ID and backend URL. Without login you cannot send chat or use authenticated features.
 - Some features depend on unofficial endpoints that are less reliable than official ones.
 - English UI only. The language setting filters stream content, not the interface.
 - No Chromecast support.
@@ -54,7 +54,7 @@ This is a small personal project maintained by one developer in occasional spare
 ## Security notes
 
 - Login uses OAuth 2.0 with PKCE against Kick's authorization server, routed through a small backend service operated by the maintainer. The backend is open source: [Xtra-Kick-OAuth-Backend](https://github.com/tibor1234567895/Xtra-Kick-OAuth-Backend). Tokens are stored locally and refreshed automatically; logout revokes them.
-- The follow import feature runs in a WebView restricted to kick.com origins only.
+- Follow import and web authorization run in WebViews restricted to kick.com and id.kick.com origins only.
 - The app is not affiliated with or endorsed by Kick. You use your account at your own discretion.
 
 ## License
