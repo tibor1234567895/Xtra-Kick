@@ -750,7 +750,7 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="daily_reward_login_required">Open Kick login in the app once to enable daily rewards.</string>
     <string name="daily_reward_load_failed">Couldn\'t load the daily reward. Try again.</string>
     <string name="daily_reward_claim_failed">Couldn\'t claim the reward. It may already have been claimed.</string>
-    <string name="daily_reward_reset">Daily reward resets at %s</string>
+    <string name="daily_reward_reset">Daily Reward resets at %s</string>
     <string name="daily_reward_winner">Daily reward winner</string>
     <string name="daily_reward_rarity">%s reward</string>
     <plurals name="daily_reward_streak">

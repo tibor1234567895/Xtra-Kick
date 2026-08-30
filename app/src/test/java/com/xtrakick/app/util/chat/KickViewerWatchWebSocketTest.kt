@@ -14,12 +14,20 @@ class KickViewerWatchWebSocketTest {
         assertEquals("tracking.user.watch.livestream", data.getString("name"))
         assertEquals(114586, data.getInt("channel_id"))
         assertEquals(124297944, data.getInt("livestream_id"))
+        org.junit.Assert.assertTrue(data.isNull("vod_id"))
     }
 
     @Test
     fun buildsChannelHandshakeWithStringChannelId() {
         val message = KickViewerWatchWebSocket.buildChannelHandshake("114586")
         assertEquals("channel_handshake", message.getString("type"))
+        assertEquals("114586", message.getJSONObject("data").getJSONObject("message").getString("channelId"))
+    }
+
+    @Test
+    fun buildsDisconnectionMessageWithStringChannelId() {
+        val message = KickViewerWatchWebSocket.buildDisconnectionMessage("114586")
+        assertEquals("channel_disconnect", message.getString("type"))
         assertEquals("114586", message.getJSONObject("data").getJSONObject("message").getString("channelId"))
     }
 

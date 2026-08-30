@@ -133,30 +133,30 @@ class MessageClickedChatAdapter(
 
     var messageClickListener: ((ChatMessage, ChatMessage?) -> Unit)? = null
     private var renderGeneration = 0L
-    private val renderConfigSignature = listOf(
-        enableTimestamps,
-        timestampFormat,
-        firstMsgVisibility,
-        firstChatMsg,
-        redeemedChatMsg,
-        redeemedNoMsg,
-        rewardChatMsg,
-        replyMessage,
-        useRandomColors,
-        useReadableColors,
-        isLightTheme,
-        nameDisplay,
-        useBoldNames,
-        showNamePaints,
-        showStvBadges,
-        showKickBadges,
-        showPersonalEmotes,
-        showSystemMessageEmotes,
-        chatUrl,
-        loggedInUser,
-        false,
-        true
-    ).joinToString("|").hashCode().toLong()
+    private val renderConfigSignature: Long = run {
+        var result = 1L
+        result = 31L * result + (if (enableTimestamps) 1 else 0)
+        result = 31L * result + (timestampFormat?.hashCode() ?: 0)
+        result = 31L * result + firstMsgVisibility
+        result = 31L * result + firstChatMsg.hashCode()
+        result = 31L * result + redeemedChatMsg.hashCode()
+        result = 31L * result + redeemedNoMsg.hashCode()
+        result = 31L * result + rewardChatMsg.hashCode()
+        result = 31L * result + replyMessage.hashCode()
+        result = 31L * result + (if (useRandomColors) 1 else 0)
+        result = 31L * result + (if (useReadableColors) 1 else 0)
+        result = 31L * result + (if (isLightTheme) 1 else 0)
+        result = 31L * result + (nameDisplay?.hashCode() ?: 0)
+        result = 31L * result + (if (useBoldNames) 1 else 0)
+        result = 31L * result + (if (showNamePaints) 1 else 0)
+        result = 31L * result + (if (showStvBadges) 1 else 0)
+        result = 31L * result + (if (showKickBadges) 1 else 0)
+        result = 31L * result + (if (showPersonalEmotes) 1 else 0)
+        result = 31L * result + (if (showSystemMessageEmotes) 1 else 0)
+        result = 31L * result + (chatUrl?.hashCode() ?: 0)
+        result = 31L * result + (loggedInUser?.hashCode() ?: 0)
+        result
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         return ViewHolder(LayoutInflater.from(parent.context).inflate(R.layout.chat_list_item, parent, false))

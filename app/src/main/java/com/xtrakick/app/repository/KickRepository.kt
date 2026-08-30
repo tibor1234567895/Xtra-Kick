@@ -202,7 +202,7 @@ class KickRepository @Inject constructor(
     private val featureDebugTag = "KickFeatureDebug"
     private val pointsDebugTag = "KickPointsDebug"
     private val pinnedDebugTag = "KickPinnedDebug"
-    private val kickWebUserAgent by lazy {
+    internal val kickWebUserAgent by lazy {
         runCatching { WebSettings.getDefaultUserAgent(context) }
             .getOrNull()
             ?.replace(Regex(";\\s*wv"), "")
@@ -219,9 +219,9 @@ class KickRepository @Inject constructor(
     private val kickBadgeCacheKey = "kick_badge_url_cache_v1"
     private val kickBadgeCacheTtlMs = 24L * 60L * 60L * 1000L
     private val kickBadgeCachePersistDebounceMs = 500L
-    private val channelCacheTtlMs = 15_000L
-    private val livestreamCacheTtlMs = 15_000L
-    private val searchCacheTtlMs = 15_000L
+    private val channelCacheTtlMs = 180_000L
+    private val livestreamCacheTtlMs = 30_000L
+    private val searchCacheTtlMs = 60_000L
     private val kickSubscriberAccessCacheTtlMs = 60_000L
     private val kickEmoteGroupsCacheTtlMs = 60_000L
     private val kickBadgeUrls = ConcurrentHashMap<String, String>()
@@ -259,7 +259,9 @@ class KickRepository @Inject constructor(
     private val badgeCacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val livestreamPrefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val channelPointRewardsCacheTtlMs = 60_000L
-    private val kickWebBadgeScrapeTtlMs = 6L * 60L * 60L * 1000L
+    // Web badge scrape costs the kick.com HTML plus up to 18 Next.js chunks; badge
+    // image URLs barely ever change, so the disk cache is trusted for a full day
+    private val kickWebBadgeScrapeTtlMs = 24L * 60L * 60L * 1000L
     @Volatile
     private var badgePersistScheduled = false
 
@@ -286,8 +288,10 @@ class KickRepository @Inject constructor(
     init {
         badgeCacheScope.launch {
             restoreKickBadgeCacheFromDisk()
+            // must run after the restore: the scrape's TTL check reads the persisted
+            // refresh timestamps, and racing the restore made every cold start rescrape
+            maybeRefreshKickBadgeCatalogOnAppOpenInBackground()
         }
-        maybeRefreshKickBadgeCatalogOnAppOpenInBackground()
     }
 
     private data class KickCurrentUser(
@@ -1698,10 +1702,14 @@ class KickRepository @Inject constructor(
         }.getOrNull()
     }
 
-    /** True only when the WebView cookie jar contains a usable website session bearer. */
+    /** True when the app has a usable website session token or active Kick OAuth session. */
     fun hasUsableKickWebsiteSession(): Boolean {
-        val cookies = getKickCookieHeader() ?: return false
-        return AuthStateHelper.extractKickSessionToken(cookies)?.isNotBlank() == true
+        val cookies = getKickCookieHeader()
+        val hasCookieSession = cookies?.let {
+            AuthStateHelper.extractKickSessionToken(it)?.isNotBlank() == true ||
+                extractKickWebAuthToken(it)?.isNotBlank() == true
+        } == true
+        return hasCookieSession || AuthStateHelper.isKickLoggedIn(context)
     }
 
     /** Fetches the short-lived bearer used by Kick's viewer watch WebSocket. */
@@ -1768,56 +1776,62 @@ class KickRepository @Inject constructor(
         channelSlug: String?,
         channelId: String? = null,
     ): PinnedGiftUpdate? {
-        val candidates = linkedSetOf<String>()
-        val resolvedChannel = listOfNotNull(
-            channelSlug?.trim()?.takeIf { it.isNotBlank() },
-            channelId?.trim()?.takeIf { it.isNotBlank() }
-        ).firstNotNullOfOrNull { candidate ->
-            runCatching { getChannel(candidate) }.getOrNull()
-        }
-        resolvedChannel?.id?.toString()?.takeIf { it.isNotBlank() }?.let { resolvedChannelId ->
-            candidates += "https://web.kick.com/api/v1/chat/${urlEncode(resolvedChannelId)}/history"
-        }
-        channelSlug?.trim()?.takeIf { it.isNotBlank() }?.let { slug ->
-            val encoded = urlEncode(slug)
-            candidates += "https://kick.com/api/v2/channels/$encoded"
-            candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
-            candidates += "https://kick.com/api/v1/$encoded/chatroom"
-            candidates += "https://kick.com/api/v2/channels/$encoded/info"
-            candidates += "https://kick.com/api/internal/v1/channels/$encoded/chatroom/pinned-message"
-        }
-        channelId?.trim()?.takeIf { it.isNotBlank() }?.let { id ->
-            val encoded = urlEncode(id)
-            candidates += "https://kick.com/api/v2/channels/$encoded"
-            candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
-            candidates += "https://kick.com/api/v1/channels/$encoded"
-            candidates += "https://kick.com/api/internal/v1/channels/$encoded/chatroom/pinned-message"
-        }
-        // Note: kick.com/api/v1|v2/chatrooms/{id} return 405/404, so chatroom-id
-        // candidates are not probed; the endpoints above resolve the pinned state.
-        candidates.forEach { url ->
-            val raw = runCatching { getRaw(url, isKickWeb = true) }.getOrNull() ?: return@forEach
+        val slug = channelSlug?.trim()?.takeIf { it.isNotBlank() }
+        val id = channelId?.trim()?.takeIf { it.isNotBlank() }
+        val candidateSlug = slug ?: id ?: return null
+        val encoded = urlEncode(candidateSlug)
+
+        // 1. Check cached/canonical chatroom endpoint first
+        val chatroomRaw = runCatching { getChannelChatroomRaw(candidateSlug) }.getOrNull()
+        if (chatroomRaw != null) {
             val update = runCatching {
                 parsePinnedGiftUpdate(
-                    eventName = if (url.contains("pinned-message", ignoreCase = true)) "pinned_message" else "initial_state",
-                    messageJson = raw
+                    eventName = "initial_state",
+                    messageJson = chatroomRaw
                 )
             }.getOrNull()
-            if (isKickFeatureDebugEnabled()) {
-                val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
-                val pinnedKeyPaths = findInterestingKeyPaths(root, setOf("pin", "gift", "message")).take(10)
-                val parsedState = update?.pinnedGift?.id ?: if (update?.cleared == true) "cleared" else "null"
-                val preview = update?.pinnedGift?.message?.take(80) ?: "null"
-                Log.d(
-                    pinnedDebugTag,
-                    "initial url=$url topLevel=${summarizeTopLevelKeys(root)} pinnedKeys=$pinnedKeyPaths pinnedSnippet=${extractKeySnippet(root, "pinned_message")} parsed=$parsedState preview=$preview raw=${raw.compactDebugSnippet()}"
-                )
-            }
             if (update?.pinnedGift != null || update?.cleared == true) {
                 return update
             }
         }
+
+        // 2. Canonical pinned-message endpoint
+        val pinnedRaw = runCatching {
+            getRaw("https://kick.com/api/internal/v1/channels/$encoded/chatroom/pinned-message", isKickWeb = true)
+        }.getOrNull()
+        if (pinnedRaw != null) {
+            val update = runCatching {
+                parsePinnedGiftUpdate(
+                    eventName = "pinned_message",
+                    messageJson = pinnedRaw
+                )
+            }.getOrNull()
+            if (update?.pinnedGift != null || update?.cleared == true) {
+                return update
+            }
+        }
+
         return null
+    }
+
+    // v2 chatroom raw response, reused across the room-state and chatroom-candidate
+    // lookups that both fire at chat start (they would otherwise hit the same
+    // endpoint twice within a second).
+    private data class ChatroomRawCache(val key: String, val fetchedAtMs: Long, val raw: String)
+    private var chatroomRawCache: ChatroomRawCache? = null
+
+    private suspend fun getChannelChatroomRaw(channelSlug: String): String {
+        val normalizedKey = channelSlug.trim().lowercase(Locale.ROOT)
+        val now = System.currentTimeMillis()
+        chatroomRawCache?.let { (cachedKey, cachedAt, cachedRaw) ->
+            if (cachedKey == normalizedKey && now - cachedAt <= 15_000L) {
+                return cachedRaw
+            }
+        }
+        val encoded = urlEncode(channelSlug.trim())
+        val raw = getRaw("https://kick.com/api/v2/channels/$encoded/chatroom", isKickWeb = true)
+        chatroomRawCache = ChatroomRawCache(normalizedKey, now, raw)
+        return raw
     }
 
     suspend fun resolveDedicatedChatroomCandidates(channelOrId: String): List<String> {
@@ -1825,94 +1839,46 @@ class KickRepository @Inject constructor(
         if (candidate.isBlank()) {
             return emptyList()
         }
-        val urls = buildList {
-            add("https://kick.com/api/v2/channels/${urlEncode(candidate)}/chatroom")
-            if (!candidate.all(Char::isDigit)) {
-                add("https://kick.com/api/v1/${urlEncode(candidate)}/chatroom")
-            }
+        fun extractIds(raw: String): List<String> {
+            val root = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return emptyList()
+            return listOfNotNull(
+                root.primitiveOrNull("id"),
+                root.primitiveOrNull("channel_id"),
+                root.primitiveOrNull("user_id"),
+                (root["chatroom"] as? JsonObject)?.primitiveOrNull("id"),
+                (root["chatroom"] as? JsonObject)?.primitiveOrNull("channel_id"),
+                (root["chatroom"] as? JsonObject)?.primitiveOrNull("user_id"),
+                (root["data"] as? JsonObject)?.primitiveOrNull("id"),
+                (root["data"] as? JsonObject)?.primitiveOrNull("channel_id"),
+                (root["data"] as? JsonObject)?.primitiveOrNull("user_id"),
+            ).map(String::trim).filter(String::isNotBlank)
         }
         val results = linkedSetOf<String>()
-        urls.forEach { url ->
-            runCatching {
-                val root = json.parseToJsonElement(getRaw(url)).jsonObject
-                listOfNotNull(
-                    root.primitiveOrNull("id"),
-                    root.primitiveOrNull("channel_id"),
-                    root.primitiveOrNull("user_id"),
-                    (root["chatroom"] as? JsonObject)?.primitiveOrNull("id"),
-                    (root["chatroom"] as? JsonObject)?.primitiveOrNull("channel_id"),
-                    (root["chatroom"] as? JsonObject)?.primitiveOrNull("user_id"),
-                    (root["data"] as? JsonObject)?.primitiveOrNull("id"),
-                    (root["data"] as? JsonObject)?.primitiveOrNull("channel_id"),
-                    (root["data"] as? JsonObject)?.primitiveOrNull("user_id"),
-                )
-            }.getOrNull().orEmpty()
-                .map(String::trim)
-                .filter(String::isNotBlank)
-                .forEach(results::add)
-        }
+        runCatching { getChannelChatroomRaw(candidate) }.getOrNull()?.let { raw -> results += extractIds(raw) }
         return results.toList()
     }
 
-    /**
-     * Resolves the ID used by web.kick.com/api/v1/chat/{id}/history.
-     * From kick.com/api/v2/channels/{slug}, the top-level "id" (e.g. 32807 for Buddha)
-     * is what the history API expects. This is different from:
-     *   - user_id (33057) — stored as channelId on OfflineVideo
-     *   - chatroom.id (32806) — the chatroom's own ID used for WebSocket connections
-     */
     suspend fun getChatHistoryId(channelSlug: String): String? {
         val slug = channelSlug.trim().takeIf { it.isNotBlank() } ?: return null
         val url = "https://kick.com/api/v2/channels/${urlEncode(slug)}"
         val root = runCatching {
             json.parseToJsonElement(getRaw(url, isKickWeb = true)).jsonObject
         }.getOrNull() ?: return null
-        // Top-level "id" in the channel response (e.g. 32807) is the channel ID
-        // that web.kick.com/api/v1/chat/{id}/history uses.
         return root.primitiveOrNull("id")?.takeIf { it.isNotBlank() }
     }
 
     suspend fun getInitialRoomState(channelSlug: String?, channelId: String?): RoomState? {
-        val candidates = linkedSetOf<String>()
         val normalizedSlug = channelSlug?.trim()?.takeIf { it.isNotBlank() }
-        val normalizedChannelId = channelId?.trim()?.takeIf { it.isNotBlank() }
-        // Note: kick.com/api/v1|v2/chatrooms/{id} return 405/404, so chatroom-id
-        // candidates are not probed; the slug-based endpoints below resolve room state.
-        normalizedSlug?.let { slug ->
-            val encoded = urlEncode(slug)
-            candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
-            candidates += "https://kick.com/api/v1/$encoded/chatroom"
-            candidates += "https://kick.com/api/v2/channels/$encoded"
-            candidates += "https://kick.com/api/v2/channels/$encoded/info"
-        }
-        normalizedChannelId?.let { id ->
-            val encoded = urlEncode(id)
-            if (normalizedSlug == null) {
-                candidates += "https://kick.com/api/v2/channels/$encoded/chatroom"
-            }
-            candidates += "https://kick.com/api/v2/channels/$encoded"
-            candidates += "https://kick.com/api/v1/channels/$encoded"
-        }
+            ?: channelId?.trim()?.takeIf { it.isNotBlank() } ?: return null
 
-        candidates.forEach { url ->
-            val raw = runCatching { getRaw(url, isKickWeb = true) }.getOrNull() ?: return@forEach
-            val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
-            val roomState = parseKickRoomState(root)
-            if (isKickFeatureDebugEnabled()) {
-                val roomKeys = findInterestingKeyPaths(
-                    root,
-                    setOf("slow", "follower", "follow", "subscriber", "sub", "emote", "unique", "r9k")
-                ).take(16)
-                Log.d(
-                    featureDebugTag,
-                    "roomState url=$url topLevel=${summarizeTopLevelKeys(root)} roomKeys=$roomKeys parsed=${roomState?.toDebugString() ?: "null"} raw=${raw.compactDebugSnippet()}"
-                )
-            }
-            if (roomState != null) {
-                return roomState
-            }
-        }
-        return null
+        val raw = runCatching {
+            getChannelChatroomRaw(normalizedSlug)
+        }.getOrNull() ?: runCatching {
+            getRaw("https://kick.com/api/v2/channels/${urlEncode(normalizedSlug)}", isKickWeb = true)
+        }.getOrNull() ?: return null
+
+        val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
+        return parseKickRoomState(root)
     }
 
     suspend fun getChannelLivestream(channelSlug: String, forceRefresh: Boolean = false): KickChannelLivestream? {
@@ -1997,37 +1963,28 @@ class KickRepository @Inject constructor(
         cursor: String? = null,
     ): KickVideoPage? {
         val cached = channelCache[channelSlug.trim().lowercase(Locale.ROOT)]?.second
-        var resolvedChannelId = channelId ?: cached?.id?.toString()
-        var login = cached?.slug ?: channelSlug
-        var channelName = cached?.user?.username
-        var channelLogo = cached?.user?.profileImage
+        val resolvedChannelId = channelId ?: cached?.id?.toString()
+        val login = cached?.slug ?: channelSlug
+        val channelName = cached?.user?.username
+        val channelLogo = cached?.user?.profileImage
         val pageSize = limit.coerceIn(20, 100)
 
-        val attempted = mutableSetOf<String>()
-        suspend fun tryBaseUrl(baseUrl: String): KickVideoPage? {
-            if (!attempted.add(baseUrl)) return null
-            val urls = buildList {
-                add(
-                    buildPagedKickUrl(
-                        baseUrl = baseUrl,
-                        page = 1,
-                        limit = pageSize,
-                        extraQuery = buildMap {
-                            cursor?.let { put("cursor", it) }
-                        }
-                    )
-                )
-                add(
-                    buildKickUrl(
-                        baseUrl = baseUrl,
-                        extraQuery = buildMap {
-                            cursor?.let { put("cursor", it) }
-                        }
-                    )
-                )
+        val targetUrl = buildKickUrl(
+            baseUrl = "https://kick.com/api/v2/channels/${urlEncode(channelSlug)}/videos",
+            extraQuery = buildMap {
+                if (cursor.isNullOrBlank()) {
+                    put("page", "1")
+                    put("limit", pageSize.toString())
+                } else {
+                    put("cursor", cursor)
+                }
             }
-            urls.forEach { url ->
-                val root = runCatching { json.parseToJsonElement(getRaw(url, isKickWeb = true)) }.getOrNull() ?: return@forEach
+        )
+
+        val raw = runCatching { getRaw(targetUrl, isKickWeb = true) }.getOrNull()
+        if (raw != null) {
+            val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
+            if (root != null) {
                 val parsed = parseVideos(
                     roots = listOf(root),
                     channelId = channelId,
@@ -2036,52 +1993,43 @@ class KickRepository @Inject constructor(
                     channelLogo = channelLogo,
                     limit = pageSize
                 )
-                if (parsed.isNotEmpty()) {
+                return KickVideoPage(
+                    videos = parsed,
+                    nextCursor = (root as? JsonObject)?.let(::extractNextCursor)
+                )
+            }
+        }
+
+        // Fallback to numeric channelId if available and different from slug
+        if (!resolvedChannelId.isNullOrBlank() && resolvedChannelId != channelSlug) {
+            val idUrl = buildKickUrl(
+                baseUrl = "https://kick.com/api/v2/channels/${urlEncode(resolvedChannelId)}/videos",
+                extraQuery = buildMap {
+                    if (cursor.isNullOrBlank()) {
+                        put("page", "1")
+                        put("limit", pageSize.toString())
+                    } else {
+                        put("cursor", cursor)
+                    }
+                }
+            )
+            val idRaw = runCatching { getRaw(idUrl, isKickWeb = true) }.getOrNull()
+            if (idRaw != null) {
+                val root = runCatching { json.parseToJsonElement(idRaw) }.getOrNull()
+                if (root != null) {
+                    val parsed = parseVideos(
+                        roots = listOf(root),
+                        channelId = channelId,
+                        channelLogin = login,
+                        channelName = channelName,
+                        channelLogo = channelLogo,
+                        limit = pageSize
+                    )
                     return KickVideoPage(
                         videos = parsed,
                         nextCursor = (root as? JsonObject)?.let(::extractNextCursor)
                     )
                 }
-            }
-            return null
-        }
-
-        tryBaseUrl("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}/videos")?.let { return it }
-        resolvedChannelId?.let { id ->
-            tryBaseUrl("https://kick.com/api/v2/channels/${urlEncode(id)}/videos")?.let { return it }
-        }
-        tryBaseUrl("https://kick.com/api/v1/channels/${urlEncode(channelSlug)}/videos")?.let { return it }
-        resolvedChannelId?.let { id ->
-            tryBaseUrl("https://kick.com/api/v1/channels/${urlEncode(id)}/videos")?.let { return it }
-        }
-
-        val channelRoot = runCatching {
-            json.parseToJsonElement(getRaw("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}", isKickWeb = true)).jsonObject
-        }.getOrNull()
-        if (channelRoot != null) {
-            resolvedChannelId = resolvedChannelId ?: channelRoot.primitiveOrNull("id")
-            login = channelRoot.primitiveOrNull("slug") ?: login
-            channelName = channelRoot.objOrNull("user")?.primitiveOrNull("username") ?: channelName
-            channelLogo = channelRoot.objOrNull("user")?.primitiveOrNull("profile_pic")
-                ?: channelRoot.objOrNull("user")?.primitiveOrNull("profile_picture")
-                ?: channelLogo
-            parseVideos(
-                roots = listOf(channelRoot),
-                channelId = channelId,
-                channelLogin = login,
-                channelName = channelName,
-                channelLogo = channelLogo,
-                limit = pageSize
-            ).takeIf { it.isNotEmpty() }?.let {
-                return KickVideoPage(
-                    videos = it,
-                    nextCursor = extractNextCursor(channelRoot)
-                )
-            }
-
-            resolvedChannelId?.let { id ->
-                tryBaseUrl("https://kick.com/api/v2/channels/${urlEncode(id)}/videos")?.let { return it }
-                tryBaseUrl("https://kick.com/api/v1/channels/${urlEncode(id)}/videos")?.let { return it }
             }
         }
 
@@ -2112,22 +2060,63 @@ class KickRepository @Inject constructor(
         cursor: String? = null,
     ): KickClipPage? {
         val cached = channelCache[channelSlug.trim().lowercase(Locale.ROOT)]?.second
-        var resolvedChannelId = channelId ?: cached?.id?.toString()
-        var login = cached?.slug ?: channelSlug
-        var channelName = cached?.user?.username
-        var channelLogo = cached?.user?.profileImage
+        val resolvedChannelId = channelId ?: cached?.id?.toString()
+        val login = cached?.slug ?: channelSlug
+        val channelName = cached?.user?.username
+        val channelLogo = cached?.user?.profileImage
         val pageSize = limit.coerceIn(20, 100)
-        val timeCandidates = when (time?.trim()?.lowercase(Locale.ROOT)) {
-            "day", "today" -> listOf("day", "today")
-            "week" -> listOf("week")
-            "month" -> listOf("month")
-            "all" -> listOf("all")
-            else -> listOf<String?>(null)
+        val resolvedTime = when (time?.trim()?.lowercase(Locale.ROOT)) {
+            "day", "today" -> "day"
+            "week" -> "week"
+            "month" -> "month"
+            "all" -> "all"
+            else -> null
         }
 
-        suspend fun loadFromUrls(urls: List<String>): KickClipPage? {
+        val targetUrl = buildKickUrl(
+            baseUrl = "https://kick.com/api/v2/channels/${urlEncode(channelSlug)}/clips",
+            extraQuery = buildMap {
+                put("sort", "view")
+                resolvedTime?.let { put("time", it) }
+                if (cursor.isNullOrBlank()) {
+                    put("page", "1")
+                    put("limit", pageSize.toString())
+                } else {
+                    put("cursor", cursor)
+                }
+            }
+        )
+
+        val clipsPage = collectClipPages(
+            initialUrls = listOf(targetUrl),
+            limit = pageSize,
+            maxPages = 1,
+            channelId = channelId,
+            channelLogin = login,
+            channelName = channelName,
+            channelLogo = channelLogo,
+        )
+        if (clipsPage != null) {
+            return clipsPage
+        }
+
+        // Fallback to numeric channelId if available and different from slug
+        if (!resolvedChannelId.isNullOrBlank() && resolvedChannelId != channelSlug) {
+            val idUrl = buildKickUrl(
+                baseUrl = "https://kick.com/api/v2/channels/${urlEncode(resolvedChannelId)}/clips",
+                extraQuery = buildMap {
+                    put("sort", "view")
+                    resolvedTime?.let { put("time", it) }
+                    if (cursor.isNullOrBlank()) {
+                        put("page", "1")
+                        put("limit", pageSize.toString())
+                    } else {
+                        put("cursor", cursor)
+                    }
+                }
+            )
             return collectClipPages(
-                initialUrls = urls,
+                initialUrls = listOf(idUrl),
                 limit = pageSize,
                 maxPages = 1,
                 channelId = channelId,
@@ -2135,79 +2124,6 @@ class KickRepository @Inject constructor(
                 channelName = channelName,
                 channelLogo = channelLogo,
             )
-        }
-
-        val attempted = mutableSetOf<String>()
-        fun buildUrls(baseUrl: String): List<String> {
-            return buildList {
-                timeCandidates.forEach { resolvedTime ->
-                    add(
-                        buildPagedKickUrl(
-                            baseUrl = baseUrl,
-                            page = 1,
-                            limit = pageSize,
-                            extraQuery = buildMap {
-                                put("sort", "view")
-                                resolvedTime?.let { put("time", it) }
-                                cursor?.let { put("cursor", it) }
-                            }
-                        )
-                    )
-                    add(
-                        buildKickUrl(
-                            baseUrl = baseUrl,
-                            extraQuery = buildMap {
-                                put("sort", "view")
-                                resolvedTime?.let { put("time", it) }
-                                cursor?.let { put("cursor", it) }
-                            }
-                        )
-                    )
-                }
-            }
-        }
-
-        val channelSlugUrl = "https://kick.com/api/v2/channels/${urlEncode(channelSlug)}/clips"
-        if (attempted.add(channelSlugUrl)) {
-            loadFromUrls(buildUrls(channelSlugUrl))?.let { return it }
-        }
-        resolvedChannelId?.let { id ->
-            val channelIdUrl = "https://kick.com/api/v2/channels/${urlEncode(id)}/clips"
-            if (attempted.add(channelIdUrl)) {
-                loadFromUrls(buildUrls(channelIdUrl))?.let { return it }
-            }
-        }
-        val legacySlugUrl = "https://kick.com/api/v1/channels/${urlEncode(channelSlug)}/clips"
-        if (attempted.add(legacySlugUrl)) {
-            loadFromUrls(buildUrls(legacySlugUrl))?.let { return it }
-        }
-        resolvedChannelId?.let { id ->
-            val legacyIdUrl = "https://kick.com/api/v1/channels/${urlEncode(id)}/clips"
-            if (attempted.add(legacyIdUrl)) {
-                loadFromUrls(buildUrls(legacyIdUrl))?.let { return it }
-            }
-        }
-
-        val channelRoot = runCatching {
-            json.parseToJsonElement(getRaw("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}", isKickWeb = true)).jsonObject
-        }.getOrNull()
-        if (channelRoot != null) {
-            resolvedChannelId = resolvedChannelId ?: channelRoot.primitiveOrNull("id")
-            login = channelRoot.primitiveOrNull("slug") ?: login
-            channelName = channelRoot.objOrNull("user")?.primitiveOrNull("username") ?: channelName
-            channelLogo = channelRoot.objOrNull("user")?.primitiveOrNull("profile_pic")
-                ?: channelRoot.objOrNull("user")?.primitiveOrNull("profile_picture")
-                ?: channelLogo
-            resolvedChannelId?.let { id ->
-                val refreshedV2Url = "https://kick.com/api/v2/channels/${urlEncode(id)}/clips"
-                if (attempted.add(refreshedV2Url)) {
-                    loadFromUrls(buildUrls(refreshedV2Url))?.let { return it }
-                }
-                val refreshedV1Url = "https://kick.com/api/v1/channels/${urlEncode(id)}/clips"
-                if (attempted.add(refreshedV1Url)) {
-                    loadFromUrls(buildUrls(refreshedV1Url))?.let { return it }
-                }
-            }
         }
 
         return null
@@ -2565,11 +2481,7 @@ class KickRepository @Inject constructor(
                     ?: item.objOrNull("clip")?.primitiveOrNull("published_at")
                     ?: item.objOrNull("video")?.primitiveOrNull("created_at")
                     ?: item.objOrNull("video")?.primitiveOrNull("published_at")
-                val replayStartTime = item.primitiveOrNull("start_time")
-                    ?: item.primitiveOrNull("clip_start_time")
-                    ?: item.objOrNull("clip")?.primitiveOrNull("start_time")
-                    ?: item.objOrNull("video")?.primitiveOrNull("start_time")
-                    ?: createdAt
+                val replayStartTime = item.clipReplayStartTime(createdAt)
                 val thumbnail = extractImageUrl(item.objOrNull("thumbnail"))
                     ?: item.primitiveOrNull("thumbnail_url")
                     ?: item.primitiveOrNull("preview_thumbnail_url")
@@ -2579,8 +2491,7 @@ class KickRepository @Inject constructor(
                 val duration = item.intOrNull("duration_seconds")?.toDouble()
                     ?: item.intOrNull("duration")?.toDouble()
                     ?: item.intOrNull("clip_duration")?.toDouble()
-                val vodOffset = item.intOrNull("video_offset")
-                    ?: item.intOrNull("vod_offset")
+                val vodOffset = item.clipVodOffset()
                 val clipUrl = item.primitiveOrNull("video_url")
                     ?: item.primitiveOrNull("clip_url")
                     ?: item.objOrNull("video")?.primitiveOrNull("url")
@@ -2648,6 +2559,19 @@ class KickRepository @Inject constructor(
             .take(limit)
             .toList()
     }
+
+    private fun JsonObject.clipReplayStartTime(fallback: String?): String? =
+        primitiveOrNull("started_at")
+            ?: primitiveOrNull("start_time")
+            ?: primitiveOrNull("clip_start_time")
+            ?: objOrNull("clip")?.primitiveOrNull("started_at")
+            ?: objOrNull("clip")?.primitiveOrNull("start_time")
+            ?: objOrNull("video")?.primitiveOrNull("started_at")
+            ?: objOrNull("video")?.primitiveOrNull("start_time")
+            ?: fallback
+
+    private fun JsonObject.clipVodOffset(): Int? =
+        intOrNull("vod_starts_at") ?: intOrNull("video_offset") ?: intOrNull("vod_offset")
 
     private fun extractKickVideoUrl(item: JsonObject): String? {
         val directUrl = item.primitiveOrNull("playback_url")
@@ -2792,6 +2716,8 @@ class KickRepository @Inject constructor(
                 ?: data.primitiveOrNull("clip_url")
                 ?: data.objOrNull("video")?.primitiveOrNull("url")
             if (!clipUrl.isNullOrBlank() || !data.primitiveOrNull("id").isNullOrBlank() || !data.primitiveOrNull("slug").isNullOrBlank()) {
+                val rawCreatedAt = data.primitiveOrNull("created_at")
+                    ?: data.primitiveOrNull("published_at")
                 return@withContext Clip(
                     id = data.primitiveOrNull("slug") ?: data.primitiveOrNull("id") ?: id,
                     channelId = data.primitiveOrNull("channel_id")
@@ -2802,13 +2728,15 @@ class KickRepository @Inject constructor(
                         ?: data.objOrNull("channel")?.primitiveOrNull("username")
                         ?: data.objOrNull("channel")?.primitiveOrNull("name"),
                     clipUrl = clipUrl,
+                    replayStartTime = normalizeDate(data.clipReplayStartTime(rawCreatedAt)),
                     videoId = data.primitiveOrNull("video_id")
                         ?: data.objOrNull("vod")?.primitiveOrNull("id")
                         ?: data.objOrNull("video")?.primitiveOrNull("id"),
                     title = data.primitiveOrNull("title"),
                     viewCount = data.intOrNull("views") ?: data.intOrNull("view_count"),
-                    uploadDate = normalizeDate(data.primitiveOrNull("created_at") ?: data.primitiveOrNull("published_at")),
+                    uploadDate = normalizeDate(rawCreatedAt),
                     duration = data.intOrNull("duration")?.toDouble() ?: data.intOrNull("duration_seconds")?.toDouble(),
+                    vodOffset = data.clipVodOffset(),
                     thumbnailUrl = extractImageUrl(data.objOrNull("thumbnail"))
                         ?: data.primitiveOrNull("thumbnail_url"),
                     profileImageUrl = data.objOrNull("channel")?.objOrNull("user")?.primitiveOrNull("profile_pic")
@@ -2853,7 +2781,22 @@ class KickRepository @Inject constructor(
         }
     }
 
+    // Both playback endpoints require a Kick session and currently 404 for every clip
+    // even when logged in. Remember the dead round for a day, persisted, so later clips
+    // and cold starts skip the POSTs entirely; if Kick revives the endpoints we
+    // self-heal within a day.
+    private val clipPlaybackDeadAtKey = "kick_clip_playback_dead_at"
+    private val clipPlaybackDeadTtlMs = 24L * 60L * 60L * 1000L
+
+    private fun clipPlaybackEndpointsRecentlyDead(): Boolean {
+        val last = context.prefs().getLong(clipPlaybackDeadAtKey, 0L)
+        return last > 0L && System.currentTimeMillis() - last < clipPlaybackDeadTtlMs
+    }
+
     private suspend fun getClipHlsQualities(videoUuid: String, channelSlug: String?): List<KickClipQuality> = withContext(Dispatchers.IO) {
+        if (clipPlaybackEndpointsRecentlyDead()) {
+            return@withContext emptyList()
+        }
         val payload = buildJsonObject {
             put("video_player", buildJsonObject {
                 put("player", buildJsonObject {
@@ -2926,9 +2869,11 @@ class KickRepository @Inject constructor(
             }.getOrNull() ?: continue
             val qualities = fetchClipMasterPlaylist(manifestUrl)
             if (qualities.isNotEmpty()) {
+                context.prefs().edit { putLong(clipPlaybackDeadAtKey, 0L) }
                 return@withContext qualities
             }
         }
+        context.prefs().edit { putLong(clipPlaybackDeadAtKey, System.currentTimeMillis()) }
         emptyList()
     }
 
@@ -4174,17 +4119,22 @@ class KickRepository @Inject constructor(
         }.toList()
     }
 
-    private fun normalizeKickBadgeType(type: String): String {
-        val normalized = type.trim()
-            .lowercase(Locale.ROOT)
-            .replace('-', '_')
-            .replace(' ', '_')
-            .removePrefix("badge_")
-            .replace(Regex("_badges?$"), "")
-            .replace(Regex("_badge_?\\d*$"), "")
-            .replace(Regex("_v\\d+$"), "")
-            .replace(Regex("_\\d+$"), "")
-            .trim('_')
+        private val BADGE_SUFFIX_BADGES_REGEX = Regex("_badges?$")
+        private val BADGE_SUFFIX_BADGE_DIGITS_REGEX = Regex("_badge_?\\d*$")
+        private val BADGE_SUFFIX_V_DIGITS_REGEX = Regex("_v\\d+$")
+        private val BADGE_SUFFIX_DIGITS_REGEX = Regex("_\\d+$")
+
+        private fun normalizeKickBadgeType(type: String): String {
+            val normalized = type.trim()
+                .lowercase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_')
+                .removePrefix("badge_")
+                .replace(BADGE_SUFFIX_BADGES_REGEX, "")
+                .replace(BADGE_SUFFIX_BADGE_DIGITS_REGEX, "")
+                .replace(BADGE_SUFFIX_V_DIGITS_REGEX, "")
+                .replace(BADGE_SUFFIX_DIGITS_REGEX, "")
+                .trim('_')
         return when (normalized) {
             "sub", "subscription", "subscribers" -> "subscriber"
             "subgift", "sub_gift", "gift_sub", "gift_subscriber", "subscriber_gifter", "subscription_gifter", "gifter" -> "sub_gifter"
@@ -4540,6 +4490,10 @@ class KickRepository @Inject constructor(
     }
 
     private fun maybeRefreshKickBadgeCatalogOnAppOpenInBackground() {
+        // With the persisted catalog complete there is nothing this scrape can add;
+        // it only runs as a self-healing pass while badge types are missing
+        val unresolvedTypes = unresolvedKickCanonicalBadgeTypes().toSet()
+        if (unresolvedTypes.isEmpty()) return
         val refreshKey = "app_open_web"
         // The TTL timestamp was written below but never read, so the only guard was the
         // in-flight set — meaning every cold start re-scraped kick.com's HTML plus up to 18
@@ -4550,12 +4504,11 @@ class KickRepository @Inject constructor(
         badgeCacheScope.launch {
             try {
                 val channel = KickChannelResponse(slug = "kick")
-                val targetTypes = kickCanonicalBadgeTypes.toSet()
-                val webAdded = prefetchKickBadgeCatalogFromWeb(channel, targetTypes)
+                val webAdded = prefetchKickBadgeCatalogFromWeb(channel, unresolvedTypes)
                 kickBadgeCatalogRefreshAt[refreshKey] = System.currentTimeMillis()
-                if (webAdded > 0) {
-                    schedulePersistBadgeCache()
-                }
+                // Persist even when nothing was added: the timestamp is what throttles
+                // the scrape, so a fruitless run must still be remembered
+                schedulePersistBadgeCache()
                 if (isKickBadgeDebugEnabled()) {
                     Log.d(badgeDebugTag, "app-open web badge refresh added=$webAdded")
                 }
@@ -4662,9 +4615,11 @@ class KickRepository @Inject constructor(
         post: Boolean = body != null,
     ): String {
         val cookies = getKickCookieHeader()
-            ?: throw IOException("Kick website login is required.")
-        val bearer = AuthStateHelper.extractKickSessionToken(cookies)?.let { "Bearer $it" }
-            ?: throw IOException("Kick website login is required.")
+        val sessionBearer = cookies?.let { AuthStateHelper.extractKickSessionToken(it) }?.let { "Bearer $it" }
+            ?: cookies?.let { extractKickWebAuthToken(it) }?.let { "Bearer $it" }
+        val oauthBearer = AuthStateHelper.getKickBearerToken(context)
+        val bearer = sessionBearer ?: oauthBearer
+            ?: throw IOException("Kick login is required.")
         val engine = cronetEngine?.get()
             ?: return executeKickWebSessionRequestWithOkHttp(url, body, post)
         val response = withTimeout(15_000L) {
@@ -4680,8 +4635,10 @@ class KickRepository @Inject constructor(
                     .addHeader("Referer", buildKickWebReferer(url))
                     .addHeader("x-app-platform", "web")
                     .addHeader("Authorization", bearer)
-                    .addHeader("Cookie", cookies)
-                extractKickXsrfToken(cookies)?.let { builder.addHeader("X-XSRF-TOKEN", it) }
+                if (cookies != null) {
+                    builder.addHeader("Cookie", cookies)
+                    extractKickXsrfToken(cookies)?.let { builder.addHeader("X-XSRF-TOKEN", it) }
+                }
                 if (post) {
                     builder
                         .setHttpMethod("POST")
@@ -4701,14 +4658,13 @@ class KickRepository @Inject constructor(
     }
 
     private suspend fun executeKickWebSessionRequestWithOkHttp(url: String, body: String?, post: Boolean): String {
-        if (!post) return getRaw(url, isKickWeb = true)
         return withContext(Dispatchers.IO) {
-            okHttpClient.newCall(
-                createRequestBuilder(url, isKickWeb = true)
-                    .header("Content-Type", "application/json")
+            val builder = createRequestBuilder(url, isKickWeb = true)
+            if (post) {
+                builder.header("Content-Type", "application/json")
                     .post(body.orEmpty().toRequestBody("application/json".toMediaTypeOrNull()))
-                    .build()
-            ).execute().use { response ->
+            }
+            okHttpClient.newCall(builder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     throw IOException("Kick request failed (${response.code}) for $url")
                 }

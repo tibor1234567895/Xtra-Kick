@@ -190,15 +190,11 @@ class StreamDownloadWorker @AssistedInject constructor(
                 val names = IVS_NAME_REGEX.findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList()
                 val urls = M3U8_URL_REGEX.findAll(playlist).map(MatchResult::value).toMutableList()
                 val map = names.zip(urls)
-                    .sortedByDescending {
-                        it.first.substringAfter("p", "").takeWhile { it.isDigit() }.toIntOrNull()
-                    }
-                    .sortedByDescending {
-                        it.first.substringBefore("p", "").takeWhile { it.isDigit() }.toIntOrNull()
-                    }
-                    .sortedByDescending {
-                        it.first == "source"
-                    }
+                    .sortedWith(
+                        compareByDescending<Pair<String, String>> { it.first == "source" }
+                            .thenByDescending { it.first.substringBefore("p", "").takeWhile { c -> c.isDigit() }.toIntOrNull() ?: 0 }
+                            .thenByDescending { it.first.substringAfter("p", "").takeWhile { c -> c.isDigit() }.toIntOrNull() ?: 0 }
+                    )
                     .toMap()
                 if (map.isNotEmpty()) {
                     val mediaPlaylistUrl = if (!quality.isNullOrBlank()) {
@@ -256,15 +252,11 @@ class StreamDownloadWorker @AssistedInject constructor(
                         val newNames = IVS_NAME_REGEX.findAll(newPlaylist).mapNotNull { it.groups[1]?.value }.toMutableList()
                         val newUrls = M3U8_URL_REGEX.findAll(newPlaylist).map(MatchResult::value).toMutableList()
                         val newMap = newNames.zip(newUrls)
-                            .sortedByDescending {
-                                it.first.substringAfter("p", "").takeWhile { it.isDigit() }.toIntOrNull()
-                            }
-                            .sortedByDescending {
-                                it.first.substringBefore("p", "").takeWhile { it.isDigit() }.toIntOrNull()
-                            }
-                            .sortedByDescending {
-                                it.first == "source"
-                            }
+                            .sortedWith(
+                                compareByDescending<Pair<String, String>> { it.first == "source" }
+                                    .thenByDescending { it.first.substringBefore("p", "").takeWhile { c -> c.isDigit() }.toIntOrNull() ?: 0 }
+                                    .thenByDescending { it.first.substringAfter("p", "").takeWhile { c -> c.isDigit() }.toIntOrNull() ?: 0 }
+                            )
                             .toMap()
                         if (newMap.isNotEmpty()) {
                             if (!quality.isNullOrBlank()) {

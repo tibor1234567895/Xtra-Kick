@@ -226,6 +226,35 @@ object ChatAdapterUtils {
         return ConcatenatedEmoteMatcher(emotes).split(token)
     }
 
+    private val concatenatedMatcherCache = Collections.synchronizedMap(
+        object : LinkedHashMap<Pair<String?, Int>, ConcatenatedEmoteMatcher>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<String?, Int>, ConcatenatedEmoteMatcher>?): Boolean {
+                return size > 16
+            }
+        }
+    )
+
+    private fun getOrCreateConcatenatedEmoteMatcher(
+        setId: String?,
+        personalEmotes: List<Emote>?,
+        thirdPartyEmotes: List<Emote>,
+    ): ConcatenatedEmoteMatcher {
+        val tpHash = synchronized(thirdPartyEmotes) {
+            var result = thirdPartyEmotes.size
+            result = 31 * result + (thirdPartyEmotes.firstOrNull()?.name?.hashCode() ?: 0)
+            result = 31 * result + (thirdPartyEmotes.lastOrNull()?.name?.hashCode() ?: 0)
+            result
+        }
+        val key = Pair(setId, tpHash)
+        return concatenatedMatcherCache.getOrPut(key) {
+            val availableThirdPartyEmotes = buildList {
+                addAll(personalEmotes.orEmpty())
+                addAll(synchronized(thirdPartyEmotes) { thirdPartyEmotes.toList() })
+            }.distinctBy { it.name }
+            ConcatenatedEmoteMatcher(availableThirdPartyEmotes)
+        }
+    }
+
     private class ConcatenatedEmoteMatcher(emotes: List<Emote>) {
         private val emoteByName = LinkedHashMap<String, Emote>()
         private val names: List<String>
@@ -255,7 +284,12 @@ object ChatAdapterUtils {
                     val match = emoteByName.getValue(name)
                     val suffix = resolve(index + name.length)
                     if (suffix != null) {
-                        return (listOf(match) + suffix).also { memo[index] = it }
+                        val result = ArrayList<Emote>(1 + suffix.size).apply {
+                            add(match)
+                            addAll(suffix)
+                        }
+                        memo[index] = result
+                        return result
                     }
                 }
                 memo[index] = null
@@ -821,9 +855,13 @@ object ChatAdapterUtils {
         end: Int,
         span: CenteredImageSpan,
     ) {
-        builder.getSpans(start, end, ImageSpan::class.java)
-            .filter { builder.getSpanStart(it) == start && builder.getSpanEnd(it) == end }
-            .forEach(builder::removeSpan)
+        val existingSpans = builder.getSpans(start, end, ImageSpan::class.java)
+        for (i in 0 until existingSpans.size) {
+            val existing = existingSpans[i]
+            if (builder.getSpanStart(existing) == start && builder.getSpanEnd(existing) == end) {
+                builder.removeSpan(existing)
+            }
+        }
         builder.setSpan(span, start, end, SPAN_EXCLUSIVE_EXCLUSIVE)
     }
 
@@ -871,6 +909,11 @@ object ChatAdapterUtils {
             var builderIndex = startIndex
             val split = builder.substring(builderIndex).split(" ")
             var previousImage: Image? = null
+            val localEmotesById = if (localChatEmotes.isNotEmpty()) {
+                localChatEmotes.associateBy { it.id }
+            } else {
+                emptyMap()
+            }
             val chatEmotes = chatMessage.emotes?.map {
                 val realBegin = message.offsetByCodePoints(0, it.begin)
                 val realEnd = if (it.begin == realBegin) {
@@ -878,7 +921,7 @@ object ChatAdapterUtils {
                 } else {
                     it.end + realBegin - it.begin
                 }
-                localChatEmotes.find { emote -> emote.id == it.id }?.let { emote ->
+                localEmotesById[it.id]?.let { emote ->
                     ChatEmote(
                         id = emote.id,
                         name = emote.name,
@@ -895,15 +938,15 @@ object ChatAdapterUtils {
             val personalEmotes = if (showPersonalEmotes) {
                 stvUser?.emoteSetId?.let { setId ->
                     synchronized(personalEmoteSets) {
-                        personalEmoteSets.entries.find { it.key == setId }?.value
+                        personalEmoteSets[setId]
                     }
                 }
             } else null
-            val availableThirdPartyEmotes = buildList {
-                addAll(personalEmotes.orEmpty())
-                addAll(synchronized(thirdPartyEmotes) { thirdPartyEmotes.toList() })
-            }.distinctBy { it.name }
-            val concatenatedEmoteMatcher = ConcatenatedEmoteMatcher(availableThirdPartyEmotes)
+            val concatenatedEmoteMatcher = getOrCreateConcatenatedEmoteMatcher(
+                stvUser?.emoteSetId,
+                personalEmotes,
+                thirdPartyEmotes
+            )
             val personalEmotesByName = personalEmotes?.filter { !it.name.isNullOrBlank() }?.associateBy { it.name!! }
             for (value in split) {
                 if (chatMessage.bits != null) {

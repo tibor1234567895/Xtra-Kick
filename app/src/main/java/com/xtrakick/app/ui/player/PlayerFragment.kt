@@ -181,10 +181,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
+    protected var activePlaybackUrl: String? = null
+
     open fun startStream(url: String?) {}
     open fun startVideo(url: String?, playbackPosition: Long?, multivariantPlaylist: Boolean) {}
     open fun startClip(url: String?) {}
-    open fun currentPlaybackUrl(): String? = null
+    open fun currentPlaybackUrl(): String? = activePlaybackUrl
     open fun startOfflineVideo(url: String?, position: Long) {}
     open fun getCurrentPosition(): Long? = null
     open fun getCurrentSpeed(): Float? = null
@@ -1305,10 +1307,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     setDefaultQuality()
                                     changePlayerMode()
                                     val quality = viewModel.qualities.entries.find { it.key == viewModel.quality }
-                                    (quality?.value?.second ?: viewModel.qualities.values.firstOrNull()?.second)?.let { url ->
-                                        if (url != currentPlaybackUrl()) {
-                                            startClip(url)
-                                        }
+                                    val targetUrl = quality?.value?.second ?: viewModel.qualities.values.firstOrNull()?.second
+                                    if (!targetUrl.isNullOrBlank() && targetUrl != currentPlaybackUrl() && targetUrl != requireArguments().getString(KEY_URL)) {
+                                        activePlaybackUrl = targetUrl
+                                        startClip(targetUrl)
                                     }
                                     viewModel.clipUrls.value = null
                                 }
@@ -2715,6 +2717,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     )
                     setDefaultQuality()
                     changePlayerMode()
+                    activePlaybackUrl = clipUrl
                     startClip(clipUrl)
                 }
                 // Kick serves the clip quality ladder through the web playback

@@ -92,29 +92,39 @@ class AutoCompleteAdapter<T>(
     override fun getFilter(): Filter = filter
 
     private val filter: Filter = object : Filter() {
-        override fun performFiltering(constraint: CharSequence?): FilterResults? {
-            return if (constraint.isNullOrBlank()) {
-                FilterResults()
-            } else {
-                val list = synchronized(originalValues) {
-                    originalValues
-                }
-                val regex = constraint.map {
-                    "${Pattern.quote(it.lowercase())}\\S*?"
-                }.joinToString("").toRegex()
-                val results = list.filter {
-                    regex.matches(it.toString().lowercase())
-                }
-                FilterResults().apply {
-                    values = results
-                    count = results.size
+        override fun performFiltering(constraint: CharSequence?): FilterResults {
+            if (constraint.isNullOrBlank()) {
+                return FilterResults()
+            }
+            val list = synchronized(originalValues) {
+                originalValues.toList()
+            }
+            val results = list.filter { item ->
+                val name = item?.toString() ?: return@filter false
+                matchesSubsequence(constraint, name)
+            }
+            return FilterResults().apply {
+                values = results
+                count = results.size
+            }
+        }
+
+        private fun matchesSubsequence(query: CharSequence, target: String): Boolean {
+            if (query.isEmpty()) return true
+            if (target.length < query.length) return false
+            var qIdx = 0
+            for (tIdx in 0 until target.length) {
+                if (target[tIdx].equals(query[qIdx], ignoreCase = true)) {
+                    qIdx++
+                    if (qIdx == query.length) return true
                 }
             }
+            return false
         }
 
         @Suppress("UNCHECKED_CAST")
         override fun publishResults(constraint: CharSequence?, results: FilterResults?) {
-            objects = (results?.values as? MutableList<T?>) ?: mutableListOf()
+            objects = (results?.values as? List<T?>)?.toMutableList() ?: mutableListOf()
             if (results != null && results.count > 0) {
                 notifyDataSetChanged()
             } else {

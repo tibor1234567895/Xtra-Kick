@@ -19,6 +19,10 @@ class OfflineRepository @Inject constructor(
 
     fun loadAllVideos() = videosDao.getAll()
 
+    suspend fun getAllVideos(): List<OfflineVideo> = withContext(Dispatchers.IO) {
+        videosDao.getAllVideos()
+    }
+
     suspend fun getVideoById(id: Int) = withContext(Dispatchers.IO) {
         videosDao.getById(id)
     }

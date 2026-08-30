@@ -376,17 +376,16 @@ object KickApiHelper {
 
     fun getVideoUrlMapFromPreview(url: String, type: String?, list: List<String>?): Map<String, String> {
         val qualityList = list ?: listOf("chunked", "1080p60", "1080p30", "720p60", "720p30", "480p30", "360p30", "160p30", "144p30", "high", "medium", "low", "mobile", "audio_only")
-        val map = mutableMapOf<String, String>()
+        val replacementFilename = if (type?.lowercase(Locale.ROOT) == "highlight") {
+            "highlight-${url.substringAfterLast("/").substringBefore("-")}.m3u8"
+        } else {
+            "index-dvr.m3u8"
+        }
+        val map = LinkedHashMap<String, String>(qualityList.size)
         qualityList.forEach { quality ->
             map[if (quality == "chunked") "source" else quality] = url
                 .replace("storyboards", quality)
-                .replaceAfterLast("/",
-                    if (type?.lowercase() == "highlight") {
-                        "highlight-${url.substringAfterLast("/").substringBefore("-")}.m3u8"
-                    } else {
-                        "index-dvr.m3u8"
-                    }
-                )
+                .replaceAfterLast("/", replacementFilename)
         }
         return map
     }
@@ -419,8 +418,9 @@ object KickApiHelper {
                 "already_subs_off" -> ContextCompat.getString(context, R.string.irc_notice_already_subs_off)
                 "already_subs_on" -> ContextCompat.getString(context, R.string.irc_notice_already_subs_on)
                 "autohost_receive" -> ContextCompat.getString(context, R.string.irc_notice_autohost_receive).format(
-                    message?.substringBefore(" is now auto hosting", "") ?: "").format(
-                    message?.substringAfter("you for up to ", "")?.substringBefore(" viewers", "") ?: "")
+                    message?.substringBefore(" is now auto hosting", "") ?: "",
+                    message?.substringAfter("you for up to ", "")?.substringBefore(" viewers", "") ?: ""
+                )
                 "bad_ban_admin" -> ContextCompat.getString(context, R.string.irc_notice_bad_ban_admin).format(
                     message?.substringAfter("cannot ban admin", "")?.substringBefore(". Please email", "") ?: "")
                 "bad_ban_anon" -> ContextCompat.getString(context, R.string.irc_notice_bad_ban_anon)
@@ -493,8 +493,9 @@ object KickApiHelper {
                 "host_on" -> ContextCompat.getString(context, R.string.irc_notice_host_on).format(
                     message?.substringAfter("Now hosting ", "")?.substringBeforeLast(".", "") ?: "")
                 "host_receive" -> ContextCompat.getString(context, R.string.irc_notice_host_receive).format(
-                    message?.substringBefore(" is now hosting", "") ?: "").format(
-                    message?.substringAfter("you for up to ", "")?.substringBefore(" viewers", "") ?: "")
+                    message?.substringBefore(" is now hosting", "") ?: "",
+                    message?.substringAfter("you for up to ", "")?.substringBefore(" viewers", "") ?: ""
+                )
                 "host_receive_no_count" -> ContextCompat.getString(context, R.string.irc_notice_host_receive_no_count).format(
                     message?.substringBefore(" is now hosting", "") ?: "")
                 "host_target_went_offline" -> ContextCompat.getString(context, R.string.irc_notice_host_target_went_offline).format(
@@ -513,11 +514,13 @@ object KickApiHelper {
                 "msg_duplicate" -> ContextCompat.getString(context, R.string.irc_notice_msg_duplicate)
                 "msg_emoteonly" -> ContextCompat.getString(context, R.string.irc_notice_msg_emoteonly)
                 "msg_followersonly" -> ContextCompat.getString(context, R.string.irc_notice_msg_followersonly).format(
-                    message?.substringAfter("This room is in ", "")?.substringBefore(" followers-only mode", "") ?: "").format(
-                    message?.substringAfter("Follow ", "")?.substringBefore(" to join", "") ?: "")
+                    message?.substringAfter("This room is in ", "")?.substringBefore(" followers-only mode", "") ?: "",
+                    message?.substringAfter("Follow ", "")?.substringBefore(" to join", "") ?: ""
+                )
                 "msg_followersonly_followed" -> ContextCompat.getString(context, R.string.irc_notice_msg_followersonly_followed).format(
-                    message?.substringAfter("This room is in ", "")?.substringBefore(" followers-only mode", "") ?: "").format(
-                    message?.substringAfter("following for ", "")?.substringBefore(". Continue", "") ?: "")
+                    message?.substringAfter("This room is in ", "")?.substringBefore(" followers-only mode", "") ?: "",
+                    message?.substringAfter("following for ", "")?.substringBefore(". Continue", "") ?: ""
+                )
                 "msg_followersonly_zero" -> ContextCompat.getString(context, R.string.irc_notice_msg_followersonly_zero).format(
                     message?.substringAfter(". Follow ", "")?.substringBefore(" to join the", "") ?: "")
                 "msg_r9k" -> ContextCompat.getString(context, R.string.irc_notice_msg_r9k)
@@ -557,8 +560,9 @@ object KickApiHelper {
                 "timeout_no_timeout" -> ContextCompat.getString(context, R.string.irc_notice_timeout_no_timeout).format(
                     message?.substringBefore(" is not timed", "") ?: "")
                 "timeout_success" -> ContextCompat.getString(context, R.string.irc_notice_timeout_success).format(
-                    message?.substringBefore(" has been", "") ?: "").format(
-                    message?.substringAfter("timed out for ", "")?.substringBeforeLast(".", "") ?: "")
+                    message?.substringBefore(" has been", "") ?: "",
+                    message?.substringAfter("timed out for ", "")?.substringBeforeLast(".", "") ?: ""
+                )
                 "tos_ban" -> ContextCompat.getString(context, R.string.irc_notice_tos_ban).format(
                     message?.substringAfter("has closed channel ", "")?.substringBefore(" due to Terms", "") ?: "")
                 "turbo_only_color" -> ContextCompat.getString(context, R.string.irc_notice_turbo_only_color).format(

@@ -16,6 +16,7 @@ import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import androidx.core.net.toUri
 import com.xtrakick.app.util.bundleOf
 import androidx.core.view.isVisible
 import androidx.core.widget.NestedScrollView
@@ -65,6 +66,49 @@ class Media3Fragment : PlayerFragment() {
     private var liveTargetOffsetMs: Long? = null
     private val updateProgressAction = Runnable { if (view != null) updateProgress() }
 
+    private fun mediaItemUri(mediaItem: androidx.media3.common.MediaItem?): android.net.Uri? {
+        return mediaItem?.mediaId?.takeIf { it.isNotBlank() }?.toUri()
+            ?: mediaItem?.requestMetadata?.mediaUri
+            ?: mediaItem?.localConfiguration?.uri
+    }
+
+    private fun resolveDuration(): Long {
+        val playerDuration = player?.duration?.takeIf { it != androidx.media3.common.C.TIME_UNSET && it > 0L }
+        if (playerDuration != null) {
+            return playerDuration
+        }
+        if (videoType == CLIP) {
+            val clipDuration = (arguments?.getDouble(KEY_DURATION, 0.0) ?: 0.0) * 1000L
+            if (clipDuration > 0L) {
+                return clipDuration.toLong()
+            }
+        }
+        return 0L
+    }
+
+    private fun updateDurationDisplay() {
+        val duration = resolveDuration()
+        if (duration > 0 || videoType != STREAM) {
+            binding.playerControls.progressBar.setDuration(duration)
+            binding.playerControls.duration.text = DateUtils.formatElapsedTime(duration / 1000)
+        }
+    }
+
+    /**
+     * Re-shows the video surface after audio-only/chat-only hiding. clearVideoSurface()
+     * detaches media3 from the holder, and a VISIBLE toggle alone does not guarantee the
+     * holder callbacks refire — so reattach either the live surface or the holder itself,
+     * or the renderer keeps playing without a target (black screen, audio still running).
+     */
+    private fun showVideoSurface(player: MediaController) {
+        binding.playerSurface.visibility = View.VISIBLE
+        if (binding.playerSurface.holder.surface?.isValid == true) {
+            player.setVideoSurface(binding.playerSurface.holder.surface)
+        } else {
+            player.setVideoSurfaceView(binding.playerSurface)
+        }
+    }
+
     private fun playerDebugLog(message: String) {
         if (BuildConfig.DEBUG && prefs.getBoolean(AppConstants.DEBUG_PLAYER_BUFFER_LOGS, false)) {
             Log.d(TAG, message)
@@ -104,8 +148,18 @@ class Media3Fragment : PlayerFragment() {
         ).buildAsync()
         controllerFuture?.addListener({
             val controller = controllerFuture?.get()
+            // setVideoSurfaceView owns the holder lifecycle internally; attaching the
+            // surface manually as well would strip that ownership and leave the codec
+            // rendering to a destroyed surface when the view is hidden
             controller?.setVideoSurfaceView(binding.playerSurface)
             val listener = object : Player.Listener {
+
+                override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                    if (videoSize.width > 0 && videoSize.height > 0) {
+                        val aspect = videoSize.width.toFloat() / videoSize.height.toFloat()
+                        binding.aspectRatioFrameLayout.setAspectRatio(aspect)
+                    }
+                }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     binding.bufferingIndicator.isVisible = playbackState == Player.STATE_BUFFERING
@@ -160,9 +214,7 @@ class Media3Fragment : PlayerFragment() {
                             binding.playerControls.playPause.visibility = View.GONE
                         }
                     }
-                    val duration = player?.duration.takeIf { it != androidx.media3.common.C.TIME_UNSET } ?: 0
-                    binding.playerControls.progressBar.setDuration(duration)
-                    binding.playerControls.duration.text = DateUtils.formatElapsedTime(duration / 1000)
+                    updateDurationDisplay()
                     updateProgress()
                 }
 
@@ -171,9 +223,7 @@ class Media3Fragment : PlayerFragment() {
                 }
 
                 override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
-                    val duration = player?.duration.takeIf { it != androidx.media3.common.C.TIME_UNSET } ?: 0
-                    binding.playerControls.progressBar.setDuration(duration)
-                    binding.playerControls.duration.text = DateUtils.formatElapsedTime(duration / 1000)
+                    updateDurationDisplay()
                     updateProgress()
                     if (reason == Player.DISCONTINUITY_REASON_SEEK) {
                         chatFragment?.updatePosition(newPosition.positionMs)
@@ -214,9 +264,7 @@ class Media3Fragment : PlayerFragment() {
                 }
 
                 override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-                    val duration = player?.duration.takeIf { it != androidx.media3.common.C.TIME_UNSET } ?: 0
-                    binding.playerControls.progressBar.setDuration(duration)
-                    binding.playerControls.duration.text = DateUtils.formatElapsedTime(duration / 1000)
+                    updateDurationDisplay()
                     updateProgress()
                     maybeSyncToLiveEdge(player, "onTimelineChanged")
                     if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED && !timeline.isEmpty && viewModel.qualities.containsKey(AUTO_QUALITY)) {
@@ -433,6 +481,15 @@ class Media3Fragment : PlayerFragment() {
                                 }, MoreExecutors.directExecutor())
                             }
                         }
+                        CLIP -> {
+                            // There is no playback ladder to retry for clips; one re-prepare
+                            // recovers transient decoder/surface failures instead of leaving
+                            // the player idle with a frozen screen.
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                delay(1500L)
+                                runCatching { player?.prepare() }
+                            }
+                        }
                     }
                 }
             }
@@ -513,6 +570,7 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun startStream(url: String?) {
+        activePlaybackUrl = url
         val latencyConfig = LiveLatencySettings.resolve(prefs)
         liveTargetOffsetMs = latencyConfig.targetOffsetMs
         pendingInitialLiveSync = true
@@ -587,13 +645,15 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun startVideo(url: String?, playbackPosition: Long?, multivariantPlaylist: Boolean) {
+        activePlaybackUrl = url
         player?.let { player ->
             pendingInitialLiveSync = false
             liveTargetOffsetMs = null
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                 setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
+                clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
             }.build()
-            binding.playerSurface.visibility = View.VISIBLE
+            showVideoSurface(player)
             player.sendCustomCommand(
                 SessionCommand(
                     PlaybackService.START_VIDEO, bundleOf(
@@ -610,6 +670,7 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun startClip(url: String?) {
+        activePlaybackUrl = url
         player?.let { player ->
             pendingInitialLiveSync = false
             liveTargetOffsetMs = null
@@ -617,13 +678,18 @@ class Media3Fragment : PlayerFragment() {
             if (quality?.key == AUDIO_ONLY_QUALITY) {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
+                    clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
                 }.build()
+                // release the video renderer before the SurfaceView's surface dies,
+                // or the codec keeps rendering into an obsolete surface and errors out
+                player.clearVideoSurface()
                 binding.playerSurface.visibility = View.GONE
             } else {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
+                    clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
                 }.build()
-                binding.playerSurface.visibility = View.VISIBLE
+                showVideoSurface(player)
             }
             player.sendCustomCommand(
                 SessionCommand(
@@ -639,10 +705,11 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun currentPlaybackUrl(): String? {
-        return player?.currentMediaItem?.localConfiguration?.uri?.toString()
+        return activePlaybackUrl ?: mediaItemUri(player?.currentMediaItem)?.toString()
     }
 
     override fun startOfflineVideo(url: String?, position: Long) {
+        activePlaybackUrl = url
         player?.let { player ->
             pendingInitialLiveSync = false
             liveTargetOffsetMs = null
@@ -650,13 +717,16 @@ class Media3Fragment : PlayerFragment() {
             if (quality?.key == AUDIO_ONLY_QUALITY) {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
+                    clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
                 }.build()
+                player.clearVideoSurface()
                 binding.playerSurface.visibility = View.GONE
             } else {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
+                    clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
                 }.build()
-                binding.playerSurface.visibility = View.VISIBLE
+                showVideoSurface(player)
             }
             player.sendCustomCommand(
                 SessionCommand(
@@ -680,7 +750,18 @@ class Media3Fragment : PlayerFragment() {
     override fun getCurrentVolume() = player?.volume
 
     override fun playPause() {
-        Util.handlePlayPauseButtonAction(player)
+        player?.let { player ->
+            if (player.isPlaying || player.playWhenReady) {
+                player.pause()
+            } else {
+                if (player.playbackState == Player.STATE_IDLE) {
+                    player.prepare()
+                } else if (player.playbackState == Player.STATE_ENDED) {
+                    player.seekToDefaultPosition()
+                }
+                player.play()
+            }
+        } ?: Util.handlePlayPauseButtonAction(player)
     }
 
     override fun rewind() {
@@ -722,6 +803,9 @@ class Media3Fragment : PlayerFragment() {
                 position.text = DateUtils.formatElapsedTime(currentPosition / 1000)
                 progressBar.setPosition(currentPosition)
                 progressBar.setBufferedPosition(player?.bufferedPosition ?: 0)
+                if (videoType != STREAM) {
+                    updateDurationDisplay()
+                }
             }
             root.removeCallbacks(updateProgressAction)
             player?.let { player ->
@@ -868,9 +952,9 @@ class Media3Fragment : PlayerFragment() {
                     when (quality.key) {
                         AUTO_QUALITY -> {
                             viewModel.playlistUrl?.let { uri ->
-                                if (mediaItem.localConfiguration?.uri != uri) {
+                                if (mediaItemUri(mediaItem) != uri) {
                                     val position = player.currentPosition
-                                    player.setMediaItem(mediaItem.buildUpon().setUri(uri).build())
+                                    player.setMediaItem(mediaItem.buildUpon().setUri(uri).setMediaId(uri.toString()).build())
                                     player.prepare()
                                     player.seekTo(position)
                                 }
@@ -880,22 +964,25 @@ class Media3Fragment : PlayerFragment() {
                                 setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
                                 clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
                             }.build()
-                            binding.playerSurface.visibility = View.VISIBLE
+                            showVideoSurface(player)
                         }
                         AUDIO_ONLY_QUALITY -> {
                             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                 setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                             }.build()
-                            binding.playerSurface.visibility = View.GONE
                             quality.value.second?.let {
                                 val position = player.currentPosition
                                 if (viewModel.qualities.containsKey(AUTO_QUALITY)) {
-                                    viewModel.playlistUrl = mediaItem.localConfiguration?.uri
+                                    viewModel.playlistUrl = mediaItemUri(mediaItem)
                                 }
-                                player.setMediaItem(mediaItem.buildUpon().setUri(it).build())
+                                player.setMediaItem(mediaItem.buildUpon().setUri(it).setMediaId(it).build())
                                 player.prepare()
                                 player.seekTo(position)
                             }
+                            // release the video renderer before the SurfaceView's surface dies,
+                            // or the codec keeps rendering into an obsolete surface and errors out
+                            player.clearVideoSurface()
+                            binding.playerSurface.visibility = View.GONE
                         }
                         CHAT_ONLY_QUALITY -> {
                             player.stop()
@@ -905,7 +992,7 @@ class Media3Fragment : PlayerFragment() {
                                 viewModel.playlistUrl?.let { uri ->
                                     player.currentMediaItem?.let {
                                         val position = player.currentPosition
-                                        player.setMediaItem(it.buildUpon().setUri(uri).build())
+                                        player.setMediaItem(it.buildUpon().setUri(uri).setMediaId(uri.toString()).build())
                                         player.prepare()
                                         player.seekTo(position)
                                         viewModel.playlistUrl = null
@@ -913,7 +1000,6 @@ class Media3Fragment : PlayerFragment() {
                                 } ?: player.prepare()
                                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
-                                    binding.playerSurface.visibility = View.VISIBLE
                                     if (!player.currentTracks.isEmpty) {
                                         player.currentTracks.groups.find { it.type == androidx.media3.common.C.TRACK_TYPE_VIDEO }?.let {
                                             val selectedQuality = quality.key.split("p")
@@ -941,11 +1027,12 @@ class Media3Fragment : PlayerFragment() {
                                         }
                                     }
                                 }.build()
+                                showVideoSurface(player)
                             } else {
                                 player.currentMediaItem?.let {
-                                    if (it.localConfiguration?.uri?.toString() != quality.value.second) {
+                                    if (mediaItemUri(it)?.toString() != quality.value.second) {
                                         val position = player.currentPosition
-                                        player.setMediaItem(it.buildUpon().setUri(quality.value.second).build())
+                                        player.setMediaItem(it.buildUpon().setUri(quality.value.second).setMediaId(quality.value.second ?: "").build())
                                         player.prepare()
                                         player.seekTo(position)
                                     }
@@ -953,7 +1040,7 @@ class Media3Fragment : PlayerFragment() {
                                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
                                 }.build()
-                                binding.playerSurface.visibility = View.VISIBLE
+                                showVideoSurface(player)
                             }
                         }
                     }
@@ -986,9 +1073,9 @@ class Media3Fragment : PlayerFragment() {
                                 quality.value.second?.let {
                                     val position = player.currentPosition
                                     if (viewModel.qualities.containsKey(AUTO_QUALITY)) {
-                                        viewModel.playlistUrl = mediaItem.localConfiguration?.uri
+                                        viewModel.playlistUrl = mediaItemUri(mediaItem)
                                     }
-                                    player.setMediaItem(mediaItem.buildUpon().setUri(it).build())
+                                    player.setMediaItem(mediaItem.buildUpon().setUri(it).setMediaId(it).build())
                                     player.prepare()
                                     player.seekTo(position)
                                 }
@@ -1076,15 +1163,16 @@ class Media3Fragment : PlayerFragment() {
                                     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                         setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                                     }.build()
+                                    player.clearVideoSurface()
                                     binding.playerSurface.visibility = View.GONE
                                 }
                                 if (prefs.getBoolean(AppConstants.PLAYER_USE_BACKGROUND_AUDIO_TRACK, false)) {
                                     quality.value.second?.let {
                                         val position = player.currentPosition
                                         if (viewModel.qualities.containsKey(AUTO_QUALITY)) {
-                                            viewModel.playlistUrl = mediaItem.localConfiguration?.uri
+                                            viewModel.playlistUrl = mediaItemUri(mediaItem)
                                         }
-                                        player.setMediaItem(mediaItem.buildUpon().setUri(it).build())
+                                        player.setMediaItem(mediaItem.buildUpon().setUri(it).setMediaId(it).build())
                                         player.prepare()
                                         player.seekTo(position)
                                     }

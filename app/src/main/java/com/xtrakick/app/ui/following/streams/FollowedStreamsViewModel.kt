@@ -241,9 +241,6 @@ class FollowedStreamsViewModel @Inject constructor(
                 if (fastResult != null) {
                     logFollowedStreamsInfo("Fast followed-live path resolved ${fastResult.items.size} items and left ${fastResult.unresolvedFollows.size} for fallback")
                     val sorted = resolved.values.toList().sortedForFollowedLive()
-                    kickRepository.prefetchChannelLivestreams(
-                        sorted.mapNotNull { it.channelLogin }.take(FOLLOWED_STREAMS_BATCH_SIZE)
-                    )
                     updateStateForGeneration(
                         generation = generation,
                         items = sorted,
@@ -271,9 +268,6 @@ class FollowedStreamsViewModel @Inject constructor(
                 }
                 if (bulkFallbackResult != null) {
                     val sorted = resolved.values.toList().sortedForFollowedLive()
-                    kickRepository.prefetchChannelLivestreams(
-                        sorted.mapNotNull { it.channelLogin }.take(FOLLOWED_STREAMS_BATCH_SIZE)
-                    )
                     updateStateForGeneration(
                         generation = generation,
                         items = sorted,
@@ -682,19 +676,27 @@ class FollowedStreamsViewModel @Inject constructor(
             !resolved.startsWith("https://files.kick.com/images/default-thumbnail", ignoreCase = true)
     }
 
+    private var inMemoryBroadcasterIdCache: MutableMap<String, String>? = null
+
     private fun loadBroadcasterIdCache(): MutableMap<String, String> {
+        inMemoryBroadcasterIdCache?.let { return it }
         val raw = applicationContext.prefs().getString(KICK_BROADCASTER_ID_CACHE_KEY, null)
             ?.takeIf { it.isNotBlank() }
-            ?: return linkedMapOf()
-        return runCatching {
-            val root = JSONObject(raw)
-            buildMap {
-                root.keys().forEach { key ->
-                    val value = root.optString(key).takeIf { it.isNotBlank() } ?: return@forEach
-                    put(key.lowercase(), value)
-                }
-            }.toMutableMap()
-        }.getOrDefault(linkedMapOf())
+        val cache = if (raw != null) {
+            runCatching {
+                val root = JSONObject(raw)
+                buildMap {
+                    root.keys().forEach { key ->
+                        val value = root.optString(key).takeIf { it.isNotBlank() } ?: return@forEach
+                        put(key.lowercase(), value)
+                    }
+                }.toMutableMap()
+            }.getOrDefault(linkedMapOf())
+        } else {
+            linkedMapOf()
+        }
+        inMemoryBroadcasterIdCache = cache
+        return cache
     }
 
     private fun rememberBroadcasterId(login: String?, broadcasterUserId: String?) {

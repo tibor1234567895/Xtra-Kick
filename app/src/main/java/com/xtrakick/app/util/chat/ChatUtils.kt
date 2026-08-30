@@ -174,12 +174,14 @@ object ChatUtils {
         return sets?.split(",")?.dropLastWhile { it.isEmpty() }
     }
 
-    private fun splitAndMakeMap(string: String, splitRegex: String, mapRegex: String): Map<String, String?> {
-        val list = string.split(splitRegex.toRegex()).dropLastWhile { it.isEmpty() }
-        val map = LinkedHashMap<String, String?>()
+    private fun splitAndMakeMap(string: String, splitDelimiter: String, mapDelimiter: String): Map<String, String?> {
+        val list = string.split(splitDelimiter).dropLastWhile { it.isEmpty() }
+        val map = LinkedHashMap<String, String?>(list.size)
         for (pair in list) {
-            val kv = pair.split(mapRegex.toRegex()).dropLastWhile { it.isEmpty() }
-            map[kv[0]] = if (kv.size == 2) kv[1] else null
+            val kv = pair.split(mapDelimiter).dropLastWhile { it.isEmpty() }
+            if (kv.isNotEmpty()) {
+                map[kv[0]] = if (kv.size == 2) kv[1] else null
+            }
         }
         return map
     }

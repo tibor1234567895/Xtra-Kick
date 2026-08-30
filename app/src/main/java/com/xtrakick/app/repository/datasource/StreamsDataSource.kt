@@ -57,11 +57,6 @@ class StreamsDataSource(
         val list = response.data
             .filter { matchesFilters(it) }
             .map { kickRepository.toStream(it) }
-        if (page == 1) {
-            kickRepository.prefetchChannelLivestreams(
-                list.mapNotNull { it.channelLogin }.take(12)
-            )
-        }
         return LoadResult.Page(
             data = list,
             prevKey = null,

@@ -37,7 +37,7 @@ class HeadingFixPlugin : AbstractMarkwonPlugin() {
                                     return buildString {
                                         append(line.subSequence(0, index))
                                         append(' ')
-                                        append(line.subSequence(index, line.lastIndex))
+                                        append(line.subSequence(index, line.length))
                                     }
                                 }
 

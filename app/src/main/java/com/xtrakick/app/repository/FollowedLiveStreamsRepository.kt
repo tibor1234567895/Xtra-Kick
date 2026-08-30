@@ -176,10 +176,6 @@ class FollowedLiveStreamsRepository @Inject constructor(
         }
 
         val finalItems = resolved.values.toList().sortedByViewersDesc()
-        // Prefetch a handful of playback masters for snappy MultiPOV add (no badge spam).
-        kickRepository.prefetchChannelLivestreams(
-            finalItems.mapNotNull { it.channelLogin }.take(PER_CHANNEL_BATCH_SIZE)
-        )
         persistCache(finalItems)
         onPartial(finalItems)
         return LoadResult(items = finalItems, fromCache = false)
@@ -383,9 +379,9 @@ class FollowedLiveStreamsRepository @Inject constructor(
         follow: LocalFollowChannel?,
     ): Stream {
         return Stream(
-            id = channelId?.toString(),
+            id = null,
             source = AppConstants.KICK,
-            channelId = broadcasterUserId?.toString() ?: follow?.userId,
+            channelId = broadcasterUserId?.toString() ?: follow?.userId ?: channelId?.toString(),
             channelLogin = slug ?: follow?.userLogin,
             channelName = follow?.userName ?: slug,
             playbackUrl = null,

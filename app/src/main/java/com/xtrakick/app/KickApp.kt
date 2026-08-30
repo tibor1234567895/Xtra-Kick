@@ -173,7 +173,9 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         requestBuilder: okhttp3.Request.Builder,
         url: String,
     ): okhttp3.Request.Builder {
-        if (!url.contains("://stream.kick.com/", ignoreCase = true)) {
+        if (!url.contains("://stream.kick.com/", ignoreCase = true) &&
+            !url.contains("://images.kick.com/", ignoreCase = true)
+        ) {
             return requestBuilder
         }
         kickStreamThumbnailHeaders().forEach { (name, value) ->
@@ -203,7 +205,8 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                             it.writeTo(buffer)
                                             buffer.readByteArray()
                                         }
-                                        val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true)
+                                        val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true) ||
+                                            request.url.contains("://images.kick.com/", ignoreCase = true)
                                         val requestMillis = System.currentTimeMillis()
                                         val response = suspendCoroutine { continuation ->
                                             httpEngine!!.get().newUrlRequestBuilder(request.url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
@@ -250,7 +253,8 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                     object : NetworkClient {
                                         override suspend fun <T> executeRequest(request: NetworkRequest, block: suspend (NetworkResponse) -> T): T {
                                             val cronetRequest = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                            val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true)
+                                            val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true) ||
+                                                request.url.contains("://images.kick.com/", ignoreCase = true)
                                             cronetEngine!!.get().newUrlRequestBuilder(request.url, cronetRequest.callback, cronetExecutor).apply {
                                                 request.headers.asMap().forEach { entry ->
                                                     entry.value.forEach {
@@ -300,7 +304,8 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                                 it.writeTo(buffer)
                                                 buffer.readByteArray()
                                             }
-                                            val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true)
+                                            val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true) ||
+                                                request.url.contains("://images.kick.com/", ignoreCase = true)
                                             val requestMillis = System.currentTimeMillis()
                                             val response = suspendCoroutine { continuation ->
                                                 cronetEngine!!.get().newUrlRequestBuilder(request.url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
@@ -346,7 +351,9 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                             .addNetworkInterceptor(Interceptor { chain ->
                                 val request = chain.request()
                                 val url = request.url.toString()
-                                if (url.contains("://stream.kick.com/", ignoreCase = true)) {
+                                if (url.contains("://stream.kick.com/", ignoreCase = true) ||
+                                    url.contains("://images.kick.com/", ignoreCase = true)
+                                ) {
                                     chain.proceed(applyKickStreamThumbnailHeaders(request.newBuilder(), url).build())
                                 } else {
                                     chain.proceed(request)

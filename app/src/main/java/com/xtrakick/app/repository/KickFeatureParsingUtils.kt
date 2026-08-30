@@ -391,10 +391,10 @@ object KickFeatureParsingUtils {
         var available = false
         var balance: Int? = null
 
-        fun walk(element: JsonElement, path: List<String>) {
+        fun walk(element: JsonElement, hasRewardScope: Boolean) {
             when (element) {
                 is JsonObject -> {
-                    if (path.any { it.contains("reward") || it.contains("community-point") || it.contains("channel-point") }) {
+                    if (hasRewardScope) {
                         available = true
                     }
                     if (balance == null) {
@@ -429,15 +429,19 @@ object KickFeatureParsingUtils {
                         )
                     }
                     element.forEach { (key, value) ->
-                        walk(value, path + key.lowercase(Locale.ROOT))
+                        val nextRewardScope = hasRewardScope ||
+                            key.contains("reward", ignoreCase = true) ||
+                            key.contains("community-point", ignoreCase = true) ||
+                            key.contains("channel-point", ignoreCase = true)
+                        walk(value, nextRewardScope)
                     }
                 }
-                is JsonArray -> element.forEach { child -> walk(child, path) }
+                is JsonArray -> element.forEach { child -> walk(child, hasRewardScope) }
                 else -> Unit
             }
         }
 
-        walk(root, emptyList())
+        walk(root, false)
         return KickRepository.ChannelPointRewardsResult(
             rewards = rewards.values.sortedWith(compareBy<ChannelPointReward> { it.cost ?: Int.MAX_VALUE }.thenBy { it.title.orEmpty() }),
             available = available,
@@ -451,7 +455,7 @@ object KickFeatureParsingUtils {
         if (normalizedEventName.contains("gift") && findIntRecursive(root, setOf("pinned_time_seconds", "pin_duration", "pin_duration_seconds", "duration")) != null) {
             return true
         }
-        return containsKeyNormalized(root, explicitPinnedKeys)
+        return containsKeyRecursive(root, explicitPinnedKeys)
     }
 
     private fun isPinnedGiftCleared(eventName: String?, root: JsonElement): Boolean {
@@ -467,24 +471,19 @@ object KickFeatureParsingUtils {
     }
 
     private fun containsKeyRecursive(root: JsonElement, targetKeys: Set<String>): Boolean {
-        val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
-        return containsKeyNormalized(root, normalizedKeys)
-    }
-
-    private fun containsKeyNormalized(root: JsonElement, normalizedKeys: Set<String>): Boolean {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
-                    if (key.lowercase(Locale.ROOT) in normalizedKeys) {
+                    if (key.lowercase(Locale.ROOT) in targetKeys) {
                         return true
                     }
-                    if (containsKeyNormalized(value, normalizedKeys)) {
+                    if (containsKeyRecursive(value, targetKeys)) {
                         return true
                     }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                if (containsKeyNormalized(child, normalizedKeys)) return true
+                if (containsKeyRecursive(child, targetKeys)) return true
             }
             else -> Unit
         }
@@ -492,15 +491,10 @@ object KickFeatureParsingUtils {
     }
 
     private fun findStringRecursive(root: JsonElement, targetKeys: Set<String>): String? {
-        val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
-        return findStringNormalized(root, normalizedKeys)
-    }
-
-    private fun findStringNormalized(root: JsonElement, normalizedKeys: Set<String>): String? {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
-                    if (key.lowercase(Locale.ROOT) in normalizedKeys) {
+                    if (key.lowercase(Locale.ROOT) in targetKeys) {
                         when (value) {
                             is JsonPrimitive -> {
                                 value.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
@@ -508,11 +502,11 @@ object KickFeatureParsingUtils {
                             else -> Unit
                         }
                     }
-                    findStringNormalized(value, normalizedKeys)?.let { return it }
+                    findStringRecursive(value, targetKeys)?.let { return it }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                findStringNormalized(child, normalizedKeys)?.let { return it }
+                findStringRecursive(child, targetKeys)?.let { return it }
             }
             is JsonPrimitive -> Unit
         }
@@ -520,15 +514,10 @@ object KickFeatureParsingUtils {
     }
 
     private fun findIntRecursive(root: JsonElement, targetKeys: Set<String>): Int? {
-        val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
-        return findIntNormalized(root, normalizedKeys)
-    }
-
-    private fun findIntNormalized(root: JsonElement, normalizedKeys: Set<String>): Int? {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
-                    if (key.lowercase(Locale.ROOT) in normalizedKeys) {
+                    if (key.lowercase(Locale.ROOT) in targetKeys) {
                         when (value) {
                             is JsonPrimitive -> {
                                 value.intOrNull?.let { return it }
@@ -537,11 +526,11 @@ object KickFeatureParsingUtils {
                             else -> Unit
                         }
                     }
-                    findIntNormalized(value, normalizedKeys)?.let { return it }
+                    findIntRecursive(value, targetKeys)?.let { return it }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                findIntNormalized(child, normalizedKeys)?.let { return it }
+                findIntRecursive(child, targetKeys)?.let { return it }
             }
             else -> Unit
         }
@@ -549,15 +538,10 @@ object KickFeatureParsingUtils {
     }
 
     private fun findBooleanRecursive(root: JsonElement, targetKeys: Set<String>): Boolean? {
-        val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
-        return findBooleanNormalized(root, normalizedKeys)
-    }
-
-    private fun findBooleanNormalized(root: JsonElement, normalizedKeys: Set<String>): Boolean? {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
-                    if (key.lowercase(Locale.ROOT) in normalizedKeys) {
+                    if (key.lowercase(Locale.ROOT) in targetKeys) {
                         when (value) {
                             is JsonPrimitive -> {
                                 value.booleanOrNull?.let { return it }
@@ -566,11 +550,11 @@ object KickFeatureParsingUtils {
                             else -> Unit
                         }
                     }
-                    findBooleanNormalized(value, normalizedKeys)?.let { return it }
+                    findBooleanRecursive(value, targetKeys)?.let { return it }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                findBooleanNormalized(child, normalizedKeys)?.let { return it }
+                findBooleanRecursive(child, targetKeys)?.let { return it }
             }
             else -> Unit
         }
@@ -578,22 +562,17 @@ object KickFeatureParsingUtils {
     }
 
     private fun findObjectRecursive(root: JsonElement, targetKeys: Set<String>): JsonObject? {
-        val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
-        return findObjectNormalized(root, normalizedKeys)
-    }
-
-    private fun findObjectNormalized(root: JsonElement, normalizedKeys: Set<String>): JsonObject? {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
-                    if (key.lowercase(Locale.ROOT) in normalizedKeys) {
+                    if (key.lowercase(Locale.ROOT) in targetKeys) {
                         (value as? JsonObject)?.let { return it }
                     }
-                    findObjectNormalized(value, normalizedKeys)?.let { return it }
+                    findObjectRecursive(value, targetKeys)?.let { return it }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                findObjectNormalized(child, normalizedKeys)?.let { return it }
+                findObjectRecursive(child, targetKeys)?.let { return it }
             }
             else -> Unit
         }
@@ -601,22 +580,17 @@ object KickFeatureParsingUtils {
     }
 
     private fun findElementRecursive(root: JsonElement, targetKeys: Set<String>): JsonElement? {
-        val normalizedKeys = targetKeys.map { it.lowercase(Locale.ROOT) }.toSet()
-        return findElementNormalized(root, normalizedKeys)
-    }
-
-    private fun findElementNormalized(root: JsonElement, normalizedKeys: Set<String>): JsonElement? {
         when (root) {
             is JsonObject -> {
                 root.forEach { (key, value) ->
-                    if (key.lowercase(Locale.ROOT) in normalizedKeys) {
+                    if (key.lowercase(Locale.ROOT) in targetKeys) {
                         return value
                     }
-                    findElementNormalized(value, normalizedKeys)?.let { return it }
+                    findElementRecursive(value, targetKeys)?.let { return it }
                 }
             }
             is JsonArray -> root.forEach { child ->
-                findElementNormalized(child, normalizedKeys)?.let { return it }
+                findElementRecursive(child, targetKeys)?.let { return it }
             }
             else -> Unit
         }

@@ -848,9 +848,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                 val resumed = false
                 val savedOffset = if (resumed) offlineVideo.chatOffsetSeconds else 0
                 val latestSavedMessages = mutableListOf<VideoChatMessage>()
-                val savedChatEmotes = mutableListOf<String>()
-                val savedBadges = mutableListOf<Pair<String, String>>()
-                val savedEmotes = mutableListOf<String>()
+                val savedChatEmotes = hashSetOf<String>()
+                val savedBadges = hashSetOf<Pair<String, String>>()
+                val savedEmotes = hashSetOf<String>()
                 val existingChatFileUri = offlineVideo.chatUrl
                 val existingChatFileAccessible = if (hasExistingChatFile) {
                     canOpenChatFile(existingChatFileUri!!, isShared)
@@ -1167,9 +1167,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 downloadedComments.addAll(comments)
                             }
                             if (downloadEmotes) {
-                                val words = mutableListOf<String>()
-                                val emoteIds = mutableListOf<String>()
-                                val badges = mutableListOf<Badge>()
+                                val words = hashSetOf<String>()
+                                val emoteIds = hashSetOf<String>()
+                                val badges = hashSetOf<Badge>()
                                 messageObjects.mapNotNull { json ->
                                     StringReader(json.toString()).use { string ->
                                         JsonReader(string).use { reader ->
@@ -1180,9 +1180,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                     message.emotes?.mapNotNull { it.id }?.let { emoteIds.addAll(it) }
                                     message.badges?.let { badges.addAll(it) }
                                     message.message?.split(" ").orEmpty().forEach { word ->
-                                        if (!words.contains(word)) {
-                                            words.add(word)
-                                        }
+                                        words.add(word)
                                     }
                                 }
                                 val chatEmotes = mutableListOf<ChatEmote>()
@@ -1190,8 +1188,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 val cheerEmotes = mutableListOf<CheerEmote>()
                                 val emotes = mutableListOf<Emote>()
                                 emoteIds.forEach {
-                                    if (!savedChatEmotes.contains(it)) {
-                                        savedChatEmotes.add(it)
+                                    if (savedChatEmotes.add(it)) {
                                         chatEmotes.add(ChatEmote(
                                             id = it,
                                             url1x = "https://files.kick.com/emotes/$it/fullsize",
@@ -1203,8 +1200,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 }
                                 badges.forEach {
                                     val pair = Pair(it.setId, it.version)
-                                    if (!savedBadges.contains(pair)) {
-                                        savedBadges.add(pair)
+                                    if (savedBadges.add(pair)) {
                                         val badge = badgeList.find { badge -> badge.setId == it.setId && badge.version == it.version }
                                         if (badge != null) {
                                             ChatBadges.add(badge)
@@ -1212,19 +1208,17 @@ class VideoDownloadWorker @AssistedInject constructor(
                                     }
                                 }
                                 words.forEach { word ->
-                                    if (!savedEmotes.contains(word)) {
+                                    if (savedEmotes.add(word)) {
                                         val bitsCount = word.takeLastWhile { it.isDigit() }
                                         val cheerEmote = if (bitsCount.isNotEmpty()) {
                                             val bitsName = word.substringBeforeLast(bitsCount)
                                             cheerEmoteList.findLast { it.name.equals(bitsName, true) && it.minBits <= bitsCount.toInt() }
                                         } else null
                                         if (cheerEmote != null) {
-                                            savedEmotes.add(word)
                                             cheerEmotes.add(cheerEmote)
                                         } else {
                                             val emote = emoteList.find { it.name == word }
                                             if (emote != null) {
-                                                savedEmotes.add(word)
                                                 emotes.add(emote)
                                             }
                                         }

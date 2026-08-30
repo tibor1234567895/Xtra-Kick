@@ -30,7 +30,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.DateFormat
+import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
@@ -231,7 +231,7 @@ class KickDailyRewardDialog : DialogFragment() {
     private fun renderResetTime(dailyChallenge: KickDailyChallenge?) {
         val currentBinding = _binding ?: return
         val resetAt = dailyChallenge?.endsAtEpochMs ?: return
-        val formatted = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(resetAt))
+        val formatted = SimpleDateFormat("MMM d, hh:mm a", Locale.US).format(Date(resetAt))
         currentBinding.resetText.text = getString(R.string.daily_reward_reset, formatted)
         currentBinding.resetText.isVisible = true
     }

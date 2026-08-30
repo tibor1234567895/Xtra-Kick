@@ -113,17 +113,11 @@ class SettingsViewModel @Inject constructor(
      */
     private suspend fun leftoverEntries(): List<File> {
         val orphans = mutableListOf<File>()
+        val allVideos = offlineRepository.getAllVideos()
+        val videoByUrl = allVideos.associateBy { it.url }
+        val referencedChatUrls = allVideos.mapNotNullTo(hashSetOf()) { it.chatUrl }
         applicationContext.getExternalFilesDirs(".downloads").forEach { storage ->
             val files = storage?.absolutePath?.let { File(it).listFiles() } ?: return@forEach
-            val referencedChatUrls = files.filter { !it.name.endsWith(".json") }
-                .flatMap { entry ->
-                    when {
-                        entry.isDirectory -> entry.listFiles()?.filter { it.name.endsWith(".m3u8") }?.map { it.path }.orEmpty()
-                        else -> listOf(entry.path)
-                    }
-                }
-                .mapNotNull { offlineRepository.getVideoByUrl(it)?.chatUrl }
-                .toSet()
             files.forEach { entry ->
                 when {
                     entry.name.endsWith(".json") -> {
@@ -131,12 +125,12 @@ class SettingsViewModel @Inject constructor(
                     }
                     entry.isDirectory -> {
                         val playlists = entry.listFiles()?.filter { it.name.endsWith(".m3u8") }.orEmpty()
-                        if (playlists.isNotEmpty() && playlists.all { offlineRepository.getVideoByUrl(it.path) == null }) {
+                        if (playlists.isNotEmpty() && playlists.all { videoByUrl[it.path] == null }) {
                             orphans.add(entry)
                         }
                     }
                     entry.isFile && (entry.name.endsWith(".mp4") || entry.name.endsWith(".ts")) -> {
-                        if (offlineRepository.getVideoByUrl(entry.path) == null) orphans.add(entry)
+                        if (videoByUrl[entry.path] == null) orphans.add(entry)
                     }
                 }
             }
@@ -255,7 +249,6 @@ class SettingsViewModel @Inject constructor(
 
                                                 }
                                             }
-                                            restored++
                                             restored++
                                     offlineRepository.saveVideo(
                                                 OfflineVideo(

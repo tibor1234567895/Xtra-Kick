@@ -117,8 +117,8 @@ class IvsPlayerService : Service() {
         val channelId = activeKickChannelId?.takeIf { it.isNotBlank() }
         val livestreamId = activeKickLivestreamId?.takeIf { it.isNotBlank() }
         val channelLogin = activeKickChannelLogin?.takeIf { it.isNotBlank() }
-        Log.i(TAG, "viewer metadata channelId=$channelId livestreamId=$livestreamId channelLogin=$channelLogin")
-        if (channelId == null || (livestreamId == null && channelLogin == null)) return
+        playerDebugLog("viewer metadata channelId=$channelId livestreamId=$livestreamId channelLogin=$channelLogin")
+        if (channelId == null && livestreamId == null && channelLogin == null) return
         if (kickViewerWatchJob?.isActive == true) return
         kickViewerWatch = KickViewerWatchWebSocket(
             kickRepository,

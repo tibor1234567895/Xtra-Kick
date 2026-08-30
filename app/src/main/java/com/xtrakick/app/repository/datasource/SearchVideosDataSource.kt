@@ -5,6 +5,10 @@ import androidx.paging.PagingState
 import com.xtrakick.app.model.ui.Video
 import com.xtrakick.app.repository.KickRepository
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+
 class SearchVideosDataSource(
     private val query: String,
     private val kickRepository: KickRepository,
@@ -43,29 +47,34 @@ class SearchVideosDataSource(
             }
         }
 
-        val videosById = linkedMapOf<String, Video>()
         val perChannelLimit = params.loadSize.coerceAtMost(15).coerceAtLeast(10)
-        candidateChannelSlugs
-            .take(5)
-            .forEach { (slug, id) ->
-                val videos = runCatching {
-                    kickRepository.getChannelVideosPage(
-                        channelSlug = slug,
-                        channelId = id,
-                        limit = perChannelLimit
-                    )
-                }.getOrNull()?.videos.orEmpty()
-                videos
-                    .filter { matchesVideoQuery(it, query) }
-                    .forEach { video ->
-                        val key = video.id?.takeIf { it.isNotBlank() }
-                            ?: "${video.channelLogin}:${video.title}:${video.uploadDate}"
-                        if (videosById[key] == null) {
-                            videosById[key] = video
-                        }
-                    }
-                if (videosById.size >= params.loadSize) return@forEach
+        val candidateList = candidateChannelSlugs.take(5)
+
+        val channelVideosList = coroutineScope {
+            candidateList.map { (slug, id) ->
+                async {
+                    runCatching {
+                        kickRepository.getChannelVideosPage(
+                            channelSlug = slug,
+                            channelId = id,
+                            limit = perChannelLimit
+                        )
+                    }.getOrNull()?.videos.orEmpty()
+                }
+            }.awaitAll()
+        }
+
+        val videosById = linkedMapOf<String, Video>()
+        channelVideosList.flatten()
+            .filter { matchesVideoQuery(it, query) }
+            .forEach { video ->
+                val key = video.id?.takeIf { it.isNotBlank() }
+                    ?: "${video.channelLogin}:${video.title}:${video.uploadDate}"
+                if (videosById[key] == null) {
+                    videosById[key] = video
+                }
             }
+
         return LoadResult.Page(
             data = videosById.values
                 .sortedByDescending { it.uploadDate }

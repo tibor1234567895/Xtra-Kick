@@ -231,7 +231,7 @@ class PlayerRepository @Inject constructor(
                                 url(spadeUrl)
                                 header("Content-Type", "application/x-www-form-urlencoded")
                                 post(spadeRequest.toRequestBody())
-                            }.build()).execute()
+                            }.build()).execute().close()
                         }
                     }
                 }
@@ -619,7 +619,7 @@ class PlayerRepository @Inject constructor(
                     header("Content-Type", "application/json")
                     header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                     post(body.toRequestBody())
-                }.build()).execute()
+                }.build()).execute().close()
             }
         }
     }
@@ -749,11 +749,10 @@ class PlayerRepository @Inject constructor(
     }
 
     suspend fun insertRecentEmotes(emotes: Collection<RecentEmote>) = withContext(Dispatchers.IO) {
-        val listSize = emotes.size
-        val list = if (listSize <= RecentEmote.MAX_SIZE) {
+        val list = if (emotes.size <= RecentEmote.MAX_SIZE) {
             emotes
         } else {
-            emotes.toList().subList(listSize - RecentEmote.MAX_SIZE, listSize)
+            emotes.toList().takeLast(RecentEmote.MAX_SIZE)
         }
         recentEmotes.ensureMaxSizeAndInsert(list)
     }

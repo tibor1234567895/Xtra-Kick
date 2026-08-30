@@ -110,7 +110,7 @@ class ChatViewModel @Inject constructor(
     private var stvEventApiJob: Job? = null
     private var stvUserId: String? = null
     private var stvLastPresenceUpdate: Long? = null
-    private val allEmotes = mutableListOf<String>()
+    private val allEmotes = LinkedHashSet<String>()
     private var usedRaidId: String? = null
     private var usedPollId: String? = null
     private var pollTimeoutJob: Job? = null
@@ -153,6 +153,9 @@ class ChatViewModel @Inject constructor(
      * state, where the head of the queue is roughly at the playhead, gets spread out.
      */
     private val kickReplayCatchupThresholdMs = 3_000L
+
+    /** Messages released per emit tick while a deep backlog (preload or seek) drains. */
+    private val kickReplayBacklogReleasePerTick = 4
 
     /**
      * How far ahead of the playhead the pending queue should stay stocked.
@@ -510,37 +513,18 @@ class ChatViewModel @Inject constructor(
         if (!channelLogin.isNullOrBlank()) {
             viewModelScope.launch {
                 try {
-                    // Populate Kick badge URL cache regardless of third-party emote settings.
-                    kickRepository.getChannel(channelLogin)
-                } catch (_: Exception) {
-                    channelId?.takeIf { it.isNotBlank() }?.let { idCandidate ->
-                        runCatching {
-                            kickRepository.getChannel(idCandidate)
-                        }
-                    }
-                }
-            }
-            viewModelScope.launch {
-                try {
                     val includeCurrentChannelSubscriberEmotes = kickRepository.canAccessKickSubscriberEmotes(channelLogin)
                     val groups = kickRepository.loadKickNativeEmoteGroups(channelLogin, includeCurrentChannelSubscriberEmotes)
                     kickEmoteGroups.value = groups
                     val emotes = groups.flatMap { it.emotes }
                     if (emotes.isNotEmpty()) {
-                        synchronized(thirdPartyEmotes) {
-                            thirdPartyEmotes.addAll(emotes.filter { emote -> thirdPartyEmotes.none { it.name == emote.name } })
-                            thirdPartyEmotes.sortBy { it.source }
-                        }
+                        appendToThirdPartyEmotes(emotes)
                         if (!reloadMessages.value) {
                             reloadMessages.value = true
                         }
                         thirdPartyEmotesUpdated.emit(Unit)
-                        synchronized(autoCompleteList) {
-                            autoCompleteList.addAll(emotes.filter { it !in autoCompleteList })
-                        }
-                        synchronized(allEmotes) {
-                            allEmotes.addAll(emotes.filter { it.name !in allEmotes }.mapNotNull { it.name })
-                        }
+                        appendToAutoCompleteList(emotes)
+                        appendToAllEmotes(emotes.mapNotNull { it.name })
                     }
                 } catch (_: Exception) {
 
@@ -559,42 +543,28 @@ class ChatViewModel @Inject constructor(
         if (applicationContext.prefs().getBoolean(AppConstants.CHAT_ENABLE_STV, true)) {
             val saved = savedGlobalStvEmotes
             if (!saved.isNullOrEmpty()) {
-                synchronized(thirdPartyEmotes) {
-                    thirdPartyEmotes.addAll(saved)
-                    thirdPartyEmotes.sortBy { it.source }
-                }
+                appendToThirdPartyEmotes(saved)
                 if (!reloadMessages.value) {
                     reloadMessages.value = true
                 }
                 viewModelScope.launch {
                     thirdPartyEmotesUpdated.emit(Unit)
                 }
-                synchronized(autoCompleteList) {
-                    autoCompleteList.addAll(saved.filter { it !in autoCompleteList })
-                }
-                synchronized(allEmotes) {
-                    allEmotes.addAll(saved.filter { it.name !in allEmotes }.mapNotNull { it.name })
-                }
+                appendToAutoCompleteList(saved)
+                appendToAllEmotes(saved.mapNotNull { it.name })
             } else {
                 viewModelScope.launch {
                     try {
                         val emotes = playerRepository.loadGlobalStvEmotes(networkLibrary, useWebp)
                         if (emotes.isNotEmpty()) {
                             savedGlobalStvEmotes = emotes
-                            synchronized(thirdPartyEmotes) {
-                                thirdPartyEmotes.addAll(emotes)
-                                thirdPartyEmotes.sortBy { it.source }
-                            }
+                            appendToThirdPartyEmotes(emotes)
                             if (!reloadMessages.value) {
                                 reloadMessages.value = true
                             }
                             thirdPartyEmotesUpdated.emit(Unit)
-                            synchronized(autoCompleteList) {
-                                autoCompleteList.addAll(emotes.filter { it !in autoCompleteList })
-                            }
-                            synchronized(allEmotes) {
-                                allEmotes.addAll(emotes.filter { it.name !in allEmotes }.mapNotNull { it.name })
-                            }
+                            appendToAutoCompleteList(emotes)
+                            appendToAllEmotes(emotes.mapNotNull { it.name })
                         }
                     } catch (e: Exception) {
 
@@ -609,25 +579,59 @@ class ChatViewModel @Inject constructor(
                         val emotes = response.second
                         if (emotes.isNotEmpty()) {
                             channelStvEmoteSetId = setId
-                            synchronized(thirdPartyEmotes) {
-                                thirdPartyEmotes.addAll(emotes)
-                                thirdPartyEmotes.sortBy { it.source }
-                            }
+                            appendToThirdPartyEmotes(emotes)
                             if (!reloadMessages.value) {
                                 reloadMessages.value = true
                             }
                             thirdPartyEmotesUpdated.emit(Unit)
-                            synchronized(autoCompleteList) {
-                                autoCompleteList.addAll(emotes.filter { it !in autoCompleteList })
-                            }
-                            synchronized(allEmotes) {
-                                allEmotes.addAll(emotes.filter { it.name !in allEmotes }.mapNotNull { it.name })
-                            }
+                            appendToAutoCompleteList(emotes)
+                            appendToAllEmotes(emotes.mapNotNull { it.name })
                         }
                     } catch (e: Exception) {
 
                     }
                 }
+            }
+        }
+    }
+
+    private fun appendToAutoCompleteList(items: Collection<Any?>) {
+        if (items.isEmpty()) return
+        synchronized(autoCompleteList) {
+            val existing = autoCompleteList.toHashSet()
+            items.forEach {
+                if (it != null && existing.add(it)) {
+                    autoCompleteList.add(it)
+                }
+            }
+        }
+    }
+
+    private fun appendToAllEmotes(names: Collection<String?>) {
+        if (names.isEmpty()) return
+        synchronized(allEmotes) {
+            names.forEach { name ->
+                if (!name.isNullOrBlank()) {
+                    allEmotes.add(name)
+                }
+            }
+        }
+    }
+
+    private fun appendToThirdPartyEmotes(emotes: Collection<Emote>) {
+        if (emotes.isEmpty()) return
+        synchronized(thirdPartyEmotes) {
+            val existingNames = thirdPartyEmotes.mapNotNullTo(hashSetOf()) { it.name }
+            var addedAny = false
+            for (emote in emotes) {
+                val name = emote.name
+                if (name != null && existingNames.add(name)) {
+                    thirdPartyEmotes.add(emote)
+                    addedAny = true
+                }
+            }
+            if (addedAny) {
+                thirdPartyEmotes.sortBy { it.source }
             }
         }
     }
@@ -1278,11 +1282,14 @@ class ChatViewModel @Inject constructor(
         return ChatReplayPacing.perTickRelease(bucketSize, kickReplayEmitIntervalMs)
     }
 
-    private fun queueKickReplayMessages(messages: List<ChatMessage>): KickClipQueueStats {
+    private fun queueKickReplayMessages(messages: List<ChatMessage>, minAllowedTimestampMs: Long? = null): KickClipQueueStats {
         var queued = 0
         var alreadyEmitted = 0
         var alreadyQueued = 0
         messages.forEach { message ->
+            if (minAllowedTimestampMs != null && message.timestamp != null && message.timestamp < minAllowedTimestampMs) {
+                return@forEach
+            }
             val key = kickMessageKey(message)
             val seen = synchronized(kickMessageIds) { kickMessageIds.contains(key) }
             if (seen) {
@@ -1317,7 +1324,7 @@ class ChatViewModel @Inject constructor(
         // due on the same tick. Releasing the whole bucket at once is what made replay lurch a
         // screenful at a time and scroll most of it past unread; spread it over the ticks that
         // cover that second instead. Buckets more than kickReplayCatchupThresholdMs behind the
-        // playhead are a backlog from a preload or seek and still go out in one go.
+        // playhead are a backlog from a preload or seek and still go out smoothly paced.
         val headTimestamp = kickReplayPendingMessages.peek()?.timestamp
         val paced = headTimestamp != null &&
             cutoffTimestampMs - headTimestamp <= kickReplayCatchupThresholdMs
@@ -1328,7 +1335,7 @@ class ChatViewModel @Inject constructor(
             }
             kickReplayPacingPerTick
         } else {
-            Int.MAX_VALUE
+            kickReplayBacklogReleasePerTick
         }
 
         val due = mutableListOf<ChatMessage>()
@@ -1978,7 +1985,7 @@ class ChatViewModel @Inject constructor(
                                 debugPhase = "timeline",
                                 maxPages = kickReplayTimelineMaxPages
                             )
-                            val queueStats = queueKickReplayMessages(timelineMessages)
+                            val queueStats = queueKickReplayMessages(timelineMessages, minAllowedTimestampMs = effectiveReplayStartTimeMs)
                             if (queueStats.queued > 0 || queueStats.alreadyQueued > 0) {
                                 logKickReplayChat(stage = "queue", sessionKey = sessionKey) {
                                     "phase=timeline ${messageRangeSummary(timelineMessages)} total=${queueStats.total} queued=${queueStats.queued} alreadyEmitted=${queueStats.alreadyEmitted} alreadyQueued=${queueStats.alreadyQueued} pending=${kickReplayPendingMessages.size}"
@@ -2192,13 +2199,14 @@ class ChatViewModel @Inject constructor(
     private suspend fun processMessage(message: ChatMessage) {
         synchronized(rawChatMessages) {
             rawChatMessages.add(message)
-            val removedRawItems = if (rawChatMessages.size > messageLimit) {
-                List(rawChatMessages.size - messageLimit) { rawChatMessages.removeFirst() }
-            } else {
-                emptyList()
+            var removeCount = 0
+            while (rawChatMessages.size > messageLimit) {
+                val removed = rawChatMessages.removeFirst()
+                if (!isMutedMessage(removed)) {
+                    removeCount++
+                }
             }
             synchronized(chatMessages) {
-                val removeCount = removedRawItems.count { !isMutedMessage(it) }
                 repeat(removeCount.coerceAtMost(chatMessages.size)) {
                     chatMessages.removeFirst()
                 }
@@ -2401,14 +2409,16 @@ class ChatViewModel @Inject constructor(
         networkLibrary: String?,
         channelId: String?,
         channelLogin: String?,
+        forceRefresh: Boolean = false,
     ) {
-        loadKickChannelPointState(networkLibrary, channelId, channelLogin)
+        loadKickChannelPointState(networkLibrary, channelId, channelLogin, forceRefresh)
     }
 
     private fun loadKickChannelPointState(
         networkLibrary: String?,
         channelId: String?,
         channelLogin: String?,
+        forceRefresh: Boolean = false,
     ) {
         updateChannelPointsBalance(null)
         updateChannelPointRewards(emptyList(), false)
@@ -2426,7 +2436,7 @@ class ChatViewModel @Inject constructor(
                 kickRepository.getChannelPointRewards(
                     channelSlug = channelLogin,
                     channelId = channelId,
-                    forceRefresh = true,
+                    forceRefresh = forceRefresh,
                 )
             }.getOrNull()
             val isOwnerChannel = getKickAccountLogin()?.equals(channelLogin, ignoreCase = true) == true
@@ -3316,7 +3326,9 @@ class ChatViewModel @Inject constructor(
         val currentTime = System.currentTimeMillis()
         synchronized(allEmotes) {
             message.split(' ').forEach { word ->
-                allEmotes.find { it == word }?.let { usedEmotes.add(RecentEmote(word, currentTime)) }
+                if (word in allEmotes) {
+                    usedEmotes.add(RecentEmote(word, currentTime))
+                }
             }
         }
         if (usedEmotes.isNotEmpty()) {

@@ -171,7 +171,7 @@
                 android:textAppearance="?attr/textAppearanceBodySmall"
                 android:textColor="?android:attr/textColorSecondary"
                 android:visibility="gone"
-                tools:text="Daily reward resets at 2:00 AM"
+                tools:text="Daily Reward resets at Aug 29, 02:00 AM"
                 tools:visibility="visible" />
         </LinearLayout>
     </LinearLayout>

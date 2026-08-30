@@ -24,52 +24,99 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class ShownNotificationsRepository @Inject constructor(
+    @param:ApplicationContext private val context: Context,
     private val shownNotificationsDao: ShownNotificationsDao,
     private val kickRepository: KickRepository,
+    private val kickPublicApiRepository: KickPublicApiRepository,
 ) {
 
     suspend fun getNewKickStreams(
         notificationUsersRepository: NotificationUsersRepository,
     ): List<Stream> = withContext(Dispatchers.IO) {
-        val channelIds = notificationUsersRepository.loadUsers()
+        val users = notificationUsersRepository.loadUsers()
+        val channelIds = users
             .mapNotNull { it.channelId.takeIf { id -> id.isNotBlank() } }
             .distinct()
         if (channelIds.isEmpty()) {
             return@withContext emptyList()
         }
-        val semaphore = Semaphore(8)
-        val results = coroutineScope {
-            channelIds.map { channelId ->
-                async {
-                    semaphore.withPermit {
-                        // Notifications render a title and an icon, never badges. Leaving the
-                        // default on fired a badge-catalog prefetch for every followed channel
-                        // on every poll — 8 concurrent channels turning a background check into
-                        // 100+ requests. FollowedLiveStreamsRepository already passes false.
-                        val channel = runCatching {
-                            this@ShownNotificationsRepository.kickRepository.getChannel(channelId, prefetchBadgeCatalog = false)
-                        }.getOrNull()
-                        // The Boolean records whether the fetch itself succeeded, so failed
-                        // fetches never wipe a channel's dedupe row (which used to re-notify
-                        // currently-live streams on the next healthy poll).
-                        channel?.let { this@ShownNotificationsRepository.kickRepository.toStream(it) } to (channel != null)
-                    }
+
+        val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
+        val headers = KickApiHelper.getKickPublicApiHeaders(context)
+        val numericIds = channelIds.filter { it.all(Char::isDigit) }
+        val unresolvedIds = channelIds.toMutableList()
+        val resolvedStreams = mutableListOf<Stream>()
+        val fetchedKeys = mutableSetOf<String>()
+
+        if (numericIds.isNotEmpty()) {
+            val publicApiResult = runCatching {
+                numericIds.chunked(100).flatMap { batch ->
+                    kickPublicApiRepository.getLivestreams(
+                        networkLibrary = networkLibrary,
+                        headers = headers,
+                        broadcasterUserIds = batch,
+                    ).data
                 }
-            }.awaitAll()
+            }.getOrNull()
+
+            if (publicApiResult != null) {
+                numericIds.forEach { fetchedKeys.add(it) }
+                unresolvedIds.removeAll(numericIds.toSet())
+                publicApiResult.forEach { live ->
+                    val broadcasterId = live.broadcasterUserId?.toString() ?: live.channelId?.toString()
+                    val stream = Stream(
+                        id = null,
+                        source = AppConstants.KICK,
+                        channelId = broadcasterId,
+                        channelLogin = live.slug,
+                        channelName = live.slug,
+                        playbackUrl = null,
+                        gameId = live.category?.id?.toString(),
+                        gameSlug = null,
+                        gameName = live.category?.name,
+                        title = live.streamTitle,
+                        viewerCount = live.viewerCount,
+                        startedAt = live.startedAt,
+                        thumbnailUrl = live.thumbnail,
+                        profileImageUrl = live.profilePicture,
+                    )
+                    resolvedStreams.add(stream)
+                }
+            }
         }
-        val fetchedKeys = channelIds.filterIndexed { index, _ -> results[index].second }.toSet()
+
+        if (unresolvedIds.isNotEmpty()) {
+            val semaphore = Semaphore(8)
+            val fallbackResults = coroutineScope {
+                unresolvedIds.map { channelId ->
+                    async {
+                        semaphore.withPermit {
+                            val channel = runCatching {
+                                this@ShownNotificationsRepository.kickRepository.getChannel(channelId, prefetchBadgeCatalog = false)
+                            }.getOrNull()
+                            channel?.let { this@ShownNotificationsRepository.kickRepository.toStream(it) } to (channel != null)
+                        }
+                    }
+                }.awaitAll()
+            }
+            unresolvedIds.forEachIndexed { index, id ->
+                if (fallbackResults[index].second) {
+                    fetchedKeys.add(id)
+                }
+                fallbackResults[index].first?.let { resolvedStreams.add(it) }
+            }
+        }
+
         if (fetchedKeys.isEmpty()) {
-            // Every fetch failed (Kick 429, offline). Keep the dedupe table untouched and
-            // try again next window instead of treating everything as new.
             return@withContext emptyList()
         }
-        val list = results.mapNotNull { it.first }
-            .distinctBy { it.channelId ?: it.channelLogin ?: it.id }
+        val list = resolvedStreams.distinctBy { it.channelId ?: it.channelLogin ?: it.id }
 
         val liveList = list.mapNotNull { stream ->
             stream.channelId.takeUnless { it.isNullOrBlank() }?.let { channelId ->

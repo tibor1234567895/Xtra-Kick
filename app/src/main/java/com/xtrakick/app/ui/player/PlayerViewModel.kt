@@ -214,11 +214,13 @@ class PlayerViewModel @Inject constructor(
             viewModelScope.launch {
                 try {
                     if (videoSource.equals(AppConstants.KICK, true)) {
-                        val kickUrl = channelLogin?.let { login ->
+                        val kickUrl = videoId?.let { vid ->
+                            runCatching { kickRepository.getVideoById(vid)?.url }.getOrNull()
+                        } ?: channelLogin?.let { login ->
                             kickRepository.getChannelVideos(
                                 channelSlug = login,
                                 channelId = channelId,
-                                limit = 100
+                                limit = 30
                             ).firstOrNull { it.id == videoId }?.url
                         }
                         if (!kickUrl.isNullOrBlank()) {
