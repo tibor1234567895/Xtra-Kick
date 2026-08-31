@@ -56,7 +56,7 @@ class ShownNotificationsRepository @Inject constructor(
 
         if (numericIds.isNotEmpty()) {
             val publicApiResult = runCatching {
-                numericIds.chunked(100).flatMap { batch ->
+                numericIds.chunked(50).flatMap { batch ->
                     kickPublicApiRepository.getLivestreams(
                         networkLibrary = networkLibrary,
                         headers = headers,

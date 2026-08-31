@@ -21,6 +21,7 @@ import com.xtrakick.app.model.kick.api.video.VideosResponse
 import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import dagger.Lazy
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -174,10 +175,32 @@ class KickPublicApiRepository @Inject constructor(
         return executePublicApi(networkLibrary, "/public/v1/streams", headers, query = query)
     }
 
+    // /public/v1/livestreams is deprecated but, unlike its replacement, still returns true viewer
+    // counts for channels that hide them (the replacement reports 0 and sinks them in Following >
+    // Live). It takes at most 50 broadcaster_user_id params (400 above) and truncates to 25 items
+    // unless limit is passed, so callers must batch at 50 with limit=size. Flip to the replacement
+    // permanently on first failure.
+    @Volatile
+    private var legacyLivestreamsEndpointDisabled = false
+
     suspend fun getLivestreams(networkLibrary: String?, headers: Map<String, String>, broadcasterUserIds: List<String>? = null): LivestreamsResponse {
-        val query = broadcasterUserIds.orEmpty()
+        val ids = broadcasterUserIds.orEmpty()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
+        if (!legacyLivestreamsEndpointDisabled && ids.isNotEmpty()) {
+            try {
+                val query = "?" + ids.joinToString("&") { "broadcaster_user_id=${encodeParam(it)}" } +
+                    "&limit=${ids.size}&sort=viewer_count"
+                return executePublicApi(networkLibrary, "/public/v1/livestreams", headers, query = query)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: KickAuthRequestException) {
+                throw error
+            } catch (error: Exception) {
+                legacyLivestreamsEndpointDisabled = true
+            }
+        }
+        val query = ids
             .joinToString("&") { "user_id=${encodeParam(it)}" }
             .takeIf { it.isNotEmpty() }
             ?.let { "?$it" }

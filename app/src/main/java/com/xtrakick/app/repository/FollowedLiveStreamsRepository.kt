@@ -43,8 +43,8 @@ class FollowedLiveStreamsRepository @Inject constructor(
         const val CACHE_KEY = "followed_streams_cache_v1"
         private const val BROADCASTER_ID_CACHE_KEY = "kick_broadcaster_id_cache_v1"
         const val CACHE_TTL_MS = 45_000L
-        // /public/v1/users/livestreams accepts up to 100 user_id params per request.
-        private const val LIVESTREAM_BATCH_SIZE = 100
+        // /public/v1/livestreams caps broadcaster_user_id params at 50 per request (400 above).
+        private const val LIVESTREAM_BATCH_SIZE = 50
         private const val USER_LOOKUP_BATCH_SIZE = 100
         private const val PUBLIC_API_PARALLELISM = 3
         private const val PER_CHANNEL_BATCH_SIZE = 12
