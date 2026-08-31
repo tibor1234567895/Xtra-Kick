@@ -4,19 +4,6 @@
     <string name="notification_downloads_channel_id" translatable="false">xtra_downloads_channel</string>
     <string name="notification_live_channel_id" translatable="false">xtra_live_channel</string>
     <string name="notification_playback_channel_id" translatable="false">xtra_playback_channel</string>
-    <string name="lang_de" translatable="false">Deutsch</string>
-    <string name="lang_en" translatable="false">English</string>
-    <string name="lang_es" translatable="false">Español</string>
-    <string name="lang_fr" translatable="false">Français</string>
-    <string name="lang_in" translatable="false">Indonesia</string>
-    <string name="lang_it" translatable="false">Italiano</string>
-    <string name="lang_pt_br" translatable="false">Português - Brasil</string>
-    <string name="lang_tr" translatable="false">Türkçe</string>
-    <string name="lang_ru" translatable="false">Русский</string>
-    <string name="lang_ar" translatable="false">العربية</string>
-    <string name="lang_ja" translatable="false">日本語</string>
-    <string name="lang_zh_tw" translatable="false">中文（繁體）</string>
-    <string name="lang_zh_cn" translatable="false">中文（简体）</string>
     <string name="games">Games</string>
     <string name="popular">Popular</string>
     <string name="following">Following</string>
@@ -143,7 +130,6 @@
     <string name="logout_success_toast">Logged out</string>
     <string name="logout_revoke_failed_toast">Logged out on this device, but revoking the token with Kick failed</string>
     <string name="not_logged_in">Not logged in</string>
-    <string name="language">Language</string>
     <string name="never">Never</string>
     <string name="blue">Blue</string>
     <string name="rounduserimage">Circle profile pictures</string>
@@ -562,7 +548,6 @@
     <string name="dark_theme_off">Dark theme off</string>
     <string name="follow_system_theme">Change based on device theme</string>
     <string name="image_quality">Image quality</string>
-    <string name="lang_auto">System default</string>
     <string name="save_default">Save as default</string>
     <string name="viewers_high">Viewers (descending)</string>
     <string name="viewers_low">Viewers (ascending)</string>
@@ -726,6 +711,9 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="update_dialog_default_description">A new version of Xtra is ready to install with bug fixes and performance improvements.</string>
     <string name="notification_live_channel_title">Live notifications</string>
     <string name="live_notification">%s is live</string>
+    <string name="privacy">Privacy</string>
+    <string name="usage_stats_title">Anonymous usage statistics</string>
+    <string name="usage_stats_summary">Send one anonymous daily ping with the app version, Android version, language-based country, and how often the app was opened today. No account or activity data is included.</string>
     <string name="live_notifications">Live notifications</string>
     <string name="live_notifications_polling_backup">Background polling backup</string>
     <string name="live_notifications_polling_backup_summary">Periodically check for live streams in the background as a fallback if push notifications are delayed. Uses slightly more battery.</string>

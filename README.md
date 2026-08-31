@@ -48,13 +48,14 @@ This is a small personal project maintained by one developer in occasional spare
 - Unofficial. Everything relies on Kick's public API, website endpoints, and undocumented interfaces. Any of these can change or break without notice.
 - Logging in with your Kick account via official OAuth 2.0 PKCE web authorization works out of the box in the signed release APK. When building from source yourself, you need to configure your own OAuth client ID and backend URL. Without login you cannot send chat or use authenticated features.
 - Some features depend on unofficial endpoints that are less reliable than official ones.
-- English UI only. The language setting filters stream content, not the interface.
+- English UI only. Streams, videos, and clips can be filtered by language using the browse filters.
 - No Chromecast support.
 
 ## Security notes
 
 - Login uses OAuth 2.0 with PKCE against Kick's authorization server, routed through a small backend service operated by the maintainer. The backend is open source: [Xtra-Kick-OAuth-Backend](https://github.com/tibor1234567895/Xtra-Kick-OAuth-Backend). Tokens are stored locally and refreshed automatically; logout revokes them.
 - Follow import and web authorization run in WebViews restricted to kick.com and id.kick.com origins only.
+- The app sends one anonymous daily usage ping. No account or activity data is included. You can turn it off in Settings → Advanced → Privacy.
 - The app is not affiliated with or endorsed by Kick. You use your account at your own discretion.
 
 ## License

@@ -54,4 +54,16 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
+    <PreferenceCategory
+        android:title="@string/privacy"
+        app:iconSpaceReserved="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="usage_stats_enabled"
+        android:summary="@string/usage_stats_summary"
+        android:title="@string/usage_stats_title"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
 </androidx.preference.PreferenceScreen>

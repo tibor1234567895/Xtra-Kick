@@ -26,7 +26,6 @@ import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.SearchView
 import com.xtrakick.app.model.AppUpdateInfo
 import androidx.core.app.ActivityCompat
@@ -34,7 +33,6 @@ import androidx.core.content.edit
 import androidx.core.content.FileProvider
 import androidx.core.content.res.use
 import androidx.core.net.toUri
-import androidx.core.os.LocaleListCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -379,40 +377,6 @@ class SettingsActivity : AppCompatActivity() {
 
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.general_preferences, rootKey)
-            findPreference<ListPreference>(AppConstants.UI_LANGUAGE)?.apply {
-                val lang = AppCompatDelegate.getApplicationLocales()
-                if (lang.isEmpty) {
-                    setValueIndex(findIndexOfValue("auto"))
-                } else {
-                    try {
-                        setValueIndex(findIndexOfValue(lang.toLanguageTags()))
-                    } catch (e: Exception) {
-                        try {
-                            setValueIndex(findIndexOfValue(
-                                lang.toLanguageTags().substringBefore("-").let {
-                                    when (it) {
-                                        "id" -> "in"
-                                        "pt" -> "pt-BR"
-                                        "zh" -> "zh-TW"
-                                        else -> it
-                                    }
-                                }
-                            ))
-                        } catch (e: Exception) {
-                            setValueIndex(findIndexOfValue("en"))
-                        }
-                    }
-                }
-                setOnPreferenceChangeListener { _, value ->
-                    AppCompatDelegate.setApplicationLocales(
-                        LocaleListCompat.forLanguageTags(
-                            if (value.toString() == "auto") null else value.toString()
-                        )
-                    )
-                    (requireActivity() as? SettingsActivity)?.setResult()
-                    true
-                }
-            }
             findPreference<SwitchPreferenceCompat>(AppConstants.LIVE_NOTIFICATIONS_ENABLED)?.setOnPreferenceChangeListener { _, newValue ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                     ActivityCompat.checkSelfPermission(requireActivity(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED

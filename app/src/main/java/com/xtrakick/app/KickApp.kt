@@ -93,6 +93,7 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                     WebSocketRuntime.isAppInForeground = startedActivities > 0
                     DiagnosticLogger.updateAppState(WebSocketRuntime.isAppInForeground)
                     if (startedActivities == 1) {
+                        UsagePing.noteSessionStarted(activity)
                         UsagePing.maybeSend(activity.applicationContext, delayMillis = 3_000L)
                     }
                 }

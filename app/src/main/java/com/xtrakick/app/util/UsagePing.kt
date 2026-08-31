@@ -1,6 +1,7 @@
 package com.xtrakick.app.util
 
 import android.content.Context
+import android.os.Build
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.util.prefs
 import java.security.MessageDigest
@@ -11,23 +12,26 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Anonymous, dev-only usage counter. Sends a single random identifier that rotates
- * once per calendar month along with the app version to the OAuth backend, at most
- * once per calendar day. No account, device, or usage data is included.
+ * Anonymous usage ping. Sends a single random per-install identifier plus the
+ * app version, Android API level, locale country, and today's session count to
+ * the OAuth backend, at most once per calendar day. Release builds only, and
+ * skipped entirely when the user disables anonymous usage stats in settings.
+ * No account, device, or behavioral data is included; failures are silent.
  */
 object UsagePing {
 
     private const val REQUEST_TIMEOUT_MS = 15_000L
 
     private val dayFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC)
-    private val monthFormat = DateTimeFormatter.ofPattern("yyyy-MM").withZone(ZoneOffset.UTC)
     private val inFlight = AtomicBoolean(false)
     private val random = SecureRandom()
 
     fun maybeSend(context: Context, delayMillis: Long = 0L) {
         if (BuildConfig.DEBUG) return
         val appContext = context.applicationContext
-        if (appContext.prefs().getString(AppConstants.USAGE_PING_LAST_DAY, null) == dayFormat.format(Instant.ofEpochMilli(System.currentTimeMillis()))) return
+        val prefs = appContext.prefs()
+        if (!prefs.getBoolean(AppConstants.USAGE_STATS_ENABLED, true)) return
+        if (prefs.getString(AppConstants.USAGE_PING_LAST_DAY, null) == dayFormat.format(Instant.ofEpochMilli(System.currentTimeMillis()))) return
         Thread(
             {
                 if (delayMillis > 0L) {
@@ -47,6 +51,7 @@ object UsagePing {
         if (!inFlight.compareAndSet(false, true)) return
         try {
             val prefs = context.prefs()
+            if (!prefs.getBoolean(AppConstants.USAGE_STATS_ENABLED, true)) return
             if (prefs.getString(AppConstants.USAGE_PING_LAST_DAY, null) == today) return
             val baseUrl = BuildConfig.KICK_OAUTH_BACKEND_BASE_URL.trim().trimEnd('/')
             if (baseUrl.isEmpty() || !baseUrl.startsWith("https://")) return
@@ -55,9 +60,16 @@ object UsagePing {
                 runCatching { prefs.edit().putString(AppConstants.USAGE_PING_SEED, generated).apply() }
                 generated
             }
-            val month = monthFormat.format(Instant.ofEpochMilli(System.currentTimeMillis()))
-            val pid = sha256Hex("$seed:$month")
-            val body = "{\"pid\":\"$pid\",\"v\":\"${escapeJson(BuildConfig.VERSION_NAME)}\"}"
+            val sessions = prefs.getInt(AppConstants.USAGE_SESSIONS_TODAY, 0).coerceIn(0, 100_000)
+            val pid = sha256Hex(seed)
+            val country = runCatching { java.util.Locale.getDefault().country }.getOrNull().orEmpty()
+            val body = buildString {
+                append("{\"pid\":\"").append(pid).append("\",\"v\":\"").append(escapeJson(BuildConfig.VERSION_NAME)).append("\"")
+                append(",\"os\":\"").append(Build.VERSION.SDK_INT).append('"')
+                if (country.length == 2) append(",\"cc\":\"").append(country).append('"')
+                if (sessions > 0) append(",\"s\":").append(sessions)
+                append("}")
+            }
             val url = "$baseUrl/v1/metrics/ping"
             val headers = BackendRequestSigner.sign(
                 secret = BuildConfig.KICK_OAUTH_BACKEND_HMAC_SECRET,
@@ -85,6 +97,19 @@ object UsagePing {
             // Intentionally silent: counters are best-effort.
         } finally {
             inFlight.set(false)
+        }
+    }
+
+    fun noteSessionStarted(context: Context) {
+        runCatching {
+            val prefs = context.applicationContext.prefs()
+            val today = dayFormat.format(Instant.ofEpochMilli(System.currentTimeMillis()))
+            if (prefs.getString(AppConstants.USAGE_SESSIONS_DAY, null) != today) {
+                prefs.edit().putString(AppConstants.USAGE_SESSIONS_DAY, today).putInt(AppConstants.USAGE_SESSIONS_TODAY, 0).apply()
+            }
+            prefs.edit()
+                .putInt(AppConstants.USAGE_SESSIONS_TODAY, (prefs.getInt(AppConstants.USAGE_SESSIONS_TODAY, 0) + 1).coerceAtMost(100_000))
+                .apply()
         }
     }
 

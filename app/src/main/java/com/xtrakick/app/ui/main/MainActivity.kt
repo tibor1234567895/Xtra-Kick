@@ -1249,12 +1249,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        if (version < 3) {
-            val langPref = prefs.getString(AppConstants.UI_LANGUAGE, "")
-            if (!langPref.isNullOrBlank() && langPref != "auto") {
-                AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(langPref))
-            }
-        }
         if (version < 4) {
             // Stop seeding Twitch client IDs into GQL prefs. Clear known Twitch defaults when no token.
             prefs.edit {
@@ -1426,6 +1420,15 @@ class MainActivity : AppCompatActivity() {
                     remove(AppConstants.UPDATE_URL)
                 }
                 putInt(AppConstants.SETTINGS_VERSION, 16)
+            }
+        }
+        if (version < 17) {
+            // The UI language setting was removed (only English resources ship). Reset any
+            // per-app locale left over from older installs so the system default applies again.
+            AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList())
+            prefs.edit {
+                remove("ui_language")
+                putInt(AppConstants.SETTINGS_VERSION, 17)
             }
         }
     }
