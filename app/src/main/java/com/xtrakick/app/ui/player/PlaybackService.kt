@@ -258,6 +258,13 @@ class PlaybackService : MediaSessionService() {
 
                 override fun onPlayerError(error: PlaybackException) {
                     logPlayerError(error)
+                    val httpCode = httpResponseCode(error)
+                    if (httpCode == 404 && videoId == null && offlineVideoId == null) {
+                        DiagnosticLogger.w(TAG, "stream 404 terminal error in service, stopping playback")
+                        player.clearMediaItems()
+                        player.stop()
+                        return
+                    }
                     if (background) {
                         if (isBehindLiveWindowError(error)) {
                             DiagnosticLogger.w(

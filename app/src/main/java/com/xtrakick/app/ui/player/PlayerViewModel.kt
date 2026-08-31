@@ -71,6 +71,7 @@ class PlayerViewModel @Inject constructor(
     val integrity = MutableStateFlow<String?>(null)
 
     val streamResult = MutableStateFlow<String?>(null)
+    val streamError = MutableStateFlow<Int?>(null)
     val stream = MutableStateFlow<Stream?>(null)
     private var streamJob: Job? = null
     var useCustomProxy = false
@@ -114,6 +115,7 @@ class PlayerViewModel @Inject constructor(
 
     fun loadStreamResult(networkLibrary: String?, kickWebHeaders: Map<String, String>, channelLogin: String, randomDeviceId: Boolean?, xDeviceId: String?, playerType: String?, supportedCodecs: String?, proxyPlaybackAccessToken: Boolean, proxyHost: String?, proxyPort: Int?, proxyUser: String?, proxyPassword: String?, enableIntegrity: Boolean, forceRefresh: Boolean = false, stalePlaybackUrl: String? = null) {
         if (forceRefresh || streamResult.value == null) {
+            streamError.value = null
             viewModelScope.launch {
                 try {
                     val playbackUrl = kickRepository.getPlaybackUrl(channelLogin, forceRefresh = forceRefresh)
@@ -138,6 +140,8 @@ class PlayerViewModel @Inject constructor(
                     }
                     if (e.message == "failed integrity check" && integrity.value == null) {
                         integrity.value = "refreshStream"
+                    } else {
+                        streamError.value = R.string.stream_ended
                     }
                 }
             }

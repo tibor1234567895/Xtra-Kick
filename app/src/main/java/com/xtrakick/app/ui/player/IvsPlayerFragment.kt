@@ -123,7 +123,11 @@ class IvsPlayerFragment : PlayerFragment() {
                         playerDebugWarn(
                             "IVS playback error code=${exception.code} type=${exception.errorType} source=${exception.source} session=${player?.sessionId}: ${exception.errorMessage}"
                         )
-                        retryIvsPlayback(showMessage = true)
+                        if (isStreamOfflineError(exception)) {
+                            handleIvsStreamOffline()
+                        } else {
+                            retryIvsPlayback(showMessage = true)
+                        }
                     }
 
                     override fun onRebuffering() {
@@ -299,6 +303,7 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun startStream(url: String?) {
         val resolvedUrl = url?.takeIf { it.isNotBlank() } ?: return
+        hideOfflineOverlay()
         recoveryInProgress = false
         currentUrl = resolvedUrl
         requireArguments().putString(KEY_RESOLVED_STREAM_URL, resolvedUrl)
@@ -548,6 +553,27 @@ class IvsPlayerFragment : PlayerFragment() {
         if (videoType == STREAM && isResumed && playbackService?.isBackgroundPlaybackEnabled() != true) {
             player?.pause()
             updatePlayingState()
+        }
+    }
+
+    private fun isStreamOfflineError(exception: PlayerException): Boolean {
+        val msg = exception.errorMessage.orEmpty()
+        val errorType = exception.errorType.name
+        return exception.code == 404 ||
+            msg.contains("404") ||
+            msg.contains("ErrorNotAvailable", ignoreCase = true) ||
+            msg.contains("Failed to load playlist", ignoreCase = true) ||
+            errorType.contains("MasterPlaylist", ignoreCase = true) ||
+            errorType.contains("ErrorNotAvailable", ignoreCase = true) ||
+            errorType.contains("NOT_AVAILABLE", ignoreCase = true)
+    }
+
+    private fun handleIvsStreamOffline() {
+        if (!isAdded) return
+        recoveryInProgress = false
+        playbackService?.stopPlayback()
+        if (!reloadIvsLiveStreamWithFreshUrl("offline check")) {
+            showOfflineOverlay(R.string.stream_ended)
         }
     }
 

@@ -3118,7 +3118,7 @@ class KickRepository @Inject constructor(
             channelId = channel.id?.toString(),
             channelLogin = channel.slug,
             channelName = channel.user?.username,
-            playbackUrl = livestream?.playbackUrl ?: channel.playbackUrl,
+            playbackUrl = livestream?.playbackUrl ?: channel.playbackUrl?.takeIf { livestream != null },
             gameId = livestream?.category?.id?.toString(),
             gameSlug = livestream?.category?.slug,
             gameName = livestream?.category?.name,
@@ -3819,7 +3819,7 @@ class KickRepository @Inject constructor(
     }
 
     fun getPlayableUrl(channel: KickChannelResponse): String? {
-        return channel.livestream?.playbackUrl ?: channel.playbackUrl
+        return channel.livestream?.playbackUrl ?: channel.playbackUrl?.takeIf { channel.livestream != null }
     }
 
     suspend fun getChannelPlaybackUrl(channelSlug: String): String? {
@@ -3839,19 +3839,22 @@ class KickRepository @Inject constructor(
     suspend fun getPlaybackUrl(channelSlug: String, forceRefresh: Boolean = false): String? {
         val normalizedSlug = channelSlug.trim().lowercase(Locale.ROOT)
         if (normalizedSlug.isBlank()) return null
-        if (hasUsableKickWebsiteSession()) {
-            val authenticatedUrl = runCatching {
-                getChannelPlaybackUrl(normalizedSlug)
-            }.getOrNull()
-            if (!authenticatedUrl.isNullOrBlank()) {
-                return authenticatedUrl
-            }
-        }
         val livestream = runCatching {
             getChannelLivestream(normalizedSlug, forceRefresh = forceRefresh)
         }.getOrNull()
-        return livestream?.playbackUrl?.takeIf { it.isNotBlank() }
-            ?: runCatching { getChannel(normalizedSlug, forceRefresh = forceRefresh) }.getOrNull()?.let { getPlayableUrl(it) }
+        if (livestream != null) {
+            if (hasUsableKickWebsiteSession()) {
+                val authenticatedUrl = runCatching {
+                    getChannelPlaybackUrl(normalizedSlug)
+                }.getOrNull()
+                if (!authenticatedUrl.isNullOrBlank()) {
+                    return authenticatedUrl
+                }
+            }
+            return livestream.playbackUrl?.takeIf { it.isNotBlank() }
+        }
+        val channel = runCatching { getChannel(normalizedSlug, forceRefresh = forceRefresh) }.getOrNull()
+        return channel?.let { getPlayableUrl(it) }
     }
 
     suspend fun pingCurrentViewers(livestreamId: String): String? {

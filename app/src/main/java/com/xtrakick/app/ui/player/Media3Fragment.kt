@@ -402,7 +402,11 @@ class Media3Fragment : PlayerFragment() {
                                         if (isNetworkAvailable) {
                                             when {
                                                 responseCode == 404 -> {
-                                                    Toast.makeText(context, R.string.stream_ended, Toast.LENGTH_LONG).show()
+                                                    if (!retryKickStreamWithFreshResolvedUrl("404 recovery")) {
+                                                        player?.clearMediaItems()
+                                                        player?.stop()
+                                                        showOfflineOverlay(R.string.stream_ended)
+                                                    }
                                                 }
                                                 responseCode == 403 && retryKickStreamWithFreshResolvedUrl() -> {
                                                     Toast.makeText(context, R.string.player_error, Toast.LENGTH_SHORT).show()
@@ -570,6 +574,7 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun startStream(url: String?) {
+        hideOfflineOverlay()
         activePlaybackUrl = url
         val latencyConfig = LiveLatencySettings.resolve(prefs)
         liveTargetOffsetMs = latencyConfig.targetOffsetMs

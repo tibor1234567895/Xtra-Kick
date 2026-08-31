@@ -100,6 +100,7 @@ import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.color.MaterialColors
+import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
@@ -161,6 +162,8 @@ class MainActivity : AppCompatActivity() {
     }
     @Inject
     lateinit var localFollowChannelRepository: LocalFollowChannelRepository
+    @Inject
+    lateinit var kickRepository: KickRepository
 
     private lateinit var prefs: SharedPreferences
     private var checkedUpdatesOnLaunch = false
@@ -799,13 +802,46 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             INTENT_LIVE_NOTIFICATION -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val stream = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(KEY_VIDEO, Stream::class.java)
                 } else {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra(KEY_VIDEO)
-                }?.let {
-                    startStream(it)
+                } ?: run {
+                    val channelLogin = intent.getStringExtra("stream_channel_login")
+                        ?: intent.getStringExtra("channel_login")
+                        ?: intent.getStringExtra("channelLogin")
+                    if (!channelLogin.isNullOrBlank()) {
+                        Stream(
+                            channelLogin = channelLogin,
+                            channelName = intent.getStringExtra("channel_name") ?: channelLogin,
+                            source = intent.getStringExtra("stream_source") ?: AppConstants.KICK
+                        )
+                    } else null
+                }
+                if (stream != null) {
+                    val login = stream.channelLogin
+                    if (!login.isNullOrBlank() && stream.source.equals(AppConstants.KICK, true)) {
+                        lifecycleScope.launch {
+                            val livestream = runCatching { kickRepository.getChannelLivestream(login) }.getOrNull()
+                            if (livestream != null) {
+                                startStream(stream)
+                            } else {
+                                Toast.makeText(this@MainActivity, R.string.stream_ended, Toast.LENGTH_SHORT).show()
+                                playerFragment?.minimize()
+                                navController.navigate(
+                                    ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(
+                                        channelId = stream.channelId,
+                                        channelLogin = login,
+                                        channelName = stream.channelName,
+                                        channelLogo = stream.channelLogo,
+                                    )
+                                )
+                            }
+                        }
+                    } else {
+                        startStream(stream)
+                    }
                 }
             }
             INTENT_OPEN_DOWNLOADS_TAB -> {

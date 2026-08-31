@@ -318,6 +318,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 requireContext(),
                 object : GestureDetector.SimpleOnGestureListener() {
                     override fun onSingleTapUp(e: MotionEvent): Boolean {
+                        if (offlineOverlay.isVisible) {
+                            return false
+                        }
                         return if (!doubleTap || isPortrait) {
                             val visible = playerControls.root.isVisible
                             if (visible) {
@@ -337,6 +340,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     }
 
                     override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                        if (offlineOverlay.isVisible) {
+                            return false
+                        }
                         return if (doubleTap && !isPortrait) {
                             val visible = playerControls.root.isVisible
                             if (visible) {
@@ -554,7 +560,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     chatDragStartX = event.rawX
                     chatDragStartY = event.rawY
                     chatDragStartProgress = chatOpenProgress
-                    if (playerControls.root.isVisible) {
+                    if (offlineOverlay.isVisible) {
+                        offlineOverlay.dispatchTouchEvent(event)
+                    } else if (playerControls.root.isVisible) {
                         playerControls.root.dispatchTouchEvent(event)
                     } else {
                         controllerTapDetector.onTouchEvent(event)
@@ -597,7 +605,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         return
                     }
                     chatDragCandidate = false
-                    if (playerControls.progressBar.isPressed) {
+                    if (offlineOverlay.isVisible) {
+                        offlineOverlay.dispatchTouchEvent(event)
+                    } else if (playerControls.progressBar.isPressed) {
                         playerControls.root.dispatchTouchEvent(event)
                     } else {
                         if (slidingLayout.translationY in touchSlopRange) {
@@ -796,7 +806,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     if (chatDragActive) {
                                         updateChatDrag(event, pointerIndex)
                                     } else {
-                                        playerControls.root.dispatchTouchEvent(event)
+                                        if (offlineOverlay.isVisible) {
+                                            offlineOverlay.dispatchTouchEvent(event)
+                                        } else {
+                                            playerControls.root.dispatchTouchEvent(event)
+                                        }
                                         if (!playerControls.progressBar.isPressed && !statusBarSwipe) {
                                             val y = event.getY(pointerIndex)
                                             val translationY = y - lastY
@@ -812,6 +826,18 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                                     enableBackground()
                                                 }
                                             } else {
+                                                if (offlineOverlay.isVisible) {
+                                                    val cancel = MotionEvent.obtain(
+                                                        event.downTime,
+                                                        event.eventTime,
+                                                        MotionEvent.ACTION_CANCEL,
+                                                        event.x,
+                                                        event.y,
+                                                        event.metaState
+                                                    )
+                                                    offlineOverlay.dispatchTouchEvent(cancel)
+                                                    cancel.recycle()
+                                                }
                                                 if (backgroundVisible) {
                                                     disableBackground()
                                                 }
@@ -819,7 +845,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                         }
                                     }
                                 } else {
-                                    playerControls.root.dispatchTouchEvent(event)
+                                    if (offlineOverlay.isVisible) {
+                                        offlineOverlay.dispatchTouchEvent(event)
+                                    } else {
+                                        playerControls.root.dispatchTouchEvent(event)
+                                    }
                                 }
                             } else {
                                 if (activePointerId != -1) {
@@ -1071,10 +1101,41 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     }
                 }
                 if (videoType == STREAM) {
+                    offlineRetryButton.setOnClickListener {
+                        hideOfflineOverlay()
+                        bufferingIndicator.isVisible = true
+                        loadStream(forceRefresh = true)
+                    }
+                    offlineChannelButton.setOnClickListener {
+                        val channelId = requireArguments().getString(KEY_CHANNEL_ID)
+                        val channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)
+                        if (!channelId.isNullOrBlank() || !channelLogin.isNullOrBlank()) {
+                            minimize()
+                            (activity as? MainActivity)?.closePlayer()
+                            findNavController().navigate(
+                                ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(
+                                    channelId = channelId,
+                                    channelLogin = channelLogin,
+                                    channelName = requireArguments().getString(KEY_CHANNEL_NAME),
+                                    channelLogo = requireArguments().getString(KEY_CHANNEL_LOGO),
+                                )
+                            )
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.streamError.collectLatest { errorResId ->
+                                if (errorResId != null) {
+                                    showOfflineOverlay(errorResId)
+                                }
+                            }
+                        }
+                    }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.streamResult.collectLatest {
                                 if (it != null) {
+                                    hideOfflineOverlay()
                                     requireArguments().putString(KEY_RESOLVED_STREAM_URL, it)
                                     startStream(it)
                                     viewModel.streamResult.value = null
@@ -2126,12 +2187,27 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
-    protected fun retryKickStreamWithFreshResolvedUrl(): Boolean {
+    protected fun retryKickStreamWithFreshResolvedUrl(reason: String = "403 recovery"): Boolean {
         return reloadKickStreamWithFreshResolvedUrl(
             stalePlaybackUrl = requireArguments().getString(KEY_RESOLVED_STREAM_URL),
-            reason = "403 recovery",
+            reason = reason,
             delayMs = 1500L
         )
+    }
+
+    open fun showOfflineOverlay(messageResId: Int = R.string.stream_ended) {
+        if (_binding == null) return
+        binding.bufferingIndicator.isVisible = false
+        binding.offlineText.setText(messageResId)
+        binding.offlineOverlay.visibility = View.VISIBLE
+        hideController(force = true)
+        binding.playerControls.root.visibility = View.GONE
+        binding.playerControls.root.alpha = 0f
+    }
+
+    open fun hideOfflineOverlay() {
+        if (_binding == null) return
+        binding.offlineOverlay.visibility = View.GONE
     }
 
     protected fun reloadKickStreamWithFreshResolvedUrl(
@@ -2366,6 +2442,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     protected fun showController(force: Boolean = false) {
+        if (_binding != null && binding.offlineOverlay.isVisible) {
+            return
+        }
         if (!controllerIsAnimating) {
             if (!binding.playerControls.root.isVisible) {
                 binding.playerControls.root.removeCallbacks(controllerHideAction)
@@ -2742,8 +2821,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     private fun loadStream(forceRefresh: Boolean = false, stalePlaybackUrl: String? = null) {
+        if (forceRefresh) {
+            hideOfflineOverlay()
+        }
         if (!forceRefresh) {
             requireArguments().getString(KEY_RESOLVED_STREAM_URL)?.takeIf { it.isNotBlank() }?.let { resolvedUrl ->
+                hideOfflineOverlay()
                 startStream(resolvedUrl)
                 return
             }
