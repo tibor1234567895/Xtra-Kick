@@ -539,6 +539,7 @@ class KickRepository @Inject constructor(
         val url = "https://search.kick.com/multi_search"
         val request = Request.Builder()
             .url(url)
+            // gitleaks:allow — Kick's public client-side search key, same one kick.com sends in browsers; ships in every APK
             .header("X-Typesense-Api-Key", "nXIMW0iEN6sMujFYjFuhdrSwVow3pDQu")
             .header("Content-Type", "application/json")
             .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))

@@ -1,0 +1,15 @@
+# Gitleaks configuration for the public mirror (loaded from the repo root).
+# Extends the default rules; only suppresses findings verified as safe.
+
+[extend]
+useDefault = true
+
+[allowlist]
+  # Firebase google-services.json contains the Android API key, which is a
+  # public client identifier shipped in every APK — not a credential.
+  # Access control is enforced via Firebase Security Rules and the API key
+  # restrictions configured in Google Cloud Console.
+  description = "Known-safe Firebase client configuration"
+  paths = [
+    '''(?i)google-services\.json$''',
+  ]
