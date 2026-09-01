@@ -267,7 +267,7 @@ dependencies {
 testImplementation("org.json:json:20240303")
     // ChatBackgroundUtilsTest computes its expected values with androidx ColorUtils,
     // which calls android.graphics.Color — absent on a plain JVM. Robolectric supplies it.
-    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("org.robolectric:robolectric:4.16.1")
     // conscrypt-android ships JNI only for Android. Robolectric loads it on the JVM, so the
     // desktop build supplies the matching native library. Test runtime only.
     testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.6.1")
