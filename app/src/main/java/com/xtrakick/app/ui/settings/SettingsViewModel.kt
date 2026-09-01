@@ -14,11 +14,6 @@ import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.sqlite.db.SimpleSQLiteQuery
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
 import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.model.AppUpdateInfo
 import com.xtrakick.app.model.ui.OfflineVideo
@@ -28,7 +23,8 @@ import com.xtrakick.app.repository.PlayerRepository
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.repository.RecentSearchRepository
 import com.xtrakick.app.repository.ShownNotificationsRepository
-import com.xtrakick.app.ui.main.LiveNotificationWorker
+import com.xtrakick.app.util.cancelLiveNotificationsPollingWork
+import com.xtrakick.app.util.enqueueLiveNotificationsPollingWork
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
@@ -61,7 +57,6 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import kotlin.coroutines.suspendCoroutine
 import kotlin.math.max
@@ -568,10 +563,10 @@ class SettingsViewModel @Inject constructor(
                 if (applicationContext.prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP, false)) {
                     schedulePollingBackup()
                 } else {
-                    WorkManager.getInstance(applicationContext).cancelUniqueWork("live_notifications")
+                    cancelLiveNotificationsPollingWork(applicationContext)
                 }
             } else {
-                WorkManager.getInstance(applicationContext).cancelUniqueWork("live_notifications")
+                cancelLiveNotificationsPollingWork(applicationContext)
             }
         }
     }
@@ -581,23 +576,12 @@ class SettingsViewModel @Inject constructor(
             if (enabled && applicationContext.prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)) {
                 schedulePollingBackup()
             } else {
-                WorkManager.getInstance(applicationContext).cancelUniqueWork("live_notifications")
+                cancelLiveNotificationsPollingWork(applicationContext)
             }
         }
     }
 
     private fun schedulePollingBackup() {
-        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
-            "live_notifications",
-            ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
-            PeriodicWorkRequestBuilder<LiveNotificationWorker>(15, TimeUnit.MINUTES)
-                .setInitialDelay(1, TimeUnit.MINUTES)
-                .setConstraints(
-                    Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                        .build()
-                )
-                .build()
-        )
+        enqueueLiveNotificationsPollingWork(applicationContext)
     }
 }

@@ -375,7 +375,7 @@ class ChatViewModel @Inject constructor(
         }
         kickInitialRoomStateLoaded = true
         viewModelScope.launch {
-            kickRepository.getInitialRoomState(channelLogin, channelId)?.let {
+            runCatching { kickRepository.getInitialRoomState(channelLogin, channelId) }.getOrNull()?.let {
                 roomState.value = it
             }
         }
@@ -826,6 +826,9 @@ class ChatViewModel @Inject constructor(
     fun reloadEmotes(channelId: String?, channelLogin: String?) {
         savedGlobalBadges = null
         savedGlobalStvEmotes = null
+        // An explicit reload must refetch 7TV, not replay the memory cache's
+        // 6h global / 60min channel TTLs.
+        playerRepository.clearStvMemoryCache()
         loadEmotes(channelId, channelLogin)
     }
 
@@ -838,10 +841,11 @@ class ChatViewModel @Inject constructor(
                     if (debugKickRealtimeChat) {
                         Log.d("KickRecentChat", "preload start channelId=$channelId channelLogin=$channelLogin sources=$kickMessageSources")
                     }
-                    val liveHistorySources = buildList {
-                        add(channelId)
-                        addAll(kickMessageSources)
-                    }.distinct()
+                    // resolveKickMessageSources already ends with the raw channelId, which
+                    // is usually the broadcaster user id; leading with it probed the
+                    // known-empty /chat/{user_id}/history on every open instead of the
+                    // cached working source
+                    val liveHistorySources = kickMessageSources.distinct()
                     if (debugKickRealtimeChat) {
                         Log.d(
                             "KickRecentChat",
@@ -961,6 +965,10 @@ class ChatViewModel @Inject constructor(
         return LinkedHashSet<String>().apply {
             getCachedKickPreferredMessageSource(channelId, channelLogin)?.let(::add)
             addAll(resolvedChatroomIds)
+            // History is keyed by the channel's top-level id (mirrors the realtime chat's
+            // effectiveChannelId): user ids return empty and chatroom ids are Pusher-only
+            // (log-anchored in buildLiveHistoryMessageSources).
+            channel?.id?.toString()?.takeIf { it.isNotBlank() }?.let(::add)
             channel?.userId?.toString()?.takeIf { it.isNotBlank() }?.let(::add)
             channel?.user?.id?.toString()?.takeIf { it.isNotBlank() }?.let(::add)
             add(channelId)
@@ -2323,7 +2331,7 @@ class ChatViewModel @Inject constructor(
         val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(AppConstants.DEBUG_KICK_REALTIME_CHAT, false)
         seedKickMessageIdsFromCurrentMessages()
         viewModelScope.launch {
-            kickRepository.getInitialPinnedGift(channelLogin, channelId)?.let { update ->
+            runCatching { kickRepository.getInitialPinnedGift(channelLogin, channelId) }.getOrNull()?.let { update ->
                 if (update.cleared) {
                     clearPinnedGift()
                 } else {

@@ -86,6 +86,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -285,9 +287,15 @@ class KickRepository @Inject constructor(
         return context.prefs().getBoolean(AppConstants.DEBUG_NETWORK_LOGS, false)
     }
 
+    // Completed once the persisted badge cache (URLs + refresh gates) is restored; the
+    // per-channel prefetch waits for it so an early channel open cannot bypass the
+    // persisted TTL gates while the restore is still in flight.
+    private val badgeCacheRestoreBarrier = CompletableDeferred<Unit>()
+
     init {
         badgeCacheScope.launch {
-            restoreKickBadgeCacheFromDisk()
+            runCatching { restoreKickBadgeCacheFromDisk() }
+            badgeCacheRestoreBarrier.complete(Unit)
             // must run after the restore: the scrape's TTL check reads the persisted
             // refresh timestamps, and racing the restore made every cold start rescrape
             maybeRefreshKickBadgeCatalogOnAppOpenInBackground()
@@ -1820,8 +1828,11 @@ class KickRepository @Inject constructor(
     // endpoint twice within a second).
     private data class ChatroomRawCache(val key: String, val fetchedAtMs: Long, val raw: String)
     private var chatroomRawCache: ChatroomRawCache? = null
+    // Guards check-then-fetch on the single-slot cache: two concurrent callers at chat
+    // start would otherwise both miss and hit the same endpoint within milliseconds.
+    private val chatroomRawMutex = Mutex()
 
-    private suspend fun getChannelChatroomRaw(channelSlug: String): String {
+    private suspend fun getChannelChatroomRaw(channelSlug: String): String = chatroomRawMutex.withLock {
         val normalizedKey = channelSlug.trim().lowercase(Locale.ROOT)
         val now = System.currentTimeMillis()
         chatroomRawCache?.let { (cachedKey, cachedAt, cachedRaw) ->
@@ -1832,7 +1843,7 @@ class KickRepository @Inject constructor(
         val encoded = urlEncode(channelSlug.trim())
         val raw = getRaw("https://kick.com/api/v2/channels/$encoded/chatroom", isKickWeb = true)
         chatroomRawCache = ChatroomRawCache(normalizedKey, now, raw)
-        return raw
+        raw
     }
 
     suspend fun resolveDedicatedChatroomCandidates(channelOrId: String): List<String> {
@@ -4165,6 +4176,7 @@ class KickRepository @Inject constructor(
     }
 
     private suspend fun prefetchKickBadgeCatalog(channel: KickChannelResponse) {
+        val slug = channel.slug?.trim()?.takeIf { it.isNotBlank() } ?: return
         val scopeIds = listOfNotNull(
             channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() },
             channel.id?.toString()?.takeIf { it.isNotBlank() }
@@ -4173,23 +4185,30 @@ class KickRepository @Inject constructor(
         // channel-id paths and chatroom-id paths (api/v1|v2/chatrooms/{id},
         // api/v2/channels/{id}/..., api/v2/channels/{slug}/badges) do not exist
         // and only produce 404/405 noise, so they are no longer requested.
-        val urls = linkedSetOf<String>().apply {
-            channel.slug?.takeIf { it.isNotBlank() }?.let { slug ->
-                val encodedSlug = urlEncode(slug)
-                add("https://kick.com/api/v2/channels/$encodedSlug/info")
-                add("https://kick.com/api/v2/channels/$encodedSlug/chatroom")
-                add("https://kick.com/api/v1/$encodedSlug/chatroom")
-                add("https://kick.com/api/v1/channels/$encodedSlug")
+        val encodedSlug = urlEncode(slug)
+        val chatroomUrl = "https://kick.com/api/v2/channels/$encodedSlug/chatroom"
+        val primaryUrls = listOf(
+            "https://kick.com/api/v2/channels/$encodedSlug/info",
+            chatroomUrl
+        )
+        // The v1 documents mirror the same payloads as their v2 counterparts; only pay
+        // for them when the v2 responses contributed no badge entries at all.
+        val legacyMirrorUrls = listOf(
+            "https://kick.com/api/v1/$encodedSlug/chatroom",
+            "https://kick.com/api/v1/channels/$encodedSlug"
+        )
+        var matchedTotal = 0
+        suspend fun fetchCatalogUrl(url: String) {
+            runCatching {
+                if (url == chatroomUrl) getChannelChatroomRaw(slug) else getRaw(url)
             }
-        }
-        urls.forEach { url ->
-            runCatching { getRaw(url) }
                 .onSuccess { body ->
                     runCatching { json.parseToJsonElement(body) }
                         .onSuccess { element ->
-                            val added = cacheKickBadgeUrlsFromJson(element, scopeIds)
-                            if (isKickBadgeDebugEnabled() && added > 0) {
-                                Log.d(badgeDebugTag, "prefetch catalog matched $added entries from $url")
+                            val matched = cacheKickBadgeUrlsFromJson(element, scopeIds)
+                            matchedTotal += matched
+                            if (isKickBadgeDebugEnabled() && matched > 0) {
+                                Log.d(badgeDebugTag, "prefetch catalog matched $matched entries from $url")
                             }
                         }
                 }
@@ -4199,6 +4218,10 @@ class KickRepository @Inject constructor(
                     }
                 }
         }
+        primaryUrls.forEach { fetchCatalogUrl(it) }
+        if (matchedTotal == 0) {
+            legacyMirrorUrls.forEach { fetchCatalogUrl(it) }
+        }
     }
 
     private suspend fun prefetchKickBadgeCatalogFromWeb(
@@ -4206,7 +4229,7 @@ class KickRepository @Inject constructor(
         unresolvedTargetTypes: Set<String>,
     ): Int {
         if (unresolvedTargetTypes.isEmpty()) return 0
-        var added = 0
+        var contributed = 0
         val scopeIds = listOfNotNull(
             channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() },
             channel.id?.toString()?.takeIf { it.isNotBlank() }
@@ -4227,7 +4250,7 @@ class KickRepository @Inject constructor(
                 return@forEach
             }
             snapshot.jsonPayloads.forEach { payload ->
-                added += cacheKickBadgeUrlsFromJson(payload, scopeIds)
+                contributed += cacheKickBadgeUrlsFromJson(payload, scopeIds)
             }
             if (unresolvedKickCanonicalBadgeTypes().none { it in unresolvedTargetTypes }) {
                 return@forEach
@@ -4254,20 +4277,28 @@ class KickRepository @Inject constructor(
                     }
                     extracted.forEach { (type, imageUrl) ->
                         if (type !in unresolvedTargetTypes) return@forEach
-                        added += cacheKickExtractedBadgeUrl(type, "1", imageUrl)
+                        contributed += cacheKickExtractedBadgeUrl(type, "1", imageUrl)
                     }
                 }
             if (unresolvedKickCanonicalBadgeTypes().none { it in unresolvedTargetTypes }) {
                 return@forEach
             }
         }
-        if (added > 0) {
+        if (contributed > 0) {
             schedulePersistBadgeCache()
         }
-        return added
+        return contributed
     }
 
+    /**
+     * Caches badge URLs from a Kick API/HTML JSON payload and returns how many badge
+     * entries the payload *contributed* — either newly inserted or matching an already
+     * cached URL for that key. Counting matches (not only inserts) keeps the v1-mirror
+     * fallback gating truthful once the cache is warm: a warm cache would otherwise
+     * report 0 contributions and re-fetch both legacy mirrors on every TTL-expired pass.
+     */
     private fun cacheKickBadgeUrlsFromJson(root: JsonElement, scopeIds: List<String> = emptyList()): Int {
+        var contributed = 0
         var added = 0
 
         fun stringValue(obj: JsonObject, keys: List<String>): String? {
@@ -4305,14 +4336,18 @@ class KickRepository @Inject constructor(
                                 if (isKickChannelSpecificBadgeType(candidate) && scopeIds.isNotEmpty()) {
                                     scopeIds.forEach { scopeId ->
                                         val key = "kick:chat:$scopeId:$candidate:$version"
-                                        if (kickBadgeUrls.put(key, imageUrl) == null) {
+                                        val previous = kickBadgeUrls.put(key, imageUrl)
+                                        contributed += 1
+                                        if (previous == null || previous != imageUrl) {
                                             added += 1
                                         }
                                         cacheKickBadgeUrlIfAbsent("kick:chat:$scopeId:$candidate:default", imageUrl)
                                     }
                                 } else {
                                     val key = "kick:$candidate:$version"
-                                    if (kickBadgeUrls.put(key, imageUrl) == null) {
+                                    val previous = kickBadgeUrls.put(key, imageUrl)
+                                    contributed += 1
+                                    if (previous == null || previous != imageUrl) {
                                         added += 1
                                     }
                                     cacheKickBadgeUrlIfAbsent("kick:$candidate:default", imageUrl)
@@ -4333,7 +4368,7 @@ class KickRepository @Inject constructor(
         if (added > 0) {
             schedulePersistBadgeCache()
         }
-        return added
+        return contributed
     }
 
     private fun extractImageUrl(element: JsonElement?): String? {
@@ -4458,32 +4493,43 @@ class KickRepository @Inject constructor(
     private fun maybeRefreshKickBadgeCatalogInBackground(channel: KickChannelResponse) {
         val channelCacheKey = channel.id?.toString() ?: channel.slug.orEmpty()
         if (channelCacheKey.isBlank()) return
-        val now = System.currentTimeMillis()
-        val lastRefresh = kickBadgeCatalogRefreshAt[channelCacheKey] ?: 0L
-        if (now - lastRefresh < kickBadgeCacheTtlMs) return
         if (!kickBadgeCatalogRefreshInProgress.add(channelCacheKey)) return
         badgeCacheScope.launch {
             try {
+                // A channel opened before the persisted gate timestamps finished restoring
+                // would bypass the TTL check below and redo the whole prefetch; wait for
+                // the restore, then decide with the restored timestamps in place.
+                badgeCacheRestoreBarrier.await()
+                val now = System.currentTimeMillis()
+                if (now - (kickBadgeCatalogRefreshAt[channelCacheKey] ?: 0L) < kickBadgeCacheTtlMs) return@launch
+                // Write-ahead the gate before any work and persist it: recording the
+                // timestamps only after completion meant a force-stop mid-prefetch lost
+                // them and the next start paid for everything again.
+                markBadgeCatalogRefreshGate(channelCacheKey)
                 prefetchKickBadgeCatalog(channel)
                 val unresolvedBeforeWeb = unresolvedKickCanonicalBadgeTypes().toSet()
                 if (unresolvedBeforeWeb.isNotEmpty()) {
                     val webRefreshKey = "web:$channelCacheKey"
-                    val lastWebRefresh = kickBadgeCatalogRefreshAt[webRefreshKey] ?: 0L
-                    if (now - lastWebRefresh >= kickWebBadgeScrapeTtlMs) {
+                    if (now - (kickBadgeCatalogRefreshAt[webRefreshKey] ?: 0L) >= kickWebBadgeScrapeTtlMs) {
+                        markBadgeCatalogRefreshGate(webRefreshKey)
                         val webAdded = prefetchKickBadgeCatalogFromWeb(channel, unresolvedBeforeWeb)
-                        kickBadgeCatalogRefreshAt[webRefreshKey] = System.currentTimeMillis()
                         if (isKickBadgeDebugEnabled()) {
                             val unresolvedAfterWeb = unresolvedKickCanonicalBadgeTypes().toSet()
                             Log.d(
                                 badgeDebugTag,
-                                "web badge prefetch channel=$channelCacheKey unresolvedBefore=${unresolvedBeforeWeb.joinToString(",")} unresolvedAfter=${unresolvedAfterWeb.joinToString(",")} added=$webAdded"
+                                "web badge prefetch channel=$channelCacheKey unresolvedBefore=${unresolvedBeforeWeb.joinToString(",")} unresolvedAfter=${unresolvedAfterWeb.joinToString(",")} contributed=$webAdded"
                             )
                         }
                     }
                 }
-                kickBadgeCatalogRefreshAt[channelCacheKey] = System.currentTimeMillis()
-                schedulePersistBadgeCache()
             } catch (e: Exception) {
+                // Release the gate so the next channel view retries instead of waiting
+                // out the full TTL after a failed prefetch. The web scrape gate must be
+                // released too — it was written by markBadgeCatalogRefreshGate before the
+                // scrape started and would otherwise stay stuck for the full scrape TTL.
+                kickBadgeCatalogRefreshAt.remove(channelCacheKey)
+                kickBadgeCatalogRefreshAt.remove("web:$channelCacheKey")
+                schedulePersistBadgeCache()
                 if (isKickBadgeDebugEnabled()) {
                     Log.w(badgeDebugTag, "prefetch catalog failed for channel=$channelCacheKey: ${e.message}")
                 }
@@ -4507,16 +4553,17 @@ class KickRepository @Inject constructor(
         if (!kickBadgeCatalogRefreshInProgress.add(refreshKey)) return
         badgeCacheScope.launch {
             try {
+                // Write-ahead: persist the gate before scraping so a force-stop mid-scrape
+                // cannot lose it and make every cold start re-scrape the HTML plus chunks.
+                markBadgeCatalogRefreshGate(refreshKey)
                 val channel = KickChannelResponse(slug = "kick")
                 val webAdded = prefetchKickBadgeCatalogFromWeb(channel, unresolvedTypes)
-                kickBadgeCatalogRefreshAt[refreshKey] = System.currentTimeMillis()
-                // Persist even when nothing was added: the timestamp is what throttles
-                // the scrape, so a fruitless run must still be remembered
-                schedulePersistBadgeCache()
                 if (isKickBadgeDebugEnabled()) {
-                    Log.d(badgeDebugTag, "app-open web badge refresh added=$webAdded")
+                    Log.d(badgeDebugTag, "app-open web badge refresh contributed=$webAdded")
                 }
             } catch (e: Exception) {
+                kickBadgeCatalogRefreshAt.remove(refreshKey)
+                schedulePersistBadgeCache()
                 if (isKickBadgeDebugEnabled()) {
                     Log.w(badgeDebugTag, "app-open web badge refresh failed: ${e.message}")
                 }
@@ -4524,6 +4571,14 @@ class KickRepository @Inject constructor(
                 kickBadgeCatalogRefreshInProgress.remove(refreshKey)
             }
         }
+    }
+
+    // Records a throttle timestamp immediately and schedules its persist. The gates must
+    // be durable before the scrape they authorize starts, otherwise a force-stop
+    // mid-scrape erases them and the next cold start repeats the whole scrape.
+    private fun markBadgeCatalogRefreshGate(key: String) {
+        kickBadgeCatalogRefreshAt[key] = System.currentTimeMillis()
+        schedulePersistBadgeCache()
     }
 
     private fun schedulePersistBadgeCache() {

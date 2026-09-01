@@ -11,6 +11,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -31,11 +32,6 @@ import androidx.navigation.fragment.navArgs
 import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.setupWithNavController
 import androidx.viewpager2.widget.ViewPager2
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
 import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.crossfade
@@ -55,7 +51,6 @@ import com.xtrakick.app.ui.download.DownloadDialog
 import com.xtrakick.app.ui.game.GameMediaFragmentDirections
 import com.xtrakick.app.ui.game.GamePagerFragmentDirections
 import com.xtrakick.app.ui.login.LoginActivity
-import com.xtrakick.app.ui.main.LiveNotificationWorker
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.ui.search.SearchPagerFragmentDirections
 import com.xtrakick.app.util.AppConstants
@@ -73,7 +68,6 @@ import com.google.android.material.tabs.TabLayoutMediator
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import java.util.concurrent.TimeUnit
 
 @AndroidEntryPoint
 class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, IntegrityDialog.CallbackListener {
@@ -83,6 +77,45 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
     private val args: ChannelPagerFragmentArgs by navArgs()
     private val viewModel: ChannelPagerViewModel by viewModels()
     private var firstLaunch = true
+
+    // The bell flow pauses on the Android 13 notification permission prompt and resumes
+    // through this launcher. Raw ActivityCompat.requestPermissions results are never
+    // forwarded to fragments by current androidx versions, so the legacy
+    // onRequestPermissionsResult hook would never fire after a grant.
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                enableChannelNotifications()
+            } else {
+                context?.let {
+                    Toast.makeText(it, R.string.live_notification_channels_permission_denied, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+
+    /** Bell enable flow: insert the row, then arm the app-wide switch and the polling backup. */
+    private fun enableChannelNotifications() {
+        val notificationsEnabled = requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)
+        viewModel.enableNotifications(
+            requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
+            args.channelId,
+            args.channelLogin,
+            requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
+            notificationsEnabled,
+            requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+            KickApiHelper.getKickWebHeaders(requireContext(), true),
+            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false)
+        )
+        if (!notificationsEnabled) {
+            BatteryOptimizationHelper.maybePrompt(requireContext())
+            viewModel.updateNotifications(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), KickApiHelper.getKickPublicApiHeaders(requireContext()))
+            if (requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP, false)) {
+                com.xtrakick.app.util.enqueueLiveNotificationsPollingWork(requireContext())
+            }
+            requireContext().prefs().edit { putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, true) }
+        }
+    }
 
     override val currentFragment: Fragment?
         get() = childFragmentManager.findFragmentByTag("f${binding.viewPager.currentItem}")
@@ -196,40 +229,16 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                 requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false)
                             )
                         } else {
-                            val notificationsEnabled = requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)
-                            viewModel.enableNotifications(
-                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                args.channelId,
-                                args.channelLogin,
-                                setting,
-                                notificationsEnabled,
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false)
-                            )
-                            if (!notificationsEnabled) {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                                    ActivityCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                                    ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-                                }
-                                BatteryOptimizationHelper.maybePrompt(requireContext())
-                                viewModel.updateNotifications(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), KickApiHelper.getKickPublicApiHeaders(requireContext()))
-                                if (requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP, false)) {
-                                    WorkManager.getInstance(requireContext()).enqueueUniquePeriodicWork(
-                                        "live_notifications",
-                                        ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE,
-                                        PeriodicWorkRequestBuilder<LiveNotificationWorker>(15, TimeUnit.MINUTES)
-                                            .setInitialDelay(1, TimeUnit.MINUTES)
-                                            .setConstraints(
-                                                Constraints.Builder()
-                                                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                                                    .build()
-                                            )
-                                            .build()
-                                    )
-                                }
-                                requireContext().prefs().edit { putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, true) }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                ActivityCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                            ) {
+                                // The row is inserted by enableNotifications below only after
+                                // the permission exists — without it every event would be
+                                // dropped at the gate and the bell would silently do nothing.
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                return@setOnMenuItemClickListener true
                             }
+                            enableChannelNotifications()
                         }
                         true
                     }

@@ -521,6 +521,10 @@ class IvsPlayerFragment : PlayerFragment() {
                 resumeOnStart = false
             } else {
                 playbackService?.setBackgroundPlaybackEnabled(false)
+                // Detach explicitly: the system may destroy the surface only after
+                // onStop, when playbackService is already null and the surface callback
+                // can no longer reach the service (leaving surfaceAttached stale-true).
+                playbackService?.attachSurface(null)
                 resumeOnStart = playbackService?.isPlaybackRequested() == true
                 if (ivsPlayer.state == Player.State.PLAYING) {
                     playbackService?.pause(clearPlaybackRequest = false)

@@ -103,8 +103,11 @@ class IvsPlayerService : Service() {
     private var retryCount = 0
     private var startedAtMs = 0L
     private var surfaceAttached = false
+    private var suspendedByFocusLoss = false
+    private var deadStreamWatchdog: Runnable? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var wifiLockSafetyRunnable: Runnable? = null
     private var dynamicsProcessing: DynamicsProcessing? = null
     private val kickViewerWatchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var kickViewerWatch: KickViewerWatchWebSocket? = null
@@ -166,7 +169,19 @@ class IvsPlayerService : Service() {
     }
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
-            AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                // Permanent loss: clear the request so the idle timer can reclaim the
+                // service and a later AUDIOFOCUS_GAIN doesn't auto-resume. Restore the
+                // volume first — CAN_DUCK may have ducked it, and a manual resume from
+                // the notification would otherwise play at 20%.
+                suspendedByFocusLoss = false
+                player?.setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
+                pause(clearPlaybackRequest = true)
+                updatePlaybackState()
+                updateNotification()
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                suspendedByFocusLoss = true
                 pause(clearPlaybackRequest = false)
                 updatePlaybackState()
                 updateNotification()
@@ -175,6 +190,7 @@ class IvsPlayerService : Service() {
                 player?.setVolume((prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f) * 0.2f)
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
+                suspendedByFocusLoss = false
                 player?.setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
                 if (playbackRequested) {
                     play()
@@ -210,14 +226,42 @@ class IvsPlayerService : Service() {
     }
 
     private fun acquirePlaybackLocks() {
-        // Only hold locks while actively playing/buffering — 10 min safety timeout.
+        // Only hold locks while actively playing/buffering — safety timeout on both
+        // (re-acquired on each state change while playback continues).
         wakeLock?.takeUnless { it.isHeld }?.acquire(WAKE_LOCK_TIMEOUT_MS)
         wifiLock?.takeUnless { it.isHeld }?.acquire()
+        armWifiLockSafetyTimeout()
     }
 
     private fun releasePlaybackLocks() {
+        disarmWifiLockSafetyTimeout()
         wakeLock?.takeIf { it.isHeld }?.release()
         wifiLock?.takeIf { it.isHeld }?.release()
+    }
+
+    /**
+     * WifiLock (unlike WakeLock) has no acquire(timeout) overload, so schedule the
+     * same 10-minute fallback manually: keep re-arming while playback is active,
+     * release when the player is stuck anywhere else.
+     */
+    private fun armWifiLockSafetyTimeout() {
+        disarmWifiLockSafetyTimeout()
+        val runnable = Runnable {
+            wifiLockSafetyRunnable = null
+            val state = player?.state
+            if (state == Player.State.PLAYING || state == Player.State.BUFFERING) {
+                armWifiLockSafetyTimeout()
+            } else {
+                releasePlaybackLocks()
+            }
+        }
+        wifiLockSafetyRunnable = runnable
+        applicationHandler?.postDelayed(runnable, WAKE_LOCK_TIMEOUT_MS)
+    }
+
+    private fun disarmWifiLockSafetyTimeout() {
+        wifiLockSafetyRunnable?.let { applicationHandler?.removeCallbacks(it) }
+        wifiLockSafetyRunnable = null
     }
 
     private fun syncLocksWithState(state: Player.State) {
@@ -267,11 +311,21 @@ class IvsPlayerService : Service() {
                 override fun onStateChanged(state: Player.State) {
                     if (state == Player.State.PLAYING) {
                         hasStablePlayback = true
+                        suspendedByFocusLoss = false
                         startKickViewerWatchIfNeeded()
                         requestAudioFocus()
                     } else {
                         stopKickViewerWatch()
                     }
+                    if (state == Player.State.ENDED && boundClients == 0) {
+                        // Unbound session (background/headset-restored) ended — tear down
+                        // instead of leaving a stale "playing" notification behind. A still
+                        // bound fragment (in-app, incl. audio-only) keeps its ended-state UI.
+                        playerDebugWarn("stream ended in background — stopping playback")
+                        stopPlaybackForGood()
+                        return
+                    }
+                    syncDeadStreamWatchdog()
                     syncLocksWithState(state)
                     if (state == Player.State.READY || state == Player.State.PLAYING) {
                         syncDynamicsProcessingWithPreference()
@@ -306,12 +360,21 @@ class IvsPlayerService : Service() {
                     updatePlaybackState(error = true)
                     updateNotification()
                     val retryUrl = currentUrl
-                    if (!retryUrl.isNullOrBlank() && retryCount < 1 && !hasStablePlayback) {
+                    // One blind same-URL retry from the service; when a fragment is
+                    // bound it also handles errors (fresh-URL reload / engine fallback),
+                    // so service and fragment must not race two recovery paths.
+                    val fragmentHandlesRecovery = boundClients > 0
+                    if (!fragmentHandlesRecovery && !retryUrl.isNullOrBlank() && retryCount < 1 && !hasStablePlayback) {
                         retryCount += 1
                         ivsPlayer.load(Uri.parse(retryUrl))
                         ivsPlayer.play()
                     } else {
                         releasePlaybackLocks()
+                        if (!surfaceAttached) {
+                            // Background playback failed for good — stop instead of
+                            // leaving a dead ERROR-state notification up.
+                            stopPlaybackForGood()
+                        }
                     }
                 }
 
@@ -431,6 +494,8 @@ class IvsPlayerService : Service() {
         releaseDynamicsProcessing()
         playerDebugLog("playStream channel=$channelName title=$title")
         playbackRequested = true
+        suspendedByFocusLoss = false
+        disarmDeadStreamWatchdog()
         disarmIdleStop()
         requestAudioFocus()
         // Don't acquire locks pre-emptively — wait for BUFFERING/PLAYING callback.
@@ -538,9 +603,61 @@ class IvsPlayerService : Service() {
         idleStopRunnable = null
     }
 
-    fun attachSurface(surface: android.view.Surface?) {        surfaceAttached = surface != null
+    /**
+     * Background playback only: if the player sits in READY/IDLE while background
+     * playback is requested, the stream went offline (IVS reports READY instead of
+     * an error) and nothing will ever play — tear the service down after a grace
+     * period instead of leaving a ghost "playing" notification behind. ENDED
+     * streams are torn down regardless of the background setting since a finished
+     * live stream cannot resume. The pause-for-app-leave path (background setting
+     * off, auto-resume on return) is excluded because it has already reached
+     * PLAYING in this session ([hasStablePlayback]); a READY/IDLE session that never
+     * played and has no bound fragment is a headset/media-button restore of an
+     * already-offline stream and IS a candidate.
+     */
+    private fun syncDeadStreamWatchdog() {
+        if (!isDeadStreamCandidate()) {
+            disarmDeadStreamWatchdog()
+            return
+        }
+        if (deadStreamWatchdog != null) return
+        val runnable = Runnable {
+            deadStreamWatchdog = null
+            if (isDeadStreamCandidate()) {
+                playerDebugWarn("dead stream watchdog: stopping background playback state=${player?.state}")
+                stopPlaybackForGood()
+            }
+        }
+        deadStreamWatchdog = runnable
+        applicationHandler?.postDelayed(runnable, DEAD_STREAM_TIMEOUT_MS)
+    }
+
+    private fun isDeadStreamCandidate(): Boolean {
+        val state = player?.state ?: return false
+        if (surfaceAttached || boundClients > 0 || suspendedByFocusLoss || !playbackRequested) return false
+        return state == Player.State.ENDED ||
+            ((state == Player.State.READY || state == Player.State.IDLE) &&
+                (backgroundPlaybackEnabled || !hasStablePlayback))
+    }
+
+    private fun disarmDeadStreamWatchdog() {
+        deadStreamWatchdog?.let { applicationHandler?.removeCallbacks(it) }
+        deadStreamWatchdog = null
+    }
+
+    /** Stops for good and clears the resume entry so a headset PLAY won't restart a dead stream. */
+    private fun stopPlaybackForGood() {
+        clearLastPlaybackRequestIfCurrent()
+        stopPlayback()
+    }
+
+    fun attachSurface(surface: android.view.Surface?) {
+        surfaceAttached = surface != null
         player?.setSurface(surface)
         playerDebugLog("attachSurface attached=$surfaceAttached")
+        // The stream may already be dead (READY/IDLE/ENDED) from while the surface
+        // was attached; no state change will fire after detach, so re-evaluate here.
+        syncDeadStreamWatchdog()
     }
 
     fun setBackgroundPlaybackEnabled(enabled: Boolean) {
@@ -555,6 +672,8 @@ class IvsPlayerService : Service() {
 
     fun play() {
         playbackRequested = true
+        suspendedByFocusLoss = false
+        disarmDeadStreamWatchdog()
         disarmIdleStop()
         requestAudioFocus()
         // Locks will be acquired on PLAYING/BUFFERING state change.
@@ -570,6 +689,7 @@ class IvsPlayerService : Service() {
             playbackRequested = false
             abandonAudioFocus()
         }
+        disarmDeadStreamWatchdog()
         player?.pause()
         releasePlaybackLocks()
         armIdleStop()
@@ -580,6 +700,7 @@ class IvsPlayerService : Service() {
     fun resetForReload() {
         backgroundPlaybackEnabled = false
         playbackRequested = false
+        disarmDeadStreamWatchdog()
         abandonAudioFocus()
         player?.pause()
         releasePlaybackLocks()
@@ -601,6 +722,8 @@ class IvsPlayerService : Service() {
         activeKickChannelLogin = null
         backgroundPlaybackEnabled = false
         playbackRequested = false
+        suspendedByFocusLoss = false
+        disarmDeadStreamWatchdog()
         surfaceAttached = false
         abandonAudioFocus()
         player?.setSurface(null)
@@ -833,8 +956,11 @@ class IvsPlayerService : Service() {
                             } else {
                                 if (ivsPlayer?.state == Player.State.READY || ivsPlayer?.state == Player.State.ENDED || playbackRequested) {
                                     play()
-                                } else {
-                                    restoreFromSavedRequest()
+                                } else if (!restoreFromSavedRequest()) {
+                                    // See KEYCODE_MEDIA_PLAY: startForegroundService
+                                    // requires the service to go foreground here.
+                                    stopPlayback()
+                                    return START_NOT_STICKY
                                 }
                             }
                             updatePlaybackState()
@@ -844,8 +970,13 @@ class IvsPlayerService : Service() {
                             val ivsPlayer = player
                             if (ivsPlayer?.state == Player.State.READY || ivsPlayer?.state == Player.State.ENDED || playbackRequested) {
                                 play()
-                            } else {
-                                restoreFromSavedRequest()
+                            } else if (!restoreFromSavedRequest()) {
+                                // Started via startForegroundService (headset PLAY with
+                                // the process dead) and nothing to restore: the service
+                                // must still enter the foreground within the system
+                                // timeout or the app crashes — post the idle state.
+                                stopPlayback()
+                                return START_NOT_STICKY
                             }
                             updatePlaybackState()
                             updateNotification()
@@ -894,6 +1025,9 @@ class IvsPlayerService : Service() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         boundClients = (boundClients - 1).coerceAtLeast(0)
+        // No state change will fire just because the fragment left; re-evaluate the
+        // dead-stream watchdog so an already-dead stream cannot ride along unwatched.
+        syncDeadStreamWatchdog()
         if (!backgroundPlaybackEnabled && !playbackRequested) {
             stopSelf()
         }
@@ -967,6 +1101,7 @@ class IvsPlayerService : Service() {
         metadataBitmapCallback = null
         notificationBitmapCallback = null
         applicationHandler?.removeCallbacksAndMessages(null)
+        wifiLockSafetyRunnable = null
         notificationManager?.cancel(NOTIFICATION_ID)
         session?.release()
         abandonAudioFocus()
@@ -991,5 +1126,8 @@ class IvsPlayerService : Service() {
 
         /** Safety timeout — locks are explicitly released on pause/stop, this is fallback only. */
         private const val WAKE_LOCK_TIMEOUT_MS = 10L * 60L * 1000L
+
+        /** Grace period before a background READY/IDLE player is declared a dead stream. */
+        private const val DEAD_STREAM_TIMEOUT_MS = 30_000L
     }
 }

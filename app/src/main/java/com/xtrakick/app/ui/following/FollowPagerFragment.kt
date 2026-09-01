@@ -38,6 +38,10 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import com.xtrakick.app.ui.notifications.NotificationChannelsFragmentDirections
+import android.graphics.Color
+import androidx.appcompat.content.res.AppCompatResources
+import com.google.android.material.color.MaterialColors
 
 @AndroidEntryPoint
 class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImportDialog.CallbackListener {
@@ -107,9 +111,15 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
 
             val activity = requireActivity() as MainActivity
             val navController = findNavController()
-            val appBarConfiguration = AppBarConfiguration(setOf(R.id.rootGamesFragment, R.id.rootTopFragment, R.id.followPagerFragment, R.id.followMediaFragment, R.id.savedPagerFragment, R.id.savedMediaFragment))
             val isLoggedIn = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
-            toolbar.setupWithNavController(navController, appBarConfiguration)
+            toolbar.navigationIcon = AppCompatResources.getDrawable(requireContext(), R.drawable.baseline_notifications_none_black_24)
+                ?.mutate()
+                ?.apply { setTint(MaterialColors.getColor(requireContext(), androidx.appcompat.R.attr.colorControlNormal, Color.WHITE)) }
+            toolbar.navigationContentDescription = getString(R.string.live_notification_channels)
+            toolbar.setNavigationOnClickListener {
+                findNavController().navigate(NotificationChannelsFragmentDirections.actionGlobalNotificationChannelsFragment())
+            }
+
             toolbar.menu.findItem(R.id.login).title = if (isLoggedIn) getString(R.string.log_out) else getString(R.string.log_in)
             toolbar.menu.findItem(R.id.importKickFollowed)?.isVisible = isLoggedIn
             toolbar.menu.findItem(R.id.dailyReward)?.isVisible = isLoggedIn

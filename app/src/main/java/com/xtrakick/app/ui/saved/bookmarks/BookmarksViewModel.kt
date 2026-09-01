@@ -241,11 +241,28 @@ class BookmarksViewModel @Inject internal constructor(
                     bookmarks.forEach { bookmark -> putIfAbsent(bookmark.videoId, bookmark) }
                 }
                 bookmarks.mapNotNull { it.videoId }.chunked(100).forEach { ids ->
-                    kickPublicApiRepository.getVideos(
-                        networkLibrary = networkLibrary,
-                        headers = kickPublicApiHeaders,
-                        ids = ids,
-                    ).data.map {
+                    val videos = try {
+                        kickPublicApiRepository.getVideos(
+                            networkLibrary = networkLibrary,
+                            headers = kickPublicApiHeaders,
+                            ids = ids,
+                        ).data
+                    } catch (e: Exception) {
+                        // Kick 404s the whole batch if any id no longer exists (deleted
+                        // VOD); fall back to per-id lookups so the rest still update.
+                        ids.mapNotNull { id ->
+                            try {
+                                kickPublicApiRepository.getVideos(
+                                    networkLibrary = networkLibrary,
+                                    headers = kickPublicApiHeaders,
+                                    ids = listOf(id),
+                                ).data.firstOrNull()
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+                    }
+                    videos.map {
                         Video(
                             id = it.id,
                             channelId = it.channelId,

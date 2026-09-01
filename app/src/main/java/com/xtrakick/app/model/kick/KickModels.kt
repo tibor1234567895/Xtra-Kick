@@ -241,11 +241,13 @@ class KickUser(
     val facebook: String? = null,
     @SerialName("profilepic")
     val profilePic: String? = null,
+    @SerialName("profile_pic")
+    val profilePicV2: String? = null,
     @SerialName("profile_picture")
     val profilePicture: String? = null,
 ) {
     val profileImage: String?
-        get() = profilePic ?: profilePicture
+        get() = profilePic ?: profilePicV2 ?: profilePicture
 }
 
 @Serializable

@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.os.ext.SdkExtensions
 import android.util.Log
 import androidx.annotation.OptIn
@@ -124,6 +125,7 @@ class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private var dynamicsProcessing: DynamicsProcessing? = null
     private var background = false
+    private var backgroundPrepareRetryCount = 0
     private var videoId: Long? = null
     private var offlineVideoId: Int? = null
     private lateinit var activeLatencyConfig: LiveLatencyConfig
@@ -166,21 +168,41 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Stops the service when it has been left paused/idle for 10 minutes with no
-     * connected controller, mirroring upstream Xtra's idle auto-stop.
+     * Stops the service when it has been left paused/idle/errored for 10 minutes,
+     * mirroring upstream Xtra's idle auto-stop. SystemUI's persistent session
+     * controller must not block the timer (verified on device: 17 controllers while
+     * paused), so only a controller from this app's own UID — the in-app player
+     * fragment, where the user may intentionally sit on a paused screen — defers it.
      */
     private fun startIdleTimerIfUnused() {
-        val hasController = mediaSession?.connectedControllers?.isNotEmpty() == true
-        if (idleStopTimer == null && !hasController && mediaSession?.player?.isPlaying != true) {
+        if (idleStopTimer == null && mediaSession?.player?.isPlaying != true) {
             idleStopTimer = Timer().apply {
                 schedule(600000) {
                     Handler(Looper.getMainLooper()).post {
-                        savePosition()
-                        pauseAllPlayersAndStopSelf()
+                        // Playback may have resumed between scheduling and this post
+                        // (stopIdleTimer cancels the timer, not an already-queued runnable).
+                        if (mediaSession?.player?.isPlaying == true) {
+                            idleStopTimer = null
+                            return@post
+                        }
+                        if (hasOwnAppController()) {
+                            // In-app controller still bound (user parked on the player):
+                            // re-arm so we stop once they leave.
+                            idleStopTimer = null
+                            startIdleTimerIfUnused()
+                        } else {
+                            savePosition()
+                            pauseAllPlayersAndStopSelf()
+                        }
                     }
                 }
             }
         }
+    }
+
+    private fun hasOwnAppController(): Boolean {
+        val session = mediaSession ?: return false
+        return session.connectedControllers.any { it.uid == Process.myUid() }
     }
 
     private fun stopIdleTimer() {
@@ -236,6 +258,7 @@ class PlaybackService : MediaSessionService() {
                             "currentPosition=${player.currentPosition}"
                     )
                     if (isPlaying) {
+                        backgroundPrepareRetryCount = 0
                         startKickViewerWatchIfNeeded()
                         stopIdleTimer()
                         if (savePositionTimer == null && (videoId != null || offlineVideoId != null)) {
@@ -263,6 +286,24 @@ class PlaybackService : MediaSessionService() {
                         DiagnosticLogger.w(TAG, "stream 404 terminal error in service, stopping playback")
                         player.clearMediaItems()
                         player.stop()
+                        if (!background) {
+                            // Foreground: the fragment shows its own ended overlay and
+                            // will bind a fresh session on retry — release this one so
+                            // the notification/session don't outlive the dead stream.
+                            pauseAllPlayersAndStopSelf()
+                        }
+                        return
+                    }
+                    if (!background && videoId == null && offlineVideoId == null && !isBehindLiveWindowError(error)) {
+                        // Foreground live-stream error: the fragment owns recovery (restart,
+                        // fresh-URL retry, offline overlay, network-restored restart) via
+                        // its still-bound MediaController. But playWhenReady stays true on
+                        // an errored player, and plain pause() leaves the service in the
+                        // foreground for Media3's FGS timeout — use the documented
+                        // immediate teardown instead. VOD/offline playback is excluded:
+                        // those keep the old behavior (fragment-side handling only).
+                        DiagnosticLogger.w(TAG, "foreground live playerError terminal, stopping foreground service")
+                        pauseAllPlayersAndStopSelf()
                         return
                     }
                     if (background) {
@@ -286,9 +327,21 @@ class PlaybackService : MediaSessionService() {
                             }, 5000L)
                             return
                         }
+                        // Cap prepare() retries so a persistent error (DNS down, 5xx,
+                        // timeouts) can't loop error→prepare forever in the background.
+                        if (backgroundPrepareRetryCount >= BACKGROUND_PREPARE_MAX_RETRIES) {
+                            DiagnosticLogger.w(
+                                TAG,
+                                "background playerError recovery exhausted after $backgroundPrepareRetryCount prepare() retries, stopping playback"
+                            )
+                            pauseAllPlayersAndStopSelf()
+                            return
+                        }
+                        backgroundPrepareRetryCount += 1
                         DiagnosticLogger.w(
                             TAG,
-                            "background playerError recovery via prepare code=${error.errorCodeName} " +
+                            "background playerError recovery via prepare retry=$backgroundPrepareRetryCount " +
+                                "code=${error.errorCodeName} " +
                                 "state=${playbackStateName(player.playbackState)} playWhenReady=${player.playWhenReady}"
                         )
                         player.prepare()
@@ -376,6 +429,9 @@ class PlaybackService : MediaSessionService() {
                                 stopIdleTimer()
                                 videoId = null
                                 offlineVideoId = null
+                                // A new stream gets its own full retry budget: a partial
+                                // count from the previous stream must not shorten it.
+                                backgroundPrepareRetryCount = 0
                                 val proxyHost = prefs().getString(AppConstants.PROXY_HOST, null)
                                 val proxyPort = prefs().getString(AppConstants.PROXY_PORT, null)?.toIntOrNull()
                                 val proxyUser = prefs().getString(AppConstants.PROXY_USER, null)
@@ -498,6 +554,8 @@ class PlaybackService : MediaSessionService() {
                                 stopIdleTimer()
                                 videoId = newId
                                 offlineVideoId = null
+                                // A new item gets its own full retry budget.
+                                if (backgroundPrepareRetryCount > 0) backgroundPrepareRetryCount = 0
                                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
                                 player.setMediaSource(
                                     HlsMediaSource.Factory(
@@ -551,6 +609,8 @@ class PlaybackService : MediaSessionService() {
                                 offlineVideoId = null
                                 prefs().edit { putString(AppConstants.LAST_PLAYBACK_ENGINE, "media3") }
                                 stopIdleTimer()
+                                // A new item gets its own full retry budget.
+                                if (backgroundPrepareRetryCount > 0) backgroundPrepareRetryCount = 0
                                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
                                 val dataSourceFactory = DefaultDataSource.Factory(
                                     this@PlaybackService,
@@ -614,6 +674,8 @@ class PlaybackService : MediaSessionService() {
                                 stopIdleTimer()
                                 videoId = null
                                 offlineVideoId = newId
+                                // A new item gets its own full retry budget.
+                                if (backgroundPrepareRetryCount > 0) backgroundPrepareRetryCount = 0
                                 session.player.setMediaItem(
                                     MediaItem.Builder().apply {
                                         setMediaId(uri.orEmpty())
@@ -939,6 +1001,9 @@ class PlaybackService : MediaSessionService() {
         const val URLS = "urls"
 
         const val REQUEST_CODE_RESUME = 2
+
+        /** Max background error→prepare() recovery attempts before giving up. */
+        private const val BACKGROUND_PREPARE_MAX_RETRIES = 5
 
         private fun playbackStateName(playbackState: Int): String {
             return when (playbackState) {

@@ -24,6 +24,8 @@ import dagger.Lazy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
@@ -55,6 +57,10 @@ class KickPublicApiRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val json: Json,
 ) {
+
+    /** Non-401 HTTP failure from the Kick Public API, carrying the status code. */
+    class KickPublicApiHttpException(val statusCode: Int, body: String?) :
+        IOException("Kick Public API request failed ($statusCode): $body")
 
     private suspend fun executePublicApiRaw(
         networkLibrary: String?,
@@ -124,7 +130,7 @@ class KickPublicApiRepository @Inject constructor(
             if (statusCode == 401) {
                 throw KickAuthRequestException.HttpFailure(statusCode)
             }
-            throw IOException("Kick Public API request failed ($statusCode): $rawBody")
+            throw KickPublicApiHttpException(statusCode, rawBody)
         }
         return json.decodeFromString<T>(rawBody)
     }
@@ -179,7 +185,8 @@ class KickPublicApiRepository @Inject constructor(
     // counts for channels that hide them (the replacement reports 0 and sinks them in Following >
     // Live). It takes at most 50 broadcaster_user_id params (400 above) and truncates to 25 items
     // unless limit is passed, so callers must batch at 50 with limit=size. Flip to the replacement
-    // permanently on first failure.
+    // permanently only on a 4xx response — that means the endpoint itself is gone; transient
+    // failures (timeouts, 429, 5xx) must keep retrying it.
     @Volatile
     private var legacyLivestreamsEndpointDisabled = false
 
@@ -197,7 +204,15 @@ class KickPublicApiRepository @Inject constructor(
             } catch (error: KickAuthRequestException) {
                 throw error
             } catch (error: Exception) {
-                legacyLivestreamsEndpointDisabled = true
+                // A definitive client-side rejection (4xx, except 429 Too Many Requests,
+                // which is transient rate limiting) means the legacy endpoint is gone and
+                // can never work again — flip permanently. Anything else — 429, 5xx,
+                // timeouts — must NOT: one transient blip would otherwise downgrade all
+                // viewer counts for the rest of the process lifetime. Either way the code
+                // below falls through to the replacement for this call.
+                if (error is KickPublicApiHttpException && error.statusCode in 400..499 && error.statusCode != 429) {
+                    legacyLivestreamsEndpointDisabled = true
+                }
             }
         }
         val query = ids
@@ -260,6 +275,27 @@ class KickPublicApiRepository @Inject constructor(
         }
         val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
         return executePublicApi(networkLibrary, "/public/v1/users", headers, query = query)
+    }
+
+    /**
+     * Resolves user ids to login names and profile pictures via the official public users
+     * endpoint. Unlike [getUsers], this parses the endpoint's actual response shape
+     * (user_id/username) — the web-style [UsersResponse] fields (id/login) are absent from
+     * api.kick.com replies.
+     */
+    suspend fun lookupUsersByIds(networkLibrary: String?, headers: Map<String, String>, ids: List<String>): Map<String, PublicUserSummary> {
+        val query = ids.takeIf { it.isNotEmpty() }
+            ?.joinToString("&", "?") { "id=${encodeParam(it)}" }
+            ?: return emptyMap()
+        val response = executePublicApi<PublicUserLookupResponse>(networkLibrary, "/public/v1/users", headers, query = query)
+        return response.data.mapNotNull { user ->
+            val id = user.userId?.toString() ?: user.id?.toString() ?: return@mapNotNull null
+            val login = user.username ?: user.login ?: user.name ?: user.channelSlug
+            id to PublicUserSummary(
+                login = login?.trim()?.takeIf { it.isNotBlank() },
+                profilePictureUrl = user.profilePicture?.trim()?.takeIf { it.isNotBlank() },
+            )
+        }.toMap()
     }
 
     suspend fun getSearchGames(networkLibrary: String?, headers: Map<String, String>, query: String?, limit: Int?, offset: String?): GamesResponse {
@@ -569,3 +605,25 @@ class KickPublicApiRepository @Inject constructor(
         return executePublicApiMutation(networkLibrary, "/public/v1/whispers", headers, method = "POST", query = query, bodyJson = body)
     }
 }
+
+/** Response shape actually returned by GET /public/v1/users on api.kick.com. */
+@Serializable
+private data class PublicUserLookupResponse(
+    val data: List<PublicUserLookupUser> = emptyList(),
+)
+
+@Serializable
+private data class PublicUserLookupUser(
+    @SerialName("user_id") val userId: Long? = null,
+    val id: Long? = null,
+    val username: String? = null,
+    val login: String? = null,
+    val name: String? = null,
+    @SerialName("channel_slug") val channelSlug: String? = null,
+    @SerialName("profile_picture") val profilePicture: String? = null,
+)
+
+data class PublicUserSummary(
+    val login: String?,
+    val profilePictureUrl: String?,
+)

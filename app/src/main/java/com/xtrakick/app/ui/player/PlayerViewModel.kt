@@ -495,15 +495,16 @@ class PlayerViewModel @Inject constructor(
     fun saveFollowChannel(userId: String?, channelId: String?, channelLogin: String?, channelName: String?, setting: Int, notificationsEnabled: Boolean, startedAt: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                val followId = (channelId ?: channelLogin)?.trim()?.takeIf { it.isNotBlank() }
+                val candidateKeys = listOfNotNull(channelId, channelLogin, userId).map { it.trim() }.filter { it.isNotBlank() }
+                val followId = (channelId ?: channelLogin)?.trim()?.takeIf { it.isNotBlank() } ?: candidateKeys.firstOrNull()
                 if (followId != null) {
                     localFollowsChannel.saveFollow(LocalFollowChannel(followId, channelLogin, channelName))
                     _isFollowing.value = true
                     follow.value = Pair(true, null)
-                    notificationUsersRepository.saveUser(NotificationUser(followId))
-                    if (notificationsEnabled) {
+                    val savedKey = notificationUsersRepository.enableNotificationsForChannel(candidateKeys)
+                    if (notificationsEnabled && savedKey != null) {
                         startedAt.takeUnless { it.isNullOrBlank() }?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { started ->
-                            shownNotificationsRepository.saveList(listOf(ShownNotification(followId, started)))
+                            shownNotificationsRepository.saveList(listOf(ShownNotification(savedKey, started)))
                         }
                     }
                 }
@@ -516,12 +517,13 @@ class PlayerViewModel @Inject constructor(
     fun deleteFollowChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
+                val candidateKeys = listOfNotNull(channelId, channelLogin, userId).map { it.trim() }.filter { it.isNotBlank() }
                 val followId = (channelId ?: channelLogin)?.trim()?.takeIf { it.isNotBlank() }
                 if (followId != null) {
                     localFollowsChannel.getFollow(channelId, channelLogin)?.let { localFollowsChannel.deleteFollow(it) }
                     _isFollowing.value = false
                     follow.value = Pair(false, null)
-                    notificationUsersRepository.deleteUser(NotificationUser(followId))
+                    notificationUsersRepository.disableNotificationsForChannel(candidateKeys)
                 }
             } catch (e: Exception) {
 

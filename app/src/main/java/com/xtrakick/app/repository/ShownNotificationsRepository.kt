@@ -1,11 +1,14 @@
 package com.xtrakick.app.repository
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.text.HtmlCompat
@@ -34,6 +37,7 @@ class ShownNotificationsRepository @Inject constructor(
     private val shownNotificationsDao: ShownNotificationsDao,
     private val kickRepository: KickRepository,
     private val kickPublicApiRepository: KickPublicApiRepository,
+    private val notificationUsersRepository: NotificationUsersRepository,
 ) {
 
     suspend fun getNewKickStreams(
@@ -220,6 +224,31 @@ class ShownNotificationsRepository @Inject constructor(
             ?.substringBefore('/')
             ?.takeIf { it.isNotBlank() }
             ?: userIdStr
+        // Chat (Pusher) and FCM deliver Kick's stream-start event with no per-channel check
+        // upstream, so the poller's gating is re-applied here: the master switch plus the
+        // channel's toggle. Without this, a stale backend subscription or an open chat of a
+        // non-enabled channel posts anyway. Dropped events must not write the dedupe row —
+        // doing so would suppress the poller for the rest of the session.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug: POST_NOTIFICATIONS not granted")
+            return@withContext
+        }
+        if (!context.prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)) {
+            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug: live notifications disabled")
+            return@withContext
+        }
+        val channelEnabled = runCatching {
+            notificationUsersRepository.isNotificationEnabled(userIdStr, cleanSlug)
+        }.getOrElse {
+            Log.w(TAG, "enablement check failed for $userIdStr/$cleanSlug", it)
+            false
+        }
+        if (!channelEnabled) {
+            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug: channel notifications disabled")
+            return@withContext
+        }
         val cleanTitle = event.description?.trim()?.takeIf { it.isNotBlank() }
             ?: event.title?.let { HtmlCompat.fromHtml(it, HtmlCompat.FROM_HTML_MODE_LEGACY).toString().trim() }
         val secureAvatar = event.profilePicture?.takeIf { it.startsWith("https://", ignoreCase = true) }
@@ -239,6 +268,8 @@ class ShownNotificationsRepository @Inject constructor(
 
     companion object {
         const val GROUP_KEY = "com.xtrakick.app.LIVE_NOTIFICATIONS"
+
+        private const val TAG = "ShownNotifications"
 
         /**
          * Sentinel outside the practical range of String.hashCode() for channel ids, so a

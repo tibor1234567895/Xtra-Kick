@@ -58,13 +58,6 @@ import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.NavigationUI
 import androidx.navigation.ui.setupWithNavController
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
 import com.xtrakick.app.R
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.KickApp
@@ -96,6 +89,8 @@ import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.applyTheme
+import com.xtrakick.app.util.cancelLiveNotificationsPollingWork
+import com.xtrakick.app.util.enqueueLiveNotificationsPollingWork
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
@@ -106,7 +101,6 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.Timer
-import java.util.concurrent.TimeUnit
 import kotlin.concurrent.schedule
 import javax.inject.Inject
 
@@ -536,19 +530,9 @@ class MainActivity : AppCompatActivity() {
         if (prefs.getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false) &&
             prefs.getBoolean(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP, false)
         ) {
-            WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-                "live_notifications",
-                ExistingPeriodicWorkPolicy.KEEP,
-                PeriodicWorkRequestBuilder<LiveNotificationWorker>(15, TimeUnit.MINUTES)
-                    .setConstraints(
-                        Constraints.Builder()
-                            .setRequiredNetworkType(NetworkType.CONNECTED)
-                            .build()
-                    )
-                    .build()
-            )
+            enqueueLiveNotificationsPollingWork(this, reenqueue = false)
         } else {
-            WorkManager.getInstance(this).cancelUniqueWork("live_notifications")
+            cancelLiveNotificationsPollingWork(this)
         }
         if (prefs.getBoolean(AppConstants.REWARD_AUTO_CLAIM_ENABLED, false)) {
             RewardClaimScheduler.enable(this)

@@ -192,4 +192,11 @@
     <action
         android:id="@+id/action_global_channelPagerFragment"
         app:destination="@id/channelPagerFragment" />
+    <fragment
+        android:id="@+id/notificationChannelsFragment"
+        android:name="com.xtrakick.app.ui.notifications.NotificationChannelsFragment"
+        android:label="@string/live_notification_channels" />
+    <action
+        android:id="@+id/action_global_notificationChannelsFragment"
+        app:destination="@id/notificationChannelsFragment" />
 </navigation>

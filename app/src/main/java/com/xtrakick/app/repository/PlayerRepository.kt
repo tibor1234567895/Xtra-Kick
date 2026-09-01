@@ -23,6 +23,8 @@ import com.xtrakick.app.util.getByteArrayCronetCallback
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -47,6 +49,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.zip.DeflaterOutputStream
 import java.util.zip.InflaterOutputStream
@@ -259,128 +262,117 @@ class PlayerRepository @Inject constructor(
         }
     }
 
-    suspend fun loadGlobalStvEmotes(networkLibrary: String?, useWebp: Boolean): List<Emote> = withContext(Dispatchers.IO) {
-        // try the network first; fall back to the last cached response when it is
-        // slow or unavailable so emotes still load offline / during 7tv outages
-        val pair = try {
-            withTimeout(20_000) {
-                loadGlobalStvEmotesResponse(networkLibrary) to true
+    // Short in-memory TTL cache keyed by URL. The emote, channel-style, and presence
+    // lookups all hit the same /v3/users/kick/{id} endpoint within a second of each other
+    // on a chat/player start; this lets them share one fetch instead of three.
+    private val stvResponseMemoryCache = ConcurrentHashMap<String, Pair<Long, String>>()
+    private val STV_GLOBAL_CACHE_TTL_MS = 6L * 60 * 60 * 1000   // global set changes rarely
+    private val STV_EMOTE_SET_CACHE_TTL_MS = 60L * 60 * 1000     // channel emote set
+    private val STV_LOOKUP_CACHE_TTL_MS = 10L * 60 * 1000        // style / presence lookups
+    private val STV_CACHE_MAX_ENTRIES = 32
+    private val stvFetchMutex = Mutex()
+
+    /**
+     * Explicit refresh path (chat emote reload): drop the memory cache so a reload
+     * re-fetches instead of replaying up to the 6h global / 60min channel TTLs. Disk
+     * fallbacks still apply on a failed refetch.
+     */
+    fun clearStvMemoryCache() {
+        stvResponseMemoryCache.clear()
+    }
+
+    /**
+     * Fetch a 7TV GET through the shared memory cache and, when [diskCacheName] is set,
+     * the deflate-compressed disk cache. A fresh memory hit skips the network entirely; on
+     * failure the last persisted response (any age) is returned so emotes still load offline
+     * or during a 7tv outage. Fetches are single-flight per URL so the concurrent lookups
+     * at chat start share one network call instead of racing three.
+     */
+    private suspend fun stvGetCached(
+        networkLibrary: String?,
+        url: String,
+        ttlMs: Long,
+        diskCacheName: String? = null,
+    ): String? {
+        val now = System.currentTimeMillis()
+        stvResponseMemoryCache[url]?.let { (fetchedAtMs, body) ->
+            if (now - fetchedAtMs <= ttlMs) return body
+        }
+        val fetched = stvFetchMutex.withLock {
+            // Re-check: another coroutine may have fetched while we waited for the lock.
+            stvResponseMemoryCache[url]?.let { (fetchedAtMs, body) ->
+                if (System.currentTimeMillis() - fetchedAtMs <= ttlMs) return@withLock body
             }
-        } catch (e: Exception) {
+            if (stvResponseMemoryCache.size >= STV_CACHE_MAX_ENTRIES) {
+                // Evict the stalest entries instead of wiping fresh ones (the global set
+                // entry is the most expensive to refetch).
+                repeat(stvResponseMemoryCache.size - STV_CACHE_MAX_ENTRIES + 1) {
+                    stvResponseMemoryCache.entries
+                        .minByOrNull { it.value.first }
+                        ?.let { stvResponseMemoryCache.remove(it.key) }
+                }
+            }
+            val body = stvGet(networkLibrary, url)
+            if (body != null && body.trimStart().startsWith("{")) {
+                // Only cache JSON-shaped bodies so an error page / CDN response cannot be
+                // replayed from memory later; callers decode it and fall back to disk anyway.
+                stvResponseMemoryCache[url] = System.currentTimeMillis() to body
+            }
+            body
+        }
+        if (fetched != null) return fetched
+        return diskCacheName?.let { readCachedEmoteResponse(it) }
+    }
+
+    suspend fun loadGlobalStvEmotes(networkLibrary: String?, useWebp: Boolean): List<Emote> = withContext(Dispatchers.IO) {
+        // network first (deduped by the shared TTL cache), falling back to the last
+        // persisted response on a timeout/failure so emotes load offline / during 7tv outages
+        val response = try {
+            withTimeout(20_000) {
+                val body = stvGetCached(networkLibrary, "https://7tv.io/v3/emote-sets/global", STV_GLOBAL_CACHE_TTL_MS, "global.stv") ?: return@withTimeout null
+                json.decodeFromString<StvGlobalResponse>(body).also { decoded ->
+                    if (decoded.emotes.isNotEmpty()) {
+                        writeCachedEmoteResponse("global.stv", json.encodeToString(StvGlobalResponse.serializer(), decoded))
+                    }
+                }
+            }
+        } catch (_: Exception) {
             try {
                 readCachedEmoteResponse("global.stv")?.let { cached ->
-                    json.decodeFromString<StvGlobalResponse>(cached) to false
+                    json.decodeFromString<StvGlobalResponse>(cached)
                 }
             } catch (_: Exception) {
                 null
             }
         }
-        val (response, online) = pair ?: (null to false)
-        if (response != null) {
-            if (online && response.emotes.isNotEmpty()) {
-                writeCachedEmoteResponse("global.stv", json.encodeToString(StvGlobalResponse.serializer(), response))
-            }
-            parseStvEmotes(response.emotes, useWebp, Emote.GLOBAL_STV)
-        } else {
-            emptyList()
-        }
-    }
-
-    private suspend fun loadGlobalStvEmotesResponse(networkLibrary: String?): StvGlobalResponse = when {
-        networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-            val response = suspendCoroutine { continuation ->
-                httpEngine.get().newUrlRequestBuilder("https://7tv.io/v3/emote-sets/global", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                    addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                }.build().start()
-            }
-            json.decodeFromString<StvGlobalResponse>(String(response.second))
-        }
-        networkLibrary == "Cronet" && cronetEngine != null -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/emote-sets/global", request.callback, cronetExecutor).apply {
-                    addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                }.build().start()
-                val response = request.future.get().responseBody as String
-                json.decodeFromString<StvGlobalResponse>(response)
-            } else {
-                val response = suspendCoroutine { continuation ->
-                    cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/emote-sets/global", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                }
-                json.decodeFromString<StvGlobalResponse>(String(response.second))
-            }
-        }
-        else -> {
-            okHttpClient.newCall(Request.Builder().apply {
-                url("https://7tv.io/v3/emote-sets/global")
-                header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-            }.build()).execute().use { response ->
-                json.decodeFromString<StvGlobalResponse>(response.body.string())
-            }
-        }
+        response?.let { parseStvEmotes(it.emotes, useWebp, Emote.GLOBAL_STV) } ?: emptyList()
     }
 
     suspend fun loadStvEmotes(networkLibrary: String?, channelId: String, useWebp: Boolean): Pair<String?, List<Emote>> = withContext(Dispatchers.IO) {
-        val pair = try {
+        val response = try {
             withTimeout(20_000) {
-                loadStvEmotesResponse(networkLibrary, channelId) to true
+                val body = stvGetCached(networkLibrary, "https://7tv.io/v3/users/kick/$channelId", STV_EMOTE_SET_CACHE_TTL_MS, "channel_$channelId.stv") ?: return@withTimeout null
+                json.decodeFromString<StvChannelResponse>(body).also { decoded ->
+                    val set = decoded.emoteSet
+                    if (set.emotes.isNotEmpty()) {
+                        writeCachedEmoteResponse("channel_$channelId.stv", json.encodeToString(StvChannelResponse.serializer(), decoded))
+                    }
+                }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             try {
                 readCachedEmoteResponse("channel_$channelId.stv")?.let { cached ->
-                    json.decodeFromString<StvChannelResponse>(cached) to false
+                    json.decodeFromString<StvChannelResponse>(cached)
                 }
             } catch (_: Exception) {
                 null
             }
         }
-        val (response, online) = pair ?: (null to false)
         if (response != null) {
             val set = response.emoteSet
-            if (online && set.emotes.isNotEmpty()) {
-                writeCachedEmoteResponse("channel_$channelId.stv", json.encodeToString(StvChannelResponse.serializer(), response))
-            }
             Pair(set.id, parseStvEmotes(set.emotes, useWebp, Emote.CHANNEL_STV))
         } else {
             Pair(null, emptyList())
-        }
-    }
-
-    private suspend fun loadStvEmotesResponse(networkLibrary: String?, channelId: String): StvChannelResponse = when {
-        networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-            val response = suspendCoroutine { continuation ->
-                httpEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${channelId}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                    addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                }.build().start()
-            }
-            json.decodeFromString<StvChannelResponse>(String(response.second))
-        }
-        networkLibrary == "Cronet" && cronetEngine != null -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${channelId}", request.callback, cronetExecutor).apply {
-                    addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                }.build().start()
-                val response = request.future.get().responseBody as String
-                json.decodeFromString<StvChannelResponse>(response)
-            } else {
-                val response = suspendCoroutine { continuation ->
-                    cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${channelId}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                }
-                json.decodeFromString<StvChannelResponse>(String(response.second))
-            }
-        }
-        else -> {
-            okHttpClient.newCall(Request.Builder().apply {
-                url("https://7tv.io/v3/users/kick/${channelId}")
-                header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-            }.build()).execute().use { response ->
-                json.decodeFromString<StvChannelResponse>(response.body.string())
-            }
         }
     }
 
@@ -392,7 +384,7 @@ class PlayerRepository @Inject constructor(
      */
     suspend fun loadStvChannelStyle(networkLibrary: String?, kickUserId: String?): Pair<String?, String?>? = withContext(Dispatchers.IO) {
         if (kickUserId.isNullOrBlank()) return@withContext null
-        val body = stvGet(networkLibrary, "https://7tv.io/v3/users/kick/$kickUserId") ?: return@withContext null
+        val body = stvGetCached(networkLibrary, "https://7tv.io/v3/users/kick/$kickUserId", STV_LOOKUP_CACHE_TTL_MS) ?: return@withContext null
         runCatching {
             fun JsonObject?.text(key: String): String? =
                 (this?.get(key) as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
@@ -462,41 +454,12 @@ class PlayerRepository @Inject constructor(
     }
 
     suspend fun loadStvKickEmotes(networkLibrary: String?, userId: String, useWebp: Boolean): Pair<String?, List<Emote>> = withContext(Dispatchers.IO) {
-        val response = when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${userId}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                }
-                json.decodeFromString<StvChannelResponse>(String(response.second))
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${userId}", request.callback, cronetExecutor).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                    val response = request.future.get().responseBody as String
-                    json.decodeFromString<StvChannelResponse>(response)
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${userId}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                        }.build().start()
-                    }
-                    json.decodeFromString<StvChannelResponse>(String(response.second))
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://7tv.io/v3/users/kick/${userId}")
-                    header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                }.build()).execute().use { response ->
-                    json.decodeFromString<StvChannelResponse>(response.body.string())
-                }
-            }
-        }
+        // Same users/kick/{id} endpoint as loadStvEmotes and the style/presence lookups, so
+        // the shared TTL cache lets the chat start dedupe three otherwise-identical fetches.
+        val response = json.decodeFromString<StvChannelResponse>(
+            stvGetCached(networkLibrary, "https://7tv.io/v3/users/kick/$userId", STV_EMOTE_SET_CACHE_TTL_MS, "channel_$userId.stv")
+                ?: return@withContext Pair(null, emptyList())
+        )
         val set = response.emoteSet
         Pair(set.id, parseStvEmotes(set.emotes, useWebp, Emote.CHANNEL_STV))
     }
@@ -537,41 +500,11 @@ class PlayerRepository @Inject constructor(
     }
 
     suspend fun getStvUser(networkLibrary: String?, userId: String): String? = withContext(Dispatchers.IO) {
-        val response = when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${userId}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                }
-                String(response.second)
-            }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${userId}", request.callback, cronetExecutor).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                    request.future.get().responseBody as String
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/kick/${userId}", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                        }.build().start()
-                    }
-                    String(response.second)
-                }
-            }
-            else -> {
-                okHttpClient.newCall(Request.Builder().apply {
-                    url("https://7tv.io/v3/users/kick/${userId}")
-                    header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                }.build()).execute().use { response ->
-                    response.body.string()
-                }
-            }
-        }
-        JSONObject(response).optJSONObject("user")?.optString("id")
+        // Same users/kick/{id} endpoint as the emote/style lookups; the shared cache means a
+        // chat start that also loads channel emotes and style pays for this once, not three times.
+        val response = stvGetCached(networkLibrary, "https://7tv.io/v3/users/kick/$userId", STV_LOOKUP_CACHE_TTL_MS)
+            ?: return@withContext null
+        runCatching { JSONObject(response).optJSONObject("user")?.optString("id")?.takeIf { it.isNotBlank() } }.getOrNull()
     }
 
     suspend fun sendStvPresence(networkLibrary: String?, stvUserId: String, channelId: String, sessionId: String?, self: Boolean) = withContext(Dispatchers.IO) {
