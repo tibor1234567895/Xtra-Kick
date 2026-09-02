@@ -18,7 +18,7 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.Executors
 import kotlinx.serialization.json.Json
 
-@Config(sdk = [35], application = android.app.Application::class)
+@Config(application = android.app.Application::class)
 @RunWith(RobolectricTestRunner::class)
 class NotificationUsersRepositoryTest {
 
@@ -110,6 +110,23 @@ class NotificationUsersRepositoryTest {
         assertTrue(repository.isNotificationEnabled("12345"))
         assertTrue(repository.isNotificationEnabled(listOf("12345", "some_slug")))
         assertFalse(repository.isNotificationEnabled("99999"))
+    }
+
+    @Test
+    fun isNotificationEnabledMatchesAnyCandidateKeyWhenChannelOrUserOrSlugIsStored() = runBlocking {
+        // Channel ID stored
+        dao.insert(NotificationUser("668"))
+        assertTrue(repository.isNotificationEnabled(listOf("668", "676", "xqc")))
+
+        // User ID stored instead
+        dao.deleteAll()
+        dao.insert(NotificationUser("676"))
+        assertTrue(repository.isNotificationEnabled(listOf("668", "676", "xqc")))
+
+        // Slug stored instead
+        dao.deleteAll()
+        dao.insert(NotificationUser("xqc"))
+        assertTrue(repository.isNotificationEnabled(listOf("668", "676", "xqc")))
     }
 
     @Test

@@ -16,6 +16,7 @@ import com.xtrakick.app.model.ui.Game
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.model.ui.User
+import com.xtrakick.app.model.ui.Video
 import com.xtrakick.app.repository.BookmarksRepository
 import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
@@ -218,20 +219,40 @@ class PlayerViewModel @Inject constructor(
             viewModelScope.launch {
                 try {
                     if (videoSource.equals(AppConstants.KICK, true)) {
+                        var fallbackVideo: Video? = null
                         val kickUrl = videoId?.let { vid ->
-                            runCatching { kickRepository.getVideoById(vid)?.url }.getOrNull()
+                            runCatching { kickRepository.getVideoById(vid)?.also { fallbackVideo = it }?.url }.getOrNull()
                         } ?: channelLogin?.let { login ->
-                            kickRepository.getChannelVideos(
-                                channelSlug = login,
-                                channelId = channelId,
-                                limit = 30
-                            ).firstOrNull { it.id == videoId }?.url
+                            runCatching {
+                                kickRepository.getChannelVideos(
+                                    channelSlug = login,
+                                    channelId = channelId,
+                                    limit = 30
+                                ).firstOrNull { it.id == videoId }
+                            }.getOrNull()?.also { fallbackVideo = it }?.url
                         }
                         if (!kickUrl.isNullOrBlank()) {
                             videoResult.value = kickUrl
                             backupQualities = null
                         } else {
-                            videoError.value = R.string.video_source_unavailable
+                            // Subscriber-only replays omit playback_url from every web API;
+                            // probe the unauthenticated IVS recording before giving up.
+                            val fallbackUrl = videoId?.let { vid ->
+                                runCatching {
+                                    kickRepository.resolveSubOnlyVodPlaybackUrl(
+                                        videoId = vid,
+                                        channelId = channelId,
+                                        channelLogin = channelLogin,
+                                        listedVideo = fallbackVideo,
+                                    )
+                                }.getOrNull()
+                            }
+                            if (!fallbackUrl.isNullOrBlank()) {
+                                videoResult.value = fallbackUrl
+                                backupQualities = null
+                            } else {
+                                videoError.value = R.string.video_source_unavailable
+                            }
                         }
                     } else {
                         videoError.value = R.string.video_source_unavailable

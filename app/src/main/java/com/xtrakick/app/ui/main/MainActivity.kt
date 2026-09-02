@@ -1079,10 +1079,15 @@ class MainActivity : AppCompatActivity() {
                 "restorePlayerFragment existing=${fragment?.javaClass?.simpleName} " +
                     "viewReady=${fragment?.view != null} isPlayerOpened=${viewModel.isPlayerOpened}"
             )
+            // maximize() relayouts for the full window (showing chat in portrait),
+            // which crushes the video surface to 0x0 inside the small PiP window —
+            // black video after unlocking. The fragment manages PiP layout itself.
+            val inPipMode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && isInPictureInPictureMode
             if (
                 viewModel.isPlayerOpened &&
                 fragment?.view != null &&
                 fragment.secondViewIsHidden() &&
+                !inPipMode &&
                 prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
             ) {
                 logPlayerShell("restorePlayerFragment maximizing existing player")

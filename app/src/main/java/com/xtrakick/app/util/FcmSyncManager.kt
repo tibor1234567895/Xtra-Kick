@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.firebase.messaging.FirebaseMessaging
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.db.NotificationUsersDao
+import com.xtrakick.app.repository.LocalFollowChannelRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -19,6 +20,7 @@ import javax.inject.Singleton
 class FcmSyncManager @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val notificationUsersDao: NotificationUsersDao,
+    private val localFollowChannelRepository: LocalFollowChannelRepository? = null,
 ) {
 
     suspend fun syncSubscriptions(tokenOverride: String? = null): Boolean = withContext(Dispatchers.IO) {
@@ -29,7 +31,16 @@ class FcmSyncManager @Inject constructor(
             FirebaseMessaging.getInstance().token.await()
         }.getOrNull() ?: return@withContext false
 
-        val followedChannels = notificationUsersDao.getAll().map { it.channelId }
+        val rawChannels = notificationUsersDao.getAll().map { it.channelId.trim() }.filter { it.isNotBlank() }
+        val allChannelIds = LinkedHashSet<String>(rawChannels)
+        val follows = runCatching { localFollowChannelRepository?.loadFollows() }.getOrNull().orEmpty()
+        for (row in rawChannels) {
+            val follow = follows.firstOrNull { it.userId == row || it.userLogin?.equals(row, ignoreCase = true) == true }
+            if (follow != null) {
+                follow.userId?.takeIf { it.isNotBlank() }?.let { allChannelIds.add(it) }
+                follow.userLogin?.takeIf { it.isNotBlank() }?.let { allChannelIds.add(it.lowercase()) }
+            }
+        }
         val kickUserId = context.prefs().getString(AppConstants.USER_ID, null)
 
         val jsonBody = JSONObject().apply {
@@ -37,7 +48,7 @@ class FcmSyncManager @Inject constructor(
             if (!kickUserId.isNullOrBlank()) {
                 put("kick_user_id", kickUserId)
             }
-            put("channel_ids", JSONArray(followedChannels))
+            put("channel_ids", JSONArray(allChannelIds.toList()))
         }.toString()
 
         val url = "$baseUrl/v1/fcm/subscribe"

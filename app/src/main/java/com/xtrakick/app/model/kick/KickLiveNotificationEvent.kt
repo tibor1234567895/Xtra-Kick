@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class KickLiveNotificationEvent(
+    @SerialName("channel_id") val channelId: Long? = null,
     @SerialName("user_id") val userId: Long? = null,
     val title: String? = null,
     val description: String? = null,

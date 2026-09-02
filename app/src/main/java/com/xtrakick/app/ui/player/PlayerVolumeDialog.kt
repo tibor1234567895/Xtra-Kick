@@ -22,7 +22,7 @@ class PlayerVolumeDialog : BottomSheetDialogFragment() {
 
         fun newInstance(volume: Float?): PlayerVolumeDialog {
             return PlayerVolumeDialog().apply {
-                arguments = bundleOf(VOLUME to volume)
+                arguments = bundleOf(VOLUME to (volume ?: 1f))
             }
         }
     }
@@ -41,11 +41,13 @@ class PlayerVolumeDialog : BottomSheetDialogFragment() {
         behavior.skipCollapsed = true
         behavior.state = BottomSheetBehavior.STATE_EXPANDED
         with(binding) {
-            val volume = (requireArguments().getFloat(VOLUME, 1f) * 100)
-            setVolume(volume)
-            volumeBar.value = volume
+            val prefVolume = requireContext().prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f
+            val argVolume = if (requireArguments().containsKey(VOLUME)) requireArguments().getFloat(VOLUME, prefVolume) else prefVolume
+            val initialVolume = ((if (argVolume in 0f..1f) argVolume else prefVolume) * 100f).coerceIn(0f, 100f)
+            setVolume(initialVolume)
+            volumeBar.value = initialVolume
             volumeBar.addOnChangeListener { _, value, _ ->
-                (parentFragment as? PlayerFragment)?.changeVolume((value / 100f))
+                (parentFragment as? PlayerFragment)?.changeVolume(value / 100f)
                 setVolume(value)
             }
             volumeBar.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
@@ -64,14 +66,17 @@ class PlayerVolumeDialog : BottomSheetDialogFragment() {
             if (volume == 0f) {
                 volumeMute.setImageResource(R.drawable.baseline_volume_off_black_24)
                 volumeMute.setOnClickListener {
-                    volumeBar.value = 100f
-                    requireContext().prefs().edit { putInt(AppConstants.PLAYER_VOLUME, 100) }
+                    val restoredVolume = requireContext().prefs().getInt(AppConstants.PLAYER_VOLUME, 100).takeIf { it > 0 }?.toFloat() ?: 100f
+                    volumeBar.value = restoredVolume
+                    (parentFragment as? PlayerFragment)?.changeVolume(restoredVolume / 100f)
+                    setVolume(restoredVolume)
                 }
             } else {
                 volumeMute.setImageResource(R.drawable.baseline_volume_up_black_24)
                 volumeMute.setOnClickListener {
                     volumeBar.value = 0f
-                    requireContext().prefs().edit { putInt(AppConstants.PLAYER_VOLUME, 0) }
+                    (parentFragment as? PlayerFragment)?.changeVolume(0f)
+                    setVolume(0f)
                 }
             }
         }

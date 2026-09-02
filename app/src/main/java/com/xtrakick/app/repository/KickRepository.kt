@@ -85,6 +85,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -118,6 +120,7 @@ import java.security.SecureRandom
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -616,6 +619,11 @@ class KickRepository @Inject constructor(
             cursor = nextCursor?.takeIf { it != cursor }
         } while (!cursor.isNullOrBlank())
         collected.values.toList()
+    }
+
+    fun getCachedChannel(channelSlugOrId: String): KickChannelResponse? {
+        val normalizedKey = channelSlugOrId.trim().lowercase(Locale.ROOT)
+        return channelCache[normalizedKey]?.second
     }
 
     suspend fun getChannel(
@@ -2438,13 +2446,35 @@ class KickRepository @Inject constructor(
                         categoryObject.primitiveOrNull("name"),
                     )
                 }
+                val itemChannel = item.objOrNull("channel")
+                    ?: item.objOrNull("livestream")?.objOrNull("channel")
+                val itemUser = item.objOrNull("user")
+                    ?: itemChannel?.objOrNull("user")
+                val videoChannelId = item.primitiveOrNull("channel_id")
+                    ?: itemChannel?.primitiveOrNull("id")
+                    ?: channelId
+                val videoChannelLogin = item.primitiveOrNull("channel_slug")
+                    ?: itemChannel?.primitiveOrNull("slug")
+                    ?: itemUser?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
+                    ?: channelLogin
+                val videoChannelName = item.primitiveOrNull("channel_name")
+                    ?: itemUser?.primitiveOrNull("username")
+                    ?: itemChannel?.primitiveOrNull("name")
+                    ?: channelName
+                    ?: videoChannelLogin
+                val videoChannelLogo = item.primitiveOrNull("channel_profile_pic")
+                    ?: itemUser?.primitiveOrNull("profile_pic")
+                    ?: itemUser?.primitiveOrNull("profile_picture")
+                    ?: itemChannel?.primitiveOrNull("profile_picture")
+                    ?: itemChannel?.primitiveOrNull("profile_pic")
+                    ?: channelLogo
                 Video(
                     id = id,
                     source = AppConstants.KICK,
                     url = extractKickVideoUrl(item),
-                    channelId = channelId,
-                    channelLogin = channelLogin,
-                    channelName = channelName,
+                    channelId = videoChannelId,
+                    channelLogin = videoChannelLogin,
+                    channelName = videoChannelName,
                     title = title,
                     uploadDate = normalizeDate(createdAt),
                     thumbnailUrl = thumbnail,
@@ -2454,7 +2484,7 @@ class KickRepository @Inject constructor(
                     gameId = category?.first,
                     gameSlug = category?.second,
                     gameName = category?.third,
-                    profileImageUrl = channelLogo
+                    profileImageUrl = videoChannelLogo
                 )
             }
             .distinctBy { it.id }
@@ -3002,15 +3032,26 @@ class KickRepository @Inject constructor(
             ).firstOrNull()?.let { return@withContext it }
             val obj = (root as? JsonObject)?.objOrNull("data") ?: root as? JsonObject ?: continue
             val resolvedId = obj.primitiveOrNull("id") ?: obj.primitiveOrNull("video_id") ?: id
-            val channel = obj.objOrNull("channel")
+            val channel = obj.objOrNull("channel") ?: obj.objOrNull("livestream")?.objOrNull("channel")
             val user = channel?.objOrNull("user") ?: obj.objOrNull("user")
+            val channelLoginResolved = channel?.primitiveOrNull("slug")
+                ?: user?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
+                ?: obj.primitiveOrNull("channel_slug")
+            val channelNameResolved = user?.primitiveOrNull("username")
+                ?: channel?.primitiveOrNull("name")
+                ?: obj.primitiveOrNull("channel_name")
+                ?: channelLoginResolved
+            val channelLogoResolved = user?.primitiveOrNull("profile_pic")
+                ?: user?.primitiveOrNull("profile_picture")
+                ?: channel?.primitiveOrNull("profile_picture")
+                ?: channel?.primitiveOrNull("profile_pic")
             return@withContext Video(
                 id = resolvedId,
                 source = AppConstants.KICK,
                 url = extractKickVideoUrl(obj),
                 channelId = channel?.primitiveOrNull("id") ?: obj.primitiveOrNull("channel_id"),
-                channelLogin = channel?.primitiveOrNull("slug") ?: user?.primitiveOrNull("username")?.lowercase(Locale.ROOT),
-                channelName = user?.primitiveOrNull("username") ?: channel?.primitiveOrNull("name"),
+                channelLogin = channelLoginResolved,
+                channelName = channelNameResolved,
                 title = obj.primitiveOrNull("session_title") ?: obj.primitiveOrNull("title"),
                 uploadDate = normalizeDate(obj.primitiveOrNull("created_at") ?: obj.primitiveOrNull("start_time")),
                 thumbnailUrl = extractImageUrl(obj.objOrNull("thumbnail"))
@@ -3022,11 +3063,165 @@ class KickRepository @Inject constructor(
                     obj.firstLongOrNull("duration_seconds", "length_seconds")
                         ?: obj.firstLongOrNull("duration")
                 ),
-                profileImageUrl = user?.primitiveOrNull("profile_pic")
-                    ?: user?.primitiveOrNull("profile_picture"),
+                profileImageUrl = channelLogoResolved,
             )
         }
         null
+    }
+
+    // Subscriber-only replays withhold playback_url on every web API, but the IVS
+    // recording behind them is unauthenticated (see KickSubOnlyVodUtils). Resolution
+    // is cached per video: a hit for a day, a miss for 10 minutes so a later retry
+    // can still recover (e.g. after a Kick CDN change) without re-probing on every
+    // player reopen.
+    private val vodFallbackDebugTag = "KickVodFallback"
+    private val subOnlyVodResolveCache = ConcurrentHashMap<String, Pair<Long, String?>>()
+    private val subOnlyVodResolvedTtlMs = 24L * 60L * 60L * 1000L
+    private val subOnlyVodMissedTtlMs = 10L * 60L * 1000L
+    private val subOnlyVodProbeClient by lazy {
+        okHttpClient.newBuilder()
+            .callTimeout(6L, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private fun logVodFallback(stage: String, detail: String) {
+        if (isKickFeatureDebugEnabled()) {
+            Log.d(vodFallbackDebugTag, "stage=$stage $detail")
+        }
+    }
+
+    /**
+     * Best-effort playback source for subscriber-only Kick replays: reconstructs the
+     * unauthenticated IVS HLS master playlist URL from the VOD's thumbnail path and
+     * probes the known IVS minute buckets around the stream start. Returns null when
+     * the recording cannot be located.
+     */
+    suspend fun resolveSubOnlyVodPlaybackUrl(
+        videoId: String,
+        channelId: String? = null,
+        channelLogin: String? = null,
+        listedVideo: Video? = null,
+    ): String? = withContext(Dispatchers.IO) {
+        val id = videoId.trim().takeIf { it.isNotBlank() } ?: return@withContext null
+        val now = System.currentTimeMillis()
+        subOnlyVodResolveCache[id]?.let { (cachedAt, cachedUrl) ->
+            val ttl = if (cachedUrl != null) subOnlyVodResolvedTtlMs else subOnlyVodMissedTtlMs
+            if (now - cachedAt < ttl) {
+                logVodFallback("cache", "videoId=$id resolved=${cachedUrl != null}")
+                return@withContext cachedUrl
+            }
+        }
+        val resolved = runCatching { resolveSubOnlyVodSourceInternal(id, channelId, channelLogin, listedVideo) }
+            .getOrElse { error ->
+                if (error is CancellationException) throw error
+                logVodFallback("error", "videoId=$id message=${error.message}")
+                null
+            }
+        subOnlyVodResolveCache[id] = now to resolved
+        resolved
+    }
+
+    private suspend fun resolveSubOnlyVodSourceInternal(
+        videoId: String,
+        channelId: String?,
+        channelLogin: String?,
+        listedVideo: Video?,
+    ): String? {
+        var thumbnailUrl = listedVideo?.thumbnailUrl
+        var startMillis = KickSubOnlyVodUtils.parseStartMillis(listedVideo?.uploadDate)
+        var resolvedChannelId = channelId?.trim()?.takeIf { it.isNotBlank() }
+        val recordingIds = mutableListOf<String?>(videoId)
+
+        if (resolvedChannelId == null && !channelLogin.isNullOrBlank()) {
+            resolvedChannelId = runCatching { getChannel(channelLogin, prefetchBadgeCatalog = false).id?.toString() }.getOrNull()
+        }
+
+        // The metadata endpoints key off the VOD slug and stay reachable for
+        // subscriber-only replays; they only run when the channel listing could not
+        // supply a usable thumbnail or start time.
+        if (thumbnailUrl.isNullOrBlank() || startMillis == null) {
+            val endpoints = buildList {
+                resolvedChannelId?.let { add("https://web.kick.com/api/v1/channels/${urlEncode(it)}/videos/${urlEncode(videoId)}") }
+                add("https://web.kick.com/api/v1/videos/${urlEncode(videoId)}")
+                add("https://web.kick.com/api/v1/video/${urlEncode(videoId)}")
+            }
+            for (endpoint in endpoints) {
+                val data = runCatching {
+                    val root = json.parseToJsonElement(getRaw(endpoint, isKickWeb = true))
+                    (root as? JsonObject)?.objOrNull("data") ?: root as? JsonObject
+                }.getOrNull() ?: continue
+                if (thumbnailUrl.isNullOrBlank()) {
+                    thumbnailUrl = data.objOrNull("thumbnail")?.let(::extractImageUrl)
+                        ?: data.primitiveOrNull("thumbnail_url")
+                        ?: data.primitiveOrNull("preview_thumbnail_url")
+                        ?: thumbnailUrl
+                }
+                if (startMillis == null) {
+                    startMillis = KickSubOnlyVodUtils.parseStartMillis(
+                        data.primitiveOrNull("start_time") ?: data.primitiveOrNull("created_at")
+                    )
+                }
+                recordingIds.add(data.primitiveOrNull("uuid"))
+                recordingIds.add(data.primitiveOrNull("id"))
+                data.objOrNull("channel")?.primitiveOrNull("id")?.let { resolvedChannelId = it }
+                if (!thumbnailUrl.isNullOrBlank() && startMillis != null) break
+            }
+        }
+        logVodFallback(
+            "metadata",
+            "videoId=$videoId channelId=$resolvedChannelId thumbnail=${!thumbnailUrl.isNullOrBlank()} startMillis=$startMillis"
+        )
+
+        val start = startMillis ?: run {
+            logVodFallback("no_start_time", "videoId=$videoId")
+            return null
+        }
+        val paths = KickSubOnlyVodUtils.extractIvsPaths(thumbnailUrl, resolvedChannelId, recordingIds)
+        if (paths.isEmpty()) {
+            logVodFallback("no_candidates", "videoId=$videoId")
+            return null
+        }
+        for (offsetMinutes in KickSubOnlyVodUtils.minuteOffsets) {
+            val urls = paths.flatMap { path ->
+                KickSubOnlyVodUtils.buildMasterPlaylistUrls(KickSubOnlyVodUtils.ivsBaseUrls, path, start, offsetMinutes)
+            }
+            val hit = probeIvsMasterPlaylists(urls)
+            if (hit != null) {
+                logVodFallback("resolved", "videoId=$videoId offset=$offsetMinutes url=$hit")
+                return hit
+            }
+        }
+        logVodFallback("miss", "videoId=$videoId pathCount=${paths.size}")
+        return null
+    }
+
+    private suspend fun probeIvsMasterPlaylists(urls: List<String>): String? = coroutineScope {
+        urls.map { url ->
+            async {
+                runCatching {
+                    subOnlyVodProbeClient.newCall(
+                        Request.Builder()
+                            .url(url)
+                            .header("User-Agent", kickWebUserAgent)
+                            .head()
+                            .build()
+                    ).execute().use { response ->
+                        if (response.isSuccessful) {
+                            url
+                        } else {
+                            if (response.code != 404) {
+                                logVodFallback("probe", "unexpected code=${response.code} url=$url")
+                            }
+                            null
+                        }
+                    }
+                }.getOrElse { error ->
+                    if (error is CancellationException) throw error
+                    logVodFallback("probe", "failed message=${error.message} url=$url")
+                    null
+                }
+            }
+        }.firstNotNullOfOrNull { it.await() }
     }
 
     suspend fun getClipPlaylistStartTimeMs(clipUrl: String): Long? = withContext(Dispatchers.IO) {

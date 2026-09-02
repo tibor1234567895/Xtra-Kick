@@ -38,6 +38,7 @@ class ShownNotificationsRepository @Inject constructor(
     private val kickRepository: KickRepository,
     private val kickPublicApiRepository: KickPublicApiRepository,
     private val notificationUsersRepository: NotificationUsersRepository,
+    private val localFollowChannelRepository: LocalFollowChannelRepository,
 ) {
 
     suspend fun getNewKickStreams(
@@ -53,14 +54,38 @@ class ShownNotificationsRepository @Inject constructor(
 
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         val headers = KickApiHelper.getKickPublicApiHeaders(context)
-        val numericIds = channelIds.filter { it.all(Char::isDigit) }
-        val unresolvedIds = channelIds.toMutableList()
+        val follows = runCatching { localFollowChannelRepository.loadFollows() }.getOrDefault(emptyList())
+
+        val userIdsForPublicApi = mutableSetOf<String>()
+        val slugsForFallback = mutableSetOf<String>()
+        val keyToBroadcasterUserId = mutableMapOf<String, String>()
+
+        for (id in channelIds) {
+            val follow = follows.firstOrNull { it.userId == id || it.userLogin?.equals(id, ignoreCase = true) == true }
+            if (follow != null) {
+                val bId = follow.userId?.takeIf { it.all(Char::isDigit) }
+                val slug = follow.userLogin?.takeIf { it.isNotBlank() }?.lowercase()
+                if (bId != null) {
+                    userIdsForPublicApi.add(bId)
+                    keyToBroadcasterUserId[id] = bId
+                }
+                if (slug != null) {
+                    slugsForFallback.add(slug)
+                }
+            } else if (id.all(Char::isDigit)) {
+                userIdsForPublicApi.add(id)
+                keyToBroadcasterUserId[id] = id
+            } else {
+                slugsForFallback.add(id.lowercase())
+            }
+        }
+
         val resolvedStreams = mutableListOf<Stream>()
         val fetchedKeys = mutableSetOf<String>()
 
-        if (numericIds.isNotEmpty()) {
+        if (userIdsForPublicApi.isNotEmpty()) {
             val publicApiResult = runCatching {
-                numericIds.chunked(50).flatMap { batch ->
+                userIdsForPublicApi.chunked(50).flatMap { batch ->
                     kickPublicApiRepository.getLivestreams(
                         networkLibrary = networkLibrary,
                         headers = headers,
@@ -70,8 +95,12 @@ class ShownNotificationsRepository @Inject constructor(
             }.getOrNull()
 
             if (publicApiResult != null) {
-                numericIds.forEach { fetchedKeys.add(it) }
-                unresolvedIds.removeAll(numericIds.toSet())
+                channelIds.forEach { id ->
+                    val bId = keyToBroadcasterUserId[id]
+                    if (bId != null && bId in userIdsForPublicApi) {
+                        fetchedKeys.add(id)
+                    }
+                }
                 publicApiResult.forEach { live ->
                     val broadcasterId = live.broadcasterUserId?.toString() ?: live.channelId?.toString()
                     val stream = Stream(
@@ -95,23 +124,27 @@ class ShownNotificationsRepository @Inject constructor(
             }
         }
 
-        if (unresolvedIds.isNotEmpty()) {
+        val unresolvedSlugs = slugsForFallback.filter { slug ->
+            resolvedStreams.none { it.channelLogin?.equals(slug, ignoreCase = true) == true }
+        }
+
+        if (unresolvedSlugs.isNotEmpty()) {
             val semaphore = Semaphore(8)
             val fallbackResults = coroutineScope {
-                unresolvedIds.map { channelId ->
+                unresolvedSlugs.map { slug ->
                     async {
                         semaphore.withPermit {
                             val channel = runCatching {
-                                this@ShownNotificationsRepository.kickRepository.getChannel(channelId, prefetchBadgeCatalog = false)
+                                this@ShownNotificationsRepository.kickRepository.getChannel(slug, prefetchBadgeCatalog = false)
                             }.getOrNull()
                             channel?.let { this@ShownNotificationsRepository.kickRepository.toStream(it) } to (channel != null)
                         }
                     }
                 }.awaitAll()
             }
-            unresolvedIds.forEachIndexed { index, id ->
+            unresolvedSlugs.forEachIndexed { index, slug ->
                 if (fallbackResults[index].second) {
-                    fetchedKeys.add(id)
+                    fetchedKeys.add(slug)
                 }
                 fallbackResults[index].first?.let { resolvedStreams.add(it) }
             }
@@ -239,8 +272,10 @@ class ShownNotificationsRepository @Inject constructor(
             Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug: live notifications disabled")
             return@withContext
         }
+        val channelIdStr = event.channelId?.toString()
+        val candidateKeys = listOfNotNull(channelIdStr, userIdStr, cleanSlug).distinct()
         val channelEnabled = runCatching {
-            notificationUsersRepository.isNotificationEnabled(userIdStr, cleanSlug)
+            notificationUsersRepository.isNotificationEnabled(candidateKeys)
         }.getOrElse {
             Log.w(TAG, "enablement check failed for $userIdStr/$cleanSlug", it)
             false
@@ -254,13 +289,14 @@ class ShownNotificationsRepository @Inject constructor(
         val secureAvatar = event.profilePicture?.takeIf { it.startsWith("https://", ignoreCase = true) }
         val stream = Stream(
             source = AppConstants.KICK,
-            channelId = userIdStr,
+            channelId = channelIdStr ?: userIdStr,
             channelLogin = cleanSlug,
             channelName = cleanSlug,
             title = cleanTitle,
             profileImageUrl = secureAvatar,
         )
-        shownNotificationsDao.insertList(listOf(ShownNotification(userIdStr, System.currentTimeMillis())))
+        val dedupeIds = listOfNotNull(userIdStr, channelIdStr).distinct()
+        shownNotificationsDao.insertList(dedupeIds.map { ShownNotification(it, System.currentTimeMillis()) })
         withContext(Dispatchers.Main) {
             showLiveNotifications(context, listOf(stream))
         }

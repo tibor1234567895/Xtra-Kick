@@ -993,26 +993,29 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 duration.text = DateUtils.formatElapsedTime(0)
                 subtitleView.setUserDefaultStyle()
                 subtitleView.setUserDefaultTextSize()
-                val channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)
-                val channelName = requireArguments().getString(KEY_CHANNEL_NAME)
-                val displayName = if (channelLogin != null && !channelLogin.equals(channelName, true)) {
+                val channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)?.trim()?.takeIf { it.isNotBlank() }
+                val channelName = requireArguments().getString(KEY_CHANNEL_NAME)?.trim()?.takeIf { it.isNotBlank() }
+                val displayName = if (!channelLogin.isNullOrBlank() && !channelName.isNullOrBlank() && !channelLogin.equals(channelName, true)) {
                     when (prefs.getString(AppConstants.UI_NAME_DISPLAY, "1")) {
                         "0" -> "${channelName}(${channelLogin})"
                         "1" -> channelName
                         else -> channelLogin
                     }
                 } else {
-                    channelName
+                    channelName ?: channelLogin
                 }
-                if (prefs.getBoolean(AppConstants.PLAYER_CHANNEL, true)) {
+                if (prefs.getBoolean(AppConstants.PLAYER_CHANNEL, true) && !displayName.isNullOrBlank()) {
                     channel.visibility = View.VISIBLE
                     channel.text = displayName
                     channel.setOnClickListener {
+                        val navChannelId = requireArguments().getString(KEY_CHANNEL_ID)
+                        val navChannelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN) ?: channelLogin ?: channelName
+                        val navChannelName = requireArguments().getString(KEY_CHANNEL_NAME) ?: channelName ?: channelLogin
                         findNavController().navigate(
                             ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(
-                                channelId = requireArguments().getString(KEY_CHANNEL_ID),
-                                channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
-                                channelName = requireArguments().getString(KEY_CHANNEL_NAME),
+                                channelId = navChannelId,
+                                channelLogin = navChannelLogin,
+                                channelName = navChannelName,
                             )
                         )
                         minimize()

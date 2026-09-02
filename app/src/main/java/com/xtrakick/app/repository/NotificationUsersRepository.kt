@@ -2,6 +2,7 @@ package com.xtrakick.app.repository
 
 import com.xtrakick.app.db.NotificationUsersDao
 import com.xtrakick.app.model.NotificationUser
+import com.xtrakick.app.model.kick.KickChannelResponse
 import com.xtrakick.app.util.FcmSyncManager
 import android.util.Log
 import dagger.Lazy
@@ -15,6 +16,7 @@ class NotificationUsersRepository @Inject constructor(
     private val notificationUsersDao: NotificationUsersDao,
     private val kickRepository: KickRepository,
     private val fcmSyncManager: Lazy<FcmSyncManager>,
+    private val localFollowChannelRepository: Lazy<LocalFollowChannelRepository>? = null,
 ) {
 
     suspend fun loadUsers() = withContext(Dispatchers.IO) {
@@ -50,10 +52,8 @@ class NotificationUsersRepository @Inject constructor(
         val initialKeys = candidateKeys.mapNotNull { it?.trim()?.takeIf { k -> k.isNotBlank() } }.toSet()
         if (initialKeys.isEmpty()) return@withContext null
 
-        val allKeys = resolveAllChannelKeys(initialKeys)
-        val canonicalId = allKeys.firstOrNull { it.all(Char::isDigit) }
-            ?: initialKeys.firstOrNull()
-            ?: return@withContext null
+        val (canonicalId, allKeys) = resolveCanonicalChannelInfo(initialKeys)
+        if (canonicalId == null) return@withContext null
 
         // Remove any stale / duplicate alias rows for this channel so the DB stays clean
         val staleKeys = allKeys.filter { it != canonicalId }
@@ -70,9 +70,8 @@ class NotificationUsersRepository @Inject constructor(
         enableNotificationsForChannel(candidateKeys.toList())
 
     /**
-     * Bulk-enable live notifications for many channels with a single FCM sync. Numeric keys
-     * are treated as canonical directly; slug-only channels fall back to alias resolution so
-     * rows stay keyed by the channel id. Returns the number of newly inserted rows.
+     * Bulk-enable live notifications for many channels with a single FCM sync.
+     * Always resolves to canonical broadcaster user ID. Returns the number of newly inserted rows.
      */
     suspend fun enableNotificationsForChannels(candidateKeysPerChannel: List<Collection<String?>>): Int = withContext(Dispatchers.IO) {
         val canonicalIds = LinkedHashSet<String>()
@@ -80,14 +79,8 @@ class NotificationUsersRepository @Inject constructor(
         for (candidateKeys in candidateKeysPerChannel) {
             val initialKeys = candidateKeys.mapNotNull { it?.trim()?.takeIf { k -> k.isNotBlank() } }.toSet()
             if (initialKeys.isEmpty()) continue
-            val numericKey = initialKeys.firstOrNull { it.all(Char::isDigit) }
-            if (numericKey != null) {
-                canonicalIds.add(numericKey)
-            } else {
-                val allKeys = resolveAllChannelKeys(initialKeys)
-                val canonicalId = allKeys.firstOrNull { it.all(Char::isDigit) }
-                    ?: initialKeys.firstOrNull()
-                    ?: continue
+            val (canonicalId, allKeys) = resolveCanonicalChannelInfo(initialKeys)
+            if (canonicalId != null) {
                 canonicalIds.add(canonicalId)
                 staleKeys.addAll(allKeys.filter { it != canonicalId })
             }
@@ -138,22 +131,29 @@ class NotificationUsersRepository @Inject constructor(
         runCatching { fcmSyncManager.get().syncSubscriptions() }
     }
 
-    private suspend fun resolveAllChannelKeys(candidateKeys: Collection<String?>): Set<String> {
+    data class ChannelResolutionResult(
+        val canonicalId: String?,
+        val allKeys: Set<String>,
+    )
+
+    suspend fun resolveCanonicalChannelInfo(candidateKeys: Collection<String?>): ChannelResolutionResult {
         val normalized = candidateKeys.mapNotNull { it?.trim()?.takeIf { k -> k.isNotBlank() } }.toMutableSet()
-        if (normalized.isEmpty()) return emptySet()
+        if (normalized.isEmpty()) return ChannelResolutionResult(null, emptySet())
 
         val lower = normalized.map { it.lowercase() }
         normalized.addAll(lower)
 
+        var resolvedChannel: KickChannelResponse? = null
         val slugs = normalized.filter { it.toIntOrNull() == null }
         for (slug in slugs) {
             val channel = runCatching {
                 kickRepository.getChannel(slug, prefetchBadgeCatalog = false)
             }.getOrNull()
             if (channel != null) {
-                channel.id?.toString()?.takeIf { it.isNotBlank() }?.let { normalized.add(it) }
+                resolvedChannel = channel
                 channel.userId?.toString()?.takeIf { it.isNotBlank() }?.let { normalized.add(it) }
                 channel.user?.id?.toString()?.takeIf { it.isNotBlank() }?.let { normalized.add(it) }
+                channel.id?.toString()?.takeIf { it.isNotBlank() }?.let { normalized.add(it) }
                 channel.slug?.trim()?.takeIf { it.isNotBlank() }?.let {
                     normalized.add(it)
                     normalized.add(it.lowercase())
@@ -162,52 +162,77 @@ class NotificationUsersRepository @Inject constructor(
                     normalized.add(it)
                     normalized.add(it.lowercase())
                 }
+                break
             }
         }
 
-        val numericOnly = normalized.filter { it.all(Char::isDigit) }
-        if (slugs.isEmpty() && numericOnly.isNotEmpty()) {
-            for (numId in numericOnly) {
-                val channel = runCatching {
-                    kickRepository.getChannel(numId, prefetchBadgeCatalog = false)
-                }.getOrNull()
-                if (channel != null) {
-                    channel.id?.toString()?.takeIf { it.isNotBlank() }?.let { normalized.add(it) }
-                    channel.userId?.toString()?.takeIf { it.isNotBlank() }?.let { normalized.add(it) }
-                    channel.user?.id?.toString()?.takeIf { it.isNotBlank() }?.let { normalized.add(it) }
-                    channel.slug?.trim()?.takeIf { it.isNotBlank() }?.let {
-                        normalized.add(it)
-                        normalized.add(it.lowercase())
-                    }
-                }
-            }
-        }
+        // Canonical ID is always the broadcaster's USER ID (which matches LocalFollowChannel.userId
+        // and Kick's Public API). Fall back to channel id, or numeric key, or initial key.
+        val canonicalId = resolvedChannel?.userId?.toString()
+            ?: resolvedChannel?.user?.id?.toString()
+            ?: resolvedChannel?.id?.toString()
+            ?: normalized.firstOrNull { it.all(Char::isDigit) }
+            ?: normalized.firstOrNull()
 
-        return normalized
+        return ChannelResolutionResult(canonicalId, normalized)
+    }
+
+    private suspend fun resolveAllChannelKeys(candidateKeys: Collection<String?>): Set<String> {
+        return resolveCanonicalChannelInfo(candidateKeys).allKeys
     }
 
     /**
-     * One-time cleanup for rows written before the canonical-key fix (issues #44/#58): they
-     * may be keyed by the channel login instead of its numeric id — invisible to the
-     * channel-page bell while the worker keeps polling them. Re-keys every non-numeric row
-     * to the resolved id. Unresolved rows (offline/failed fetch) are left for the next app
-     * start. Cheap when there is nothing to migrate: the DAO scan short-circuits first.
+     * Cleanup and migration: ensures all stored notification keys are canonical broadcaster user IDs.
+     * Re-keys any rows stored with channel IDs (e.g. from Pusher) or slugs to the true user ID.
      */
     suspend fun migrateLegacyKeys() = withContext(Dispatchers.IO) {
-        val legacy = notificationUsersDao.getAll().filter { it.channelId.trim().toIntOrNull() == null }
-        if (legacy.isEmpty()) return@withContext
-        Log.i(TAG, "migrating ${legacy.size} legacy notification key(s)")
+        val allRows = notificationUsersDao.getAll()
+        if (allRows.isEmpty()) return@withContext
+
+        val follows = runCatching { localFollowChannelRepository?.get()?.loadFollows() }.getOrNull().orEmpty()
         var changed = false
+
+        for (follow in follows) {
+            val login = follow.userLogin?.trim()?.takeIf { it.isNotBlank() } ?: continue
+            val followUserId = follow.userId?.trim()?.takeIf { it.isNotBlank() && it.all(Char::isDigit) } ?: continue
+            val channel = runCatching { kickRepository.getChannel(login, prefetchBadgeCatalog = false) }.getOrNull()
+            val channelId = channel?.id?.toString()
+            val canonicalUserId = channel?.userId?.toString() ?: followUserId
+
+            // If a row was stored with channel.id (like 101943 for 52chains or 2480758 for 0reed)
+            if (channelId != null && channelId != canonicalUserId) {
+                val rowWithChannelId = notificationUsersDao.getByUserId(channelId)
+                if (rowWithChannelId != null) {
+                    Log.i(TAG, "cleaning up channel ID row $channelId for $login and re-keying to user ID $canonicalUserId")
+                    notificationUsersDao.delete(rowWithChannelId)
+                    notificationUsersDao.insert(NotificationUser(canonicalUserId))
+                    changed = true
+                }
+            }
+
+            // If a row was stored with login
+            val rowWithLogin = notificationUsersDao.getByUserId(login)
+            if (rowWithLogin != null) {
+                Log.i(TAG, "cleaning up login row $login and re-keying to user ID $canonicalUserId")
+                notificationUsersDao.delete(rowWithLogin)
+                notificationUsersDao.insert(NotificationUser(canonicalUserId))
+                changed = true
+            }
+        }
+
+        // Also clean up any remaining non-numeric rows
+        val legacy = notificationUsersDao.getAll().filter { it.channelId.trim().toIntOrNull() == null }
         for (item in legacy) {
             val login = item.channelId.trim()
             val channel = runCatching {
                 kickRepository.getChannel(login, prefetchBadgeCatalog = false)
             }.getOrNull()
-            val id = channel?.id?.toString() ?: channel?.userId?.toString()
+            val id = channel?.userId?.toString() ?: channel?.user?.id?.toString() ?: channel?.id?.toString()
             if (id.isNullOrBlank() || id.equals(login, ignoreCase = true)) continue
             notificationUsersDao.rekey(item, NotificationUser(id))
             changed = true
         }
+
         if (changed) {
             runCatching { fcmSyncManager.get().syncSubscriptions() }
         }

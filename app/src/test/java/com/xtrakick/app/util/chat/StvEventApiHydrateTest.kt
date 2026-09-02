@@ -11,10 +11,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 // parseRGBAColor delegates to android.graphics.Color, which has no implementation on a plain
-// JVM — Robolectric supplies it. sdk pinned because Robolectric 4.14.1 tops out at API 35;
+// JVM — Robolectric supplies it.
 // application pinned so Robolectric boots the stock Application instead of KickApp
 // (Conscrypt fails with UnsatisfiedLinkError on the JVM).
-@Config(sdk = [35], application = android.app.Application::class)
+@Config(application = android.app.Application::class)
 @RunWith(RobolectricTestRunner::class)
 class StvEventApiHydrateTest {
 

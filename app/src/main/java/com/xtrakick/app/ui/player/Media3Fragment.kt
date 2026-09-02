@@ -148,10 +148,9 @@ class Media3Fragment : PlayerFragment() {
         ).buildAsync()
         controllerFuture?.addListener({
             val controller = controllerFuture?.get()
-            // setVideoSurfaceView owns the holder lifecycle internally; attaching the
-            // surface manually as well would strip that ownership and leave the codec
-            // rendering to a destroyed surface when the view is hidden
-            controller?.setVideoSurfaceView(binding.playerSurface)
+            if (viewModel.quality != AUDIO_ONLY_QUALITY) {
+                showVideoSurface(controller ?: return@addListener)
+            }
             val listener = object : Player.Listener {
 
                 override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
@@ -586,6 +585,15 @@ class Media3Fragment : PlayerFragment() {
             "START_STREAM command sending channel=${requireArguments().getString(KEY_CHANNEL_LOGIN)} " +
                 "urlPresent=${!url.isNullOrBlank()} urlHash=$urlHash latency=${LiveLatencySettings.describe(latencyConfig)}"
         )
+        player?.let { player ->
+            if (viewModel.quality != AUDIO_ONLY_QUALITY) {
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
+                    setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
+                    clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
+                }.build()
+                showVideoSurface(player)
+            }
+        }
         val commandResult = player?.sendCustomCommand(
             SessionCommand(
                 PlaybackService.START_STREAM, bundleOf(
@@ -752,7 +760,7 @@ class Media3Fragment : PlayerFragment() {
 
     override fun getCurrentSpeed() = player?.playbackParameters?.speed
 
-    override fun getCurrentVolume() = player?.volume
+    override fun getCurrentVolume() = player?.volume ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
 
     override fun playPause() {
         player?.let { player ->
@@ -795,6 +803,7 @@ class Media3Fragment : PlayerFragment() {
 
     override fun changeVolume(volume: Float) {
         player?.volume = volume
+        prefs.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
     }
 
     override fun updateProgress() {
@@ -1072,6 +1081,7 @@ class Media3Fragment : PlayerFragment() {
                                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                                 }.build()
+                                player.clearVideoSurface()
                                 binding.playerSurface.visibility = View.GONE
                             }
                             if (prefs.getBoolean(AppConstants.PLAYER_USE_BACKGROUND_AUDIO_TRACK, false)) {
@@ -1141,6 +1151,7 @@ class Media3Fragment : PlayerFragment() {
         savePosition()
         player?.pause()
         player?.stop()
+        player?.clearVideoSurface()
         player?.removeMediaItem(0)
         playerListener?.let { player?.removeListener(it) }
         playerListener = null
@@ -1168,8 +1179,6 @@ class Media3Fragment : PlayerFragment() {
                                     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                                         setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                                     }.build()
-                                    player.clearVideoSurface()
-                                    binding.playerSurface.visibility = View.GONE
                                 }
                                 if (prefs.getBoolean(AppConstants.PLAYER_USE_BACKGROUND_AUDIO_TRACK, false)) {
                                     quality.value.second?.let {
@@ -1189,6 +1198,9 @@ class Media3Fragment : PlayerFragment() {
                     viewModel.resume = player.playWhenReady
                     player.pause()
                 }
+                // Detach the video surface before the UI view's native window/Surface is destroyed by the system
+                player.clearVideoSurface()
+                binding.playerSurface.visibility = View.GONE
                 player.sendCustomCommand(
                     SessionCommand(
                         PlaybackService.SET_SLEEP_TIMER, bundleOf(
@@ -1203,6 +1215,15 @@ class Media3Fragment : PlayerFragment() {
         playerListener = null
         controllerFuture?.let { MediaController.releaseFuture(it) }
         clearPipDismissState()
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        player?.let {
+            if (it.isConnected) {
+                it.clearVideoSurface()
+            }
+        }
     }
 
     override fun onNetworkRestored() {

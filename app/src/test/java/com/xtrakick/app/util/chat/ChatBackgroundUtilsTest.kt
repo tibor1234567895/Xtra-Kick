@@ -11,12 +11,11 @@ import kotlin.math.roundToInt
 // These cases compute their expected values with androidx ColorUtils, which delegates to
 // android.graphics.Color. That class has no implementation on a plain JVM, so the test needs
 // Robolectric to supply the framework.
-// sdk pinned because Robolectric 4.14.1 supports up to API 35 while targetSdk is 36.
-// These are pure colour-maths assertions, so the API level is irrelevant to what they check.
+// These are pure colour-maths assertions, so the API level Robolectric runs them at is irrelevant.
 // application pinned to the stock Application: Robolectric would otherwise boot KickApp,
 // which initialises Conscrypt and fails with UnsatisfiedLinkError on the JVM. Nothing here
 // needs the real Application.
-@Config(sdk = [35], application = android.app.Application::class)
+@Config(application = android.app.Application::class)
 @RunWith(RobolectricTestRunner::class)
 class ChatBackgroundUtilsTest {
 

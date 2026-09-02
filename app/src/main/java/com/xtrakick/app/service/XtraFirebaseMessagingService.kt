@@ -35,6 +35,7 @@ class XtraFirebaseMessagingService : FirebaseMessagingService() {
         val data = remoteMessage.data
         val type = data["type"] ?: return
         if (type == "stream_live") {
+            val channelId = data["channel_id"]?.toLongOrNull()
             val userId = data["user_id"]?.toLongOrNull() ?: return
             val channelSlug = data["channel_slug"]?.trim()?.removePrefix("/") ?: userId.toString()
             val title = data["title"]
@@ -42,6 +43,7 @@ class XtraFirebaseMessagingService : FirebaseMessagingService() {
             val profilePicture = data["profile_picture"]
 
             val event = KickLiveNotificationEvent(
+                channelId = channelId,
                 userId = userId,
                 title = title,
                 description = description,

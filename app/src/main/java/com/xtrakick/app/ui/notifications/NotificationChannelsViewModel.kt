@@ -17,11 +17,13 @@ import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 @HiltViewModel
@@ -46,8 +48,12 @@ class NotificationChannelsViewModel @Inject constructor(
     val channels: StateFlow<List<ChannelUi>?> = _channels.asStateFlow()
 
     private var refreshJob: Job? = null
+    private val userSummaryCache = ConcurrentHashMap<String, PublicUserSummary>()
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { notificationUsersRepository.migrateLegacyKeys() }
+        }
         refresh()
     }
 
@@ -79,16 +85,18 @@ class NotificationChannelsViewModel @Inject constructor(
         toggleJobs[entry.id] = viewModelScope.launch {
             try {
                 if (enabled) {
-                    // Resolve by login so the canonical row id is authoritative, then store
-                    // it on the local follow: follows imported without their numeric id
-                    // would no longer match the new row on the next load.
                     val canonical = notificationUsersRepository.enableNotificationsForChannel(
                         entry.login ?: entry.id, entry.id, entry.name
                     )
                     if (canonical != null) {
                         onChannelsEnabled()
-                        if (entry.followed && !canonical.equals(entry.id, true)) {
+                        if (entry.followed) {
                             localFollowChannelRepository.upsertLocalFollow(canonical, entry.login, entry.name)
+                        }
+                        if (canonical != entry.id) {
+                            _channels.value = _channels.value?.map {
+                                if (it.id == entry.id && it.followed == entry.followed) it.copy(id = canonical) else it
+                            }
                         }
                     }
                 } else {
@@ -98,37 +106,37 @@ class NotificationChannelsViewModel @Inject constructor(
                 throw error
             } catch (error: Exception) {
                 Log.w(TAG, "notification toggle failed for ${entry.id}", error)
+                _channels.value = _channels.value?.map {
+                    if (it.id == entry.id && it.followed == entry.followed) it.copy(enabled = !enabled) else it
+                }
                 _updateError.value = context.getString(R.string.live_notification_channels_update_failed)
+            } finally {
+                toggleJobs.remove(entry.id)
             }
-            // Reached only on non-cancelled completion (a cancelled toggle's replacement
-            // already owns the map entry): drop the finished job so the map holds only
-            // in-flight toggles.
-            toggleJobs.remove(entry.id)
-            refresh()
         }
     }
 
     fun enableAll() {
+        _channels.value = _channels.value?.map { it.copy(enabled = true) }
         viewModelScope.launch {
             try {
                 val follows = localFollowChannelRepository.loadFollows()
                 notificationUsersRepository.enableNotificationsForChannels(
                     follows.map { listOf(it.userId, it.userLogin) }
                 )
-                // Not gated on the insert count: rows can all predate the master switch
-                // being turned off, and "enable all" must still produce a working state.
                 onChannelsEnabled()
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (error: Exception) {
                 Log.w(TAG, "enable all failed", error)
                 _updateError.value = context.getString(R.string.live_notification_channels_update_failed)
+                refresh()
             }
-            refresh()
         }
     }
 
     fun disableAll() {
+        _channels.value = _channels.value?.map { it.copy(enabled = false) }
         viewModelScope.launch {
             try {
                 notificationUsersRepository.deleteAllUsers()
@@ -137,10 +145,8 @@ class NotificationChannelsViewModel @Inject constructor(
             } catch (error: Exception) {
                 Log.w(TAG, "disable all failed", error)
                 _updateError.value = context.getString(R.string.live_notification_channels_update_failed)
+                refresh()
             }
-            // Leave the master switch alone: the polling backup and the event gate consult
-            // it independently, and channels may be re-enabled right after.
-            refresh()
         }
     }
 
@@ -174,13 +180,22 @@ class NotificationChannelsViewModel @Inject constructor(
             val login = follow.userLogin?.trim()?.takeIf { it.isNotBlank() }
             val userId = follow.userId?.trim()?.takeIf { it.isNotBlank() }
             val followId = userId ?: login ?: return@forEach
-            // Notification rows are keyed by the canonical channel id, so match the follow
-            // by id first, then login. Rows keyed by the channel's other numeric id
-            // (channel id vs user id) are re-matched later via the resolved login.
-            val row = rows.firstOrNull {
+
+            // Notification rows are keyed by the canonical broadcaster user id, but legacy
+            // rows may temporarily be keyed by channel id or login.
+            var row = rows.firstOrNull {
                 (userId != null && it.channelId.equals(userId, ignoreCase = true)) ||
                     (login != null && it.channelId.equals(login, ignoreCase = true))
             }
+
+            // Check if any row matches the follow's channel ID if cached
+            if (row == null && login != null) {
+                val channelId = kickRepository.getCachedChannel(login)?.id?.toString()
+                if (channelId != null) {
+                    row = rows.firstOrNull { it.channelId.equals(channelId, ignoreCase = true) }
+                }
+            }
+
             drafts.add(Draft(
                 id = row?.channelId ?: followId,
                 name = follow.userName?.takeIf { it.isNotBlank() } ?: login,
@@ -193,56 +208,56 @@ class NotificationChannelsViewModel @Inject constructor(
 
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         var cachedHeaders: Map<String, String>? = null
-        suspend fun lookupUser(id: String): PublicUserSummary? {
-            val headers = cachedHeaders ?: runCatching {
-                kickRepository.getKickPublicApiHeadersWithRefresh(networkLibrary)
-            }.getOrElse { KickApiHelper.getKickPublicApiHeaders(context) }.also { cachedHeaders = it }
-            val normalizedId = id.toLongOrNull()?.toString() ?: id
-            return runCatching {
-                kickPublicApiRepository.lookupUsersByIds(networkLibrary, headers, listOf(id))[id]
-                    // Kick ids are numeric; legacy rows may carry leading zeros, so also
-                    // match the normalized form the API echoes back.
-                    ?: (normalizedId.takeIf { it != id }?.let {
-                        kickPublicApiRepository.lookupUsersByIds(networkLibrary, headers, listOf(it))[it]
-                    })
-            }.getOrNull().also {
-                if (it == null || it.login == null) Log.w(TAG, "could not resolve channel id $id")
-            }
-        }
 
-        // Follows stored without any name (legacy import artifacts) would render as a raw
-        // id: resolve their login once so they display and open like other entries.
-        drafts.forEachIndexed { index, draft ->
-            if (draft.followed && draft.login == null && draft.name == null) {
-                lookupUser(draft.id)?.let { resolved ->
-                    drafts[index] = draft.copy(name = resolved.login, login = resolved.login, logoUrl = resolved.profilePictureUrl)
+        val claimedRowIds = drafts.mapNotNull { it.rowId }.toSet()
+        val unclaimedRows = rows.filterNot { it.channelId in claimedRowIds }
+        if (unclaimedRows.isNotEmpty()) {
+            val missingIds = unclaimedRows.map { it.channelId }.filterNot { userSummaryCache.containsKey(it) }
+            if (missingIds.isNotEmpty()) {
+                runCatching {
+                    val headers = cachedHeaders ?: runCatching {
+                        kickRepository.getKickPublicApiHeadersWithRefresh(networkLibrary)
+                    }.getOrElse { KickApiHelper.getKickPublicApiHeaders(context) }.also { cachedHeaders = it }
+                    val fetched = kickPublicApiRepository.lookupUsersByIds(networkLibrary, headers, missingIds)
+                    userSummaryCache.putAll(fetched)
                 }
             }
-        }
 
-        // Rows no follow claimed: either keyed by the channel's other numeric id, or
-        // notifications left on an unfollowed channel. Resolve each row's login and
-        // re-match before showing it as "not followed".
-        val claimedRowIds = drafts.mapNotNull { it.rowId }.toSet()
-        rows.filterNot { it.channelId in claimedRowIds }.forEach { row ->
-            val resolved = lookupUser(row.channelId)
-            val matchedIndex = resolved?.login?.let { login ->
-                drafts.indexOfFirst { draft ->
-                    draft.followed && draft.rowId == null &&
-                        (draft.login.equals(login, true) || draft.name.equals(login, true))
-                }.takeIf { it >= 0 }
-            }
-            if (matchedIndex != null) {
-                drafts[matchedIndex] = drafts[matchedIndex].copy(id = row.channelId, rowId = row.channelId)
-            } else {
-                drafts.add(Draft(
-                    id = row.channelId,
-                    name = resolved?.login,
-                    login = resolved?.login,
-                    logoUrl = resolved?.profilePictureUrl,
-                    rowId = row.channelId,
-                    followed = false,
-                ))
+            unclaimedRows.forEach { row ->
+                // Check if the unclaimed row matches a follow's cached channel ID
+                val matchedByFollowChannel = drafts.firstOrNull { draft ->
+                    draft.followed && draft.rowId == null && draft.login != null &&
+                        kickRepository.getCachedChannel(draft.login)?.id?.toString() == row.channelId
+                }
+                if (matchedByFollowChannel != null) {
+                    val index = drafts.indexOf(matchedByFollowChannel)
+                    drafts[index] = matchedByFollowChannel.copy(id = row.channelId, rowId = row.channelId)
+                    return@forEach
+                }
+
+                val resolved = userSummaryCache[row.channelId]
+                val matchedIndex = resolved?.login?.let { login ->
+                    drafts.indexOfFirst { draft ->
+                        draft.followed && draft.rowId == null &&
+                            (draft.login.equals(login, true) || draft.name.equals(login, true))
+                    }.takeIf { it >= 0 }
+                }
+                if (matchedIndex != null) {
+                    val draft = drafts[matchedIndex]
+                    drafts[matchedIndex] = draft.copy(id = row.channelId, rowId = row.channelId)
+                    viewModelScope.launch(Dispatchers.IO) {
+                        localFollowChannelRepository.upsertLocalFollow(row.channelId, draft.login, draft.name)
+                    }
+                } else if (resolved?.login != null) {
+                    drafts.add(Draft(
+                        id = row.channelId,
+                        name = resolved.login,
+                        login = resolved.login,
+                        logoUrl = resolved.profilePictureUrl,
+                        rowId = row.channelId,
+                        followed = false,
+                    ))
+                }
             }
         }
 
@@ -258,7 +273,7 @@ class NotificationChannelsViewModel @Inject constructor(
                     followed = draft.followed,
                 )
             }
-            .sortedWith(compareBy({ !it.enabled }, { it.name?.lowercase() ?: "" }, { it.id }))
+            .sortedWith(compareBy({ !it.followed }, { it.name?.lowercase() ?: "" }, { it.id }))
     }
 
     companion object {
