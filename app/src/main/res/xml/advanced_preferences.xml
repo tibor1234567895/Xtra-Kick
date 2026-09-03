@@ -18,6 +18,28 @@
         app:singleLineTitle="false" />
 
     <PreferenceCategory
+        android:title="@string/following_label"
+        app:iconSpaceReserved="false" />
+
+    <ListPreference
+        android:defaultValue="60"
+        android:entries="@array/followedLiveAutoRefreshEntries"
+        android:entryValues="@array/followedLiveAutoRefreshValues"
+        android:key="followed_live_auto_refresh_interval"
+        android:summary="%s"
+        android:title="@string/followed_live_auto_refresh"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="followed_live_refresh_on_return"
+        android:summary="@string/followed_live_refresh_on_return_summary"
+        android:title="@string/followed_live_refresh_on_return"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <PreferenceCategory
         android:title="@string/network"
         app:iconSpaceReserved="false" />
 
