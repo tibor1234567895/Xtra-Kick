@@ -82,6 +82,27 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        maybeRefreshOnReturn()
+    }
+
+    override fun onHiddenChanged(hidden: Boolean) {
+        super.onHiddenChanged(hidden)
+        if (!hidden) {
+            maybeRefreshOnReturn()
+        }
+    }
+
+    private fun maybeRefreshOnReturn() {
+        if (!isAdded || isHidden) return
+        val prefs = requireContext().prefs()
+        val refreshOnReturn = prefs.getBoolean(AppConstants.FOLLOWED_LIVE_REFRESH_ON_RETURN, true)
+        if (refreshOnReturn) {
+            viewModel.maybeRefreshIfStale(minAgeMs = 30_000L, silent = true)
+        }
+    }
+
     override fun initialize() {
         viewModel.initialize()
         viewLifecycleOwner.lifecycleScope.launch {
@@ -106,6 +127,24 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
                         IntegrityDialog.show(childFragmentManager, "refresh")
                     }
                     wasRefreshing = state.isRefreshing
+                }
+            }
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    val rawInterval = requireContext().prefs()
+                        .getString(AppConstants.FOLLOWED_LIVE_AUTO_REFRESH_INTERVAL, "60")
+                    val intervalSeconds = rawInterval?.toLongOrNull() ?: 60L
+                    if (intervalSeconds <= 0L) {
+                        // Polling disabled; sleep for a minute before checking preference again
+                        kotlinx.coroutines.delay(60_000L)
+                        continue
+                    }
+                    kotlinx.coroutines.delay(intervalSeconds * 1000L)
+                    if (isAdded && !isHidden && isResumed) {
+                        viewModel.refresh(silent = true)
+                    }
                 }
             }
         }

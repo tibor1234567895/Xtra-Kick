@@ -285,33 +285,52 @@ class FollowedLiveStreamsRepository @Inject constructor(
         val followsByBroadcasterId = LinkedHashMap<String, LocalFollowChannel>()
         var cacheChanged = false
 
-        coroutineScope {
-            followByLogin.keys
-                .chunked(USER_LOOKUP_BATCH_SIZE)
-                .chunked(PUBLIC_API_PARALLELISM)
-                .forEach { requestWindow ->
-                    currentCoroutineContext().ensureActive()
-                    requestWindow.map { logins ->
-                        async {
-                            kickPublicApiRepository.getUsers(
-                                networkLibrary = networkLibrary,
-                                headers = headers,
-                                logins = logins,
-                            )
-                        }
-                    }.awaitAll().forEach { response ->
-                        response.data.forEach { user ->
-                            val login = user.channelLogin?.takeIf { it.isNotBlank() }?.lowercase() ?: return@forEach
-                            val broadcasterId = user.channelId?.takeIf { it.isNotBlank() } ?: return@forEach
-                            val follow = followByLogin[login] ?: return@forEach
-                            followsByBroadcasterId[broadcasterId] = follow
-                            if (broadcasterIdCache[login] != broadcasterId) {
-                                broadcasterIdCache[login] = broadcasterId
-                                cacheChanged = true
+        followByLogin.forEach { (login, follow) ->
+            val cachedId = broadcasterIdCache[login]
+            val followUserId = follow.userId?.trim()?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+            val resolvedId = followUserId ?: cachedId
+            if (resolvedId != null) {
+                followsByBroadcasterId[resolvedId] = follow
+                if (broadcasterIdCache[login] != resolvedId) {
+                    broadcasterIdCache[login] = resolvedId
+                    cacheChanged = true
+                }
+            }
+        }
+
+        val loginsToFetch = followByLogin.keys.filter { login ->
+            broadcasterIdCache[login] == null
+        }
+
+        if (loginsToFetch.isNotEmpty()) {
+            coroutineScope {
+                loginsToFetch
+                    .chunked(USER_LOOKUP_BATCH_SIZE)
+                    .chunked(PUBLIC_API_PARALLELISM)
+                    .forEach { requestWindow ->
+                        currentCoroutineContext().ensureActive()
+                        requestWindow.map { logins ->
+                            async {
+                                kickPublicApiRepository.getUsers(
+                                    networkLibrary = networkLibrary,
+                                    headers = headers,
+                                    logins = logins,
+                                )
+                            }
+                        }.awaitAll().forEach { response ->
+                            response.data.forEach { user ->
+                                val login = user.channelLogin?.takeIf { it.isNotBlank() }?.lowercase() ?: return@forEach
+                                val broadcasterId = user.channelId?.takeIf { it.isNotBlank() } ?: return@forEach
+                                val follow = followByLogin[login] ?: return@forEach
+                                followsByBroadcasterId[broadcasterId] = follow
+                                if (broadcasterIdCache[login] != broadcasterId) {
+                                    broadcasterIdCache[login] = broadcasterId
+                                    cacheChanged = true
+                                }
                             }
                         }
                     }
-                }
+            }
         }
 
         if (cacheChanged) {

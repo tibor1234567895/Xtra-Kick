@@ -26,6 +26,11 @@ class FcmSyncManager @Inject constructor(
     private val kickRepository: Lazy<KickRepository>? = null,
 ) {
 
+    companion object {
+        private const val FCM_LAST_SYNCED_SIGNATURE = "fcm_last_synced_signature_v1"
+        private val channelInfoCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+    }
+
     suspend fun syncSubscriptions(tokenOverride: String? = null): Boolean = withContext(Dispatchers.IO) {
         // Debug builds (.test) are blocked by the Firebase API-key allowlist and must stay
         // out of the prod subscription store until a staging backend exists.
@@ -38,13 +43,22 @@ class FcmSyncManager @Inject constructor(
         }.getOrNull() ?: return@withContext false
 
         val rawChannels = notificationUsersDao.getAll().map { it.channelId.trim() }.filter { it.isNotBlank() }
+        val kickUserId = context.prefs().getString(AppConstants.USER_ID, null).orEmpty()
+        val currentSignature = "$token:$kickUserId:${rawChannels.sorted().joinToString(",")}"
+        val lastSyncedSignature = context.prefs().getString(FCM_LAST_SYNCED_SIGNATURE, null)
+        if (tokenOverride == null && currentSignature == lastSyncedSignature) {
+            return@withContext true
+        }
+
         val allChannelIds = LinkedHashSet<String>(rawChannels)
         val follows = runCatching { localFollowChannelRepository?.loadFollows() }.getOrNull().orEmpty()
+        val followsByUserId = follows.mapNotNull { f -> f.userId?.takeIf(String::isNotBlank)?.let { it to f } }.toMap()
+        val followsByLogin = follows.mapNotNull { f -> f.userLogin?.trim()?.lowercase()?.takeIf(String::isNotBlank)?.let { it to f } }.toMap()
         for (row in rawChannels) {
-            val follow = follows.firstOrNull { it.userId == row || it.userLogin?.equals(row, ignoreCase = true) == true }
+            val follow = followsByUserId[row] ?: followsByLogin[row.lowercase()]
             if (follow != null) {
-                follow.userId?.takeIf { it.isNotBlank() }?.let { allChannelIds.add(it) }
-                follow.userLogin?.takeIf { it.isNotBlank() }?.let { allChannelIds.add(it.lowercase()) }
+                follow.userId?.takeIf(String::isNotBlank)?.let(allChannelIds::add)
+                follow.userLogin?.takeIf(String::isNotBlank)?.let { allChannelIds.add(it.lowercase()) }
             }
         }
         // Kick Pusher live events arrive on channel.<channel.id>, while the DB stores the
@@ -53,27 +67,31 @@ class FcmSyncManager @Inject constructor(
         runCatching {
             val repo = kickRepository?.get() ?: return@runCatching
             for (key in allChannelIds.toList()) {
+                val cached = channelInfoCache[key]
+                if (cached != null) {
+                    allChannelIds.addAll(cached)
+                    continue
+                }
                 val channel = runCatching {
                     repo.getChannel(key, prefetchBadgeCatalog = false)
                 }.getOrNull() ?: continue
-                allChannelIds.addAll(
-                    listOfNotNull(
-                        channel.id?.toString(),
-                        channel.userId?.toString(),
-                        channel.user?.id?.toString(),
-                        channel.slug?.trim(),
-                        channel.slug?.trim()?.lowercase(),
-                        channel.user?.username?.trim(),
-                        channel.user?.username?.trim()?.lowercase(),
-                    ).filter { it.isNotBlank() }
-                )
+                val aliases = listOfNotNull(
+                    channel.id?.toString(),
+                    channel.userId?.toString(),
+                    channel.user?.id?.toString(),
+                    channel.slug?.trim(),
+                    channel.slug?.trim()?.lowercase(),
+                    channel.user?.username?.trim(),
+                    channel.user?.username?.trim()?.lowercase(),
+                ).filter { it.isNotBlank() }
+                channelInfoCache[key] = aliases
+                allChannelIds.addAll(aliases)
             }
         }
-        val kickUserId = context.prefs().getString(AppConstants.USER_ID, null)
 
         val jsonBody = JSONObject().apply {
             put("token", token)
-            if (!kickUserId.isNullOrBlank()) {
+            if (kickUserId.isNotBlank()) {
                 put("kick_user_id", kickUserId)
             }
             put("channel_ids", JSONArray(allChannelIds.toList()))
@@ -98,7 +116,11 @@ class FcmSyncManager @Inject constructor(
                 connection.setRequestProperty("Content-Type", "application/json")
                 headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
                 connection.outputStream.use { it.write(bodyBytes) }
-                connection.responseCode in 200..299
+                val ok = connection.responseCode in 200..299
+                if (ok) {
+                    context.prefs().edit().putString(FCM_LAST_SYNCED_SIGNATURE, currentSignature).apply()
+                }
+                ok
             } finally {
                 connection.disconnect()
             }
@@ -136,7 +158,11 @@ class FcmSyncManager @Inject constructor(
                 connection.setRequestProperty("Content-Type", "application/json")
                 headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
                 connection.outputStream.use { it.write(bodyBytes) }
-                connection.responseCode in 200..299
+                val ok = connection.responseCode in 200..299
+                if (ok) {
+                    context.prefs().edit().remove(FCM_LAST_SYNCED_SIGNATURE).apply()
+                }
+                ok
             } finally {
                 connection.disconnect()
             }

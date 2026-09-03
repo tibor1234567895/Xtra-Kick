@@ -126,6 +126,16 @@ class FollowedStreamsViewModel @Inject constructor(
 
     private var refreshJob: Job? = null
     private var refreshGeneration = 0L
+    private var lastRefreshedAt = 0L
+
+    fun maybeRefreshIfStale(minAgeMs: Long = 30_000L, silent: Boolean = true): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastRefreshedAt >= minAgeMs && refreshJob == null) {
+            refresh(silent = silent)
+            return true
+        }
+        return false
+    }
 
     private fun isRateLimitMessage(message: String?): Boolean =
         message?.contains("429", ignoreCase = true) == true
@@ -186,11 +196,11 @@ class FollowedStreamsViewModel @Inject constructor(
         }
     }
 
-    fun refresh() {
+    fun refresh(silent: Boolean = false) {
         val generation = ++refreshGeneration
         refreshJob?.cancel()
 
-        val cachedItems = loadFreshCache()
+        val cachedItems = if (silent) emptyList() else loadFreshCache()
         val currentState = _uiState.value
         val currentItems = when {
             cachedItems.isNotEmpty() -> cachedItems
@@ -200,8 +210,8 @@ class FollowedStreamsViewModel @Inject constructor(
 
         _uiState.value = currentState.copy(
             items = currentItems,
-            isInitialLoading = currentItems.isEmpty(),
-            isRefreshing = currentItems.isNotEmpty(),
+            isInitialLoading = !silent && currentItems.isEmpty(),
+            isRefreshing = !silent && currentItems.isNotEmpty(),
             showEmpty = false,
             integrityAction = null,
             hasLoadedOnce = currentState.hasLoadedOnce || currentItems.isNotEmpty(),
@@ -212,6 +222,7 @@ class FollowedStreamsViewModel @Inject constructor(
                 val follows = localFollowsChannel.loadFollows()
                 val resolved = LinkedHashMap<String, Stream>()
                 if (follows.isEmpty()) {
+                    lastRefreshedAt = System.currentTimeMillis()
                     updateStateForGeneration(
                         generation = generation,
                         items = emptyList(),
@@ -237,7 +248,7 @@ class FollowedStreamsViewModel @Inject constructor(
                             generation = generation,
                             items = sorted,
                             isInitialLoading = false,
-                            isRefreshing = true,
+                            isRefreshing = !silent,
                             showEmpty = false,
                             hasLoadedOnce = true,
                         )
@@ -269,7 +280,7 @@ class FollowedStreamsViewModel @Inject constructor(
                         generation = generation,
                         items = sorted,
                         isInitialLoading = false,
-                        isRefreshing = fastResult.unresolvedFollows.isNotEmpty(),
+                        isRefreshing = !silent && fastResult.unresolvedFollows.isNotEmpty(),
                         showEmpty = false,
                         hasLoadedOnce = true,
                     )
@@ -296,7 +307,7 @@ class FollowedStreamsViewModel @Inject constructor(
                         generation = generation,
                         items = sorted,
                         isInitialLoading = false,
-                        isRefreshing = bulkFallbackResult.unresolvedFollows.isNotEmpty(),
+                        isRefreshing = !silent && bulkFallbackResult.unresolvedFollows.isNotEmpty(),
                         showEmpty = false,
                         hasLoadedOnce = true,
                     )
@@ -306,6 +317,8 @@ class FollowedStreamsViewModel @Inject constructor(
 
                 if (sawRateLimit) {
                     logFollowedStreamsWarn("Skipping per-channel fallback: kick API is rate limiting")
+                } else if (resolved.isNotEmpty() && followsForPerChannelFallback.size > 6) {
+                    logFollowedStreamsWarn("Skipping per-channel fallback: live streams resolved and too many unresolved follows (${followsForPerChannelFallback.size})")
                 } else followsForPerChannelFallback.chunked(FOLLOWED_STREAMS_BATCH_SIZE).forEach { batch ->
                     ensureActive()
                     val batchResults = coroutineScope {
@@ -325,13 +338,14 @@ class FollowedStreamsViewModel @Inject constructor(
                         generation = generation,
                         items = sorted,
                         isInitialLoading = false,
-                        isRefreshing = true,
+                        isRefreshing = !silent,
                         showEmpty = false,
                         hasLoadedOnce = true,
                     )
                 }
 
                 val finalItems = resolved.values.toList().sortedForFollowedLive()
+                lastRefreshedAt = System.currentTimeMillis()
                 persistCache(finalItems)
                 updateStateForGeneration(
                     generation = generation,
@@ -343,6 +357,7 @@ class FollowedStreamsViewModel @Inject constructor(
                 )
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
+                lastRefreshedAt = System.currentTimeMillis()
                 val isIntegrityFailure = e.message == "failed integrity check" &&
                     applicationContext.prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
                     applicationContext.prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
@@ -455,33 +470,52 @@ class FollowedStreamsViewModel @Inject constructor(
         val followsByBroadcasterId = LinkedHashMap<String, LocalFollowChannel>()
         var cacheChanged = false
 
-        coroutineScope {
-            followByLogin.keys
-                .chunked(FOLLOWED_STREAMS_USER_LOOKUP_BATCH_SIZE)
-                .chunked(FOLLOWED_STREAMS_PUBLIC_API_PARALLELISM)
-                .forEach { requestWindow ->
-                    currentCoroutineContext().ensureActive()
-                    requestWindow.map { logins ->
-                        async {
-                            kickPublicApiRepository.getUsers(
-                                networkLibrary = networkLibrary,
-                                headers = headers,
-                                logins = logins,
-                            )
-                        }
-                    }.awaitAll().forEach { response ->
-                        response.data.forEach { user ->
-                            val login = user.channelLogin?.takeIf { it.isNotBlank() }?.lowercase() ?: return@forEach
-                            val broadcasterId = user.channelId?.takeIf { it.isNotBlank() } ?: return@forEach
-                            val follow = followByLogin[login] ?: return@forEach
-                            followsByBroadcasterId[broadcasterId] = follow
-                            if (broadcasterIdCache[login] != broadcasterId) {
-                                broadcasterIdCache[login] = broadcasterId
-                                cacheChanged = true
+        followByLogin.forEach { (login, follow) ->
+            val cachedId = broadcasterIdCache[login]
+            val followUserId = follow.userId?.trim()?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+            val resolvedId = followUserId ?: cachedId
+            if (resolvedId != null) {
+                followsByBroadcasterId[resolvedId] = follow
+                if (broadcasterIdCache[login] != resolvedId) {
+                    broadcasterIdCache[login] = resolvedId
+                    cacheChanged = true
+                }
+            }
+        }
+
+        val loginsToFetch = followByLogin.keys.filter { login ->
+            broadcasterIdCache[login] == null
+        }
+
+        if (loginsToFetch.isNotEmpty()) {
+            coroutineScope {
+                loginsToFetch
+                    .chunked(FOLLOWED_STREAMS_USER_LOOKUP_BATCH_SIZE)
+                    .chunked(FOLLOWED_STREAMS_PUBLIC_API_PARALLELISM)
+                    .forEach { requestWindow ->
+                        currentCoroutineContext().ensureActive()
+                        requestWindow.map { logins ->
+                            async {
+                                kickPublicApiRepository.getUsers(
+                                    networkLibrary = networkLibrary,
+                                    headers = headers,
+                                    logins = logins,
+                                )
+                            }
+                        }.awaitAll().forEach { response ->
+                            response.data.forEach { user ->
+                                val login = user.channelLogin?.takeIf { it.isNotBlank() }?.lowercase() ?: return@forEach
+                                val broadcasterId = user.channelId?.takeIf { it.isNotBlank() } ?: return@forEach
+                                val follow = followByLogin[login] ?: return@forEach
+                                followsByBroadcasterId[broadcasterId] = follow
+                                if (broadcasterIdCache[login] != broadcasterId) {
+                                    broadcasterIdCache[login] = broadcasterId
+                                    cacheChanged = true
+                                }
                             }
                         }
                     }
-                }
+            }
         }
 
         if (cacheChanged) {

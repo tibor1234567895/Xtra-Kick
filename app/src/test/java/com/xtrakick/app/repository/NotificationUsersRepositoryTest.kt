@@ -91,6 +91,7 @@ class NotificationUsersRepositoryTest {
         )
         val fcmSyncManager = FcmSyncManager(context, dao)
         repository = NotificationUsersRepository(
+            context = context,
             notificationUsersDao = dao,
             kickRepository = kickRepository,
             fcmSyncManager = Lazy { fcmSyncManager },
@@ -196,5 +197,39 @@ class NotificationUsersRepositoryTest {
         val ids = dao.getAll().map { it.channelId }
         assertEquals(listOf("99999"), ids)
         assertTrue(repository.isNotificationEnabled("99999"))
+    }
+
+    @Test
+    fun migrateLegacyKeysMarksDoneWhenEmpty() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        context.getSharedPreferences("${context.packageName}_preferences", android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(com.xtrakick.app.util.AppConstants.NOTIFICATION_KEYS_MIGRATED, false)
+            .apply()
+
+        repository.migrateLegacyKeys()
+
+        val isMigrated = context.getSharedPreferences("${context.packageName}_preferences", android.content.Context.MODE_PRIVATE)
+            .getBoolean(com.xtrakick.app.util.AppConstants.NOTIFICATION_KEYS_MIGRATED, false)
+        assertTrue(isMigrated)
+    }
+
+    @Test
+    fun migrateLegacyKeysShortCircuitsWhenAllRowsAreCanonical() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        context.getSharedPreferences("${context.packageName}_preferences", android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(com.xtrakick.app.util.AppConstants.NOTIFICATION_KEYS_MIGRATED, false)
+            .apply()
+
+        dao.insert(NotificationUser("12345"))
+        dao.insert(NotificationUser("67890"))
+
+        repository.migrateLegacyKeys()
+
+        val isMigrated = context.getSharedPreferences("${context.packageName}_preferences", android.content.Context.MODE_PRIVATE)
+            .getBoolean(com.xtrakick.app.util.AppConstants.NOTIFICATION_KEYS_MIGRATED, false)
+        assertTrue(isMigrated)
+        assertEquals(2, dao.getAll().size)
     }
 }

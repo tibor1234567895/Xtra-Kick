@@ -1021,4 +1021,12 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="debug_reset_update_timestamps">Reset update check history</string>
     <string name="debug_reset_update_timestamps_summary">Clear all update check and skip timestamps to simulate a fresh install</string>
     <string name="debug_reset_update_timestamps_success">Update check history reset</string>
+    <string name="followed_live_auto_refresh">Auto-refresh live streams</string>
+    <string name="followed_live_auto_refresh_summary">Automatically update stream positions, viewer counts, and thumbnails while viewing</string>
+    <string name="followed_live_refresh_on_return">Refresh when returning to tab</string>
+    <string name="followed_live_refresh_on_return_summary">Check for live updates when returning from watching a stream or switching tabs</string>
+    <string name="auto_refresh_30s">30 seconds</string>
+    <string name="auto_refresh_1m">1 minute</string>
+    <string name="auto_refresh_2m">2 minutes</string>
+    <string name="auto_refresh_5m">5 minutes</string>
 </resources>

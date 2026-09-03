@@ -16,8 +16,14 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
+import android.content.Context
+import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.prefs
+import dagger.hilt.android.qualifiers.ApplicationContext
+
 @Singleton
 class NotificationUsersRepository @Inject constructor(
+    @param:ApplicationContext private val context: Context? = null,
     private val notificationUsersDao: NotificationUsersDao,
     private val kickRepository: KickRepository,
     private val fcmSyncManager: Lazy<FcmSyncManager>,
@@ -215,52 +221,63 @@ class NotificationUsersRepository @Inject constructor(
      * Re-keys any rows stored with channel IDs (e.g. from Pusher) or slugs to the true user ID.
      */
     suspend fun migrateLegacyKeys() = withContext(Dispatchers.IO) {
+        if (context?.prefs()?.getBoolean(AppConstants.NOTIFICATION_KEYS_MIGRATED, false) == true) {
+            return@withContext
+        }
+
         val allRows = notificationUsersDao.getAll()
-        if (allRows.isEmpty()) return@withContext
+        if (allRows.isEmpty()) {
+            context?.prefs()?.edit()?.putBoolean(AppConstants.NOTIFICATION_KEYS_MIGRATED, true)?.apply()
+            return@withContext
+        }
 
         val follows = runCatching { localFollowChannelRepository?.get()?.loadFollows() }.getOrNull().orEmpty()
+        val followUserIds = follows.mapNotNull { it.userId?.trim()?.takeIf(String::isNotBlank) }.toSet()
+
+        // Rows whose key is already a known canonical follow userId don't need migration.
+        val nonCanonicalRows = allRows.filter { it.channelId !in followUserIds }
+        if (nonCanonicalRows.isEmpty()) {
+            context?.prefs()?.edit()?.putBoolean(AppConstants.NOTIFICATION_KEYS_MIGRATED, true)?.apply()
+            return@withContext
+        }
+
         var changed = false
+        val followsByLogin = follows.mapNotNull { f ->
+            f.userLogin?.trim()?.lowercase()?.takeIf(String::isNotBlank)?.let { it to f }
+        }.toMap()
 
-        for (follow in follows) {
-            val login = follow.userLogin?.trim()?.takeIf { it.isNotBlank() } ?: continue
-            val followUserId = follow.userId?.trim()?.takeIf { it.isNotBlank() && it.all(Char::isDigit) } ?: continue
-            val channel = runCatching { kickRepository.getChannel(login, prefetchBadgeCatalog = false) }.getOrNull()
-            val channelId = channel?.id?.toString()
-            val canonicalUserId = channel?.userId?.toString() ?: followUserId
-
-            // If a row was stored with channel.id (like 101943 for 52chains or 2480758 for 0reed)
-            if (channelId != null && channelId != canonicalUserId) {
-                val rowWithChannelId = notificationUsersDao.getByUserId(channelId)
-                if (rowWithChannelId != null) {
-                    Log.i(TAG, "cleaning up channel ID row $channelId for $login and re-keying to user ID $canonicalUserId")
-                    notificationUsersDao.delete(rowWithChannelId)
-                    notificationUsersDao.insert(NotificationUser(canonicalUserId))
-                    changed = true
+        val resolved = coroutineScope {
+            nonCanonicalRows.map { item ->
+                async {
+                    val key = item.channelId.trim()
+                    val localMatch = followsByLogin[key.lowercase()]
+                    val canonical = if (!localMatch?.userId.isNullOrBlank()) {
+                        localMatch.userId
+                    } else {
+                        resolutionSemaphore.withPermit {
+                            runCatching { kickRepository.getChannel(key, prefetchBadgeCatalog = false) }.getOrNull()
+                                ?.let { ch ->
+                                    val trueUserId = ch.userId?.toString() ?: ch.user?.id?.toString() ?: ch.id?.toString()
+                                    if (!trueUserId.isNullOrBlank() && !trueUserId.equals(key, ignoreCase = true)) {
+                                        trueUserId
+                                    } else null
+                                }
+                        }
+                    }
+                    item to canonical
                 }
-            }
+            }.awaitAll()
+        }
 
-            // If a row was stored with login
-            val rowWithLogin = notificationUsersDao.getByUserId(login)
-            if (rowWithLogin != null) {
-                Log.i(TAG, "cleaning up login row $login and re-keying to user ID $canonicalUserId")
-                notificationUsersDao.delete(rowWithLogin)
-                notificationUsersDao.insert(NotificationUser(canonicalUserId))
+        for ((item, canonicalId) in resolved) {
+            if (!canonicalId.isNullOrBlank() && !canonicalId.equals(item.channelId.trim(), ignoreCase = true)) {
+                Log.i(TAG, "cleaning up legacy notification row ${item.channelId} and re-keying to user ID $canonicalId")
+                notificationUsersDao.rekey(item, NotificationUser(canonicalId))
                 changed = true
             }
         }
 
-        // Also clean up any remaining non-numeric rows
-        val legacy = notificationUsersDao.getAll().filter { it.channelId.trim().toIntOrNull() == null }
-        for (item in legacy) {
-            val login = item.channelId.trim()
-            val channel = runCatching {
-                kickRepository.getChannel(login, prefetchBadgeCatalog = false)
-            }.getOrNull()
-            val id = channel?.userId?.toString() ?: channel?.user?.id?.toString() ?: channel?.id?.toString()
-            if (id.isNullOrBlank() || id.equals(login, ignoreCase = true)) continue
-            notificationUsersDao.rekey(item, NotificationUser(id))
-            changed = true
-        }
+        context?.prefs()?.edit()?.putBoolean(AppConstants.NOTIFICATION_KEYS_MIGRATED, true)?.apply()
 
         if (changed) {
             runCatching { fcmSyncManager.get().syncSubscriptions() }

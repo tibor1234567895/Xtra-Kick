@@ -195,6 +195,7 @@ class KickFollowImporter @Inject constructor(
     /** One-time backfill: mark locally stored follows that also exist on Kick. Safe to re-run. */
     suspend fun ensureKickSourceMarks(networkLibrary: String?): Int {
         if (context.prefs().getBoolean(AppConstants.KICK_FOLLOW_MARK_DONE, false)) return 0
+        if (!com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(context)) return 0
         fun markDone() = context.prefs().edit().putBoolean(AppConstants.KICK_FOLLOW_MARK_DONE, true).apply()
         val channels = try {
             kickRepository.getFollowedChannelsWithStoredAuth(networkLibrary)
@@ -204,7 +205,10 @@ class KickFollowImporter @Inject constructor(
             return 0
         }
         if (channels.isEmpty()) {
-            markDone()
+            // Only mark done if confirmed logged in and returned empty from authenticated call
+            if (com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(context)) {
+                markDone()
+            }
             return 0
         }
         val marked = localFollowsChannel.markKickFollows(channels.map { it.login })
@@ -272,7 +276,13 @@ class KickFollowImporter @Inject constructor(
                 val channelId = user.channelId?.takeIf { it.isNotBlank() }
                 val name = user.channelName?.takeIf { it.isNotBlank() }
                 val profileImageUrl = user.profileImageUrl?.takeIf { it.isNotBlank() }
-                LocalFollowChannel(channelId, login, name, profileImageUrl)
+                LocalFollowChannel(
+                    userId = channelId,
+                    userLogin = login,
+                    userName = name,
+                    channelLogo = profileImageUrl,
+                    sourceMask = AppConstants.FOLLOW_SOURCE_MASK_LOCAL or AppConstants.FOLLOW_SOURCE_MASK_KICK,
+                )
             }
             localFollowsChannel.upsertLocalFollows(enrichedFollows)
         }
