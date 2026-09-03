@@ -354,14 +354,12 @@ class ChatViewModel @Inject constructor(
         }
         viewModelScope.launch {
             playerRepository.resolutionChangeFlow.collect { res ->
-                val newMsg = ContextCompat.getString(applicationContext, R.string.resolution_auto_changed).format(res)
-                onMessage(ChatMessage(systemMsg = newMsg))
+                DiagnosticLogger.i("ChatStatus", "resolution auto changed suppressed from chat: $res")
             }
         }
         viewModelScope.launch {
             playerRepository.qualityChangeFlow.collect { message ->
-                val newMsg = ContextCompat.getString(applicationContext, R.string.quality_auto_changed).format(message)
-                onMessage(ChatMessage(systemMsg = newMsg))
+                DiagnosticLogger.i("ChatStatus", "quality auto changed suppressed from chat: $message")
             }
         }
     }
@@ -2602,7 +2600,7 @@ class ChatViewModel @Inject constructor(
     ) : KickPusherChatWebSocket.Listener {
         override suspend fun onConnect() {
             kickRealtimeReconnectAttempt = 0
-            onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_join).format(channelLogin)))
+            DiagnosticLogger.i("KickRealtimeChat", "connected to $channelLogin suppressed from chat timeline")
         }
 
         override suspend fun onChatEvent(eventName: String, channelName: String?, messageJson: String) {
@@ -2632,12 +2630,7 @@ class ChatViewModel @Inject constructor(
                 if (isCurrentUser && isCurrentChannel) {
                     updateChannelPointsBalance(pointsUpdate.balance)
                     if (notifyPoints && pointsUpdate.reason.equals("EARNED", ignoreCase = true) && (pointsUpdate.points ?: 0) > 0) {
-                        onMessage(
-                            ChatMessage(
-                                systemMsg = ContextCompat.getString(applicationContext, R.string.points_earned).format(pointsUpdate.points),
-                                fullMsg = messageJson,
-                            )
-                        )
+                        DiagnosticLogger.i("KickRealtimeChat", "channel points earned suppressed from chat: ${pointsUpdate.points}")
                     }
                 }
             }

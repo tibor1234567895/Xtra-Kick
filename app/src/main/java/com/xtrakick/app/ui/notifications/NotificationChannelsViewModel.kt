@@ -20,8 +20,11 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -46,6 +49,28 @@ class NotificationChannelsViewModel @Inject constructor(
 
     private val _channels = MutableStateFlow<List<ChannelUi>?>(null)
     val channels: StateFlow<List<ChannelUi>?> = _channels.asStateFlow()
+
+    private val _query = MutableStateFlow("")
+    val query: StateFlow<String> = _query.asStateFlow()
+
+    private val _enabledOnly = MutableStateFlow(false)
+    val enabledOnly: StateFlow<Boolean> = _enabledOnly.asStateFlow()
+
+    /**
+     * Full list filtered by the search query (name/login/id, case-insensitive)
+     * and the "enabled only" toggle. Null while the initial load is in flight.
+     */
+    val filteredChannels: StateFlow<List<ChannelUi>?> = combine(_channels, _query, _enabledOnly) { channels, query, enabledOnly ->
+        channels?.let { applyChannelFilter(it, query, enabledOnly) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun setQuery(value: String) {
+        _query.value = value
+    }
+
+    fun setEnabledOnly(value: Boolean) {
+        _enabledOnly.value = value
+    }
 
     private var refreshJob: Job? = null
     private val userSummaryCache = ConcurrentHashMap<String, PublicUserSummary>()
@@ -278,5 +303,26 @@ class NotificationChannelsViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "NotifChannels"
+
+        /**
+         * Pure search + enabled-only filter over the loaded list. The filter never
+         * adds, removes, or reorders source rows — toggling it on and back off
+         * always restores the exact input list.
+         */
+        fun applyChannelFilter(channels: List<ChannelUi>, query: String, enabledOnly: Boolean): List<ChannelUi> {
+            var list = channels
+            if (enabledOnly) {
+                list = list.filter { it.enabled }
+            }
+            val q = query.trim()
+            if (q.isNotEmpty()) {
+                list = list.filter {
+                    it.name?.contains(q, ignoreCase = true) == true ||
+                        it.login?.contains(q, ignoreCase = true) == true ||
+                        it.id.contains(q, ignoreCase = true)
+                }
+            }
+            return list
+        }
     }
 }

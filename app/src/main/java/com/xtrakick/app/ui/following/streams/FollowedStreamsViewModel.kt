@@ -225,8 +225,32 @@ class FollowedStreamsViewModel @Inject constructor(
                 }
 
                 var sawRateLimit = false
+                // Official single-call live list (Kick web session). Covers Kick follows;
+                // local-only follows still resolve through the paths below. Failure falls through.
+                try {
+                    val officialLive = kickRepository.getUserLiveFollowedStreams()
+                    officialLive.forEach { stream -> resolved[stream.cacheKey()] = stream }
+                    if (officialLive.isNotEmpty()) {
+                        logFollowedStreamsInfo("Official followed-live path resolved ${officialLive.size} items")
+                        val sorted = resolved.values.toList().sortedForFollowedLive()
+                        updateStateForGeneration(
+                            generation = generation,
+                            items = sorted,
+                            isInitialLoading = false,
+                            isRefreshing = true,
+                            showEmpty = false,
+                            hasLoadedOnce = true,
+                        )
+                    }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    logFollowedStreamsWarn("Official followed-live path failed, using fallback: ${error.message}")
+                }
+
+                val localOnlyFollows = follows.filter { it.isLocalOnlyFollow }
                 val fastResult = try {
-                    loadStreamsFromPublicApi(follows)
+                    if (localOnlyFollows.isEmpty()) null else loadStreamsFromPublicApi(localOnlyFollows)
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Exception) {
@@ -251,7 +275,7 @@ class FollowedStreamsViewModel @Inject constructor(
                     )
                 }
 
-                val followsForFallback = fastResult?.unresolvedFollows ?: follows
+                val followsForFallback = fastResult?.unresolvedFollows ?: localOnlyFollows
 
                 val bulkFallbackResult = try {
                     loadStreamsFromBulkFallback(followsForFallback)

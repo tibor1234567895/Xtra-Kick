@@ -719,10 +719,13 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="live_notifications_polling_backup">Background polling backup</string>
     <string name="live_notifications_polling_backup_summary">Periodically check for live streams in the background as a fallback if push notifications are delayed. Uses slightly more battery.</string>
     <string name="live_notification_channels">Notification channels</string>
-    <string name="live_notification_channels_enable_all">Enable for all followed channels</string>
+    <string name="live_notification_channels_enable_all">Enable all</string>
     <string name="live_notification_channels_disable_all">Disable all</string>
     <string name="live_notification_channels_disable_all_message">Turn off live notifications for every channel?</string>
     <string name="live_notification_channels_empty">No channels yet. Follow channels, or enable notifications from a channel page, to manage them here.</string>
+    <string name="live_notification_channels_empty_search">No channels match your search.</string>
+    <string name="live_notification_channels_empty_enabled">No channels have notifications enabled. Turn a switch on to see them here.</string>
+    <string name="live_notification_channels_enabled_only">Enabled only</string>
     <string name="live_notification_channels_not_followed">Not followed</string>
     <string name="live_notification_channels_unknown">Unknown channel (%s)</string>
     <string name="live_notification_channels_update_failed">Couldn\'t update notification setting. Check your connection and try again.</string>

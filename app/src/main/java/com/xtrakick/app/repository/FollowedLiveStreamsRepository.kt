@@ -126,8 +126,21 @@ class FollowedLiveStreamsRepository @Inject constructor(
         var sawRateLimit = false
         val isRateLimitMessage = { message: String? -> message?.contains("429", ignoreCase = true) == true }
 
+        try {
+            val officialLive = kickRepository.getUserLiveFollowedStreams()
+            officialLive.forEach { resolved[it.cacheKey()] = it }
+            if (officialLive.isNotEmpty()) {
+                onPartial(resolved.values.toList().sortedByViewersDesc())
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            debugWarn("Official followed-live path failed: ${error.message}")
+        }
+
+        val localOnlyFollows = follows.filter { it.isLocalOnlyFollow }
         val fast = try {
-            loadFromPublicApi(follows)
+            if (localOnlyFollows.isEmpty()) null else loadFromPublicApi(localOnlyFollows)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -140,7 +153,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
             onPartial(resolved.values.toList().sortedByViewersDesc())
         }
 
-        val unresolvedAfterFast = fast?.unresolved ?: follows
+        val unresolvedAfterFast = fast?.unresolved ?: localOnlyFollows
         val bulk = try {
             loadFromBulkFallback(unresolvedAfterFast)
         } catch (error: CancellationException) {

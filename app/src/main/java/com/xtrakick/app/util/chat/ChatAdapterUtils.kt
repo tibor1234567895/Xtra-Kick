@@ -468,7 +468,8 @@ object ChatAdapterUtils {
         when {
             chatMessage.isReply -> {
                 val userName = resolveReplyDisplayName(chatMessage, nameDisplay).orEmpty()
-                val string = replyMessage.format(userName, "")
+                val rawPrefix = replyMessage.format(userName, "")
+                val string = rawPrefix.replaceFirst(Regex("^Replying to\\s+"), "↳ ")
                 builder.append(string)
                 builder.setSpan(ForegroundColorSpan(getSavedColor("#999999", savedColors, useReadableColors, isLightTheme)), 0, string.length, SPAN_EXCLUSIVE_EXCLUSIVE)
                 builderIndex += string.length

@@ -405,12 +405,11 @@ class PlaybackService : MediaSessionService() {
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
                                 stopKickViewerWatch()
-                                activeKickChannelId = customCommand.customExtras.getString(CHANNEL_ID)
-                                    ?.takeIf { customCommand.customExtras.getBoolean(IS_KICK_STREAM, false) }
-                                activeKickLivestreamId = customCommand.customExtras.getString(LIVESTREAM_ID)
-                                    ?.takeIf { customCommand.customExtras.getBoolean(IS_KICK_STREAM, false) }
-                                activeKickChannelLogin = customCommand.customExtras.getString(CHANNEL_LOGIN)
-                                    ?.takeIf { customCommand.customExtras.getBoolean(IS_KICK_STREAM, false) }
+                                val isKick = customCommand.customExtras.getBoolean(IS_KICK_STREAM, false)
+                                    || customCommand.customExtras.getString(IS_KICK_STREAM).equals(AppConstants.KICK, ignoreCase = true)
+                                activeKickChannelId = customCommand.customExtras.getString(CHANNEL_ID)?.takeIf { isKick }
+                                activeKickLivestreamId = customCommand.customExtras.getString(LIVESTREAM_ID)?.takeIf { isKick }
+                                activeKickChannelLogin = customCommand.customExtras.getString(CHANNEL_LOGIN)?.takeIf { isKick }
                                 if (session.player.isPlaying) {
                                     startKickViewerWatchIfNeeded()
                                 }

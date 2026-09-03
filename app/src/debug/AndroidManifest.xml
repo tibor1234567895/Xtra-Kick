@@ -5,5 +5,11 @@
          profiler to a production build. Debug-only overlay instead. -->
     <application>
         <profileable android:shell="true" tools:ignore="UnusedAttribute" />
+        <!-- Debug package (.test) is blocked by the Firebase API-key allowlist and has no
+             staging backend. Disable FCM auto-init so debug builds don't spam 403s and
+             don't pollute the prod subscription store. Release builds are unaffected. -->
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
     </application>
 </manifest>

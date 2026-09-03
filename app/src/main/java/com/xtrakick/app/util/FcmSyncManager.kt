@@ -4,7 +4,9 @@ import android.content.Context
 import com.google.firebase.messaging.FirebaseMessaging
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.db.NotificationUsersDao
+import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowChannelRepository
+import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -21,9 +23,13 @@ class FcmSyncManager @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val notificationUsersDao: NotificationUsersDao,
     private val localFollowChannelRepository: LocalFollowChannelRepository? = null,
+    private val kickRepository: Lazy<KickRepository>? = null,
 ) {
 
     suspend fun syncSubscriptions(tokenOverride: String? = null): Boolean = withContext(Dispatchers.IO) {
+        // Debug builds (.test) are blocked by the Firebase API-key allowlist and must stay
+        // out of the prod subscription store until a staging backend exists.
+        if (BuildConfig.DEBUG) return@withContext false
         val baseUrl = BuildConfig.KICK_OAUTH_BACKEND_BASE_URL.trim().trimEnd('/')
         if (baseUrl.isEmpty() || !baseUrl.startsWith("https://")) return@withContext false
 
@@ -39,6 +45,28 @@ class FcmSyncManager @Inject constructor(
             if (follow != null) {
                 follow.userId?.takeIf { it.isNotBlank() }?.let { allChannelIds.add(it) }
                 follow.userLogin?.takeIf { it.isNotBlank() }?.let { allChannelIds.add(it.lowercase()) }
+            }
+        }
+        // Kick Pusher live events arrive on channel.<channel.id>, while the DB stores the
+        // canonical broadcaster userId. Resolve both so the backend subscribes to the
+        // correct Pusher channel. Best-effort: raw keys are always kept.
+        runCatching {
+            val repo = kickRepository?.get() ?: return@runCatching
+            for (key in allChannelIds.toList()) {
+                val channel = runCatching {
+                    repo.getChannel(key, prefetchBadgeCatalog = false)
+                }.getOrNull() ?: continue
+                allChannelIds.addAll(
+                    listOfNotNull(
+                        channel.id?.toString(),
+                        channel.userId?.toString(),
+                        channel.user?.id?.toString(),
+                        channel.slug?.trim(),
+                        channel.slug?.trim()?.lowercase(),
+                        channel.user?.username?.trim(),
+                        channel.user?.username?.trim()?.lowercase(),
+                    ).filter { it.isNotBlank() }
+                )
             }
         }
         val kickUserId = context.prefs().getString(AppConstants.USER_ID, null)

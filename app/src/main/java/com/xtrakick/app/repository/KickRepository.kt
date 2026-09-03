@@ -220,6 +220,10 @@ class KickRepository @Inject constructor(
         Regex("Chrome/(\\d+)").find(kickWebUserAgent)?.groupValues?.getOrNull(1) ?: "145"
     }
     private val emoteRegex = Regex("\\[emote:(\\d+):([^\\]]+)]")
+    private val BADGE_SUFFIX_BADGES_REGEX = Regex("_badges?$")
+    private val BADGE_SUFFIX_BADGE_DIGITS_REGEX = Regex("_badge_?\\d*$")
+    private val BADGE_SUFFIX_V_DIGITS_REGEX = Regex("_v\\d+$")
+    private val BADGE_SUFFIX_DIGITS_REGEX = Regex("_\\d+$")
     private val kickLegacyBadgeFallbackBaseUrl = "https://www.kickdatabase.com/kickBadges/"
     private val kickBadgeCacheKey = "kick_badge_url_cache_v1"
     private val kickBadgeCacheTtlMs = 24L * 60L * 60L * 1000L
@@ -301,7 +305,7 @@ class KickRepository @Inject constructor(
             badgeCacheRestoreBarrier.complete(Unit)
             // must run after the restore: the scrape's TTL check reads the persisted
             // refresh timestamps, and racing the restore made every cold start rescrape
-            maybeRefreshKickBadgeCatalogOnAppOpenInBackground()
+            runCatching { maybeRefreshKickBadgeCatalogOnAppOpenInBackground() }
         }
     }
 
@@ -619,6 +623,35 @@ class KickRepository @Inject constructor(
             cursor = nextCursor?.takeIf { it != cursor }
         } while (!cursor.isNullOrBlank())
         collected.values.toList()
+    }
+
+    suspend fun getUserLiveFollowedStreams(): List<Stream> = withContext(Dispatchers.IO) {
+        val root = json.parseToJsonElement(
+            executeKickWebSessionRequest("https://kick.com/api/v1/user/livestreams")
+        ) as? JsonArray ?: throw IOException("Invalid Kick live followed response")
+        root.mapNotNull { element ->
+            val item = element as? JsonObject ?: return@mapNotNull null
+            val channel = item.objOrNull("channel")
+            val channelUser = channel?.objOrNull("user")
+            val category = item.arrayOrNull("categories")?.firstOrNull() as? JsonObject
+            val thumbnail = item.objOrNull("thumbnail")
+            Stream(
+                id = item.firstLongOrNull("id")?.toString(),
+                source = AppConstants.KICK,
+                channelId = item.firstLongOrNull("channel_id")?.toString(),
+                channelLogin = channel?.primitiveOrNull("slug"),
+                channelName = channelUser?.primitiveOrNull("username"),
+                playbackUrl = channel?.primitiveOrNull("playback_url"),
+                gameId = category?.firstLongOrNull("category_id", "id")?.toString(),
+                gameSlug = category?.primitiveOrNull("slug"),
+                gameName = category?.primitiveOrNull("name"),
+                title = item.primitiveOrNull("session_title"),
+                viewerCount = item.intOrNull("viewer_count") ?: item.intOrNull("viewers"),
+                startedAt = normalizeDate(item.primitiveOrNull("start_time")),
+                thumbnailUrl = thumbnail?.primitiveOrNull("src"),
+                profileImageUrl = channelUser?.primitiveOrNull("profilepic"),
+            ).takeIf { !it.channelLogin.isNullOrBlank() || !it.channelId.isNullOrBlank() }
+        }
     }
 
     fun getCachedChannel(channelSlugOrId: String): KickChannelResponse? {
@@ -1906,7 +1939,7 @@ class KickRepository @Inject constructor(
         val now = System.currentTimeMillis()
         if (!forceRefresh) {
             channelLivestreamCache[normalizedKey]?.let { (cachedAt, cachedLivestream) ->
-                if (now - cachedAt <= livestreamCacheTtlMs) {
+                if (cachedLivestream != null && now - cachedAt <= livestreamCacheTtlMs) {
                     return cachedLivestream
                 }
             }
@@ -1930,7 +1963,11 @@ class KickRepository @Inject constructor(
             )
             return livestream.also {
                 val cachedAt = System.currentTimeMillis()
-                channelLivestreamCache[normalizedKey] = cachedAt to livestream
+                if (livestream != null) {
+                    channelLivestreamCache[normalizedKey] = cachedAt to livestream
+                } else {
+                    channelLivestreamCache.remove(normalizedKey)
+                }
                 deferred.complete(livestream)
             }
         } catch (t: Throwable) {
@@ -4193,15 +4230,23 @@ class KickRepository @Inject constructor(
     }
 
     private fun hasAuthoritativeKickBadge(type: String): Boolean {
-        return kickBadgeTypeCandidates(type).any { candidate ->
-            kickBadgeUrls.entries.any { (key, url) ->
-                (key.startsWith("kick:$candidate:") || key.contains(":$candidate:")) && !url.isNullOrBlank() && !isFallbackBadgeUrl(url)
+        return try {
+            kickBadgeTypeCandidates(type).any { candidate ->
+                kickBadgeUrls.entries.any { (key, url) ->
+                    (key.startsWith("kick:$candidate:") || key.contains(":$candidate:")) && !url.isNullOrBlank() && !isFallbackBadgeUrl(url)
+                }
             }
+        } catch (_: Exception) {
+            false
         }
     }
 
     private fun isKickChannelSpecificBadgeType(type: String): Boolean {
-        return normalizeKickBadgeType(type) in kickChannelSpecificBadgeTypes
+        return try {
+            normalizeKickBadgeType(type) in kickChannelSpecificBadgeTypes
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun resolveClosestChannelScopedBadgeUrl(chatScopeId: String, candidate: String, requestedVersion: String): String? {
@@ -4222,7 +4267,11 @@ class KickRepository @Inject constructor(
     }
 
     private fun unresolvedKickCanonicalBadgeTypes(): List<String> {
-        return kickCanonicalBadgeTypes.filterNot(::hasAuthoritativeKickBadge)
+        return try {
+            kickCanonicalBadgeTypes.filterNot(::hasAuthoritativeKickBadge)
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private fun resolveKickInlineBadgeUrl(normalizedType: String, version: String? = null): String? {
@@ -4274,7 +4323,11 @@ class KickRepository @Inject constructor(
     }
 
     private fun kickBadgeTypeCandidates(type: String): List<String> {
-        val normalized = normalizeKickBadgeType(type)
+        val normalized = try {
+            normalizeKickBadgeType(type)
+        } catch (_: Exception) {
+            type.trim().lowercase(Locale.ROOT).replace('-', '_').replace(' ', '_').trim('_').ifBlank { "unknown" }
+        }
         return linkedSetOf<String>().apply {
             add(normalized)
             when (normalized) {
@@ -4329,13 +4382,9 @@ class KickRepository @Inject constructor(
         }.toList()
     }
 
-        private val BADGE_SUFFIX_BADGES_REGEX = Regex("_badges?$")
-        private val BADGE_SUFFIX_BADGE_DIGITS_REGEX = Regex("_badge_?\\d*$")
-        private val BADGE_SUFFIX_V_DIGITS_REGEX = Regex("_v\\d+$")
-        private val BADGE_SUFFIX_DIGITS_REGEX = Regex("_\\d+$")
-
-        private fun normalizeKickBadgeType(type: String): String {
-            val normalized = type.trim()
+    private fun normalizeKickBadgeType(type: String): String {
+        val normalized = try {
+            type.trim()
                 .lowercase(Locale.ROOT)
                 .replace('-', '_')
                 .replace(' ', '_')
@@ -4345,6 +4394,9 @@ class KickRepository @Inject constructor(
                 .replace(BADGE_SUFFIX_V_DIGITS_REGEX, "")
                 .replace(BADGE_SUFFIX_DIGITS_REGEX, "")
                 .trim('_')
+        } catch (_: Exception) {
+            type.trim().lowercase(Locale.ROOT).replace('-', '_').replace(' ', '_').trim('_')
+        }
         return when (normalized) {
             "sub", "subscription", "subscribers" -> "subscriber"
             "subgift", "sub_gift", "gift_sub", "gift_subscriber", "subscriber_gifter", "subscription_gifter", "gifter" -> "sub_gifter"
@@ -4737,7 +4789,14 @@ class KickRepository @Inject constructor(
     private fun maybeRefreshKickBadgeCatalogOnAppOpenInBackground() {
         // With the persisted catalog complete there is nothing this scrape can add;
         // it only runs as a self-healing pass while badge types are missing
-        val unresolvedTypes = unresolvedKickCanonicalBadgeTypes().toSet()
+        val unresolvedTypes = try {
+            unresolvedKickCanonicalBadgeTypes().toSet()
+        } catch (e: Exception) {
+            if (isKickBadgeDebugEnabled()) {
+                Log.w(badgeDebugTag, "app-open unresolved check failed: ${e.message}")
+            }
+            return
+        }
         if (unresolvedTypes.isEmpty()) return
         val refreshKey = "app_open_web"
         // The TTL timestamp was written below but never read, so the only guard was the

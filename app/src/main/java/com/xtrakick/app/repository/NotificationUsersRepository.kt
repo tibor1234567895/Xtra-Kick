@@ -7,6 +7,11 @@ import com.xtrakick.app.util.FcmSyncManager
 import android.util.Log
 import dagger.Lazy
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -72,17 +77,41 @@ class NotificationUsersRepository @Inject constructor(
     /**
      * Bulk-enable live notifications for many channels with a single FCM sync.
      * Always resolves to canonical broadcaster user ID. Returns the number of newly inserted rows.
+     *
+     * Candidate keys that already contain a numeric key (follows store the canonical
+     * broadcaster user id) are trusted as-is, so a bulk enable needs no network at all.
+     * Login-only entries fall back to per-channel resolution, run with bounded
+     * concurrency since each lookup is a slow channel fetch.
      */
     suspend fun enableNotificationsForChannels(candidateKeysPerChannel: List<Collection<String?>>): Int = withContext(Dispatchers.IO) {
         val canonicalIds = LinkedHashSet<String>()
         val staleKeys = mutableSetOf<String>()
+        val unresolvedKeys = mutableListOf<Set<String>>()
         for (candidateKeys in candidateKeysPerChannel) {
             val initialKeys = candidateKeys.mapNotNull { it?.trim()?.takeIf { k -> k.isNotBlank() } }.toSet()
             if (initialKeys.isEmpty()) continue
-            val (canonicalId, allKeys) = resolveCanonicalChannelInfo(initialKeys)
-            if (canonicalId != null) {
-                canonicalIds.add(canonicalId)
-                staleKeys.addAll(allKeys.filter { it != canonicalId })
+            val numericKey = initialKeys.firstOrNull { it.all(Char::isDigit) }
+            if (numericKey != null) {
+                canonicalIds.add(numericKey)
+                staleKeys.addAll(initialKeys)
+                staleKeys.addAll(initialKeys.map(String::lowercase))
+            } else {
+                unresolvedKeys.add(initialKeys)
+            }
+        }
+        if (unresolvedKeys.isNotEmpty()) {
+            val resolved = coroutineScope {
+                unresolvedKeys.map { keys ->
+                    async {
+                        resolutionSemaphore.withPermit { resolveCanonicalChannelInfo(keys) }
+                    }
+                }.awaitAll()
+            }
+            for ((canonicalId, allKeys) in resolved) {
+                if (canonicalId != null) {
+                    canonicalIds.add(canonicalId)
+                    staleKeys.addAll(allKeys)
+                }
             }
         }
         if (canonicalIds.isEmpty()) return@withContext 0
@@ -240,5 +269,8 @@ class NotificationUsersRepository @Inject constructor(
 
     private companion object {
         private const val TAG = "NotificationUsers"
+
+        /** Concurrent channel lookups when bulk-enable must resolve login-only entries. */
+        private val resolutionSemaphore = Semaphore(8)
     }
 }

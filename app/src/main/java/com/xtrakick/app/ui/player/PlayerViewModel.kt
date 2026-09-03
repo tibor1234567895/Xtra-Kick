@@ -132,6 +132,35 @@ class PlayerViewModel @Inject constructor(
                     }
                     streamResult.value = playbackUrl
                 } catch (e: Exception) {
+                    if (e.message == "failed integrity check" && integrity.value == null) {
+                        integrity.value = "refreshStream"
+                        return@launch
+                    }
+                    // First try (cache) failed but channel may be live — retry once with fresh network (e.g. after clear data without account the search cached a stale null livestream).
+                    if (!forceRefresh && shouldRetryKickStreamWithFreshUrl()) {
+                        DiagnosticLogger.i(
+                            "PlayerViewModel",
+                            "Kick stream initial fetch failed channel=$channelLogin message=${e.message} — retrying with forceRefresh"
+                        )
+                        loadStreamResult(
+                            networkLibrary = networkLibrary,
+                            kickWebHeaders = kickWebHeaders,
+                            channelLogin = channelLogin,
+                            randomDeviceId = randomDeviceId,
+                            xDeviceId = xDeviceId,
+                            playerType = playerType,
+                            supportedCodecs = supportedCodecs,
+                            proxyPlaybackAccessToken = proxyPlaybackAccessToken,
+                            proxyHost = proxyHost,
+                            proxyPort = proxyPort,
+                            proxyUser = proxyUser,
+                            proxyPassword = proxyPassword,
+                            enableIntegrity = enableIntegrity,
+                            forceRefresh = true,
+                            stalePlaybackUrl = stalePlaybackUrl
+                        )
+                        return@launch
+                    }
                     if (forceRefresh) {
                         DiagnosticLogger.e(
                             "PlayerViewModel",
@@ -139,11 +168,7 @@ class PlayerViewModel @Inject constructor(
                             e
                         )
                     }
-                    if (e.message == "failed integrity check" && integrity.value == null) {
-                        integrity.value = "refreshStream"
-                    } else {
-                        streamError.value = R.string.stream_ended
-                    }
+                    streamError.value = R.string.stream_ended
                 }
             }
         }

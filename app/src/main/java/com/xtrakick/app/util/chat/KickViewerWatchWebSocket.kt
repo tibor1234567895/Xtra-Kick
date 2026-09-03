@@ -33,6 +33,7 @@ class KickViewerWatchWebSocket(
     private var socketJob: Job? = null
     private var heartbeatJob: Job? = null
     private var currentViewersHeartbeatJob: Job? = null
+    private var rewardsPollJob: Job? = null
     private var parentScope: CoroutineScope? = null
     private var resolvedLivestreamId: String? = null
     private var resolvedChannelId: String? = null
@@ -42,11 +43,11 @@ class KickViewerWatchWebSocket(
         val job = scope.launch(Dispatchers.IO) {
             val resolvedLivestream = if (!channelLogin.isNullOrBlank()) {
                 runCatching {
-                    kickRepository.getChannelLivestream(channelLogin, forceRefresh = false)
+                    kickRepository.getChannelLivestream(channelLogin, forceRefresh = true)
                 }.getOrNull()
             } else null
 
-            val resolvedChannel = if (!channelLogin.isNullOrBlank() && (channelId.isNullOrBlank() || resolvedLivestream == null)) {
+            val resolvedChannel = if (!channelLogin.isNullOrBlank()) {
                 runCatching {
                     kickRepository.getChannel(channelLogin, prefetchBadgeCatalog = false, forceRefresh = false)
                 }.getOrNull()
@@ -74,6 +75,7 @@ class KickViewerWatchWebSocket(
                 Log.i(tag, "starting viewer watch presence channel=$effectiveChannelId livestream=$activeLivestreamId channelLogin=$channelLogin")
             }
             startCurrentViewersHeartbeat(activeLivestreamId)
+            startRewardsPolling()
 
             while (isActive) {
                 if (!kickRepository.hasUsableKickWebsiteSession()) {
@@ -131,12 +133,16 @@ class KickViewerWatchWebSocket(
             currentViewersHeartbeatJob = null
             heartbeatJob?.cancel()
             heartbeatJob = null
+            rewardsPollJob?.cancel()
+            rewardsPollJob = null
         }
         socketJob = job
         return job
     }
 
     suspend fun stop() = withContext(Dispatchers.IO) {
+        rewardsPollJob?.cancel()
+        rewardsPollJob = null
         currentViewersHeartbeatJob?.cancel()
         currentViewersHeartbeatJob = null
         heartbeatJob?.cancel()
@@ -151,6 +157,27 @@ class KickViewerWatchWebSocket(
                 runCatching { socket.write(buildDisconnectionMessage(channel).toString()) }
             }
             socket.disconnect()
+        }
+    }
+
+    private fun startRewardsPolling() {
+        if (!kickRepository.hasUsableKickWebsiteSession()) return
+        rewardsPollJob?.cancel()
+        rewardsPollJob = parentScope?.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(REWARDS_POLL_INTERVAL_MS)
+                if (!kickRepository.hasUsableKickWebsiteSession()) break
+                runCatching {
+                    val raw = kickRepository.executeKickWebSessionRequest("https://web.kick.com/api/v1/gamification/challenges")
+                    if (debugLogging) {
+                        Log.d(tag, "rewards cadence poll completed: ${raw.take(80)}")
+                    }
+                }.onFailure {
+                    if (debugLogging) {
+                        Log.w(tag, "rewards cadence poll failed: ${it.message}")
+                    }
+                }
+            }
         }
     }
 

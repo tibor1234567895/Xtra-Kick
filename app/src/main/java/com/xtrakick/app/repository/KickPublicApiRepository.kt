@@ -281,14 +281,21 @@ class KickPublicApiRepository @Inject constructor(
      * Resolves user ids to login names and profile pictures via the official public users
      * endpoint. Unlike [getUsers], this parses the endpoint's actual response shape
      * (user_id/username) — the web-style [UsersResponse] fields (id/login) are absent from
-     * api.kick.com replies.
+     * api.kick.com replies. The endpoint rejects long id lists with a 400, so ids are
+     * fetched in batches; a failed batch is skipped rather than losing the rest.
      */
     suspend fun lookupUsersByIds(networkLibrary: String?, headers: Map<String, String>, ids: List<String>): Map<String, PublicUserSummary> {
-        val query = ids.takeIf { it.isNotEmpty() }
-            ?.joinToString("&", "?") { "id=${encodeParam(it)}" }
-            ?: return emptyMap()
-        val response = executePublicApi<PublicUserLookupResponse>(networkLibrary, "/public/v1/users", headers, query = query)
-        return response.data.mapNotNull { user ->
+        if (ids.isEmpty()) return emptyMap()
+        val users = ids.chunked(USER_LOOKUP_BATCH_SIZE).flatMap { batch ->
+            val query = batch.joinToString("&", "?") { "id=${encodeParam(it)}" }
+            runCatching {
+                executePublicApi<PublicUserLookupResponse>(networkLibrary, "/public/v1/users", headers, query = query).data
+            }.getOrElse { error ->
+                if (error is CancellationException) throw error
+                emptyList()
+            }
+        }
+        return users.mapNotNull { user ->
             val id = user.userId?.toString() ?: user.id?.toString() ?: return@mapNotNull null
             val login = user.username ?: user.login ?: user.name ?: user.channelSlug
             id to PublicUserSummary(
@@ -603,6 +610,11 @@ class KickPublicApiRepository @Inject constructor(
             put("message", message)
         }.toString()
         return executePublicApiMutation(networkLibrary, "/public/v1/whispers", headers, method = "POST", query = query, bodyJson = body)
+    }
+
+    private companion object {
+        /** Kick's users endpoint rejects long id lists with a 400, so look up in batches. */
+        private const val USER_LOOKUP_BATCH_SIZE = 50
     }
 }
 

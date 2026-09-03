@@ -3,6 +3,7 @@ package com.xtrakick.app.ui.following
 import android.content.Context
 import android.util.Log
 import android.widget.Toast
+import androidx.core.content.edit
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.repository.KickPublicApiRepository
@@ -191,6 +192,27 @@ class KickFollowImporter @Inject constructor(
         }
     }
 
+    /** One-time backfill: mark locally stored follows that also exist on Kick. Safe to re-run. */
+    suspend fun ensureKickSourceMarks(networkLibrary: String?): Int {
+        if (context.prefs().getBoolean(AppConstants.KICK_FOLLOW_MARK_DONE, false)) return 0
+        fun markDone() = context.prefs().edit().putBoolean(AppConstants.KICK_FOLLOW_MARK_DONE, true).apply()
+        val channels = try {
+            kickRepository.getFollowedChannelsWithStoredAuth(networkLibrary)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            return 0
+        }
+        if (channels.isEmpty()) {
+            markDone()
+            return 0
+        }
+        val marked = localFollowsChannel.markKickFollows(channels.map { it.login })
+        markDone()
+        Log.i(LOG_TAG, "Kick follow source-mark backfill marked=$marked of ${channels.size}")
+        return marked
+    }
+
     internal suspend fun importFollows(follows: List<KickImportedFollow>): Int {
         val dedupedFollows = follows
             .asSequence()
@@ -206,6 +228,7 @@ class KickFollowImporter @Inject constructor(
                 userLogin = follow.login,
                 userName = follow.name,
                 channelLogo = follow.profilePicture,
+                sourceMask = AppConstants.FOLLOW_SOURCE_MASK_LOCAL or AppConstants.FOLLOW_SOURCE_MASK_KICK,
             )
         })
         Log.i(LOG_TAG, "Kick follow import stored follows count=${dedupedFollows.size}")

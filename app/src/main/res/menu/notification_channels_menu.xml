@@ -3,12 +3,10 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item
-        android:id="@+id/action_enable_all"
-        android:title="@string/live_notification_channels_enable_all"
-        app:showAsAction="never" />
-
-    <item
-        android:id="@+id/action_disable_all"
-        android:title="@string/live_notification_channels_disable_all"
-        app:showAsAction="never" />
+        android:id="@+id/action_search"
+        android:icon="@drawable/baseline_search_black_24"
+        android:title="@string/search"
+        app:iconTint="?attr/colorControlNormal"
+        app:actionViewClass="androidx.appcompat.widget.SearchView"
+        app:showAsAction="ifRoom|collapseActionView" />
 </menu>

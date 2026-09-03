@@ -2628,7 +2628,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 (isInteractive && prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO_PIP_CLOSED, false)) ||
                     (!isInteractive && prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO_PIP_LOCKED, true))
             }
-            !isMaximized -> false
             else -> {
                 (isInteractive && prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO, true)) ||
                     (!isInteractive && prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO_LOCKED, true))

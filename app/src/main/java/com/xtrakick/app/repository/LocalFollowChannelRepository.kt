@@ -61,11 +61,27 @@ class LocalFollowChannelRepository @Inject constructor(
 
     suspend fun upsertLocalFollows(items: List<LocalFollowChannel>) = withContext(Dispatchers.IO) {
         items.forEach { item ->
-            upsertLocalFollowInternal(item.userId, item.userLogin, item.userName, item.channelLogo)
+            upsertLocalFollowInternal(item.userId, item.userLogin, item.userName, item.channelLogo, item.sourceMask)
         }
         if (items.isNotEmpty()) {
             notifyFollowsChanged()
         }
+    }
+
+    suspend fun markKickFollows(logins: Collection<String>): Int = withContext(Dispatchers.IO) {
+        val normalized = logins.mapNotNull { it.trim().takeIf(String::isNotBlank)?.lowercase() }.toSet()
+        if (normalized.isEmpty()) return@withContext 0
+        var marked = 0
+        loadFollows().forEach { existing ->
+            val loginKey = existing.userLogin?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return@forEach
+            if (loginKey in normalized && !existing.isKickFollow) {
+                existing.sourceMask = existing.sourceMask or AppConstants.FOLLOW_SOURCE_MASK_KICK
+                localFollowsChannelDao.update(existing)
+                marked++
+            }
+        }
+        if (marked > 0) notifyFollowsChanged()
+        marked
     }
 
     private fun upsertLocalFollowInternal(
@@ -73,6 +89,7 @@ class LocalFollowChannelRepository @Inject constructor(
         userLogin: String?,
         userName: String?,
         channelLogo: String? = null,
+        sourceMask: Int = AppConstants.FOLLOW_SOURCE_MASK_LOCAL,
     ) {
         val normalizedUserId = userId?.takeIf { it.isNotBlank() }
         val normalizedUserLogin = userLogin?.takeIf { it.isNotBlank() }
@@ -85,7 +102,7 @@ class LocalFollowChannelRepository @Inject constructor(
                     userLogin = normalizedUserLogin,
                     userName = userName,
                     channelLogo = channelLogo,
-                    sourceMask = AppConstants.FOLLOW_SOURCE_MASK_LOCAL,
+                    sourceMask = sourceMask,
                 )
             )
         } else {
@@ -93,7 +110,7 @@ class LocalFollowChannelRepository @Inject constructor(
             existing.userLogin = normalizedUserLogin ?: existing.userLogin
             existing.userName = userName ?: existing.userName
             existing.channelLogo = channelLogo ?: existing.channelLogo
-            existing.sourceMask = existing.sourceMask or AppConstants.FOLLOW_SOURCE_MASK_LOCAL
+            existing.sourceMask = existing.sourceMask or sourceMask
             localFollowsChannelDao.update(existing)
         }
     }

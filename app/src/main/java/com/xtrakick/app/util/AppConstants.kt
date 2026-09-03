@@ -287,6 +287,8 @@ object AppConstants {
     const val API_PREFS_FOLLOWED_STREAMS = "api_prefs_followed_streams_v2"
     const val API_PREFS_FOLLOWED_CHANNELS = "api_prefs_followed_channels_v2"
     const val FOLLOW_SOURCE_MASK_LOCAL = 1
+    const val FOLLOW_SOURCE_MASK_KICK = 2
+    const val KICK_FOLLOW_MARK_DONE = "kick_follow_mark_done_v1"
     const val API_PREFS_CHANNEL_VIDEOS = "api_prefs_channel_videos_v2"
     const val API_PREFS_CHANNEL_CLIPS = "api_prefs_channel_clips_v2"
     const val API_PREFS_GAME_STREAMS = "api_prefs_game_streams_v2"

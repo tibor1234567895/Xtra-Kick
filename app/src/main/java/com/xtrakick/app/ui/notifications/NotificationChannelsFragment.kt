@@ -5,11 +5,13 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
+import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.widget.SearchView
 import androidx.core.app.ActivityCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -80,32 +82,66 @@ class NotificationChannelsFragment : Fragment() {
         }
         val navController = findNavController()
         binding.toolbar.setupWithNavController(navController, AppBarConfiguration(setOf()))
-        binding.toolbar.setOnMenuItemClickListener { menuItem ->
-            when (menuItem.itemId) {
-                R.id.action_enable_all -> {
-                    viewModel.enableAll()
-                    true
-                }
-                R.id.action_disable_all -> {
-                    requireActivity().getAlertDialogBuilder()
-                        .setTitle(getString(R.string.live_notification_channels_disable_all))
-                        .setMessage(getString(R.string.live_notification_channels_disable_all_message))
-                        .setPositiveButton(getString(R.string.yes)) { _, _ -> viewModel.disableAll() }
-                        .setNegativeButton(getString(android.R.string.cancel), null)
-                        .show()
-                    true
-                }
-                else -> false
-            }
+        setupSearch()
+        binding.enabledOnlyChip.setOnCheckedChangeListener { _, checked ->
+            viewModel.setEnabledOnly(checked)
         }
+        binding.enableAllChip.setOnClickListener { viewModel.enableAll() }
+        binding.disableAllChip.setOnClickListener { confirmDisableAll() }
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
-                    viewModel.channels.collect { channels ->
+                    viewModel.channels.collect { full ->
+                        // The filter chip is only useful when there is something to filter.
+                        binding.filterRow.isVisible = full != null && full.isNotEmpty()
+                    }
+                }
+                launch {
+                    viewModel.enabledOnly.collect { onlyEnabled ->
+                        if (binding.enabledOnlyChip.isChecked != onlyEnabled) {
+                            binding.enabledOnlyChip.isChecked = onlyEnabled
+                        }
+                    }
+                }
+                launch {
+                    // Snap back to the top when the filter changes (search query or
+                    // "Enabled only"), since restoring rows above the current scroll
+                    // position otherwise looks like the top channels vanished.
+                    // Plain data updates (e.g. toggling a switch) must not scroll.
+                    var lastFilter = viewModel.query.value to viewModel.enabledOnly.value
+                    viewModel.filteredChannels.collect { channels ->
+                        val query = viewModel.query.value
+                        val enabledOnly = viewModel.enabledOnly.value
+                        val filterChanged = (query to enabledOnly) != lastFilter
+                        lastFilter = query to enabledOnly
                         binding.progressBar.isVisible = channels == null
-                        binding.emptyText.isVisible = channels?.isEmpty() == true
-                        binding.recyclerView.isVisible = channels?.isNotEmpty() == true
-                        channels?.let { adapter.submitList(it) }
+                        if (channels == null) {
+                            binding.emptyText.isVisible = false
+                            binding.recyclerView.isVisible = false
+                        } else if (channels.isEmpty()) {
+                            binding.recyclerView.isVisible = false
+                            binding.emptyText.isVisible = true
+                            binding.emptyText.text = when {
+                                query.isNotBlank() ->
+                                    getString(R.string.live_notification_channels_empty_search)
+                                enabledOnly ->
+                                    getString(R.string.live_notification_channels_empty_enabled)
+                                else ->
+                                    getString(R.string.live_notification_channels_empty)
+                            }
+                        } else {
+                            binding.emptyText.isVisible = false
+                            binding.recyclerView.isVisible = true
+                            adapter.submitList(channels) {
+                                // Must run after the diff is applied: scrolling before
+                                // targets the old list, and RecyclerView then keeps the
+                                // previously visible row (e.g. 4HEAD) anchored on screen
+                                // instead of showing the restored top rows.
+                                if (filterChanged) {
+                                    _binding?.recyclerView?.scrollToPosition(0)
+                                }
+                            }
+                        }
                     }
                 }
                 launch {
@@ -118,6 +154,47 @@ class NotificationChannelsFragment : Fragment() {
                 }
             }
         }
+    }
+
+    private fun setupSearch() {
+        val searchItem = binding.toolbar.menu.findItem(R.id.action_search) ?: return
+        val searchView = searchItem.actionView as? SearchView ?: return
+        searchView.queryHint = getString(R.string.search)
+        searchView.maxWidth = Int.MAX_VALUE
+        // Restore the query after rotation.
+        if (viewModel.query.value.isNotEmpty()) {
+            searchItem.expandActionView()
+            searchView.setQuery(viewModel.query.value, false)
+        }
+        searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
+            override fun onQueryTextSubmit(query: String): Boolean {
+                viewModel.setQuery(query)
+                searchView.clearFocus()
+                return true
+            }
+
+            override fun onQueryTextChange(newText: String): Boolean {
+                viewModel.setQuery(newText)
+                return true
+            }
+        })
+        searchItem.setOnActionExpandListener(object : MenuItem.OnActionExpandListener {
+            override fun onMenuItemActionExpand(item: MenuItem): Boolean = true
+
+            override fun onMenuItemActionCollapse(item: MenuItem): Boolean {
+                viewModel.setQuery("")
+                return true
+            }
+        })
+    }
+
+    private fun confirmDisableAll() {
+        requireActivity().getAlertDialogBuilder()
+            .setTitle(getString(R.string.live_notification_channels_disable_all))
+            .setMessage(getString(R.string.live_notification_channels_disable_all_message))
+            .setPositiveButton(getString(R.string.yes)) { _, _ -> viewModel.disableAll() }
+            .setNegativeButton(getString(android.R.string.cancel), null)
+            .show()
     }
 
     private fun onToggleChannel(entry: ChannelUi, enabled: Boolean) {

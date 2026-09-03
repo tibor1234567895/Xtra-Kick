@@ -105,6 +105,7 @@ class ChatAdapter(
     private val savedLocalCheerEmotes = mutableMapOf<String, ByteArray>()
     private val savedLocalEmotes = mutableMapOf<String, ByteArray>()
     private val expandedReplyPreviewKeys = mutableSetOf<String>()
+    private val truncatableReplyPreviewKeys = mutableSetOf<String>()
     private var renderGeneration = 0L
 
     data class LiveSettings(
@@ -269,7 +270,9 @@ class ChatAdapter(
             loggedInUser, chatUrl, getEmoteBytes, userColors, savedColors, localChatEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalChatEmotes, savedLocalBadges,
             savedLocalCheerEmotes, savedLocalEmotes
         )
-        ChatAdapterUtils.reserveImagePlaceholders(result.builder, result.images, emoteSize, badgeSize)
+        val effectiveEmoteSize = if (chatMessage.isReply) (emoteSize * 0.7f).toInt().coerceAtLeast(12) else emoteSize
+        val effectiveBadgeSize = if (chatMessage.isReply) (badgeSize * 0.7f).toInt().coerceAtLeast(10) else badgeSize
+        ChatAdapterUtils.reserveImagePlaceholders(result.builder, result.images, effectiveEmoteSize, effectiveBadgeSize)
         holder.bind(bindKey, chatMessage, result.builder, position, result.backgroundRes)
         if (result.images.isNotEmpty() || result.imagePaint != null) {
             ChatAdapterUtils.loadImages(
@@ -278,7 +281,7 @@ class ChatAdapter(
                         holder.bind(bindKey, chatMessage, updatedBuilder, position, result.backgroundRes)
                     }
                 }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
-                backgroundColor, imageLibrary, result.builder, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes,
+                backgroundColor, imageLibrary, result.builder, effectiveEmoteSize, effectiveBadgeSize, emoteQuality, animateGifs, enableOverlayEmotes,
                 animatedEmoteFps
             )
         }
@@ -470,11 +473,14 @@ class ChatAdapter(
         val textView: TextView = itemView.findViewById(R.id.chatMessageText)
         private val expandView: ImageView = itemView.findViewById(R.id.chatMessageExpand)
         private var currentBindKey: String? = null
+        private var bindSeq = 0L
 
         fun isBoundTo(bindKey: String): Boolean = currentBindKey == bindKey
 
         fun bind(bindKey: String, chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder, position: Int, backgroundRes: Int) {
             currentBindKey = bindKey
+            bindSeq++
+            val boundSeq = bindSeq
             val currentPosition = resolveCurrentMessagePosition(chatMessage, bindingAdapterPosition, position)
             val resolvedBackgroundColor = resolveMessageBackgroundColor(textView.context, currentPosition, backgroundRes)
             val dividerColors = resolveDividerColor(currentPosition, resolvedBackgroundColor)
@@ -484,16 +490,24 @@ class ChatAdapter(
             val isRewardRedemption = chatMessage.reward?.title != null
             textView.apply {
                 text = formattedMessage
-                textSize = messageTextSize
-                alpha = if (chatMessage.isDeleted) 0.62f else 1f
+                textSize = if (chatMessage.isReply) messageTextSize * 0.85f else messageTextSize
+                alpha = if (chatMessage.isDeleted) 0.62f else if (chatMessage.isReply) 0.8f else 1f
                 if (isRewardRedemption && rewardColor != null) {
                     containerView.background = createRewardBackgroundDrawable(resolvedBackgroundColor, rewardColor)
                     setPaddingRelative(26, 8, 12, 8)
+                } else if (chatMessage.isReply) {
+                    containerView.setBackgroundColor(resolvedBackgroundColor)
+                    setPaddingRelative(5, 6, 5, 6)
                 } else {
                     containerView.setBackgroundColor(resolvedBackgroundColor)
                     setPaddingRelative(5, 1, 5, 1)
                 }
-                minHeight = emoteSize + paddingTop + paddingBottom
+                if (chatMessage.isReply) {
+                    setLineSpacing(3f, 1.12f)
+                } else {
+                    setLineSpacing(0f, 1f)
+                }
+                minHeight = (if (chatMessage.isReply) (emoteSize * 0.7f).toInt().coerceAtLeast(12) else emoteSize) + paddingTop + paddingBottom
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 if (chatMessage.isReply) {
                     movementMethod = null
@@ -509,17 +523,25 @@ class ChatAdapter(
                             }
                         }
                     }
-                    updateReplyExpandUi(showExpand = expanded, expanded = expanded)
+                    updateReplyExpandUi(showExpand = expanded || (previewKey != null && previewKey in truncatableReplyPreviewKeys), expanded = expanded)
                     doOnLayout {
+                        if (boundSeq != bindSeq || !isBoundTo(bindKey)) return@doOnLayout
                         val layout = layout ?: return@doOnLayout
-                        if (expanded) {
+                        if (expanded && previewKey != null) {
+                            truncatableReplyPreviewKeys.add(previewKey)
                             updateReplyExpandUi(showExpand = true, expanded = true)
                             return@doOnLayout
                         }
                         val isTruncated = layout.lineCount > 3 || (0 until layout.lineCount).any { lineIndex ->
                             layout.getEllipsisCount(lineIndex) > 0
                         }
-                        updateReplyExpandUi(showExpand = isTruncated, expanded = false)
+                        if (isTruncated) {
+                            previewKey?.let { truncatableReplyPreviewKeys.add(it) }
+                        }
+                        updateReplyExpandUi(
+                            showExpand = isTruncated || (previewKey != null && previewKey in truncatableReplyPreviewKeys),
+                            expanded = false
+                        )
                     }
                 } else {
                     movementMethod = LinkMovementMethod.getInstance()

@@ -184,4 +184,17 @@ class NotificationUsersRepositoryTest {
         assertTrue(ids.containsAll(setOf("11111", "22222", "33333", "otherchannel")))
         assertTrue(repository.isNotificationEnabled("22222"))
     }
+
+    @Test
+    fun enableNotificationsForChannelsTrustsNumericKeyAndCleansAliasRows() = runBlocking {
+        // Legacy alias row stored under the login should be replaced by the numeric user id.
+        dao.insert(NotificationUser("channel_a"))
+
+        val count = repository.enableNotificationsForChannels(listOf(listOf("99999", "channel_a")))
+
+        assertEquals(1, count)
+        val ids = dao.getAll().map { it.channelId }
+        assertEquals(listOf("99999"), ids)
+        assertTrue(repository.isNotificationEnabled("99999"))
+    }
 }
