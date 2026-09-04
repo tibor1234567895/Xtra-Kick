@@ -24,6 +24,8 @@ import javax.inject.Inject
 enum class MultiPovPickerMode {
     /** Live channels from the user's followed list (default when search is empty). */
     FollowedLive,
+    /** Top live streams across Kick (shown when no followed channels are currently live). */
+    TopLive,
     /** Kick website search results. */
     Search,
 }
@@ -376,22 +378,22 @@ class MultiPovViewModel @Inject constructor(
      *
      * Uses the same batched Public API path + shared cache as Following → Live.
      * Does **not** hammer per-channel Kick pages (that caused the logcat spam).
+     * Falls back to top live streams on Kick when no followed channels are currently live.
      */
     fun loadFollowedLivePicker(forceRefresh: Boolean = false) {
         pickerJob?.cancel()
-        _pickerMode.value = MultiPovPickerMode.FollowedLive
         pickerJob = viewModelScope.launch {
             val occupied = occupiedPickerKeys()
             // Instant paint from Following→Live shared cache when available.
             if (!forceRefresh) {
                 val cached = followedLiveStreamsRepository.peekCache()
-                if (cached.isNotEmpty()) {
-                    _pickerResults.value = cached
-                        .distinctBy { it.multiPovKey() }
-                        .filterNot { it.multiPovKey() in occupied }
+                val cachedAvailable = cached
+                    .distinctBy { it.multiPovKey() }
+                    .filterNot { it.multiPovKey() in occupied }
+                if (cachedAvailable.isNotEmpty()) {
+                    _pickerMode.value = MultiPovPickerMode.FollowedLive
+                    _pickerResults.value = cachedAvailable
                     _pickerLoading.value = false
-                    // Still refresh in background if cache is all we have and user re-opens often —
-                    // but only when forced. Cache TTL is already short (45s).
                     return@launch
                 }
             }
@@ -402,24 +404,48 @@ class MultiPovViewModel @Inject constructor(
                     // MultiPOV picker: never fall back to N per-channel requests.
                     allowPerChannelFallback = false,
                     onPartial = { partial ->
-                        _pickerResults.value = partial
+                        val partialAvailable = partial
                             .distinctBy { it.multiPovKey() }
-                            .filterNot { it.multiPovKey() in occupiedPickerKeys() }
+                            .filterNot { it.multiPovKey() in occupied }
+                        if (partialAvailable.isNotEmpty()) {
+                            _pickerMode.value = MultiPovPickerMode.FollowedLive
+                            _pickerResults.value = partialAvailable
+                        }
                     },
                 )
-                _pickerResults.value = result.items
-                    .distinctBy { it.multiPovKey() }
-                    .filterNot { it.multiPovKey() in occupiedPickerKeys() }
+                displayFollowedOrTopLive(result.items, occupied)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 val fallback = followedLiveStreamsRepository.peekCache(maxAgeMs = Long.MAX_VALUE)
-                _pickerResults.value = fallback
-                    .distinctBy { it.multiPovKey() }
-                    .filterNot { it.multiPovKey() in occupiedPickerKeys() }
+                displayFollowedOrTopLive(fallback, occupied)
             } finally {
                 _pickerLoading.value = false
             }
         }
+    }
+
+    private suspend fun displayFollowedOrTopLive(liveItems: List<Stream>, occupied: Set<String>) {
+        val available = liveItems
+            .distinctBy { it.multiPovKey() }
+            .filterNot { it.multiPovKey() in occupied }
+        if (available.isNotEmpty()) {
+            _pickerMode.value = MultiPovPickerMode.FollowedLive
+            _pickerResults.value = available
+        } else {
+            val topStreams = fetchTopLiveStreams(occupied)
+            _pickerMode.value = if (topStreams.isNotEmpty()) MultiPovPickerMode.TopLive else MultiPovPickerMode.FollowedLive
+            _pickerResults.value = topStreams
+        }
+    }
+
+    private suspend fun fetchTopLiveStreams(occupied: Set<String>): List<Stream> {
+        return runCatching {
+            kickRepository.getLivestreams(page = 1, limit = 25, sort = "desc")
+                .data
+                .map { kickRepository.toStream(it) }
+                .distinctBy { it.multiPovKey() }
+                .filterNot { it.multiPovKey() in occupied }
+        }.getOrDefault(emptyList())
     }
 
     fun searchPicker(query: String) {
@@ -430,6 +456,11 @@ class MultiPovViewModel @Inject constructor(
             return
         }
         _pickerMode.value = MultiPovPickerMode.Search
+        if (trimmed.length < 3) {
+            _pickerResults.value = emptyList()
+            _pickerLoading.value = false
+            return
+        }
         pickerJob = viewModelScope.launch {
             // Extra debounce beyond UI; avoids double search on rapid state updates.
             delay(150)
@@ -447,13 +478,10 @@ class MultiPovViewModel @Inject constructor(
                             streamsByKey.putIfAbsent(key, stream)
                         }
                     }
-                // Kick search often returns live channels under `channels` with camelCase isLive
-                // and may leave livestreams.tags empty — include those with playback URLs too.
+                // Only include channels that are strictly live; ignore offline channels and static playback URLs.
                 response.channels
                     .asSequence()
-                    .filter { channel ->
-                        channel.isLive == true || !channel.playbackUrl.isNullOrBlank()
-                    }
+                    .filter { channel -> channel.isLive == true }
                     .forEach { channel ->
                         val stream = Stream(
                             id = null,
@@ -469,26 +497,9 @@ class MultiPovViewModel @Inject constructor(
                             streamsByKey.putIfAbsent(key, stream)
                         }
                     }
-                // If still empty (offline-only matches), surface channels so the user can pick;
-                // URL resolve will fail with Offline/Error if not live.
-                if (streamsByKey.isEmpty()) {
-                    response.channels.forEach { channel ->
-                        val stream = Stream(
-                            source = AppConstants.KICK,
-                            channelId = channel.id?.toString() ?: channel.userId?.toString(),
-                            channelLogin = channel.slug,
-                            channelName = channel.user?.username,
-                            playbackUrl = channel.playbackUrl,
-                            profileImageUrl = channel.user?.profileImage,
-                        )
-                        val key = stream.multiPovKey()
-                        if (key.isNotBlank() && key !in occupied) {
-                            streamsByKey.putIfAbsent(key, stream)
-                        }
-                    }
-                }
                 _pickerResults.value = streamsByKey.values.toList()
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _pickerResults.value = emptyList()
             } finally {
                 _pickerLoading.value = false

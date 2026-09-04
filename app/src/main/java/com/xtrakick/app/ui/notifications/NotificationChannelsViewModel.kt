@@ -234,7 +234,20 @@ class NotificationChannelsViewModel @Inject constructor(
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         var cachedHeaders: Map<String, String>? = null
 
-        val claimedRowIds = drafts.mapNotNull { it.rowId }.toSet()
+        val claimedRowIds = mutableSetOf<String>()
+        drafts.forEach { draft ->
+            val login = draft.login?.lowercase()
+            val id = draft.id
+            val cachedChannelId = draft.login?.let { kickRepository.getCachedChannel(it)?.id?.toString() }
+            rows.forEach { row ->
+                val rId = row.channelId.trim()
+                if (rId.equals(id, ignoreCase = true) ||
+                    (login != null && rId.equals(login, ignoreCase = true)) ||
+                    (cachedChannelId != null && rId == cachedChannelId)) {
+                    claimedRowIds.add(row.channelId)
+                }
+            }
+        }
         val unclaimedRows = rows.filterNot { it.channelId in claimedRowIds }
         if (unclaimedRows.isNotEmpty()) {
             val missingIds = unclaimedRows.map { it.channelId }.filterNot { userSummaryCache.containsKey(it) }
@@ -287,7 +300,7 @@ class NotificationChannelsViewModel @Inject constructor(
         }
 
         return drafts
-            .distinctBy { it.id.lowercase() }
+            .distinctBy { (it.login ?: it.id).lowercase() }
             .map { draft ->
                 ChannelUi(
                     id = draft.id,

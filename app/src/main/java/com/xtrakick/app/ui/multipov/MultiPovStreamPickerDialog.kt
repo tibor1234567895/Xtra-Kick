@@ -105,6 +105,7 @@ class MultiPovStreamPickerDialog : BottomSheetDialogFragment() {
                         binding.sectionLabel.setText(
                             when (mode) {
                                 MultiPovPickerMode.FollowedLive -> R.string.multipov_picker_followed_live
+                                MultiPovPickerMode.TopLive -> R.string.multipov_picker_top_live
                                 MultiPovPickerMode.Search -> R.string.multipov_picker_search_results
                             }
                         )
@@ -136,7 +137,8 @@ class MultiPovStreamPickerDialog : BottomSheetDialogFragment() {
         if (empty && !loading) {
             binding.emptyText.setText(
                 when (viewModel.pickerMode.value) {
-                    MultiPovPickerMode.FollowedLive -> R.string.multipov_picker_followed_empty
+                    MultiPovPickerMode.FollowedLive,
+                    MultiPovPickerMode.TopLive -> R.string.multipov_picker_followed_empty
                     MultiPovPickerMode.Search -> R.string.multipov_search_hint
                 }
             )

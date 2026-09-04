@@ -5,6 +5,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.db.NotificationUsersDao
 import com.xtrakick.app.repository.LocalFollowChannelRepository
+import com.xtrakick.app.repository.NotificationUsersRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -40,11 +41,6 @@ class FcmSyncManager @Inject constructor(
 
         val rawChannels = notificationUsersDao.getAll().map { it.channelId.trim() }.filter { it.isNotBlank() }
         val kickUserId = context.prefs().getString(AppConstants.USER_ID, null).orEmpty()
-        val currentSignature = "$token:$kickUserId:${rawChannels.sorted().joinToString(",")}"
-        val lastSyncedSignature = context.prefs().getString(FCM_LAST_SYNCED_SIGNATURE, null)
-        if (tokenOverride == null && currentSignature == lastSyncedSignature) {
-            return@withContext true
-        }
 
         val allChannelIds = LinkedHashSet<String>(rawChannels)
         val follows = runCatching { localFollowChannelRepository?.loadFollows() }.getOrNull().orEmpty()
@@ -56,6 +52,13 @@ class FcmSyncManager @Inject constructor(
                 follow.userId?.takeIf(String::isNotBlank)?.let(allChannelIds::add)
                 follow.userLogin?.takeIf(String::isNotBlank)?.let { allChannelIds.add(it.lowercase()) }
             }
+            allChannelIds.addAll(NotificationUsersRepository.getKnownAliases(row))
+        }
+
+        val currentSignature = "$token:$kickUserId:${allChannelIds.sorted().joinToString(",")}"
+        val lastSyncedSignature = context.prefs().getString(FCM_LAST_SYNCED_SIGNATURE, null)
+        if (tokenOverride == null && currentSignature == lastSyncedSignature) {
+            return@withContext true
         }
 
         val jsonBody = JSONObject().apply {

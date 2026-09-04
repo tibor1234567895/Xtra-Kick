@@ -992,6 +992,7 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="multipov_search_hint">No matching channels. Try another name.</string>
     <string name="multipov_picker_search_hint">Search channels…</string>
     <string name="multipov_picker_followed_live">Live followed</string>
+    <string name="multipov_picker_top_live">Live streams</string>
     <string name="multipov_picker_search_results">Search results</string>
     <string name="multipov_picker_followed_empty">No followed channels are live right now.\nSearch above to add someone else.</string>
     <string name="multipov_settings">MultiPOV</string>
