@@ -16,6 +16,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.SimpleItemAnimator
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.CommonRecyclerViewLayoutBinding
 import com.xtrakick.app.databinding.SortBarBinding
@@ -69,6 +70,7 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
             })
         }
         binding.recyclerView.adapter = listAdapter
+        (binding.recyclerView.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
         binding.swipeRefresh.isEnabled = true
         binding.swipeRefresh.setOnRefreshListener {
             viewModel.refresh()

@@ -202,7 +202,8 @@ class WebSocket(
     }
 
     suspend fun readNextFrame(): Boolean = withContext(Dispatchers.IO) {
-        val firstByte = inputStream!!.read()
+        val currentInput = inputStream ?: return@withContext true
+        val firstByte = currentInput.read()
         if (firstByte < 0) {
             return@withContext true
         }
@@ -210,7 +211,7 @@ class WebSocket(
         val compressed = useCompression && firstByte and COMPRESSED_BIT != 0
         val opcode = firstByte and OPCODE
         val isControlFrame = firstByte and OPCODE_CONTROL_FRAME != 0
-        val secondByte = inputStream!!.read()
+        val secondByte = currentInput.read()
         if (secondByte < 0) {
             return@withContext true
         }
@@ -314,8 +315,11 @@ class WebSocket(
                     }
                     if (isFinalFrame) {
                         nextFrameCompressed = false
-                        listener.onMessage(this@WebSocket, messageByteArray!!.decodeToString())
+                        val completeMessage = messageByteArray
                         messageByteArray = null
+                        if (completeMessage != null) {
+                            listener.onMessage(this@WebSocket, completeMessage.decodeToString())
+                        }
                     } else {
                         if (opcode != OPCODE_CONTINUATION) {
                             nextFrameCompressed = compressed

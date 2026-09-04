@@ -1309,6 +1309,10 @@ class SettingsActivity : AppCompatActivity() {
                 stopPlaybackServices()
                 true
             }
+            findPreference<SwitchPreferenceCompat>(AppConstants.PLAYER_IVS_LATENCY_CATCHUP)?.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, _ ->
+                settingsActivity?.setResult()
+                true
+            }
             latencyEditKeys.forEach { key ->
                 findPreference<EditTextPreference>(key)?.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, _ ->
                     settingsActivity?.setResult()

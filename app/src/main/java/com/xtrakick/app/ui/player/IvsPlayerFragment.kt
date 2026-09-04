@@ -44,6 +44,7 @@ class IvsPlayerFragment : PlayerFragment() {
     private var recoveryInProgress = false
     private var resumeOnStart = false
     private var backgroundAudioTransitionRequested = false
+    private var isCatchingUp = false
     private var pendingAutomaticQualityLog: String? = null
     private var pendingAutomaticQualityTransport: NetworkMonitor.NetworkType? = null
 
@@ -110,6 +111,9 @@ class IvsPlayerFragment : PlayerFragment() {
 
                     override fun onStateChanged(state: Player.State) {
                         binding.bufferingIndicator.isVisible = state == Player.State.BUFFERING
+                        if (state != Player.State.PLAYING) {
+                            resetCatchupState(player)
+                        }
                         if (state == Player.State.READY || state == Player.State.PLAYING) {
                             if (!viewModel.loaded.value) {
                                 viewModel.loaded.value = true
@@ -358,12 +362,16 @@ class IvsPlayerFragment : PlayerFragment() {
     override fun seekToLivePosition() {
         val ivsPlayer = player ?: return
         ivsPlayer.setRebufferToLive(true)
+        resetCatchupState(ivsPlayer)
         val duration = ivsPlayer.duration
         if (duration > 0L) {
             ivsPlayer.seekTo(duration)
         } else {
             currentUrl?.let { ivsPlayer.load(Uri.parse(it)) }
             playbackService?.play()
+        }
+        context?.let {
+            Toast.makeText(it, R.string.syncing_to_live, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -378,11 +386,34 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun updateProgress() {
         with(binding.playerControls) {
-            updateLatency(player?.liveLatency?.takeIf { it > 0L })
+            val latency = player?.liveLatency?.takeIf { it > 0L }
+            val catchupEnabled = prefs.getBoolean(AppConstants.PLAYER_IVS_LATENCY_CATCHUP, false)
+            val latencyConfig = LiveLatencySettings.resolve(prefs)
+            val targetOffsetMs = latencyConfig.targetOffsetMs
+            updateLatency(latency, if (catchupEnabled) targetOffsetMs else null)
+
+            val ivsPlayer = player
+            if (catchupEnabled && ivsPlayer != null && ivsPlayer.state == Player.State.PLAYING && latency != null) {
+                val driftThreshold = targetOffsetMs + CATCHUP_DRIFT_THRESHOLD_MS
+                val maxSpeed = (latencyConfig.maxPlaybackSpeed ?: DEFAULT_MAX_CATCHUP_SPEED).coerceIn(1.05f, 1.25f)
+                if (latency > driftThreshold) {
+                    if (ivsPlayer.playbackRate != maxSpeed) {
+                        playerDebugLog("IVS catch-up: latency=${latency}ms > driftThreshold=${driftThreshold}ms, setting speed to ${maxSpeed}x")
+                        ivsPlayer.setPlaybackRate(maxSpeed)
+                        isCatchingUp = true
+                    }
+                } else if (isCatchingUp && latency <= targetOffsetMs + CATCHUP_TARGET_MARGIN_MS) {
+                    playerDebugLog("IVS catch-up: latency=${latency}ms reached target (~${targetOffsetMs}ms), restoring speed to 1.0x")
+                    resetCatchupState(ivsPlayer)
+                }
+            } else {
+                resetCatchupState(ivsPlayer)
+            }
+
             if (root.isVisible && !progressBar.isPressed) {
-                val currentPosition = player?.position ?: 0L
+                val currentPosition = ivsPlayer?.position ?: 0L
                 progressBar.setPosition(currentPosition)
-                progressBar.setBufferedPosition(player?.bufferedPosition ?: 0L)
+                progressBar.setBufferedPosition(ivsPlayer?.bufferedPosition ?: 0L)
                 position.text = if (currentPosition > 0L) {
                     android.text.format.DateUtils.formatElapsedTime(currentPosition / 1000)
                 } else {
@@ -390,7 +421,7 @@ class IvsPlayerFragment : PlayerFragment() {
                 }
             }
             root.removeCallbacks(updateProgressAction)
-            if (player?.state == Player.State.PLAYING || player?.state == Player.State.BUFFERING) {
+            if (ivsPlayer?.state == Player.State.PLAYING || ivsPlayer?.state == Player.State.BUFFERING) {
                 root.postDelayed(updateProgressAction, 500L)
             }
         }
@@ -414,7 +445,7 @@ class IvsPlayerFragment : PlayerFragment() {
             AUTO_QUALITY -> ivsPlayer.setAutoQualityMode(true)
             else -> qualitiesByKey[selectedQuality]?.let { quality ->
                 ivsPlayer.setAutoQualityMode(false)
-                ivsPlayer.setQuality(quality)
+                ivsPlayer.setQuality(quality, true)
             }
         }
         persistSelectedQuality(selectedQuality)
@@ -486,6 +517,7 @@ class IvsPlayerFragment : PlayerFragment() {
         binding.playerControls.root.removeCallbacks(updateProgressAction)
         val service = playbackService
         val ivsPlayer = service?.player
+        resetCatchupState(ivsPlayer)
         playerListener?.let { ivsPlayer?.removeListener(it) }
         playerListener = null
         surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
@@ -510,6 +542,7 @@ class IvsPlayerFragment : PlayerFragment() {
         }
         binding.playerControls.root.removeCallbacks(updateProgressAction)
         val ivsPlayer = player
+        resetCatchupState(ivsPlayer)
         val shouldKeepPlaying = ivsPlayer?.let { shouldContinueIvsInBackground(it) } ?: false
         playerDebugLog(
             "onStop state=${ivsPlayer?.state} shouldKeepPlaying=$shouldKeepPlaying urlPresent=${!currentUrl.isNullOrBlank()} recoveryInProgress=$recoveryInProgress"
@@ -674,8 +707,18 @@ class IvsPlayerFragment : PlayerFragment() {
         }
     }
 
+    private fun resetCatchupState(targetPlayer: Player?) {
+        if (isCatchingUp) {
+            isCatchingUp = false
+            targetPlayer?.setPlaybackRate(1.0f)
+        }
+    }
+
     companion object {
         private const val TAG = "IvsPlayerFragment"
+        private const val CATCHUP_DRIFT_THRESHOLD_MS = 800L
+        private const val CATCHUP_TARGET_MARGIN_MS = 200L
+        private const val DEFAULT_MAX_CATCHUP_SPEED = 1.15f
 
         fun newInstance(item: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean): IvsPlayerFragment {
             return IvsPlayerFragment().apply {

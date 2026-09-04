@@ -852,6 +852,9 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="player_latency_profile_lowest">Lowest latency (may rebuffer more)</string>
     <string name="player_latency_profile_balanced">Balanced latency and stability</string>
     <string name="player_latency_profile_stable">Maximum stability (higher delay)</string>
+    <string name="player_ivs_latency_catchup">IVS live latency catch-up</string>
+    <string name="player_ivs_latency_catchup_summary">Automatically increase playback speed (up to 1.15x) when live stream latency drifts behind the live edge.</string>
+    <string name="syncing_to_live">Syncing to live edge…</string>
     <string name="max_buffer">Maximum buffer</string>
     <string name="max_buffer_summary">Maximum buffer in milliseconds</string>
     <string name="buffer_for_playback_summary">Buffer needed to start playback in milliseconds</string>

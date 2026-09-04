@@ -2619,6 +2619,7 @@ class ChatViewModel @Inject constructor(
                     shownNotificationsRepository.showLiveNotificationFromEvent(
                         context = applicationContext,
                         event = liveEvent,
+                        source = ShownNotificationsRepository.EVENT_SOURCE_CHAT,
                     )
                 }
                 return

@@ -1232,6 +1232,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     }
                     if (prefs.getBoolean(AppConstants.PLAYER_SHOW_LATENCY, true)) {
                         latencyLayout.visibility = View.VISIBLE
+                        latencyLayout.setOnClickListener {
+                            showController(force = true)
+                            seekToLivePosition()
+                        }
                     }
                     rewind.visibility = View.GONE
                     fastForward.visibility = View.GONE

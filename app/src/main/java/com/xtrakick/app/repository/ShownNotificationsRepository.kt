@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.text.HtmlCompat
 import com.xtrakick.app.db.ShownNotificationsDao
 import com.xtrakick.app.model.ShownNotification
+import com.xtrakick.app.model.kick.api.livestream.Livestream
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.R
 import com.xtrakick.app.ui.main.MainActivity
@@ -101,7 +102,15 @@ class ShownNotificationsRepository @Inject constructor(
                         fetchedKeys.add(id)
                     }
                 }
-                publicApiResult.forEach { live ->
+                // Never trust the server filter blindly: only streams that were actually
+                // requested may notify. Anything else is another channel's live response
+                // leaking into this poll (strangers in the notification shade).
+                val requested = publicApiResult.filter { isRequestedLivestream(it, userIdsForPublicApi, slugsForFallback) }
+                val dropped = publicApiResult.size - requested.size
+                if (dropped > 0) {
+                    Log.i(TAG, "ignoring $dropped unrequested livestreams")
+                }
+                requested.forEach { live ->
                     val broadcasterId = live.broadcasterUserId?.toString() ?: live.channelId?.toString()
                     val stream = Stream(
                         id = null,
@@ -249,6 +258,7 @@ class ShownNotificationsRepository @Inject constructor(
     suspend fun showLiveNotificationFromEvent(
         context: Context,
         event: com.xtrakick.app.model.kick.KickLiveNotificationEvent,
+        source: String = EVENT_SOURCE_UNKNOWN,
     ) = withContext(Dispatchers.IO) {
         val userIdStr = event.userId?.toString() ?: return@withContext
         val cleanSlug = event.path?.trim()
@@ -265,11 +275,11 @@ class ShownNotificationsRepository @Inject constructor(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
-            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug: POST_NOTIFICATIONS not granted")
+            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug from $source: POST_NOTIFICATIONS not granted")
             return@withContext
         }
         if (!context.prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)) {
-            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug: live notifications disabled")
+            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug from $source: live notifications disabled")
             return@withContext
         }
         val channelIdStr = event.channelId?.toString()
@@ -281,22 +291,46 @@ class ShownNotificationsRepository @Inject constructor(
             false
         }
         if (!channelEnabled) {
-            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug: channel notifications disabled")
+            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug from $source: channel notifications disabled")
             return@withContext
         }
         val cleanTitle = event.description?.trim()?.takeIf { it.isNotBlank() }
             ?: event.title?.let { HtmlCompat.fromHtml(it, HtmlCompat.FROM_HTML_MODE_LEGACY).toString().trim() }
         val secureAvatar = event.profilePicture?.takeIf { it.startsWith("https://", ignoreCase = true) }
+        // Unify with the checker road: resolve the canonical broadcaster id and the live
+        // start so both roads share one notification id and one dedupe row. Fail open —
+        // without resolution keep posting so a slow network never eats the alert.
+        val resolution = runCatching {
+            kickRepository.getChannel(cleanSlug, prefetchBadgeCatalog = false)
+        }.getOrNull()
+        val canonicalId = resolution?.userId?.toString()
+            ?: resolution?.user?.id?.toString()
+            ?: channelIdStr
+            ?: userIdStr
+        val liveStartedAt = resolution?.livestream?.createdAt
+            ?.takeUnless { it.isBlank() }
+            ?.let { KickApiHelper.parseIso8601DateUTC(it) }
+        val nowMs = System.currentTimeMillis()
+        // Cross-road dedupe: a row for this channel means this session already notified,
+        // no matter which road wrote it. Legacy rows keyed by the raw event ids count too.
+        val legacyKeys = listOfNotNull(userIdStr, channelIdStr).distinct()
+        val shown = shownNotificationsDao.getAll()
+        val existingStartedAt = (listOf(canonicalId) + legacyKeys).distinct()
+            .firstNotNullOfOrNull { key -> shown.firstOrNull { it.channelId == key }?.startedAt }
+        if (shouldSuppressEvent(existingStartedAt, liveStartedAt, nowMs)) {
+            Log.i(TAG, "dropping duplicate live event for $userIdStr/$cleanSlug from $source: already shown")
+            return@withContext
+        }
         val stream = Stream(
             source = AppConstants.KICK,
-            channelId = channelIdStr ?: userIdStr,
+            channelId = canonicalId,
             channelLogin = cleanSlug,
             channelName = cleanSlug,
             title = cleanTitle,
             profileImageUrl = secureAvatar,
         )
-        val dedupeIds = listOfNotNull(userIdStr, channelIdStr).distinct()
-        shownNotificationsDao.insertList(dedupeIds.map { ShownNotification(it, System.currentTimeMillis()) })
+        shownNotificationsDao.insertList(listOf(ShownNotification(canonicalId, liveStartedAt ?: nowMs)))
+        Log.i(TAG, "posting live event for $userIdStr/$cleanSlug from $source (canonical=$canonicalId)")
         withContext(Dispatchers.Main) {
             showLiveNotifications(context, listOf(stream))
         }
@@ -306,6 +340,49 @@ class ShownNotificationsRepository @Inject constructor(
         const val GROUP_KEY = "com.xtrakick.app.LIVE_NOTIFICATIONS"
 
         private const val TAG = "ShownNotifications"
+
+        /** Where a live-start event came from. Logged on every post/drop so doubles are attributable. */
+        const val EVENT_SOURCE_FCM = "fcm"
+        const val EVENT_SOURCE_CHAT = "chat"
+        const val EVENT_SOURCE_UNKNOWN = "unknown"
+
+        /**
+         * Fallback duplicate window when the live start is unknown (channel lookup failed).
+         * Same-session redeliveries arrive seconds/minutes apart; a genuinely restarted
+         * stream days later must still notify, so the window stays at hours, not days.
+         */
+        const val EVENT_DUPLICATE_WINDOW_MS = 4 * 60 * 60 * 1000L
+
+        /**
+         * Guards the checker road: keep only livestreams that were actually requested,
+         * by broadcaster id, channel id, or slug. Anything else is another channel's
+         * live response leaking into this poll and must never notify.
+         */
+        fun isRequestedLivestream(
+            live: Livestream,
+            requestedIds: Set<String>,
+            requestedSlugsLowercase: Set<String>,
+        ): Boolean {
+            live.broadcasterUserId?.toString()?.let { if (it in requestedIds) return true }
+            live.channelId?.toString()?.let { if (it in requestedIds) return true }
+            live.slug?.lowercase()?.let { if (it in requestedSlugsLowercase) return true }
+            return false
+        }
+
+        /**
+         * Cross-road duplicate check shared by the event and checker roads, which use the
+         * same canonical channel key. With a known live start, any stored row at or past
+         * it means this session already notified. Without one, only a recent row counts.
+         */
+        fun shouldSuppressEvent(
+            existingStartedAt: Long?,
+            liveStartedAt: Long?,
+            nowMs: Long = System.currentTimeMillis(),
+        ): Boolean {
+            if (existingStartedAt == null) return false
+            if (liveStartedAt != null) return existingStartedAt >= liveStartedAt
+            return existingStartedAt > nowMs - EVENT_DUPLICATE_WINDOW_MS
+        }
 
         /**
          * Sentinel outside the practical range of String.hashCode() for channel ids, so a

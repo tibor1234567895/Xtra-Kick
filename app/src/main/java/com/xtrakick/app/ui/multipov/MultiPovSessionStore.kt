@@ -30,7 +30,7 @@ data class MultiPovSession(
     val channels: List<MultiPovSessionChannel>,
     val focusedKey: String? = null,
     val streamQuality: String = MultiPovQuality.DEFAULT_PREF,
-    val bandwidthSaving: Boolean = false,
+    val bandwidthSaving: Boolean = true,
 ) {
     fun toStreams(): List<Stream> = channels.map { it.toStream() }
 }
@@ -104,7 +104,7 @@ object MultiPovSessionStore {
                     streamQuality = root.optString("streamQuality")
                         .ifBlank { root.optString("secondaryQuality") }
                         .ifBlank { MultiPovQuality.DEFAULT_PREF },
-                    bandwidthSaving = root.optBoolean("bandwidthSaving", false),
+                    bandwidthSaving = root.optBoolean("bandwidthSaving", true),
                 )
             }
         }.getOrNull()

@@ -158,6 +158,7 @@ object AppConstants {
     const val PLAYER_LIVE_MAX_SPEED = "player_live_max_speed"
     const val PLAYER_LIVE_TARGET_OFFSET = "player_live_target_offset"
     const val PLAYER_LATENCY_PROFILE = "player_latency_profile"
+    const val PLAYER_IVS_LATENCY_CATCHUP = "player_ivs_latency_catchup"
     const val PLAYER_SHOW_STREAM_NOTIFICATION_SEEKBAR = "player_show_stream_notification_seekbar"
     const val LAST_PLAYBACK_ENGINE = "last_playback_engine"
     const val LAST_PLAYBACK_URL = "last_playback_url"

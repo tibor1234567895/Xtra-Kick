@@ -52,7 +52,11 @@ class XtraFirebaseMessagingService : FirebaseMessagingService() {
             )
 
             serviceScope.launch {
-                shownNotificationsRepository.showLiveNotificationFromEvent(applicationContext, event)
+                shownNotificationsRepository.showLiveNotificationFromEvent(
+                    applicationContext,
+                    event,
+                    ShownNotificationsRepository.EVENT_SOURCE_FCM,
+                )
             }
         }
     }

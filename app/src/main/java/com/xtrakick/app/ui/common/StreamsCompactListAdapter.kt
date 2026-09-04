@@ -14,6 +14,7 @@ import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import coil3.asImage
 import coil3.imageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
@@ -76,6 +77,7 @@ class StreamsCompactListAdapter(
                             if (context.prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
                                 transformations(CircleCropTransformation())
                             }
+                            placeholder(userImage.drawable?.asImage())
                             crossfade(true)
                             target(userImage)
                         }.build()
@@ -140,6 +142,7 @@ class StreamsCompactListAdapter(
                             data(resolvedThumbnail)
                             memoryCacheKeyExtra("minutes", key.toString())
                             diskCachePolicy(CachePolicy.DISABLED)
+                            placeholder(thumbnail.drawable?.asImage())
                             crossfade(true)
                             target(thumbnail)
                         }.build()

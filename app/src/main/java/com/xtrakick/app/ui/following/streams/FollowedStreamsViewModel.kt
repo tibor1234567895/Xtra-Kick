@@ -243,15 +243,17 @@ class FollowedStreamsViewModel @Inject constructor(
                     officialLive.forEach { stream -> resolved[stream.cacheKey()] = stream }
                     if (officialLive.isNotEmpty()) {
                         logFollowedStreamsInfo("Official followed-live path resolved ${officialLive.size} items")
-                        val sorted = resolved.values.toList().sortedForFollowedLive()
-                        updateStateForGeneration(
-                            generation = generation,
-                            items = sorted,
-                            isInitialLoading = false,
-                            isRefreshing = !silent,
-                            showEmpty = false,
-                            hasLoadedOnce = true,
-                        )
+                        if (!silent) {
+                            val sorted = resolved.values.toList().sortedForFollowedLive()
+                            updateStateForGeneration(
+                                generation = generation,
+                                items = sorted,
+                                isInitialLoading = false,
+                                isRefreshing = true,
+                                showEmpty = false,
+                                hasLoadedOnce = true,
+                            )
+                        }
                     }
                 } catch (error: CancellationException) {
                     throw error
@@ -275,15 +277,17 @@ class FollowedStreamsViewModel @Inject constructor(
                 }
                 if (fastResult != null) {
                     logFollowedStreamsInfo("Fast followed-live path resolved ${fastResult.items.size} items and left ${fastResult.unresolvedFollows.size} for fallback")
-                    val sorted = resolved.values.toList().sortedForFollowedLive()
-                    updateStateForGeneration(
-                        generation = generation,
-                        items = sorted,
-                        isInitialLoading = false,
-                        isRefreshing = !silent && fastResult.unresolvedFollows.isNotEmpty(),
-                        showEmpty = false,
-                        hasLoadedOnce = true,
-                    )
+                    if (!silent) {
+                        val sorted = resolved.values.toList().sortedForFollowedLive()
+                        updateStateForGeneration(
+                            generation = generation,
+                            items = sorted,
+                            isInitialLoading = false,
+                            isRefreshing = fastResult.unresolvedFollows.isNotEmpty(),
+                            showEmpty = false,
+                            hasLoadedOnce = true,
+                        )
+                    }
                 }
 
                 val followsForFallback = fastResult?.unresolvedFollows ?: localOnlyFollows
@@ -302,15 +306,17 @@ class FollowedStreamsViewModel @Inject constructor(
                     resolved[stream.cacheKey()] = stream
                 }
                 if (bulkFallbackResult != null) {
-                    val sorted = resolved.values.toList().sortedForFollowedLive()
-                    updateStateForGeneration(
-                        generation = generation,
-                        items = sorted,
-                        isInitialLoading = false,
-                        isRefreshing = !silent && bulkFallbackResult.unresolvedFollows.isNotEmpty(),
-                        showEmpty = false,
-                        hasLoadedOnce = true,
-                    )
+                    if (!silent) {
+                        val sorted = resolved.values.toList().sortedForFollowedLive()
+                        updateStateForGeneration(
+                            generation = generation,
+                            items = sorted,
+                            isInitialLoading = false,
+                            isRefreshing = bulkFallbackResult.unresolvedFollows.isNotEmpty(),
+                            showEmpty = false,
+                            hasLoadedOnce = true,
+                        )
+                    }
                 }
 
                 val followsForPerChannelFallback = bulkFallbackResult?.unresolvedFollows ?: followsForFallback
@@ -333,15 +339,17 @@ class FollowedStreamsViewModel @Inject constructor(
                         resolved[stream.cacheKey()] = stream
                     }
 
-                    val sorted = resolved.values.toList().sortedForFollowedLive()
-                    updateStateForGeneration(
-                        generation = generation,
-                        items = sorted,
-                        isInitialLoading = false,
-                        isRefreshing = !silent,
-                        showEmpty = false,
-                        hasLoadedOnce = true,
-                    )
+                    if (!silent) {
+                        val sorted = resolved.values.toList().sortedForFollowedLive()
+                        updateStateForGeneration(
+                            generation = generation,
+                            items = sorted,
+                            isInitialLoading = false,
+                            isRefreshing = true,
+                            showEmpty = false,
+                            hasLoadedOnce = true,
+                        )
+                    }
                 }
 
                 val finalItems = resolved.values.toList().sortedForFollowedLive()

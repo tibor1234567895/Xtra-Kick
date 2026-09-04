@@ -170,7 +170,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             resolvedUrls = resolved,
             focusedKey = focused,
             streamQuality = MultiPovQuality.fromPrefs(prefs),
-            bandwidthSaving = prefs.getBoolean(AppConstants.MULTIPOV_BANDWIDTH_SAVING, false),
+            bandwidthSaving = prefs.getBoolean(AppConstants.MULTIPOV_BANDWIDTH_SAVING, true),
             maxStreams = prefs.getInt(AppConstants.MULTIPOV_MAX_STREAMS, AppConstants.MULTIPOV_MAX_STREAMS_DEFAULT)
                 .coerceIn(2, AppConstants.MULTIPOV_MAX_STREAMS_DEFAULT),
             prefs = prefs,
