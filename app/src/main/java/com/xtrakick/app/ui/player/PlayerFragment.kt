@@ -1274,6 +1274,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.videoUploadDate.collectLatest { date ->
+                                if (!date.isNullOrBlank()) {
+                                    chatFragment?.updateKickReplayStartTime(date)
+                                }
+                            }
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.videoError.collectLatest {
                                 if (it != null) {
                                     Toast.makeText(requireContext(), it, Toast.LENGTH_LONG).show()
@@ -1376,7 +1385,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     changePlayerMode()
                                     val quality = viewModel.qualities.entries.find { it.key == viewModel.quality }
                                     val targetUrl = quality?.value?.second ?: viewModel.qualities.values.firstOrNull()?.second
-                                    if (!targetUrl.isNullOrBlank() && targetUrl != currentPlaybackUrl() && targetUrl != requireArguments().getString(KEY_URL)) {
+                                    if (!targetUrl.isNullOrBlank() && (currentPlaybackUrl() == null || (targetUrl != currentPlaybackUrl() && targetUrl != requireArguments().getString(KEY_URL)))) {
                                         activePlaybackUrl = targetUrl
                                         startClip(targetUrl)
                                     }
@@ -1390,9 +1399,32 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         binding.watchVideo.visibility = View.VISIBLE
                         binding.watchVideo.setOnClickListener {
                             viewLifecycleOwner.lifecycleScope.launch {
-                                val offset = requireArguments().getInt(KEY_VOD_OFFSET).takeIf { it != -1 }?.let {
-                                    (it * 1000) + (getCurrentPosition() ?: 0)
-                                } ?: 0
+                                val vodOffsetSeconds = requireArguments().getInt(KEY_VOD_OFFSET).takeIf { it != -1 }
+                                val currentPos = getCurrentPosition() ?: 0L
+                                val clipDurationMs = requireArguments().getDouble(KEY_DURATION, 0.0).takeIf { it > 0.0 }?.let { (it * 1000.0).toLong() }
+                                val offset = vodOffsetSeconds?.let { sec ->
+                                    val baseOffsetMs = sec.toLong() * 1000L
+                                    if (clipDurationMs != null && currentPos >= clipDurationMs - 2000L) {
+                                        baseOffsetMs
+                                    } else {
+                                        baseOffsetMs + currentPos
+                                    }
+                                } ?: 0L
+
+                                val clipStartTimeStr = requireArguments().getString(KEY_CLIP_REPLAY_START_TIME)
+                                    ?: requireArguments().getString(KEY_UPLOAD_DATE)
+                                val vodStartTime = if (!clipStartTimeStr.isNullOrBlank() && vodOffsetSeconds != null) {
+                                    val clipStartMs = KickApiHelper.parseIso8601DateUTC(clipStartTimeStr)
+                                    if (clipStartMs != null && clipStartMs > 0L) {
+                                        val vodStartMs = clipStartMs - (vodOffsetSeconds.toLong() * 1000L)
+                                        runCatching { java.time.Instant.ofEpochMilli(vodStartMs).toString() }.getOrDefault(clipStartTimeStr)
+                                    } else {
+                                        clipStartTimeStr
+                                    }
+                                } else {
+                                    clipStartTimeStr
+                                }
+
                                 if (prefs.getBoolean(AppConstants.PLAYER_USE_VIDEOPOSITIONS, true)) {
                                     videoId.toLongOrNull()?.let { id ->
                                         viewModel.savePosition(id, offset)
@@ -1401,11 +1433,18 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 (requireActivity() as MainActivity).startVideo(
                                     Video(
                                         id = videoId,
+                                        source = requireArguments().getString(KEY_VIDEO_SOURCE) ?: AppConstants.KICK,
                                         channelId = requireArguments().getString(KEY_CHANNEL_ID),
                                         channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
                                         channelName = requireArguments().getString(KEY_CHANNEL_NAME),
+                                        title = requireArguments().getString(KEY_TITLE),
+                                        uploadDate = vodStartTime,
                                         profileImageUrl = requireArguments().getString(KEY_PROFILE_IMAGE_URL),
-                                        animatedPreviewURL = requireArguments().getString(KEY_VIDEO_ANIMATED_PREVIEW)
+                                        animatedPreviewURL = requireArguments().getString(KEY_VIDEO_ANIMATED_PREVIEW),
+                                        gameId = requireArguments().getString(KEY_GAME_ID),
+                                        gameSlug = requireArguments().getString(KEY_GAME_SLUG),
+                                        gameName = requireArguments().getString(KEY_GAME_NAME),
+                                        uuid = videoId,
                                     ),
                                     offset,
                                     true
@@ -1548,20 +1587,24 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         requireArguments().getString(KEY_STREAM_ID),
                         requireArguments().getString(KEY_STREAM_SOURCE)
                     )
-                    VIDEO -> ChatFragment.newInstance(
-                        channelId = requireArguments().getString(KEY_CHANNEL_ID),
-                        channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
-                        videoId = requireArguments().getString(KEY_VIDEO_ID),
-                        startTime = 0,
-                        suppressReplayUnavailable = requireArguments().getString(KEY_VIDEO_SOURCE).equals(AppConstants.KICK, true),
-                        kickReplayFallback = requireArguments().getString(KEY_VIDEO_SOURCE).equals(AppConstants.KICK, true),
-                        kickReplayStartTime = requireArguments().getString(KEY_UPLOAD_DATE),
-                        kickReplayUrl = requireArguments().getString(KEY_URL),
-                        source = requireArguments().getString(KEY_VIDEO_SOURCE)
-                    )
+                    VIDEO -> {
+                        val initialOffsetMs = requireArguments().getLong(KEY_OFFSET).takeIf { it > 0L }
+                        ChatFragment.newInstance(
+                            channelId = requireArguments().getString(KEY_CHANNEL_ID),
+                            channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
+                            videoId = requireArguments().getString(KEY_VIDEO_ID),
+                            startTime = initialOffsetMs?.let { (it / 1000L).toInt() } ?: 0,
+                            suppressReplayUnavailable = requireArguments().getString(KEY_VIDEO_SOURCE).equals(AppConstants.KICK, true),
+                            kickReplayFallback = requireArguments().getString(KEY_VIDEO_SOURCE).equals(AppConstants.KICK, true),
+                            kickReplayStartTime = requireArguments().getString(KEY_UPLOAD_DATE),
+                            kickReplayUrl = requireArguments().getString(KEY_URL),
+                            source = requireArguments().getString(KEY_VIDEO_SOURCE)
+                        )
+                    }
                     CLIP -> run {
                         val clipUrl = requireArguments().getString(KEY_URL)
-                        val isKickClip = clipUrl?.contains("clips.kick.com", ignoreCase = true) == true ||
+                        val isKickClip = requireArguments().getString(KEY_VIDEO_SOURCE).equals(AppConstants.KICK, true) ||
+                                clipUrl?.contains("clips.kick.com", ignoreCase = true) == true ||
                                 clipUrl?.contains("kick.com", ignoreCase = true) == true
                         ChatFragment.newInstance(
                             requireArguments().getString(KEY_CHANNEL_ID),
@@ -1572,7 +1615,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             isKickClip,
                             requireArguments().getString(KEY_CLIP_REPLAY_START_TIME) ?: requireArguments().getString(KEY_UPLOAD_DATE),
                             clipUrl,
-                            source = requireArguments().getString(KEY_VIDEO_SOURCE)
+                            source = requireArguments().getString(KEY_VIDEO_SOURCE) ?: AppConstants.KICK
                         )
                     }
                     OFFLINE_VIDEO -> ChatFragment.newLocalInstance(
@@ -2776,21 +2819,22 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 )
             }
             VIDEO -> {
-                if (prefs.getBoolean(AppConstants.PLAYER_USE_VIDEOPOSITIONS, true)) {
+                val skipAccessToken = (prefs.getString(AppConstants.TOKEN_SKIP_VIDEO_ACCESS_TOKEN, "2")?.toIntOrNull() ?: 2) <= 1
+                val explicitOffset = requireArguments().getLong(KEY_OFFSET).takeIf { it != -1L }
+                val ignoreSaved = requireArguments().getBoolean(KEY_IGNORE_SAVED_POSITION)
+                if (ignoreSaved || explicitOffset != null) {
+                    requireArguments().putBoolean(KEY_IGNORE_SAVED_POSITION, false)
+                    requireArguments().putLong(KEY_OFFSET, -1)
+                    playVideo(skipAccessToken, explicitOffset ?: 0L)
+                } else if (prefs.getBoolean(AppConstants.PLAYER_USE_VIDEOPOSITIONS, true)) {
                     val id = requireArguments().getString(KEY_VIDEO_ID)?.toLongOrNull()
                     if (id != null) {
                         viewModel.getVideoPosition(id)
                     } else {
-                        playVideo((prefs.getString(AppConstants.TOKEN_SKIP_VIDEO_ACCESS_TOKEN, "2")?.toIntOrNull() ?: 2) <= 1, 0)
+                        playVideo(skipAccessToken, 0L)
                     }
                 } else {
-                    if (requireArguments().getBoolean(KEY_IGNORE_SAVED_POSITION)) {
-                        playVideo((prefs.getString(AppConstants.TOKEN_SKIP_VIDEO_ACCESS_TOKEN, "2")?.toIntOrNull() ?: 2) <= 1, requireArguments().getLong(KEY_OFFSET).takeIf { it != -1L } ?: 0)
-                        requireArguments().putBoolean(KEY_IGNORE_SAVED_POSITION, false)
-                        requireArguments().putLong(KEY_OFFSET, -1)
-                    } else {
-                        playVideo((prefs.getString(AppConstants.TOKEN_SKIP_VIDEO_ACCESS_TOKEN, "2")?.toIntOrNull() ?: 2) <= 1, 0)
-                    }
+                    playVideo(skipAccessToken, 0L)
                 }
             }
             CLIP -> {
@@ -3700,7 +3744,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         return bundleOf(
             KEY_TYPE to VIDEO,
             KEY_VIDEO_ID to item.id,
-            KEY_VIDEO_SOURCE to item.source,
+            KEY_VIDEO_SOURCE to (item.source ?: AppConstants.KICK),
             KEY_TITLE to item.title,
             KEY_UPLOAD_DATE to item.uploadDate,
             KEY_DURATION to item.duration,
@@ -3741,6 +3785,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             KEY_GAME_ID to item.gameId,
             KEY_GAME_SLUG to item.gameSlug,
             KEY_GAME_NAME to item.gameName,
+            KEY_VIDEO_SOURCE to AppConstants.KICK,
         )
     }
 

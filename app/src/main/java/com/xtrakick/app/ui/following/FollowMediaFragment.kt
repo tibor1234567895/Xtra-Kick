@@ -76,9 +76,10 @@ class FollowMediaFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
                 findNavController().navigate(NotificationChannelsFragmentDirections.actionGlobalNotificationChannelsFragment())
             }
 
+            val isRewardsEnabled = requireContext().prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)
             toolbar.menu.findItem(R.id.login).title = if (isLoggedIn) getString(R.string.log_out) else getString(R.string.log_in)
             toolbar.menu.findItem(R.id.importKickFollowed)?.isVisible = isLoggedIn
-            toolbar.menu.findItem(R.id.dailyReward)?.isVisible = isLoggedIn
+            toolbar.menu.findItem(R.id.dailyReward)?.isVisible = isLoggedIn && isRewardsEnabled
             toolbar.setOnMenuItemClickListener { menuItem ->
                 when (menuItem.itemId) {
                     R.id.search -> {
@@ -240,6 +241,15 @@ class FollowMediaFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
         childFragmentManager.fragments.forEach { fragment ->
             (fragment as? com.xtrakick.app.ui.common.IntegrityDialog.CallbackListener)
                 ?.onIntegrityDialogCallback("refresh")
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        _binding?.let { b ->
+            val isLoggedIn = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+            val isRewardsEnabled = requireContext().prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)
+            b.toolbar.menu.findItem(R.id.dailyReward)?.isVisible = isLoggedIn && isRewardsEnabled
         }
     }
 

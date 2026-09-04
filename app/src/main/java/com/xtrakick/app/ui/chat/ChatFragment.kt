@@ -3087,6 +3087,10 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         viewModel.startReplayChatLoad(seekPosition)
     }
 
+    fun updateKickReplayStartTime(startTime: String?) {
+        viewModel.updateKickReplayStartTime(startTime)
+    }
+
     fun stopReplayChat() {
         viewModel.stopReplayChat()
     }

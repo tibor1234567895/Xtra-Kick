@@ -32,7 +32,9 @@ class RewardClaimWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         val prefs = applicationContext.prefs()
-        if (!prefs.getBoolean(AppConstants.REWARD_AUTO_CLAIM_ENABLED, false)) {
+        if (!prefs.getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true) ||
+            !prefs.getBoolean(AppConstants.REWARD_AUTO_CLAIM_ENABLED, false)
+        ) {
             return Result.success()
         }
         if (!rewardsRepository.canAttemptClaims()) {

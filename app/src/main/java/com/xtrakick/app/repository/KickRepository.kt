@@ -2452,6 +2452,9 @@ class KickRepository @Inject constructor(
                     ?: item.primitiveOrNull("video_id")
                     ?: item.primitiveOrNull("livestream_id")
                     ?: return@mapNotNull null
+                val uuid = item.objOrNull("video")?.primitiveOrNull("uuid")
+                    ?: item.primitiveOrNull("uuid")
+                val slug = item.primitiveOrNull("slug")
                 val title = item.primitiveOrNull("session_title")
                     ?: item.primitiveOrNull("title")
                     ?: item.primitiveOrNull("name")
@@ -2521,7 +2524,9 @@ class KickRepository @Inject constructor(
                     gameId = category?.first,
                     gameSlug = category?.second,
                     gameName = category?.third,
-                    profileImageUrl = videoChannelLogo
+                    profileImageUrl = videoChannelLogo,
+                    uuid = uuid,
+                    slug = slug,
                 )
             }
             .distinctBy { it.id }
@@ -2564,14 +2569,16 @@ class KickRepository @Inject constructor(
                 val thumbnail = extractImageUrl(item.objOrNull("thumbnail"))
                     ?: item.primitiveOrNull("thumbnail_url")
                     ?: item.primitiveOrNull("preview_thumbnail_url")
-                val viewCount = item.intOrNull("views")
+                val viewCount = item.intOrNull("views_count")
+                    ?: item.intOrNull("views")
                     ?: item.intOrNull("view_count")
                     ?: item.intOrNull("viewer_count")
                 val duration = item.intOrNull("duration_seconds")?.toDouble()
                     ?: item.intOrNull("duration")?.toDouble()
                     ?: item.intOrNull("clip_duration")?.toDouble()
                 val vodOffset = item.clipVodOffset()
-                val clipUrl = item.primitiveOrNull("video_url")
+                val clipUrl = item.primitiveOrNull("playback_url")
+                    ?: item.primitiveOrNull("video_url")
                     ?: item.primitiveOrNull("clip_url")
                     ?: item.objOrNull("video")?.primitiveOrNull("url")
                     ?: item.objOrNull("clip")?.primitiveOrNull("url")
@@ -2650,7 +2657,11 @@ class KickRepository @Inject constructor(
             ?: fallback
 
     private fun JsonObject.clipVodOffset(): Int? =
-        intOrNull("vod_starts_at") ?: intOrNull("video_offset") ?: intOrNull("vod_offset")
+        intOrNull("vod_starts_at")
+            ?: intOrNull("video_offset")
+            ?: intOrNull("vod_offset")
+            ?: objOrNull("video")?.intOrNull("offset")
+            ?: objOrNull("video")?.intOrNull("video_offset")
 
     private fun extractKickVideoUrl(item: JsonObject): String? {
         val directUrl = item.primitiveOrNull("playback_url")
@@ -2783,6 +2794,7 @@ class KickRepository @Inject constructor(
         val id = clipIdOrSlug.trim().takeIf { it.isNotBlank() } ?: return@withContext null
         val encoded = urlEncode(id)
         val candidates = listOf(
+            "https://web.kick.com/api/v1/clips/$encoded",
             "https://kick.com/api/v2/clips/$encoded",
             "https://kick.com/api/v1/clips/$encoded",
         )
@@ -2791,9 +2803,12 @@ class KickRepository @Inject constructor(
             parseClips(roots = listOf(root), limit = 1).firstOrNull()?.let { return@withContext it }
             val obj = root as? JsonObject ?: continue
             val data = obj.objOrNull("data") ?: obj.objOrNull("clip") ?: obj
-            val clipUrl = data.primitiveOrNull("video_url")
+            val clipUrl = data.primitiveOrNull("playback_url")
+                ?: data.primitiveOrNull("video_url")
                 ?: data.primitiveOrNull("clip_url")
                 ?: data.objOrNull("video")?.primitiveOrNull("url")
+                ?: data.objOrNull("clip")?.primitiveOrNull("url")
+            val category = data.objOrNull("category")
             if (!clipUrl.isNullOrBlank() || !data.primitiveOrNull("id").isNullOrBlank() || !data.primitiveOrNull("slug").isNullOrBlank()) {
                 val rawCreatedAt = data.primitiveOrNull("created_at")
                     ?: data.primitiveOrNull("published_at")
@@ -2812,14 +2827,19 @@ class KickRepository @Inject constructor(
                         ?: data.objOrNull("vod")?.primitiveOrNull("id")
                         ?: data.objOrNull("video")?.primitiveOrNull("id"),
                     title = data.primitiveOrNull("title"),
-                    viewCount = data.intOrNull("views") ?: data.intOrNull("view_count"),
+                    viewCount = data.intOrNull("views_count") ?: data.intOrNull("views") ?: data.intOrNull("view_count"),
                     uploadDate = normalizeDate(rawCreatedAt),
                     duration = data.intOrNull("duration")?.toDouble() ?: data.intOrNull("duration_seconds")?.toDouble(),
                     vodOffset = data.clipVodOffset(),
                     thumbnailUrl = extractImageUrl(data.objOrNull("thumbnail"))
                         ?: data.primitiveOrNull("thumbnail_url"),
-                    profileImageUrl = data.objOrNull("channel")?.objOrNull("user")?.primitiveOrNull("profile_pic")
+                    profileImageUrl = data.objOrNull("channel")?.primitiveOrNull("profile_picture")
+                        ?: data.objOrNull("channel")?.primitiveOrNull("profile_pic")
+                        ?: data.objOrNull("channel")?.objOrNull("user")?.primitiveOrNull("profile_pic")
                         ?: data.objOrNull("channel")?.objOrNull("user")?.primitiveOrNull("profile_picture"),
+                    gameId = category?.primitiveOrNull("id"),
+                    gameSlug = category?.primitiveOrNull("slug"),
+                    gameName = category?.primitiveOrNull("name"),
                 )
             }
         }
@@ -3048,21 +3068,39 @@ class KickRepository @Inject constructor(
     /**
      * Resolve a Kick VOD/video by id from Kick web APIs (not Twitch GQL).
      */
-    suspend fun getVideoById(videoId: String): Video? = withContext(Dispatchers.IO) {
+    suspend fun getVideoById(
+        videoId: String,
+        channelSlugOrId: String? = null,
+        channelId: String? = null,
+    ): Video? = withContext(Dispatchers.IO) {
         val id = videoId.trim().takeIf { it.isNotBlank() } ?: return@withContext null
         val encoded = urlEncode(id)
-        val candidates = listOf(
-            "https://kick.com/api/v1/video/$encoded",
-            "https://kick.com/api/v2/video/$encoded",
-            "https://kick.com/api/v1/videos/$encoded",
-            "https://kick.com/api/v2/videos/$encoded",
-        )
+        val trimmedChannel = channelSlugOrId?.trim()?.takeIf { it.isNotBlank() }
+        val explicitChannelId = channelId?.trim()?.takeIf { it.isNotBlank() && it.all { ch -> ch.isDigit() } }
+        val isNumericChannel = trimmedChannel?.all { it.isDigit() } == true
+        val channelLoginFallback = if (isNumericChannel) null else trimmedChannel
+        val resolvedChannelId = explicitChannelId ?: when {
+            isNumericChannel -> trimmedChannel
+            trimmedChannel != null -> runCatching {
+                getChannel(trimmedChannel, prefetchBadgeCatalog = false).id?.toString()
+            }.getOrNull()
+            else -> null
+        }
+        val candidates = buildList {
+            resolvedChannelId?.let { add("https://web.kick.com/api/v1/channels/${urlEncode(it)}/videos/$encoded") }
+            add("https://web.kick.com/api/v1/videos/$encoded")
+            add("https://web.kick.com/api/v1/video/$encoded")
+            add("https://kick.com/api/v1/video/$encoded")
+            add("https://kick.com/api/v2/video/$encoded")
+            add("https://kick.com/api/v1/videos/$encoded")
+            add("https://kick.com/api/v2/videos/$encoded")
+        }
         for (url in candidates) {
             val root = runCatching { json.parseToJsonElement(getRaw(url, isKickWeb = true)) }.getOrNull() ?: continue
             parseVideos(
                 roots = listOf(root),
-                channelId = null,
-                channelLogin = null,
+                channelId = resolvedChannelId,
+                channelLogin = channelLoginFallback,
                 channelName = null,
                 channelLogo = null,
                 limit = 1,
@@ -3074,8 +3112,10 @@ class KickRepository @Inject constructor(
             val channelLoginResolved = channel?.primitiveOrNull("slug")
                 ?: user?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
                 ?: obj.primitiveOrNull("channel_slug")
+                ?: channelLoginFallback
             val channelNameResolved = user?.primitiveOrNull("username")
                 ?: channel?.primitiveOrNull("name")
+                ?: channel?.primitiveOrNull("username")
                 ?: obj.primitiveOrNull("channel_name")
                 ?: channelLoginResolved
             val channelLogoResolved = user?.primitiveOrNull("profile_pic")
@@ -3086,7 +3126,7 @@ class KickRepository @Inject constructor(
                 id = resolvedId,
                 source = AppConstants.KICK,
                 url = extractKickVideoUrl(obj),
-                channelId = channel?.primitiveOrNull("id") ?: obj.primitiveOrNull("channel_id"),
+                channelId = channel?.primitiveOrNull("id") ?: obj.primitiveOrNull("channel_id") ?: resolvedChannelId,
                 channelLogin = channelLoginResolved,
                 channelName = channelNameResolved,
                 title = obj.primitiveOrNull("session_title") ?: obj.primitiveOrNull("title"),
@@ -3094,13 +3134,15 @@ class KickRepository @Inject constructor(
                 thumbnailUrl = extractImageUrl(obj.objOrNull("thumbnail"))
                     ?: obj.primitiveOrNull("thumbnail_url")
                     ?: obj.primitiveOrNull("preview_thumbnail_url"),
-                viewCount = obj.intOrNull("views") ?: obj.intOrNull("view_count"),
+                viewCount = obj.intOrNull("views") ?: obj.intOrNull("view_count") ?: obj.intOrNull("viewer_count"),
                 type = "ARCHIVE",
                 duration = normalizeVideoDurationSeconds(
                     obj.firstLongOrNull("duration_seconds", "length_seconds")
                         ?: obj.firstLongOrNull("duration")
                 ),
                 profileImageUrl = channelLogoResolved,
+                uuid = obj.objOrNull("video")?.primitiveOrNull("uuid") ?: obj.primitiveOrNull("uuid") ?: resolvedId.takeIf { KickSubOnlyVodUtils.isUuidShaped(it) },
+                slug = obj.primitiveOrNull("slug"),
             )
         }
         null
@@ -3233,18 +3275,44 @@ class KickRepository @Inject constructor(
     }
 
     private suspend fun probeIvsMasterPlaylists(urls: List<String>): String? = coroutineScope {
-        urls.map { url ->
+        val jobs = urls.map { url ->
             async {
                 runCatching {
                     subOnlyVodProbeClient.newCall(
                         Request.Builder()
                             .url(url)
                             .header("User-Agent", kickWebUserAgent)
-                            .head()
+                            .get()
                             .build()
                     ).execute().use { response ->
                         if (response.isSuccessful) {
-                            url
+                            val body = response.body.string()
+                            if (body.startsWith("#EXTM3U", ignoreCase = true)) {
+                                val variant = body.lineSequence()
+                                    .map { it.trim() }
+                                    .firstOrNull { it.isNotBlank() && !it.startsWith("#") && it.substringBefore('?').endsWith(".m3u8", ignoreCase = true) }
+                                if (variant != null) {
+                                    val variantUrl = resolvePlaylistUrl(url, variant)
+                                    subOnlyVodProbeClient.newCall(
+                                        Request.Builder()
+                                            .url(variantUrl)
+                                            .header("User-Agent", kickWebUserAgent)
+                                            .get()
+                                            .build()
+                                    ).execute().use { variantResp ->
+                                        if (variantResp.isSuccessful && variantResp.body.string().startsWith("#EXTM3U", ignoreCase = true)) {
+                                            url
+                                        } else {
+                                            logVodFallback("probe", "variant rejected code=${variantResp.code} url=$variantUrl")
+                                            null
+                                        }
+                                    }
+                                } else {
+                                    url
+                                }
+                            } else {
+                                null
+                            }
                         } else {
                             if (response.code != 404) {
                                 logVodFallback("probe", "unexpected code=${response.code} url=$url")
@@ -3258,7 +3326,19 @@ class KickRepository @Inject constructor(
                     null
                 }
             }
-        }.firstNotNullOfOrNull { it.await() }
+        }
+        var found: String? = null
+        for (job in jobs) {
+            val result = job.await()
+            if (result != null) {
+                found = result
+                break
+            }
+        }
+        if (found != null) {
+            jobs.forEach { if (it.isActive) it.cancel() }
+        }
+        found
     }
 
     suspend fun getClipPlaylistStartTimeMs(clipUrl: String): Long? = withContext(Dispatchers.IO) {
@@ -4079,6 +4159,10 @@ class KickRepository @Inject constructor(
         return parsePlaybackUrlResponse(raw)
     }
 
+    fun isDailyRewardsEnabled(): Boolean {
+        return context.prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)
+    }
+
     suspend fun getPlaybackUrl(channelSlug: String, forceRefresh: Boolean = false): String? {
         val normalizedSlug = channelSlug.trim().lowercase(Locale.ROOT)
         if (normalizedSlug.isBlank()) return null
@@ -4086,7 +4170,7 @@ class KickRepository @Inject constructor(
             getChannelLivestream(normalizedSlug, forceRefresh = forceRefresh)
         }.getOrNull()
         if (livestream != null) {
-            if (hasUsableKickWebsiteSession()) {
+            if (isDailyRewardsEnabled() && hasUsableKickWebsiteSession()) {
                 val authenticatedUrl = runCatching {
                     getChannelPlaybackUrl(normalizedSlug)
                 }.getOrNull()

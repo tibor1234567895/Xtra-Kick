@@ -17,8 +17,21 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
+    <PreferenceCategory
+        android:title="@string/daily_rewards_category"
+        app:iconSpaceReserved="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="kick_daily_rewards_enabled"
+        android:summary="@string/kick_daily_rewards_enabled_summary"
+        android:title="@string/kick_daily_rewards_enabled_title"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
     <SwitchPreferenceCompat
         android:defaultValue="false"
+        android:dependency="kick_daily_rewards_enabled"
         android:key="reward_auto_claim_enabled"
         android:summary="@string/reward_auto_claim_summary"
         android:title="@string/reward_auto_claim"

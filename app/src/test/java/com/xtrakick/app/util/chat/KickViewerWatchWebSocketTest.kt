@@ -36,4 +36,9 @@ class KickViewerWatchWebSocketTest {
         assertEquals(60_000L, KickViewerWatchWebSocket.CURRENT_VIEWERS_INTERVAL_MS)
         assertEquals(120_000L, KickViewerWatchWebSocket.REWARDS_POLL_INTERVAL_MS)
     }
+
+    @Test
+    fun verifiesRewardsEnabledConstant() {
+        assertEquals("kick_daily_rewards_enabled", com.xtrakick.app.util.AppConstants.KICK_DAILY_REWARDS_ENABLED)
+    }
 }

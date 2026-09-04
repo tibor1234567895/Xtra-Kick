@@ -323,6 +323,7 @@ object AppConstants {
     const val LIVE_NOTIFICATIONS_LAST_SUCCESS = "live_notifications_last_success"
     const val BATTERY_OPT_PROMPT_SHOWN = "battery_opt_prompt_shown"
 
+    const val KICK_DAILY_REWARDS_ENABLED = "kick_daily_rewards_enabled"
     const val REWARD_AUTO_CLAIM_ENABLED = "reward_auto_claim_enabled"
     const val REWARD_CLAIM_NOTIFICATIONS_ENABLED = "reward_claim_notifications_enabled"
     const val REWARD_DAILY_CLAIMED_UNTIL = "reward_daily_claimed_until"

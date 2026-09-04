@@ -188,7 +188,15 @@ class MainViewModel @Inject constructor(
         } ?: false
     }
 
-    fun loadVideo(videoId: String?, offset: Long?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadVideo(
+        videoId: String?,
+        offset: Long?,
+        networkLibrary: String?,
+        kickWebHeaders: Map<String, String>,
+        kickPublicApiHeaders: Map<String, String>,
+        enableIntegrity: Boolean,
+        channelLogin: String? = null,
+    ) {
         if (video.value == null) {
             viewModelScope.launch {
                 val id = videoId?.takeIf { it.isNotBlank() }
@@ -196,7 +204,7 @@ class MainViewModel @Inject constructor(
                     null
                 } else {
                     // Prefer Kick web / public APIs — never Twitch GQL for deep links.
-                    runCatching { kickRepository.getVideoById(id) }.getOrNull()
+                    runCatching { kickRepository.getVideoById(id, channelLogin) }.getOrNull()
                         ?: runCatching {
                             kickPublicApiRepository.getVideos(
                                 networkLibrary = networkLibrary,
@@ -207,7 +215,7 @@ class MainViewModel @Inject constructor(
                                     id = it.id,
                                     source = AppConstants.KICK,
                                     channelId = it.channelId,
-                                    channelLogin = it.channelLogin,
+                                    channelLogin = it.channelLogin ?: channelLogin,
                                     channelName = it.channelName,
                                     title = it.title,
                                     viewCount = it.viewCount,
@@ -217,8 +225,18 @@ class MainViewModel @Inject constructor(
                                 )
                             }
                         }.getOrNull()
+                        ?: channelLogin?.let { login ->
+                            runCatching {
+                                kickRepository.getChannelVideos(channelSlug = login, limit = 50)
+                                    .firstOrNull { it.id == id || it.uuid == id || it.slug == id }
+                            }.getOrNull()
+                        }
                 }
-                video.value = item to offset
+                if (item != null) {
+                    video.value = item to offset
+                } else {
+                    video.value = null
+                }
             }
         }
     }

@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.drawable.Icon
@@ -115,6 +116,17 @@ class IvsPlayerService : Service() {
     private var activeKickChannelId: String? = null
     private var activeKickLivestreamId: String? = null
     private var activeKickChannelLogin: String? = null
+    private val rewardsPreferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == AppConstants.KICK_DAILY_REWARDS_ENABLED) {
+            if (prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)) {
+                if (player?.state == Player.State.PLAYING) {
+                    startKickViewerWatchIfNeeded()
+                }
+            } else {
+                stopKickViewerWatch()
+            }
+        }
+    }
 
     private fun startKickViewerWatchIfNeeded() {
         val channelId = activeKickChannelId?.takeIf { it.isNotBlank() }
@@ -122,6 +134,7 @@ class IvsPlayerService : Service() {
         val channelLogin = activeKickChannelLogin?.takeIf { it.isNotBlank() }
         playerDebugLog("viewer metadata channelId=$channelId livestreamId=$livestreamId channelLogin=$channelLogin")
         if (channelId == null && livestreamId == null && channelLogin == null) return
+        if (!prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)) return
         if (kickViewerWatchJob?.isActive == true) return
         kickViewerWatch = KickViewerWatchWebSocket(
             kickRepository,
@@ -281,6 +294,7 @@ class IvsPlayerService : Service() {
     @Suppress("DEPRECATION")
     override fun onCreate() {
         super.onCreate()
+        prefs().registerOnSharedPreferenceChangeListener(rewardsPreferenceChangeListener)
         wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager).newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
             "IvsPlayerService:WakeLock"
@@ -1111,6 +1125,7 @@ class IvsPlayerService : Service() {
         releasePlaybackLocks()
         wakeLock = null
         wifiLock = null
+        prefs().unregisterOnSharedPreferenceChangeListener(rewardsPreferenceChangeListener)
         super.onDestroy()
     }
 

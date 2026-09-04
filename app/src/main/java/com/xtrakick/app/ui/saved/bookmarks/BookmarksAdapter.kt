@@ -118,6 +118,7 @@ class BookmarksAdapter(
                         (fragment.activity as MainActivity).startVideo(
                             Video(
                                 id = item.videoId,
+                                source = AppConstants.KICK,
                                 channelId = item.userId,
                                 channelLogin = item.userLogin,
                                 channelName = item.userName,
@@ -260,6 +261,7 @@ class BookmarksAdapter(
                                     R.id.download -> showDownloadDialog(
                                         Video(
                                             id = item.videoId,
+                                            source = AppConstants.KICK,
                                             channelId = item.userId,
                                             channelLogin = item.userLogin,
                                             channelName = item.userName,

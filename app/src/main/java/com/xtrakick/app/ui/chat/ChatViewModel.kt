@@ -3839,7 +3839,9 @@ class ChatViewModel @Inject constructor(
                 kickReplayFallbackGetCurrentPosition = getCurrentPosition
                 val startTimeMs = kickReplayFallbackStartTimeMs ?: 0L
                 val isClipReplay = kickReplayUrl?.contains("/clips/", ignoreCase = true) == true ||
+                        kickReplayUrl?.contains("/clip/", ignoreCase = true) == true ||
                         kickReplayUrl?.contains("clips.kick.com", ignoreCase = true) == true
+                val initialSeekPosition = startTime.takeIf { it > 0 }?.toLong()?.times(1000L)
                 startKickReplayChat(
                     channelId = channelId,
                     channelLogin = channelLogin,
@@ -3847,7 +3849,8 @@ class ChatViewModel @Inject constructor(
                     replayStartTimeMs = startTimeMs,
                     kickReplayUrl = kickReplayUrl,
                     getCurrentPosition = getCurrentPosition,
-                    showClipStartMarker = isClipReplay
+                    showClipStartMarker = isClipReplay,
+                    seekPosition = initialSeekPosition
                 )
                 return
             }
@@ -3879,6 +3882,16 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun updateKickReplayStartTime(startTime: String?) {
+        val newTimeMs = startTime?.let { KickApiHelper.parseIso8601DateUTC(it) } ?: return
+        if (kickReplayFallbackStartTimeMs != newTimeMs) {
+            kickReplayFallbackStartTimeMs = newTimeMs
+            if (kickReplayFallbackEnabled) {
+                startReplayChatLoad(seekPosition = kickReplayLastPlaybackPositionMs ?: kickReplayFallbackGetCurrentPosition?.invoke())
+            }
+        }
+    }
+
     fun startReplayChatLoad(seekPosition: Long? = null) {
         if (kickReplayFallbackEnabled) {
             val channelId = kickReplayFallbackChannelId
@@ -3897,6 +3910,7 @@ class ChatViewModel @Inject constructor(
                     "restarting_fallback channelId=$channelId seekPosition=$seekPosition"
                 }
                 val isClipReplay = kickReplayUrl?.contains("/clips/", ignoreCase = true) == true ||
+                        kickReplayUrl?.contains("/clip/", ignoreCase = true) == true ||
                         kickReplayUrl?.contains("clips.kick.com", ignoreCase = true) == true
                 startKickReplayChat(
                     channelId = channelId,
@@ -3932,6 +3946,12 @@ class ChatViewModel @Inject constructor(
     }
 
     fun updatePosition(position: Long) {
+        if (kickReplayFallbackEnabled) {
+            val prev = kickReplayLastPlaybackPositionMs
+            if (prev != null && kotlin.math.abs(position - prev) > 20_000L) {
+                startReplayChatLoad(position)
+            }
+        }
         chatReplayManager?.updatePosition(position) ?: chatReplayManagerLocal?.updatePosition(position)
     }
 

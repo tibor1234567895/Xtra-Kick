@@ -730,6 +730,9 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="live_notification_channels_unknown">Unknown channel (%s)</string>
     <string name="live_notification_channels_update_failed">Couldn\'t update notification setting. Check your connection and try again.</string>
     <string name="live_notification_channels_permission_denied">Notification permission denied — enable it in system settings to get live notifications.</string>
+    <string name="daily_rewards_category">Daily rewards &amp; tracking</string>
+    <string name="kick_daily_rewards_enabled_title">Enable daily rewards &amp; watch tracking</string>
+    <string name="kick_daily_rewards_enabled_summary">Send watch telemetry to earn daily rewards, streaks, and claim prizes. Turn off to watch streams anonymously without tracking.</string>
     <string name="reward_auto_claim">Auto-claim Kick rewards</string>
     <string name="reward_auto_claim_summary">Automatically claims your daily reward and finished drops. Requires a kick.com login done inside the app.</string>
     <string name="reward_claim_notifications">Notify about claimed rewards</string>

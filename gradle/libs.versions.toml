@@ -34,6 +34,7 @@ webkit = "1.17.0"
 work = "2.11.1"
 firebase-bom = "33.10.0"
 google-services = "4.5.0"
+detekt = "1.23.8"
 
 [libraries]
 activity = { module = "androidx.activity:activity", version.ref = "activity" }
@@ -92,3 +93,4 @@ kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref =
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 navigation-safeargs = { id = "androidx.navigation.safeargs.kotlin", version.ref = "navigation" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }

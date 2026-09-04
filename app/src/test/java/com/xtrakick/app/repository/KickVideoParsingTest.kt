@@ -60,8 +60,16 @@ class KickVideoParsingTest {
             duration = "7445"
         )
         assertEquals("12345", video.id)
+        assertEquals(com.xtrakick.app.util.AppConstants.KICK, video.source)
         assertEquals("maximusblack", video.channelLogin)
         assertEquals("MaximusBlack", video.channelName)
         assertEquals("OTT - Gang Update", video.title)
+    }
+
+    @Test
+    fun testVideoModelDefaultsSourceToKick() {
+        val video = Video(id = "01a0590d-ed00-78b9-9df1-979c88189a5e", uuid = "01a0590d-ed00-78b9-9df1-979c88189a5e")
+        assertEquals(com.xtrakick.app.util.AppConstants.KICK, video.source)
+        assertEquals("01a0590d-ed00-78b9-9df1-979c88189a5e", video.uuid)
     }
 }

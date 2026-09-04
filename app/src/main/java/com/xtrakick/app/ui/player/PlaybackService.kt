@@ -2,6 +2,7 @@ package com.xtrakick.app.ui.player
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.SharedPreferences
 import android.media.audiofx.DynamicsProcessing
 import android.net.http.HttpEngine
 import android.os.Build
@@ -127,6 +128,7 @@ class PlaybackService : MediaSessionService() {
     private var background = false
     private var backgroundPrepareRetryCount = 0
     private var videoId: Long? = null
+    private var currentVideoIdString: String? = null
     private var offlineVideoId: Int? = null
     private lateinit var activeLatencyConfig: LiveLatencyConfig
     private var sleepTimer: Timer? = null
@@ -140,12 +142,24 @@ class PlaybackService : MediaSessionService() {
     private var activeKickChannelId: String? = null
     private var activeKickLivestreamId: String? = null
     private var activeKickChannelLogin: String? = null
+    private val rewardsPreferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == AppConstants.KICK_DAILY_REWARDS_ENABLED) {
+            if (prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)) {
+                if (mediaSession?.player?.isPlaying == true) {
+                    startKickViewerWatchIfNeeded()
+                }
+            } else {
+                stopKickViewerWatch()
+            }
+        }
+    }
 
     private fun startKickViewerWatchIfNeeded() {
         val channelId = activeKickChannelId?.takeIf { it.isNotBlank() }
         val livestreamId = activeKickLivestreamId?.takeIf { it.isNotBlank() }
         val channelLogin = activeKickChannelLogin?.takeIf { it.isNotBlank() }
         if (channelId == null && livestreamId == null && channelLogin == null) return
+        if (!prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)) return
         if (kickViewerWatchJob?.isActive == true) return
         kickViewerWatch = KickViewerWatchWebSocket(
             kickRepository = kickRepository,
@@ -222,6 +236,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        prefs().registerOnSharedPreferenceChangeListener(rewardsPreferenceChangeListener)
         activeLatencyConfig = LiveLatencySettings.resolve(prefs())
         val player = ExoPlayer.Builder(this).apply {
             setLoadControl(LiveLatencySettings.toLoadControl(activeLatencyConfig))
@@ -542,7 +557,10 @@ class PlaybackService : MediaSessionService() {
                                 activeKickLivestreamId = null
                                 activeKickChannelLogin = null
                                 val newId = customCommand.customExtras.getLong(VIDEO_ID).takeIf { it != 0L }
-                                val position = if (videoId == newId && session.player.currentMediaItem != null) {
+                                val newIdString = customCommand.customExtras.getString(VIDEO_ID_STRING)
+                                    ?: newId?.toString()
+                                val isSameVideo = !newIdString.isNullOrBlank() && newIdString == currentVideoIdString
+                                val position = if (isSameVideo && session.player.currentMediaItem != null) {
                                     session.player.currentPosition
                                 } else {
                                     customCommand.customExtras.getLong(PLAYBACK_POSITION)
@@ -552,6 +570,7 @@ class PlaybackService : MediaSessionService() {
                                 prefs().edit { putString(AppConstants.LAST_PLAYBACK_ENGINE, "media3") }
                                 stopIdleTimer()
                                 videoId = newId
+                                currentVideoIdString = newIdString
                                 offlineVideoId = null
                                 // A new item gets its own full retry budget.
                                 if (backgroundPrepareRetryCount > 0) backgroundPrepareRetryCount = 0
@@ -605,6 +624,7 @@ class PlaybackService : MediaSessionService() {
                                 activeKickLivestreamId = null
                                 activeKickChannelLogin = null
                                 videoId = null
+                                currentVideoIdString = null
                                 offlineVideoId = null
                                 prefs().edit { putString(AppConstants.LAST_PLAYBACK_ENGINE, "media3") }
                                 stopIdleTimer()
@@ -901,6 +921,7 @@ class PlaybackService : MediaSessionService() {
             release()
             mediaSession = null
         }
+        prefs().unregisterOnSharedPreferenceChangeListener(rewardsPreferenceChangeListener)
         super.onDestroy()
     }
 
@@ -985,6 +1006,7 @@ class PlaybackService : MediaSessionService() {
         const val RESULT = "result"
         const val URI = "uri"
         const val VIDEO_ID = "videoId"
+        const val VIDEO_ID_STRING = "videoIdString"
         const val PLAYBACK_POSITION = "playbackPosition"
         const val TITLE = "title"
         const val CHANNEL_NAME = "channelName"

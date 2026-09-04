@@ -88,6 +88,8 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.KickApiHelper
+import com.xtrakick.app.util.KickLink
+import com.xtrakick.app.util.KickLinkRouter
 import com.xtrakick.app.util.applyTheme
 import com.xtrakick.app.util.cancelLiveNotificationsPollingWork
 import com.xtrakick.app.util.enqueueLiveNotificationsPollingWork
@@ -664,96 +666,68 @@ class MainActivity : AppCompatActivity() {
             Intent.ACTION_VIEW -> {
                 val url = intent.data?.toString()
                 if (url != null) {
-                    when {
-                        url.contains("kick.com/videos/") || url.contains("kick.com/video/") -> {
-                            val id = url.substringAfter("kick.com/videos/", "")
-                                .ifEmpty { url.substringAfter("kick.com/video/", "") }
-                                .takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
-                            val offset = url.substringAfter("?t=", "").takeIf { it.isNotBlank() }?.let { (KickApiHelper.getDuration(it) ?: 0) * 1000 }
-                            if (!id.isNullOrBlank()) {
-                                viewModel.loadVideo(
-                                    id,
-                                    offset,
-                                    prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getKickWebHeaders(this),
-                                    KickApiHelper.getKickPublicApiHeaders(this),
-                                    prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                                )
-                            }
+                    when (val link = KickLinkRouter.parse(url)) {
+                        is KickLink.Video -> {
+                            viewModel.loadVideo(
+                                videoId = link.videoId,
+                                offset = link.offsetMs,
+                                networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                                kickWebHeaders = KickApiHelper.getKickWebHeaders(this),
+                                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(this),
+                                enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                                channelLogin = link.channelLogin,
+                            )
                         }
-                        url.contains("/clip/") -> {
-                            val id = url.substringAfter("/clip/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
-                            if (!id.isNullOrBlank()) {
-                                viewModel.loadClip(
-                                    id,
-                                    prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getKickWebHeaders(this),
-                                    KickApiHelper.getKickPublicApiHeaders(this),
-                                    prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                                )
-                            }
+                        is KickLink.Clip -> {
+                            viewModel.loadClip(
+                                clipId = link.clipId,
+                                networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                                kickWebHeaders = KickApiHelper.getKickWebHeaders(this),
+                                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(this),
+                                enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                            )
                         }
-                        url.contains("clips.kick.com/") -> {
-                            val id = url.substringAfter("clips.kick.com/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
-                            if (!id.isNullOrBlank()) {
-                                viewModel.loadClip(
-                                    id,
-                                    prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getKickPublicApiHeaders(this),
-                                    KickApiHelper.getKickWebHeaders(this),
-                                    prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                                )
-                            }
+                        is KickLink.Category -> {
+                            viewModel.loadGame(
+                                gameSlug = link.slug,
+                                tag = link.tag,
+                                networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                                kickWebHeaders = KickApiHelper.getKickWebHeaders(this),
+                                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(this),
+                                enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                            )
                         }
-                        url.contains("kick.com/category/") || url.contains("kick.com/categories/") -> {
-                            val pathPrefix = if (url.contains("kick.com/category/")) "kick.com/category/" else "kick.com/categories/"
-                            val slug = url.substringAfter(pathPrefix).takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
-                            val tag = url.substringAfter("?tl=", "").takeIf { it.isNotBlank() }?.substringBefore("&")
-                            if (!slug.isNullOrBlank()) {
-                                viewModel.loadGame(
-                                    gameSlug = slug,
-                                    tag = tag?.let { Uri.decode(it) },
-                                    networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                    kickWebHeaders = KickApiHelper.getKickWebHeaders(this),
-                                    kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(this),
-                                    enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                        is KickLink.Tag -> {
+                            playerFragment?.minimize()
+                            navController.navigate(
+                                TopStreamsFragmentDirections.actionGlobalTopFragment(
+                                    tags = arrayOf(link.tag)
                                 )
-                            }
+                            )
                         }
-                        url.contains("kick.com/tags/") -> {
-                            val tag = url.substringAfter("kick.com/tags/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
-                            if (!tag.isNullOrBlank()) {
-                                playerFragment?.minimize()
-                                navController.navigate(
-                                    TopStreamsFragmentDirections.actionGlobalTopFragment(
-                                        tags = arrayOf(Uri.decode(tag))
-                                    )
-                                )
-                            }
-                        }
-                        url.contains("kick.com/directory/all") -> {
+                        KickLink.DirectoryAll -> {
                             playerFragment?.minimize()
                             navController.navigate(
                                 TopStreamsFragmentDirections.actionGlobalTopFragment()
                             )
                         }
-                        url.contains("kick.com/directory") -> {
+                        KickLink.Directory -> {
                             playerFragment?.minimize()
                             navController.navigate(
                                 GamesFragmentDirections.actionGlobalGamesFragment()
                             )
                         }
-                        else -> {
-                            val login = url.substringAfter("kick.com/").takeIf { it.isNotBlank() }?.let { it.substringBefore("?", it.substringBefore("/")) }
-                            if (!login.isNullOrBlank()) {
-                                viewModel.loadUser(
-                                    login,
-                                    prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getKickWebHeaders(this),
-                                    KickApiHelper.getKickPublicApiHeaders(this),
-                                    prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                                )
-                            }
+                        is KickLink.User -> {
+                            viewModel.loadUser(
+                                login = link.channelLogin,
+                                networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                                kickWebHeaders = KickApiHelper.getKickWebHeaders(this),
+                                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(this),
+                                enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                            )
+                        }
+                        null -> {
+                            // Unsupported or unroutable Kick URL
                         }
                     }
                 }

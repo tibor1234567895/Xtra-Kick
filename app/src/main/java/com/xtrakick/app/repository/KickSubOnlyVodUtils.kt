@@ -17,7 +17,6 @@ internal object KickSubOnlyVodUtils {
     private const val IVS_ACCOUNT_ID = "196233775518"
 
     val ivsBaseUrls: List<String> = listOf(
-        "https://stream.kick.com/ivs/v1/$IVS_ACCOUNT_ID",
         "https://stream.kick.com/3c81249a5ce0/ivs/v1/$IVS_ACCOUNT_ID",
         "https://stream.kick.com/0f3cb0ebce7/ivs/v1/$IVS_ACCOUNT_ID",
     )
@@ -34,11 +33,12 @@ internal object KickSubOnlyVodUtils {
      * recording ids (the IVS path keys off the slug, not the numeric VOD id).
      */
     fun extractIvsPaths(thumbnailUrl: String?, channelId: String?, recordingIds: List<String?>): List<IvsPath> {
-        val paths = mutableListOf<IvsPath>()
+        val paths = LinkedHashSet<IvsPath>()
         fun add(ivsChannelId: String?, recordingId: String?) {
-            val path = IvsPath(ivsChannelId?.trim().orEmpty(), recordingId?.trim().orEmpty())
-            if (path.ivsChannelId.isNotBlank() && path.recordingId.isNotBlank() && paths.none { it == path }) {
-                paths.add(path)
+            val cid = ivsChannelId?.trim().orEmpty()
+            val rid = recordingId?.trim().orEmpty()
+            if (cid.isNotBlank() && rid.isNotBlank()) {
+                paths.add(IvsPath(cid, rid))
             }
         }
         thumbnailUrl?.trim()?.takeIf { it.isNotBlank() }?.let { thumbnail ->
@@ -59,7 +59,7 @@ internal object KickSubOnlyVodUtils {
                 }
             }
         }
-        return paths
+        return paths.toList()
     }
 
     /** Parses ISO-8601 timestamps ("2026-08-27T21:03:59Z", offsets accepted) to epoch ms. */

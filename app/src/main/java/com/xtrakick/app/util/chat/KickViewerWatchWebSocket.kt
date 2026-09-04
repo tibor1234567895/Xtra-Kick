@@ -41,6 +41,13 @@ class KickViewerWatchWebSocket(
     fun start(scope: CoroutineScope): Job {
         parentScope = scope
         val job = scope.launch(Dispatchers.IO) {
+            if (!kickRepository.isDailyRewardsEnabled()) {
+                if (debugLogging) {
+                    Log.d(tag, "Kick daily rewards & watch telemetry disabled by user setting")
+                }
+                return@launch
+            }
+
             val resolvedLivestream = if (!channelLogin.isNullOrBlank()) {
                 runCatching {
                     kickRepository.getChannelLivestream(channelLogin, forceRefresh = true)

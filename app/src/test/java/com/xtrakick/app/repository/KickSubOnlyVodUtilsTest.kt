@@ -130,4 +130,11 @@ class KickSubOnlyVodUtilsTest {
         assertFalse(KickSubOnlyVodUtils.isUuidShaped(null))
         assertFalse(KickSubOnlyVodUtils.isUuidShaped("  "))
     }
+
+    @Test
+    fun ivsBaseUrls_prioritizesWorkingCdnDistributions() {
+        assertTrue(KickSubOnlyVodUtils.ivsBaseUrls.contains("https://stream.kick.com/3c81249a5ce0/ivs/v1/196233775518"))
+        assertTrue(KickSubOnlyVodUtils.ivsBaseUrls.contains("https://stream.kick.com/0f3cb0ebce7/ivs/v1/196233775518"))
+        assertFalse(KickSubOnlyVodUtils.ivsBaseUrls.contains("https://stream.kick.com/ivs/v1/196233775518"))
+    }
 }

@@ -673,12 +673,17 @@ class Media3Fragment : PlayerFragment() {
                         PlaybackService.URI to url,
                         PlaybackService.PLAYBACK_POSITION to playbackPosition,
                         PlaybackService.VIDEO_ID to requireArguments().getString(KEY_VIDEO_ID)?.toLongOrNull(),
+                        PlaybackService.VIDEO_ID_STRING to requireArguments().getString(KEY_VIDEO_ID),
                         PlaybackService.TITLE to requireArguments().getString(KEY_TITLE),
                         PlaybackService.CHANNEL_NAME to requireArguments().getString(KEY_CHANNEL_NAME),
                         PlaybackService.CHANNEL_LOGO to requireArguments().getString(KEY_CHANNEL_LOGO),
                     )
                 ), Bundle.EMPTY
             )
+            if (playbackPosition != null && playbackPosition > 0L) {
+                chatFragment?.updatePosition(playbackPosition)
+                chatFragment?.startReplayChatLoad(playbackPosition)
+            }
         }
     }
 

@@ -400,6 +400,16 @@ class SettingsActivity : AppCompatActivity() {
                 (requireActivity() as? SettingsActivity)?.setResult()
                 true
             }
+            findPreference<SwitchPreferenceCompat>(AppConstants.KICK_DAILY_REWARDS_ENABLED)?.setOnPreferenceChangeListener { _, newValue ->
+                val enabled = newValue as Boolean
+                if (!enabled) {
+                    RewardClaimScheduler.disable(requireContext().applicationContext)
+                } else if (requireContext().prefs().getBoolean(AppConstants.REWARD_AUTO_CLAIM_ENABLED, false)) {
+                    RewardClaimScheduler.enable(requireContext().applicationContext)
+                }
+                (requireActivity() as? SettingsActivity)?.setResult()
+                true
+            }
             findPreference<SwitchPreferenceCompat>(AppConstants.REWARD_AUTO_CLAIM_ENABLED)?.setOnPreferenceChangeListener { _, newValue ->
                 if (newValue == true) {
                     RewardClaimScheduler.enable(requireContext().applicationContext)

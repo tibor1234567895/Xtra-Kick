@@ -58,8 +58,11 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="kick.com" />
-                <data android:scheme="https" android:host="clips.kick.com" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="kick.com" />
+                <data android:host="www.kick.com" />
+                <data android:host="clips.kick.com" />
             </intent-filter>
         </activity>
         <activity android:name=".ui.settings.SettingsActivity" />

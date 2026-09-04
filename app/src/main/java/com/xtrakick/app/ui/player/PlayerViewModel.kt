@@ -79,6 +79,7 @@ class PlayerViewModel @Inject constructor(
 
     val videoResult = MutableStateFlow<String?>(null)
     val videoError = MutableStateFlow<Int?>(null)
+    val videoUploadDate = MutableStateFlow<String?>(null)
     var backupQualities: List<String>? = null
     var playbackPosition: Long? = null
     val savedPosition = MutableStateFlow<Long?>(null)
@@ -243,20 +244,28 @@ class PlayerViewModel @Inject constructor(
         if (videoResult.value == null) {
             viewModelScope.launch {
                 try {
-                    if (videoSource.equals(AppConstants.KICK, true)) {
+                    val resolvedSource = videoSource?.takeIf { it.isNotBlank() } ?: AppConstants.KICK
+                    if (resolvedSource.equals(AppConstants.KICK, true)) {
                         var fallbackVideo: Video? = null
                         val kickUrl = videoId?.let { vid ->
-                            runCatching { kickRepository.getVideoById(vid)?.also { fallbackVideo = it }?.url }.getOrNull()
+                            runCatching {
+                                kickRepository.getVideoById(
+                                    videoId = vid,
+                                    channelSlugOrId = channelLogin ?: channelId,
+                                    channelId = channelId,
+                                )?.also { fallbackVideo = it }?.url
+                            }.getOrNull()
                         } ?: channelLogin?.let { login ->
                             runCatching {
                                 kickRepository.getChannelVideos(
                                     channelSlug = login,
                                     channelId = channelId,
-                                    limit = 30
-                                ).firstOrNull { it.id == videoId }
+                                    limit = 50
+                                ).firstOrNull { it.id == videoId || it.uuid == videoId || it.slug == videoId }
                             }.getOrNull()?.also { fallbackVideo = it }?.url
                         }
                         if (!kickUrl.isNullOrBlank()) {
+                            fallbackVideo?.uploadDate?.takeIf { it.isNotBlank() }?.let { videoUploadDate.value = it }
                             videoResult.value = kickUrl
                             backupQualities = null
                         } else {
@@ -266,13 +275,14 @@ class PlayerViewModel @Inject constructor(
                                 runCatching {
                                     kickRepository.resolveSubOnlyVodPlaybackUrl(
                                         videoId = vid,
-                                        channelId = channelId,
-                                        channelLogin = channelLogin,
+                                        channelId = channelId ?: fallbackVideo?.channelId,
+                                        channelLogin = channelLogin ?: fallbackVideo?.channelLogin,
                                         listedVideo = fallbackVideo,
                                     )
                                 }.getOrNull()
                             }
                             if (!fallbackUrl.isNullOrBlank()) {
+                                fallbackVideo?.uploadDate?.takeIf { it.isNotBlank() }?.let { videoUploadDate.value = it }
                                 videoResult.value = fallbackUrl
                                 backupQualities = null
                             } else {

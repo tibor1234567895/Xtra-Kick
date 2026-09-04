@@ -1,13 +1,14 @@
 package com.xtrakick.app.model.ui
 
 import android.os.Parcelable
+import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import kotlinx.parcelize.Parcelize
 
 @Parcelize
 class Video(
     val id: String? = null,
-    val source: String? = null,
+    val source: String? = AppConstants.KICK,
     val url: String? = null,
     val channelId: String? = null,
     val channelLogin: String? = null,
@@ -24,6 +25,8 @@ class Video(
     var gameName: String? = null,
     var profileImageUrl: String? = null,
     val animatedPreviewURL: String? = null,
+    val uuid: String? = null,
+    val slug: String? = null,
 ) : Parcelable {
 
     val thumbnail: String?

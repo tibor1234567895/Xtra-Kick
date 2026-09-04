@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.hilt)
     alias(libs.plugins.navigation.safeargs)
     alias(libs.plugins.google.services)
+    alias(libs.plugins.detekt)
 }
 
 kotlin {
@@ -277,3 +278,7 @@ ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
 
+detekt {
+    buildUponDefaultConfig = true
+    baseline = file("$projectDir/detekt-baseline.xml")
+}
