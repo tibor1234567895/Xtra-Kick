@@ -4,9 +4,7 @@ import android.content.Context
 import com.google.firebase.messaging.FirebaseMessaging
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.db.NotificationUsersDao
-import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowChannelRepository
-import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -23,12 +21,10 @@ class FcmSyncManager @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val notificationUsersDao: NotificationUsersDao,
     private val localFollowChannelRepository: LocalFollowChannelRepository? = null,
-    private val kickRepository: Lazy<KickRepository>? = null,
 ) {
 
     companion object {
         private const val FCM_LAST_SYNCED_SIGNATURE = "fcm_last_synced_signature_v1"
-        private val channelInfoCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
     }
 
     suspend fun syncSubscriptions(tokenOverride: String? = null): Boolean = withContext(Dispatchers.IO) {
@@ -59,33 +55,6 @@ class FcmSyncManager @Inject constructor(
             if (follow != null) {
                 follow.userId?.takeIf(String::isNotBlank)?.let(allChannelIds::add)
                 follow.userLogin?.takeIf(String::isNotBlank)?.let { allChannelIds.add(it.lowercase()) }
-            }
-        }
-        // Kick Pusher live events arrive on channel.<channel.id>, while the DB stores the
-        // canonical broadcaster userId. Resolve both so the backend subscribes to the
-        // correct Pusher channel. Best-effort: raw keys are always kept.
-        runCatching {
-            val repo = kickRepository?.get() ?: return@runCatching
-            for (key in allChannelIds.toList()) {
-                val cached = channelInfoCache[key]
-                if (cached != null) {
-                    allChannelIds.addAll(cached)
-                    continue
-                }
-                val channel = runCatching {
-                    repo.getChannel(key, prefetchBadgeCatalog = false)
-                }.getOrNull() ?: continue
-                val aliases = listOfNotNull(
-                    channel.id?.toString(),
-                    channel.userId?.toString(),
-                    channel.user?.id?.toString(),
-                    channel.slug?.trim(),
-                    channel.slug?.trim()?.lowercase(),
-                    channel.user?.username?.trim(),
-                    channel.user?.username?.trim()?.lowercase(),
-                ).filter { it.isNotBlank() }
-                channelInfoCache[key] = aliases
-                allChannelIds.addAll(aliases)
             }
         }
 

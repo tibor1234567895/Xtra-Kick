@@ -131,8 +131,8 @@ class NotificationUsersRepository @Inject constructor(
         val missing = canonicalIds.filterNot { it in existing }
         if (missing.isNotEmpty()) {
             notificationUsersDao.insertList(missing.map { NotificationUser(it) })
-            runCatching { fcmSyncManager.get().syncSubscriptions() }
         }
+        runCatching { fcmSyncManager.get().syncSubscriptions() }
         missing.size
     }
 
