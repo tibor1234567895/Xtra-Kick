@@ -23,7 +23,6 @@ import com.xtrakick.app.model.chat.Chatter
 import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
-import java.util.regex.Pattern
 
 class AutoCompleteAdapter<T>(
     context: Context,
@@ -93,7 +92,7 @@ class AutoCompleteAdapter<T>(
 
     private val filter: Filter = object : Filter() {
         override fun performFiltering(constraint: CharSequence?): FilterResults {
-            if (constraint.isNullOrBlank()) {
+            if (constraint.isNullOrBlank() || (constraint[0] != ':' && constraint[0] != '@')) {
                 return FilterResults()
             }
             val list = synchronized(originalValues) {
@@ -110,10 +109,10 @@ class AutoCompleteAdapter<T>(
         }
 
         private fun matchesSubsequence(query: CharSequence, target: String): Boolean {
-            if (query.isEmpty()) return true
-            if (target.length < query.length) return false
-            var qIdx = 0
-            for (tIdx in 0 until target.length) {
+            if (target.length < query.length || target[0] != query[0]) return false
+            if (query.length == 1) return true
+            var qIdx = 1
+            for (tIdx in 1 until target.length) {
                 if (target[tIdx].equals(query[qIdx], ignoreCase = true)) {
                     qIdx++
                     if (qIdx == query.length) return true
