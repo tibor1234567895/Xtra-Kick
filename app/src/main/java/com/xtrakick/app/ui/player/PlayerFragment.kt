@@ -197,7 +197,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     open fun seek(position: Long) {}
     open fun seekToLivePosition() {}
     open fun setPlaybackSpeed(speed: Float) {}
-    open fun changeVolume(volume: Float) {}
+    open fun changeVolume(volume: Float) {
+        updateVolumeButtonVisual(volume)
+    }
+
+    fun updateVolumeButtonVisual(volumeFraction: Float? = getCurrentVolume()) {
+        if (_binding == null) return
+        val vol = volumeFraction ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
+        binding.playerControls.volume.setImageResource(PlayerVolumeDialog.getVolumeIconRes(vol))
+    }
     open fun updateProgress() {}
     open fun toggleAudioCompressor() {}
     open fun setSubtitlesButton() {}
@@ -207,6 +215,39 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     open fun startAudioOnly() {}
     open fun downloadVideo() {}
     open fun close() {}
+
+    open fun getVideoStats(): com.xtrakick.app.model.ui.VideoStatsInfo? = null
+
+    private var videoStatsActiveInSession = false
+
+    fun isVideoStatsVisible(): Boolean = videoStatsActiveInSession
+
+    private val updateVideoStatsAction = object : Runnable {
+        override fun run() {
+            val binding = _binding ?: return
+            if (!binding.videoStatsOverlay.isVisible) return
+            val stats = getVideoStats()
+            binding.videoStatsOverlay.updateStats(stats)
+            binding.videoStatsOverlay.removeCallbacks(this)
+            binding.videoStatsOverlay.postDelayed(this, 1000L)
+        }
+    }
+
+    fun showVideoStatsOverlay(show: Boolean) {
+        videoStatsActiveInSession = show
+        val binding = _binding ?: return
+        val shouldDisplay = show && isMaximized && !requireActivity().isInPictureInPictureMode
+        binding.videoStatsOverlay.isVisible = shouldDisplay
+        binding.videoStatsOverlay.removeCallbacks(updateVideoStatsAction)
+        if (shouldDisplay) {
+            binding.videoStatsOverlay.updateStats(getVideoStats())
+            binding.videoStatsOverlay.postDelayed(updateVideoStatsAction, 1000L)
+        }
+    }
+
+    fun toggleVideoStats() {
+        showVideoStatsOverlay(!videoStatsActiveInSession)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         videoType = requireArguments().getString(KEY_TYPE)
@@ -305,6 +346,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             resizeMode = prefs.getInt(AppConstants.ASPECT_RATIO_LANDSCAPE, AspectRatioFrameLayout.RESIZE_MODE_FIT)
             aspectRatioFrameLayout.setAspectRatio(16f / 9f)
             initLayout()
+            videoStatsOverlay.onCloseRequested = {
+                showVideoStatsOverlay(false)
+            }
             changePlayerMode()
             val viewConfiguration = ViewConfiguration.get(requireContext())
             val touchSlop = viewConfiguration.scaledTouchSlop
@@ -1055,6 +1099,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
                 if (prefs.getBoolean(AppConstants.PLAYER_VOLUMEBUTTON, true)) {
                     volume.visibility = View.VISIBLE
+                    updateVolumeButtonVisual()
                     volume.setOnClickListener {
                         showController(force = true)
                         showVolumeDialog()
@@ -2798,6 +2843,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     protected fun startPlayer() {
+        showVideoStatsOverlay(false)
         viewModel.started = true
         when (videoType) {
             STREAM -> {
@@ -3049,11 +3095,19 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 (chatFragment?.childFragmentManager?.findFragmentByTag("messageDialog") as? BottomSheetDialogFragment)?.dismiss()
                 (chatFragment?.childFragmentManager?.findFragmentByTag("replyDialog") as? BottomSheetDialogFragment)?.dismiss()
                 (chatFragment?.childFragmentManager?.findFragmentByTag("imageDialog") as? BottomSheetDialogFragment)?.dismiss()
+                videoStatsOverlay.visibility = View.GONE
+                videoStatsOverlay.removeCallbacks(updateVideoStatsAction)
             } else {
                 useController = true
                 // System PiP hides chat while active; restore the user's landscape preference on exit.
                 if (isMaximized && !isPortrait) {
                     restoreLandscapeChatIfNeeded(animate = false)
+                }
+                if (isMaximized && videoStatsActiveInSession) {
+                    videoStatsOverlay.visibility = View.VISIBLE
+                    videoStatsOverlay.updateStats(getVideoStats())
+                    videoStatsOverlay.removeCallbacks(updateVideoStatsAction)
+                    videoStatsOverlay.postDelayed(updateVideoStatsAction, 1000L)
                 }
             }
         }
@@ -3064,6 +3118,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         unlockOrientationJob?.cancel()
         unlockOrientationJob = null
 
+        _binding?.videoStatsOverlay?.removeCallbacks(updateVideoStatsAction)
         binding.playerControls.root.removeCallbacks(controllerHideAction)
     }
 
@@ -3318,6 +3373,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             backPressedCallback.remove()
             useController = false
             hideController(true)
+            videoStatsOverlay.visibility = View.GONE
+            videoStatsOverlay.removeCallbacks(updateVideoStatsAction)
             fun animate() {
                 val (minimizedScaleX, minimizedScaleY) = getScaleValues()
                 val windowInsets = ViewCompat.getRootWindowInsets(requireView())
@@ -3428,6 +3485,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 if (!isPortrait && isMaximized) {
                                     restoreLandscapeChatIfNeeded(animate = false)
                                 }
+                            }
+                            if (isMaximized && videoStatsActiveInSession && !requireActivity().isInPictureInPictureMode) {
+                                videoStatsOverlay.visibility = View.VISIBLE
+                                videoStatsOverlay.updateStats(getVideoStats())
+                                videoStatsOverlay.removeCallbacks(updateVideoStatsAction)
+                                videoStatsOverlay.postDelayed(updateVideoStatsAction, 1000L)
                             }
                             activePointerId = -1
                         }
@@ -3807,7 +3870,18 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         )
     }
 
+    override fun onStart() {
+        super.onStart()
+        if (videoStatsActiveInSession && isMaximized && !requireActivity().isInPictureInPictureMode) {
+            _binding?.videoStatsOverlay?.visibility = View.VISIBLE
+            _binding?.videoStatsOverlay?.removeCallbacks(updateVideoStatsAction)
+            _binding?.videoStatsOverlay?.post(updateVideoStatsAction)
+        }
+    }
+
     override fun onDestroyView() {
+        videoStatsActiveInSession = false
+        _binding?.videoStatsOverlay?.removeCallbacks(updateVideoStatsAction)
         super.onDestroyView()
         _binding = null
     }

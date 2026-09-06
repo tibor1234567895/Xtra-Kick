@@ -364,6 +364,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             minimize.setOnClickListener { minimize() }
 
             volume.isVisible = prefs.getBoolean(AppConstants.PLAYER_VOLUMEBUTTON, true)
+            updateVolumeButtonVisual()
             volume.setOnClickListener {
                 showControlsTemporarily()
                 showVolumeDialog()
@@ -495,6 +496,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             updateChatToggleIcon()
             updateUptime(stream?.startedAt)
             updateLatencyDisplay(playbackController?.getLiveOffsetMs(key))
+            updateVolumeButtonVisual(getCurrentVolume())
         }
         val state = viewModel.uiState.value
         // Compact count only — stream names live in chips.
@@ -545,7 +547,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 if (focused) {
                     val icon = ContextCompat.getDrawable(
                         requireContext(),
-                        R.drawable.baseline_volume_up_black_24,
+                        PlayerVolumeDialog.getVolumeIconRes(getCurrentVolume()),
                     )?.mutate()
                     icon?.setBounds(0, 0, (16 * density).toInt(), (16 * density).toInt())
                     icon?.setTint(Color.parseColor("#0A0A0A"))
@@ -661,8 +663,15 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         }
     }
 
+    fun updateVolumeButtonVisual(volumeFraction: Float = getCurrentVolume()) {
+        focusedControls()?.volume?.setImageResource(
+            PlayerVolumeDialog.getVolumeIconRes(volumeFraction)
+        )
+    }
+
     fun changeVolume(volume: Float) {
         playbackController?.setVolume(viewModel.uiState.value.focusedKey, volume)
+        updateVolumeButtonVisual(volume)
     }
 
     fun getCurrentVolume(): Float {

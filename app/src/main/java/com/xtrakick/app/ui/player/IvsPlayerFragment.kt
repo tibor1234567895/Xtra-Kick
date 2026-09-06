@@ -22,6 +22,8 @@ import com.amazonaws.ivs.player.Quality
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.model.ui.Stream
+import com.xtrakick.app.model.ui.VideoStatsInfo
+import java.util.Locale
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
@@ -380,6 +382,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun changeVolume(volume: Float) {
+        super.changeVolume(volume)
         player?.setVolume(volume)
         prefs.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
     }
@@ -425,6 +428,72 @@ class IvsPlayerFragment : PlayerFragment() {
                 root.postDelayed(updateProgressAction, 500L)
             }
         }
+    }
+
+    override fun getVideoStats(): VideoStatsInfo? {
+        val ivsPlayer = player ?: return null
+        if (view == null) return null
+        val q = ivsPlayer.quality
+        val stats = ivsPlayer.statistics
+
+        val downloadRes = if (q.width > 0 && q.height > 0) "${q.width}×${q.height}" else null
+        val renderRes = downloadRes
+        val viewportRes = if (binding.playerSurface.width > 0 && binding.playerSurface.height > 0) {
+            "${binding.playerSurface.width}×${binding.playerSurface.height}"
+        } else null
+
+        val bitrateBps = stats.videoBitRate.takeIf { it > 0 } ?: q.bitrate.takeIf { it > 0 }
+        val downloadBitrate = bitrateBps?.let { "${it / 1000} Kbps" }
+
+        val bw = ivsPlayer.bandwidthEstimate.takeIf { it > 0 }
+        val bandwidthEstimate = bw?.let {
+            // Convert bytes/sec to bits/sec if raw value is byte-scale, or format as Kbps
+            val bwKbps = if (it < 100_000_000L && it * 8 <= 1_000_000_000L) {
+                // IVS Android reports bandwidthEstimate in bytes/sec
+                (it * 8) / 1000
+            } else {
+                it / 1000
+            }
+            "$bwKbps Kbps"
+        }
+
+        val liveFps = stats.frameRate.takeIf { it > 0 }
+        val targetFps = q.framerate.takeIf { it > 0 }
+        val fpsStr = when {
+            liveFps != null && targetFps != null -> "${targetFps.toInt()} (live: $liveFps)"
+            targetFps != null -> "${targetFps.toInt()}"
+            liveFps != null -> "$liveFps"
+            else -> null
+        }
+
+        val dropped = stats.droppedFrames
+        val decoded = stats.decodedFrames
+        val skippedStr = if (decoded > 0) "$dropped / $decoded" else "$dropped"
+
+        val pos = ivsPlayer.position
+        val buf = ivsPlayer.bufferedPosition
+        val bufferMs = (buf - pos).coerceAtLeast(0L)
+        val bufferStr = String.format(Locale.US, "%.2f sec.", bufferMs / 1000.0)
+
+        val latMs = ivsPlayer.liveLatency.takeIf { it > 0 }
+        val latStr = latMs?.let { String.format(Locale.US, "%.2f sec.", it / 1000.0) }
+
+        val codecs = q.codecs.takeIf { it.isNotBlank() }
+        val backendVersion = "Amazon IVS ${ivsPlayer.version}"
+
+        return VideoStatsInfo(
+            resolution = downloadRes,
+            viewportResolution = viewportRes,
+            downloadBitrate = downloadBitrate,
+            bandwidthEstimate = bandwidthEstimate,
+            fps = fpsStr,
+            skippedFrames = skippedStr,
+            bufferSize = bufferStr,
+            latencyToBroadcaster = latStr,
+            codecs = codecs,
+            protocol = "HLS",
+            backendVersion = backendVersion
+        )
     }
 
     override fun changeQuality(selectedQuality: String?) {

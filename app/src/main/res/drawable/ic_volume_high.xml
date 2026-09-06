@@ -1,0 +1,31 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Speaker Horn Body -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M3,9v6h4l5,5V4L7,9H3z" />
+    <!-- Wave 1 (Inner) - Active -->
+    <path
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeAlpha="1.0"
+        android:pathData="M13.2,9.6 A3.5,3.5 0 0,1 13.2,14.4" />
+    <!-- Wave 2 (Middle) - Active -->
+    <path
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeAlpha="1.0"
+        android:pathData="M15.5,7.3 A6.7,6.7 0 0,1 15.5,16.7" />
+    <!-- Wave 3 (Outer) - Active -->
+    <path
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeAlpha="1.0"
+        android:pathData="M17.8,5.1 A10.0,10.0 0 0,1 17.8,18.9" />
+</vector>

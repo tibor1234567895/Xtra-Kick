@@ -15,6 +15,9 @@ import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.slider.Slider
 import java.util.Locale
 
+import androidx.annotation.DrawableRes
+import com.xtrakick.app.ui.multipov.MultiPovFragment
+
 class PlayerVolumeDialog : BottomSheetDialogFragment() {
 
     companion object {
@@ -24,6 +27,17 @@ class PlayerVolumeDialog : BottomSheetDialogFragment() {
             return PlayerVolumeDialog().apply {
                 arguments = bundleOf(VOLUME to (volume ?: 1f))
             }
+        }
+
+        @DrawableRes
+        fun getVolumeIconRes(volumeFraction: Float): Int = getVolumeIconRes((volumeFraction * 100f).toInt())
+
+        @DrawableRes
+        fun getVolumeIconRes(volumePercent: Int): Int = when {
+            volumePercent <= 0 -> R.drawable.baseline_volume_off_black_24
+            volumePercent <= 33 -> R.drawable.ic_volume_low
+            volumePercent <= 66 -> R.drawable.ic_volume_medium
+            else -> R.drawable.ic_volume_high
         }
     }
 
@@ -47,7 +61,7 @@ class PlayerVolumeDialog : BottomSheetDialogFragment() {
             setVolume(initialVolume)
             volumeBar.value = initialVolume
             volumeBar.addOnChangeListener { _, value, _ ->
-                (parentFragment as? PlayerFragment)?.changeVolume(value / 100f)
+                notifyVolumeChanged(value / 100f)
                 setVolume(value)
             }
             volumeBar.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
@@ -60,22 +74,26 @@ class PlayerVolumeDialog : BottomSheetDialogFragment() {
         }
     }
 
+    private fun notifyVolumeChanged(volumeFraction: Float) {
+        (parentFragment as? PlayerFragment)?.changeVolume(volumeFraction)
+        (parentFragment as? MultiPovFragment)?.changeVolume(volumeFraction)
+    }
+
     private fun setVolume(volume: Float) {
         with(binding) {
             volumeText.text = String.format(Locale.getDefault(), "%d", volume.toInt())
+            volumeMute.setImageResource(getVolumeIconRes(volume.toInt()))
             if (volume == 0f) {
-                volumeMute.setImageResource(R.drawable.baseline_volume_off_black_24)
                 volumeMute.setOnClickListener {
                     val restoredVolume = requireContext().prefs().getInt(AppConstants.PLAYER_VOLUME, 100).takeIf { it > 0 }?.toFloat() ?: 100f
                     volumeBar.value = restoredVolume
-                    (parentFragment as? PlayerFragment)?.changeVolume(restoredVolume / 100f)
+                    notifyVolumeChanged(restoredVolume / 100f)
                     setVolume(restoredVolume)
                 }
             } else {
-                volumeMute.setImageResource(R.drawable.baseline_volume_up_black_24)
                 volumeMute.setOnClickListener {
                     volumeBar.value = 0f
-                    (parentFragment as? PlayerFragment)?.changeVolume(0f)
+                    notifyVolumeChanged(0f)
                     setVolume(0f)
                 }
             }

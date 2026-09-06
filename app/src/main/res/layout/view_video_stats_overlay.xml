@@ -1,0 +1,524 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/statsCard"
+    android:layout_width="250dp"
+    android:layout_height="wrap_content"
+    app:cardBackgroundColor="#E6101216"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="8dp"
+    app:strokeColor="#26FFFFFF"
+    app:strokeWidth="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- Designated Drag Header Bar -->
+        <LinearLayout
+            android:id="@+id/headerLayout"
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:background="#15FFFFFF"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingEnd="4dp">
+
+            <ImageView
+                android:id="@+id/dragHandleIcon"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_marginEnd="6dp"
+                android:contentDescription="@string/video_stats"
+                android:src="@drawable/ic_drag_handle_24"
+                app:tint="#B3FFFFFF" />
+
+            <TextView
+                android:id="@+id/headerTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/video_stats"
+                android:textColor="@android:color/white"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <ImageView
+                android:id="@+id/opacityButton"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/video_stats_toggle_opacity"
+                android:padding="5dp"
+                android:src="@drawable/ic_opacity_24"
+                app:tint="#D9FFFFFF" />
+
+            <ImageView
+                android:id="@+id/compactButton"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/video_stats_toggle_compact"
+                android:padding="5dp"
+                android:src="@drawable/ic_minimize_24"
+                app:tint="#D9FFFFFF" />
+
+            <ImageView
+                android:id="@+id/copyButton"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/video_stats_copied"
+                android:padding="5dp"
+                android:src="@drawable/baseline_content_copy_24"
+                app:tint="#D9FFFFFF" />
+
+            <ImageView
+                android:id="@+id/closeButton"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@android:string/cancel"
+                android:padding="5dp"
+                android:src="@drawable/baseline_close_24"
+                app:tint="#D9FFFFFF" />
+
+        </LinearLayout>
+
+        <View
+            android:id="@+id/headerDivider"
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#1AFFFFFF" />
+
+        <!-- Minimal Inline View (FRAPS / Steam / MangoHUD gaming performance overlay style) -->
+        <LinearLayout
+            android:id="@+id/minimalInlineLayout"
+            android:layout_width="wrap_content"
+            android:layout_height="22dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="7dp"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:id="@+id/valMinimalFps"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:shadowColor="#FF000000"
+                android:shadowDx="1"
+                android:shadowDy="1"
+                android:shadowRadius="2"
+                android:textColor="#00FF66"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                tools:text="60 FPS" />
+
+            <TextView
+                android:id="@+id/valMinimalDrops"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="3dp"
+                android:fontFamily="monospace"
+                android:shadowColor="#FF000000"
+                android:shadowDx="1"
+                android:shadowDy="1"
+                android:shadowRadius="2"
+                android:textColor="#FF4444"
+                android:textSize="9.5sp"
+                android:visibility="gone"
+                tools:text="(-2)"
+                tools:visibility="visible" />
+
+            <TextView
+                android:id="@+id/valMinimalSeparator"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="5dp"
+                android:text="|"
+                android:textColor="#40FFFFFF"
+                android:textSize="10sp" />
+
+            <TextView
+                android:id="@+id/valMinimalBitrate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:shadowColor="#FF000000"
+                android:shadowDx="1"
+                android:shadowDy="1"
+                android:shadowRadius="2"
+                android:textColor="@android:color/white"
+                android:textSize="11sp"
+                tools:text="8002 Kbps" />
+
+            <ImageView
+                android:id="@+id/minimalExpandButton"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:layout_marginStart="6dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/video_stats_toggle_compact"
+                android:padding="2dp"
+                android:src="@drawable/ic_expand_24"
+                app:tint="#80FFFFFF" />
+
+            <ImageView
+                android:id="@+id/minimalCloseButton"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:layout_marginStart="3dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@android:string/cancel"
+                android:padding="2dp"
+                android:src="@drawable/baseline_close_24"
+                app:tint="#80FFFFFF" />
+
+        </LinearLayout>
+
+        <!-- Stats Content Body (wrap_content so all rows fit without scrolling) -->
+        <LinearLayout
+            android:id="@+id/statsContentLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="5dp">
+
+            <!-- Resolution -->
+            <LinearLayout
+                android:id="@+id/rowResolution"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingVertical="1.5dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/stat_resolution"
+                    android:textColor="#A6FFFFFF"
+                    android:textSize="10.5sp" />
+
+                <TextView
+                    android:id="@+id/valResolution"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@android:color/white"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    tools:text="1920×1080" />
+            </LinearLayout>
+
+            <!-- Viewport Resolution -->
+            <LinearLayout
+                android:id="@+id/rowViewportResolution"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingVertical="1.5dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/stat_viewport_resolution"
+                    android:textColor="#A6FFFFFF"
+                    android:textSize="10.5sp" />
+
+                <TextView
+                    android:id="@+id/valViewportResolution"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@android:color/white"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    tools:text="930×523" />
+            </LinearLayout>
+
+            <!-- Download Bitrate -->
+            <LinearLayout
+                android:id="@+id/rowDownloadBitrate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingVertical="1.5dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/stat_download_bitrate"
+                    android:textColor="#A6FFFFFF"
+                    android:textSize="10.5sp" />
+
+                <TextView
+                    android:id="@+id/valDownloadBitrate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@android:color/white"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    tools:text="8278 Kbps" />
+            </LinearLayout>
+
+            <!-- Bandwidth Estimate -->
+            <LinearLayout
+                android:id="@+id/rowBandwidthEstimate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingVertical="1.5dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/stat_bandwidth_estimate"
+                    android:textColor="#A6FFFFFF"
+                    android:textSize="10.5sp" />
+
+                <TextView
+                    android:id="@+id/valBandwidthEstimate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@android:color/white"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    tools:text="15.2 Mbps" />
+            </LinearLayout>
+
+            <!-- FPS -->
+            <LinearLayout
+                android:id="@+id/rowFps"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingVertical="1.5dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/stat_fps"
+                    android:textColor="#A6FFFFFF"
+                    android:textSize="10.5sp" />
+
+                <TextView
+                    android:id="@+id/valFps"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@android:color/white"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    tools:text="60" />
+            </LinearLayout>
+
+            <!-- Skipped Frames -->
+            <LinearLayout
+                android:id="@+id/rowSkippedFrames"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingVertical="1.5dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/stat_skipped_frames"
+                    android:textColor="#A6FFFFFF"
+                    android:textSize="10.5sp" />
+
+                <TextView
+                    android:id="@+id/valSkippedFrames"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@android:color/white"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    tools:text="16 / 1000" />
+            </LinearLayout>
+
+            <!-- Buffer Size -->
+            <LinearLayout
+                android:id="@+id/rowBufferSize"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingVertical="1.5dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/stat_buffer_size"
+                    android:textColor="#A6FFFFFF"
+                    android:textSize="10.5sp" />
+
+                <TextView
+                    android:id="@+id/valBufferSize"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@android:color/white"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    tools:text="1.92 sec." />
+            </LinearLayout>
+
+            <!-- Latency To Broadcaster -->
+            <LinearLayout
+                android:id="@+id/rowLatency"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingVertical="1.5dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/stat_latency_to_broadcaster"
+                    android:textColor="#A6FFFFFF"
+                    android:textSize="10.5sp" />
+
+                <TextView
+                    android:id="@+id/valLatency"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@android:color/white"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    tools:text="2.02 sec." />
+            </LinearLayout>
+
+            <!-- Codecs -->
+            <LinearLayout
+                android:id="@+id/rowCodecs"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingVertical="1.5dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/stat_codecs"
+                    android:textColor="#A6FFFFFF"
+                    android:textSize="10.5sp" />
+
+                <TextView
+                    android:id="@+id/valCodecs"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:maxWidth="130dp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:textColor="@android:color/white"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    tools:text="avc1.64002A" />
+            </LinearLayout>
+
+            <!-- Protocol -->
+            <LinearLayout
+                android:id="@+id/rowProtocol"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingVertical="1.5dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/stat_protocol"
+                    android:textColor="#A6FFFFFF"
+                    android:textSize="10.5sp" />
+
+                <TextView
+                    android:id="@+id/valProtocol"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@android:color/white"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    tools:text="HLS" />
+            </LinearLayout>
+
+            <!-- Backend Version -->
+            <LinearLayout
+                android:id="@+id/rowBackendVersion"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingVertical="1.5dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/stat_backend_version"
+                    android:textColor="#A6FFFFFF"
+                    android:textSize="10.5sp" />
+
+                <TextView
+                    android:id="@+id/valBackendVersion"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:maxWidth="130dp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:textColor="@android:color/white"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    tools:text="Amazon IVS 1.55.0" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

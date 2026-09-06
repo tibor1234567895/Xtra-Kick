@@ -1036,4 +1036,21 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="auto_refresh_1m">1 minute</string>
     <string name="auto_refresh_2m">2 minutes</string>
     <string name="auto_refresh_5m">5 minutes</string>
+    <string name="show_video_stats">Show video stats</string>
+    <string name="hide_video_stats">Hide video stats</string>
+    <string name="video_stats">Video stats</string>
+    <string name="video_stats_copied">Video stats copied to clipboard</string>
+    <string name="video_stats_toggle_compact">Toggle compact view</string>
+    <string name="video_stats_toggle_opacity">Toggle transparency</string>
+    <string name="stat_resolution">Resolution</string>
+    <string name="stat_viewport_resolution">Viewport Resolution</string>
+    <string name="stat_download_bitrate">Download Bitrate</string>
+    <string name="stat_bandwidth_estimate">Bandwidth Estimate</string>
+    <string name="stat_fps">FPS</string>
+    <string name="stat_skipped_frames">Skipped Frames</string>
+    <string name="stat_buffer_size">Buffer Size</string>
+    <string name="stat_latency_to_broadcaster">Latency To Broadcaster</string>
+    <string name="stat_codecs">Codecs</string>
+    <string name="stat_protocol">Protocol</string>
+    <string name="stat_backend_version">Backend Version</string>
 </resources>

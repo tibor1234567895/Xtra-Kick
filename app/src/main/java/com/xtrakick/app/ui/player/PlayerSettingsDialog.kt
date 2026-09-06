@@ -195,6 +195,12 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
                     dismiss()
                 }
             }
+            val isVideoStatsActive = (parentFragment as? PlayerFragment)?.isVideoStatsVisible() == true
+            menuVideoStats.setText(if (isVideoStatsActive) R.string.hide_video_stats else R.string.show_video_stats)
+            menuVideoStats.setOnClickListener {
+                (parentFragment as? PlayerFragment)?.toggleVideoStats()
+                dismiss()
+            }
         }
     }
 

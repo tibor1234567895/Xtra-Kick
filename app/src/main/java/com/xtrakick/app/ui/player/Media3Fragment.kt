@@ -42,6 +42,8 @@ import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.model.ui.Video
+import com.xtrakick.app.model.ui.VideoStatsInfo
+import java.util.Locale
 import com.xtrakick.app.ui.download.DownloadDialog
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
@@ -807,6 +809,7 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun changeVolume(volume: Float) {
+        super.changeVolume(volume)
         player?.volume = volume
         prefs.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
     }
@@ -839,6 +842,56 @@ class Media3Fragment : PlayerFragment() {
                 }
             }
         }
+    }
+
+    override fun getVideoStats(): VideoStatsInfo? {
+        val exoPlayer = player ?: return null
+        if (view == null) return null
+
+        val videoFormat = exoPlayer.currentTracks.groups
+            .filter { it.type == androidx.media3.common.C.TRACK_TYPE_VIDEO }
+            .flatMap { group -> (0 until group.length).filter { group.isTrackSelected(it) }.map { group.getTrackFormat(it) } }
+            .firstOrNull()
+
+        val width = videoFormat?.width?.takeIf { it > 0 } ?: exoPlayer.videoSize.width.takeIf { it > 0 }
+        val height = videoFormat?.height?.takeIf { it > 0 } ?: exoPlayer.videoSize.height.takeIf { it > 0 }
+        val downloadRes = if (width != null && height != null) "${width}×${height}" else null
+        val renderRes = downloadRes
+        val viewportRes = if (binding.playerSurface.width > 0 && binding.playerSurface.height > 0) {
+            "${binding.playerSurface.width}×${binding.playerSurface.height}"
+        } else null
+
+        val bitrateBps = videoFormat?.bitrate?.takeIf { it > 0 } ?: videoFormat?.peakBitrate?.takeIf { it > 0 }
+        val downloadBitrate = bitrateBps?.let { "${it / 1000} Kbps" }
+
+        val fps = videoFormat?.frameRate?.takeIf { it > 0 }
+        val fpsStr = fps?.let { String.format(Locale.US, "%.0f", it) }
+
+        val pos = exoPlayer.currentPosition
+        val buf = exoPlayer.bufferedPosition
+        val bufferMs = (buf - pos).coerceAtLeast(0L)
+        val bufferStr = String.format(Locale.US, "%.2f sec.", bufferMs / 1000.0)
+
+        val liveOffsetMs = exoPlayer.currentLiveOffset.takeIf { it != androidx.media3.common.C.TIME_UNSET }
+        val latStr = liveOffsetMs?.let { String.format(Locale.US, "%.2f sec.", it / 1000.0) }
+
+        val codecs = videoFormat?.codecs ?: videoFormat?.sampleMimeType
+        val protocol = if (videoType == STREAM) "HLS" else "MP4"
+        val backendVersion = "Media3 ${androidx.media3.common.MediaLibraryInfo.VERSION}"
+
+        return VideoStatsInfo(
+            resolution = downloadRes,
+            viewportResolution = viewportRes,
+            downloadBitrate = downloadBitrate,
+            bandwidthEstimate = null,
+            fps = fpsStr,
+            skippedFrames = null,
+            bufferSize = bufferStr,
+            latencyToBroadcaster = latStr,
+            codecs = codecs,
+            protocol = protocol,
+            backendVersion = backendVersion
+        )
     }
 
     private fun maybeSyncToLiveEdge(player: Player?, source: String) {
