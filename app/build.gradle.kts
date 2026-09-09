@@ -271,7 +271,7 @@ testImplementation("org.json:json:20260814")
     testImplementation("org.robolectric:robolectric:4.16.1")
     // conscrypt-android ships JNI only for Android. Robolectric loads it on the JVM, so the
     // desktop build supplies the matching native library. Test runtime only.
-    testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.6.3")
+    testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.7.0")
 }
 
 ksp {
