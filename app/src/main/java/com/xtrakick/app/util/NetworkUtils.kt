@@ -8,6 +8,13 @@ import android.net.http.UrlResponseInfo
 import android.os.Build
 import androidx.annotation.RequiresExtension
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Interceptor
@@ -23,6 +30,7 @@ import org.chromium.net.UrlRequest as CronetUrlRequest
 import org.chromium.net.UrlResponseInfo as CronetUrlResponseInfo
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
 import java.nio.channels.WritableByteChannel
@@ -42,6 +50,25 @@ import kotlin.coroutines.resumeWithException
 // - progress reporting interceptors / callbacks
 // - a coroutine cancellable wrapper around OkHttp Call.execute()
 object NetworkUtils {
+    suspend fun <T> Call.useCancellable(block: suspend (Response) -> T): T = coroutineScope {
+        val call = this@useCancellable
+        val cancellationWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                awaitCancellation()
+            } finally {
+                call.cancel()
+            }
+        }
+        try {
+            withContext(Dispatchers.IO) { call.execute().use { block(it) } }
+        } catch (error: Exception) {
+            ensureActive()
+            throw error
+        } finally {
+            cancellationWatcher.cancel()
+        }
+    }
+
     private const val CONTENT_LENGTH_HEADER_NAME = "Content-Length"
     private const val MAX_ARRAY_SIZE = Int.MAX_VALUE - 8
     private const val BYTE_BUFFER_CAPACITY = 32 * 1024
@@ -63,9 +90,11 @@ object NetworkUtils {
     class ByteArrayCronetUrlCallback(
         private val continuation: Continuation<Pair<CronetUrlResponseInfo, ByteArray>>,
         private val progressListener: ProgressListener? = null,
+        private val output: OutputStream? = null,
     ) : CronetUrlRequest.Callback() {
         private lateinit var mResponseBodyStream: ByteArrayOutputStream
         private lateinit var mResponseBodyChannel: WritableByteChannel
+        private var bytesRead = 0
 
         override fun onRedirectReceived(request: CronetUrlRequest, info: CronetUrlResponseInfo, newLocationUrl: String) {
             request.followRedirect()
@@ -73,15 +102,22 @@ object NetworkUtils {
 
         override fun onResponseStarted(request: CronetUrlRequest, info: CronetUrlResponseInfo) {
             mResponseBodyStream = ByteArrayOutputStream()
-            mResponseBodyChannel = Channels.newChannel(mResponseBodyStream)
+            mResponseBodyChannel = Channels.newChannel(output ?: mResponseBodyStream)
             request.read(ByteBuffer.allocateDirect(BYTE_BUFFER_CAPACITY))
         }
 
         override fun onReadCompleted(request: CronetUrlRequest, info: CronetUrlResponseInfo, byteBuffer: ByteBuffer) {
             byteBuffer.flip()
-            mResponseBodyChannel.write(byteBuffer)
+            val count = byteBuffer.remaining()
+            try {
+                mResponseBodyChannel.write(byteBuffer)
+            } catch (error: IOException) {
+                request.cancel()
+                return
+            }
+            bytesRead += count
             byteBuffer.clear()
-            progressListener?.update(mResponseBodyStream.size())
+            progressListener?.update(bytesRead)
             request.read(byteBuffer)
         }
 

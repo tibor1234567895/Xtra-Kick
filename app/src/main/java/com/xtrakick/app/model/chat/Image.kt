@@ -2,6 +2,7 @@ package com.xtrakick.app.model.chat
 
 class Image(
     val localData: ByteArray? = null,
+    val localDataLoader: (() -> ByteArray?)? = null,
     val url1x: String? = null,
     val url2x: String? = null,
     val url3x: String? = null,

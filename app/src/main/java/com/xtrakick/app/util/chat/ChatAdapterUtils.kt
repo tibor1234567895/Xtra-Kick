@@ -23,6 +23,10 @@ import android.util.Patterns
 import android.view.View
 import androidx.core.graphics.ColorUtils
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import coil3.asDrawable
 import coil3.imageLoader
 import coil3.network.NetworkHeaders
@@ -345,6 +349,7 @@ object ChatAdapterUtils {
             startLoad: (((V?) -> Unit) -> Unit),
             callback: (V?) -> Unit,
         ) {
+            val pending = mutableListOf(callback)
             synchronized(this) {
                 cache[key]?.let {
                     onCacheHit?.invoke(key)
@@ -356,17 +361,27 @@ object ChatAdapterUtils {
                     onInFlightJoin?.invoke(key)
                     return
                 }
-                inFlight[key] = mutableListOf(callback)
+                inFlight[key] = pending
                 onEnqueue?.invoke(key)
             }
-            startLoad { value ->
+            val complete: (V?) -> Unit = { value ->
                 val callbacks = synchronized(this) {
-                    if (value != null) {
-                        cache[key] = value
+                    if (inFlight[key] !== pending) {
+                        emptyList()
+                    } else {
+                        if (value != null) {
+                            cache[key] = value
+                        }
+                        inFlight.remove(key).orEmpty()
                     }
-                    inFlight.remove(key).orEmpty()
                 }
                 callbacks.forEach { it(value) }
+            }
+            try {
+                startLoad(complete)
+            } catch (error: Exception) {
+                complete(null)
+                throw error
             }
         }
 
@@ -635,7 +650,7 @@ object ChatAdapterUtils {
                             }, builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
                         }
                         images.add(Image(
-                            localData = badge.localData?.let { getLocalEmoteData(badge.setId + badge.version, it, savedLocalBadges, chatUrl, getEmoteBytes) },
+                            localDataLoader = badge.localData?.let { getLocalEmoteData(badge.setId + badge.version, it, savedLocalBadges, chatUrl, getEmoteBytes) },
                             url1x = badge.url1x,
                             url2x = badge.url2x,
                             url3x = badge.url3x,
@@ -982,7 +997,7 @@ object ChatAdapterUtils {
                                 }, builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
                             }
                             images.add(Image(
-                                localData = emote.localData?.let { getLocalEmoteData(emote.name + emote.minBits, it, savedLocalCheerEmotes, chatUrl, getEmoteBytes) },
+                                localDataLoader = emote.localData?.let { getLocalEmoteData(emote.name + emote.minBits, it, savedLocalCheerEmotes, chatUrl, getEmoteBytes) },
                                 url1x = emote.url1x,
                                 url2x = emote.url2x,
                                 url3x = emote.url3x,
@@ -1015,7 +1030,7 @@ object ChatAdapterUtils {
                     if (emote.isOverlayEmote && enableOverlayEmotes && previousImage != null) {
                         builder.replace(builderIndex - 1, builderIndex + value.length, "")
                         val image = Image(
-                            localData = emote.localData?.let { getLocalEmoteData(emote.name!!, it, savedLocalEmotes, chatUrl, getEmoteBytes) },
+                            localDataLoader = emote.localData?.let { getLocalEmoteData(emote.name!!, it, savedLocalEmotes, chatUrl, getEmoteBytes) },
                             url1x = emote.url1x,
                             url2x = emote.url2x,
                             url3x = emote.url3x,
@@ -1050,7 +1065,7 @@ object ChatAdapterUtils {
                             }, builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
                         }
                         val image = Image(
-                            localData = emote.localData?.let { getLocalEmoteData(emote.name!!, it, savedLocalEmotes, chatUrl, getEmoteBytes) },
+                            localDataLoader = emote.localData?.let { getLocalEmoteData(emote.name!!, it, savedLocalEmotes, chatUrl, getEmoteBytes) },
                             url1x = emote.url1x,
                             url2x = emote.url2x,
                             url3x = emote.url3x,
@@ -1085,7 +1100,7 @@ object ChatAdapterUtils {
                     concatenatedEmotes.forEach { matchedEmote ->
                         if (matchedEmote.isOverlayEmote && enableOverlayEmotes && previousImage != null) {
                             previousImage.overlayEmote = Image(
-                                localData = matchedEmote.localData?.let { getLocalEmoteData(matchedEmote.name!!, it, savedLocalEmotes, chatUrl, getEmoteBytes) },
+                                localDataLoader = matchedEmote.localData?.let { getLocalEmoteData(matchedEmote.name!!, it, savedLocalEmotes, chatUrl, getEmoteBytes) },
                                 url1x = matchedEmote.url1x,
                                 url2x = matchedEmote.url2x,
                                 url3x = matchedEmote.url3x,
@@ -1117,7 +1132,7 @@ object ChatAdapterUtils {
                                 }, imageStart, imageStart + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
                             }
                             val image = Image(
-                                localData = matchedEmote.localData?.let { getLocalEmoteData(matchedEmote.name!!, it, savedLocalEmotes, chatUrl, getEmoteBytes) },
+                                localDataLoader = matchedEmote.localData?.let { getLocalEmoteData(matchedEmote.name!!, it, savedLocalEmotes, chatUrl, getEmoteBytes) },
                                 url1x = matchedEmote.url1x,
                                 url2x = matchedEmote.url2x,
                                 url3x = matchedEmote.url3x,
@@ -1182,7 +1197,7 @@ object ChatAdapterUtils {
                         }, builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
                     val image = Image(
-                        localData = emote.localData?.let { getLocalEmoteData(emote.id!!, it, savedLocalChatEmotes, chatUrl, getEmoteBytes) },
+                        localDataLoader = emote.localData?.let { getLocalEmoteData(emote.id!!, it, savedLocalChatEmotes, chatUrl, getEmoteBytes) },
                         url1x = emote.url1x,
                         url2x = emote.url2x,
                         url3x = emote.url3x,
@@ -1235,8 +1250,9 @@ object ChatAdapterUtils {
         return wasMentioned
     }
 
-    private fun getLocalEmoteData(name: String, data: Pair<Long, Int>, savedLocalEmotes: MutableMap<String, ByteArray>, chatUrl: String?, getEmoteBytes: ((String, Pair<Long, Int>) -> ByteArray?)?): ByteArray? {
-        return savedLocalEmotes[name] ?: chatUrl?.let { url ->
+    private fun getLocalEmoteData(name: String, data: Pair<Long, Int>, savedLocalEmotes: MutableMap<String, ByteArray>, chatUrl: String?, getEmoteBytes: ((String, Pair<Long, Int>) -> ByteArray?)?): () -> ByteArray? = {
+        synchronized(savedLocalEmotes) {
+        savedLocalEmotes[name] ?: chatUrl?.let { url ->
             getEmoteBytes?.let { get ->
                 get(url, data)?.also {
                     if (savedLocalEmotes.size >= 100) {
@@ -1245,6 +1261,7 @@ object ChatAdapterUtils {
                     savedLocalEmotes[name] = it
                 }
             }
+        }
         }
     }
 
@@ -1360,6 +1377,13 @@ object ChatAdapterUtils {
     }
 
     private fun loadImage(imageLibrary: String?, fragment: Fragment, image: Image, emoteQuality: String, targetHeight: Int, onLoaded: (Drawable) -> Unit) {
+        image.localDataLoader?.let { load ->
+            fragment.viewLifecycleOwner.lifecycleScope.launch {
+                val source = withContext(Dispatchers.IO) { runCatching { load() }.getOrNull() } ?: return@launch
+                loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { it?.let(onLoaded) }
+            }
+            return
+        }
         val source = resolveImageSource(image, emoteQuality) ?: return
         val key = createChatImageKey(image, source, targetHeight)
         if (key != null) {
@@ -1375,11 +1399,13 @@ object ChatAdapterUtils {
                 },
             )
         } else {
-            loadImageUncached(imageLibrary, fragment, image, source, targetHeight, onLoaded)
+            loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { result ->
+                result?.let(onLoaded)
+            }
         }
     }
 
-    private fun loadImageUncached(imageLibrary: String?, fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable) -> Unit) {
+    private fun loadImageUncached(imageLibrary: String?, fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable?) -> Unit) {
         if (imageLibrary == "0" || (imageLibrary == "1" && !image.format.equals("webp", true))) {
             loadCoil(fragment, image, source, targetHeight, onLoaded)
         } else {
@@ -1387,7 +1413,7 @@ object ChatAdapterUtils {
         }
     }
 
-    private fun loadCoil(fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable) -> Unit) {
+    private fun loadCoil(fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable?) -> Unit) {
         fragment.requireContext().imageLoader.enqueue(
             ImageRequest.Builder(fragment.requireContext()).apply {
                 data(source)
@@ -1402,15 +1428,17 @@ object ChatAdapterUtils {
                     httpHeaders(headers)
                 }
                 target(
+                    onError = { onLoaded(null) },
                     onSuccess = {
                         onLoaded((it.asDrawable(fragment.resources)))
                     },
                 )
+                listener(onCancel = { onLoaded(null) })
             }.build()
         )
     }
 
-    private fun loadGlide(fragment: Fragment, image: Image, source: Any, onLoaded: (Drawable) -> Unit) {
+    private fun loadGlide(fragment: Fragment, image: Image, source: Any, onLoaded: (Drawable?) -> Unit) {
         Glide.with(fragment)
             .load(source.let {
                 if (it is String && it.startsWith("http", ignoreCase = true)) {
@@ -1429,6 +1457,11 @@ object ChatAdapterUtils {
                 }
 
                 override fun onLoadCleared(placeholder: Drawable?) {
+                    onLoaded(null)
+                }
+
+                override fun onLoadFailed(errorDrawable: Drawable?) {
+                    onLoaded(null)
                 }
             })
     }
@@ -1479,7 +1512,7 @@ object ChatAdapterUtils {
     }
 
     private fun createChatImageKey(image: Image, source: Any, targetHeight: Int): ChatImageKey? {
-        if (image.localData != null || targetHeight <= 0) {
+        if (image.localData != null || image.localDataLoader != null || targetHeight <= 0) {
             return null
         }
         val sourceString = source as? String ?: return null

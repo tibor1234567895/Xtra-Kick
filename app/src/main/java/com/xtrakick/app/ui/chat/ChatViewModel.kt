@@ -67,6 +67,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -90,6 +91,16 @@ import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.scheduleAtFixedRate
 
 
+internal fun <T> clearChatBuffers(rawMessages: MutableList<T>, visibleMessages: MutableList<T>): Int =
+    synchronized(rawMessages) {
+        synchronized(visibleMessages) {
+            val visibleCount = visibleMessages.size
+            visibleMessages.clear()
+            rawMessages.clear()
+            visibleCount
+        }
+    }
+
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
@@ -106,6 +117,8 @@ class ChatViewModel @Inject constructor(
 
     private var kickPusherChatWebSocket: KickPusherChatWebSocket? = null
     private var chatReadJob: Job? = null
+    @Volatile
+    private var chatSessionGeneration = 0L
     private var stvEventApi: StvEventApiWebSocket? = null
     private var stvEventApiJob: Job? = null
     private var stvUserId: String? = null
@@ -187,6 +200,7 @@ class ChatViewModel @Inject constructor(
             .thenBy { kickMessageKey(it) }
     )
     private val kickReplayPendingKeys = LinkedHashSet<String>()
+    private val kickReplayBucketCounts = mutableMapOf<Long, Int>()
     private val kickReplayChatDebugTag = "KickReplayChatDebug"
     private val kickReplayChatRequestSeq = AtomicLong(0L)
     var autoReconnect = true
@@ -372,9 +386,10 @@ class ChatViewModel @Inject constructor(
             return
         }
         kickInitialRoomStateLoaded = true
+        val sessionGeneration = chatSessionGeneration
         viewModelScope.launch {
             runCatching { kickRepository.getInitialRoomState(channelLogin, channelId) }.getOrNull()?.let {
-                roomState.value = it
+                if (sessionGeneration == chatSessionGeneration) roomState.value = it
             }
         }
     }
@@ -402,9 +417,9 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun rebuildVisibleMessages() {
-        synchronized(chatMessages) {
-            chatMessages.clear()
-            synchronized(rawChatMessages) {
+        synchronized(rawChatMessages) {
+            synchronized(chatMessages) {
+                chatMessages.clear()
                 chatMessages.addAll(rawChatMessages.filterNot(::isMutedMessage))
             }
         }
@@ -809,14 +824,26 @@ class ChatViewModel @Inject constructor(
     }
 
     fun getEmoteBytes(chatUrl: String, localData: Pair<Long, Int>): ByteArray? {
+        if (localData.first < 0 || localData.second !in 1..(8 * 1024 * 1024)) return null
         return if (chatUrl.toUri().scheme == ContentResolver.SCHEME_CONTENT) {
             applicationContext.contentResolver.openInputStream(chatUrl.toUri())?.bufferedReader()
         } else {
             FileInputStream(File(chatUrl)).bufferedReader()
         }?.use { fileReader ->
             val buffer = CharArray(localData.second)
-            fileReader.skip(localData.first)
-            fileReader.read(buffer, 0, localData.second)
+            var remaining = localData.first
+            while (remaining > 0) {
+                val skipped = fileReader.skip(remaining)
+                if (skipped > 0) remaining -= skipped
+                else if (fileReader.read() == -1) return null
+                else remaining--
+            }
+            var offset = 0
+            while (offset < buffer.size) {
+                val count = fileReader.read(buffer, offset, buffer.size - offset)
+                if (count == -1) return null
+                offset += count
+            }
             Base64.decode(buffer.concatToString(), Base64.NO_WRAP or Base64.NO_PADDING)
         }
     }
@@ -1203,9 +1230,12 @@ class ChatViewModel @Inject constructor(
             }
     }
 
-    private fun buildReplyPreviewMessage(message: ChatMessage, additionalMessages: List<ChatMessage> = emptyList()): ChatMessage? {
+    private fun buildReplyPreviewMessage(
+        message: ChatMessage,
+        additionalMessages: List<ChatMessage> = emptyList(),
+        replyParent: ChatMessage? = findReplyParentMessage(message.reply, additionalMessages),
+    ): ChatMessage? {
         val reply = message.reply?.takeIf { !it.threadParentId.isNullOrBlank() } ?: return null
-        val replyParent = findReplyParentMessage(reply, additionalMessages)
         val previewMessage = replyParent?.message ?: reply.message ?: replyParent?.systemMsg ?: return null
         val previewReply = Reply(
             threadParentId = reply.threadParentId,
@@ -1223,9 +1253,13 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun buildKickDisplayMessages(messages: List<ChatMessage>): List<ChatMessage> {
+        val parentsById = synchronized(chatMessages) {
+            chatMessages.filter { !it.isReply && it.id != null }.associateBy { it.id }.toMutableMap()
+        }
+        messages.filter { !it.isReply && it.id != null }.forEach { parentsById[it.id] = it }
         return buildList {
             messages.forEach { message ->
-                buildReplyPreviewMessage(message, messages)?.let(::add)
+                buildReplyPreviewMessage(message, replyParent = parentsById[message.reply?.threadParentId])?.let(::add)
                 add(message)
             }
         }
@@ -1266,25 +1300,14 @@ class ChatViewModel @Inject constructor(
     private fun resetKickReplayPendingQueue() {
         kickReplayPendingMessages.clear()
         kickReplayPendingKeys.clear()
+        kickReplayBucketCounts.clear()
         kickReplayPacingBucketMs = null
         kickReplayPacingPerTick = 1
         kickReplayQueuedThroughMs = null
     }
 
-    /**
-     * How many messages of a bucket to release per tick so the bucket spans the second it covers.
-     *
-     * Counts the whole pending queue rather than a prefix because [kickReplayPendingMessages] is a
-     * PriorityQueue - its iteration order is arbitrary, so a matching timestamp can sit anywhere.
-     * Only runs once per bucket, so roughly once per second of playback.
-     */
     private fun kickReplayPerTickForBucket(bucketTimestampMs: Long): Int {
-        var bucketSize = 0
-        kickReplayPendingMessages.forEach { pending ->
-            if (pending.timestamp == bucketTimestampMs) {
-                bucketSize += 1
-            }
-        }
+        val bucketSize = kickReplayBucketCounts[bucketTimestampMs] ?: 0
         return ChatReplayPacing.perTickRelease(bucketSize, kickReplayEmitIntervalMs)
     }
 
@@ -1308,6 +1331,7 @@ class ChatViewModel @Inject constructor(
             }
             kickReplayPendingMessages.offer(message)
             message.timestamp?.let { timestamp ->
+                kickReplayBucketCounts[timestamp] = (kickReplayBucketCounts[timestamp] ?: 0) + 1
                 if (timestamp > (kickReplayQueuedThroughMs ?: Long.MIN_VALUE)) {
                     kickReplayQueuedThroughMs = timestamp
                 }
@@ -1361,6 +1385,10 @@ class ChatViewModel @Inject constructor(
                 kickReplayPacingPerTick = kickReplayPerTickForBucket(nextTimestamp)
             }
             kickReplayPendingMessages.poll()
+            nextTimestamp?.let { timestamp ->
+                val remaining = (kickReplayBucketCounts[timestamp] ?: 1) - 1
+                if (remaining == 0) kickReplayBucketCounts.remove(timestamp) else kickReplayBucketCounts[timestamp] = remaining
+            }
             kickReplayPendingKeys.remove(kickMessageKey(next))
             due += next
         }
@@ -1768,14 +1796,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun clearChatMessages(): Int {
-        val size = synchronized(chatMessages) {
-            val size = chatMessages.size
-            chatMessages.clear()
-            synchronized(rawChatMessages) {
-                rawChatMessages.clear()
-            }
-            size
-        }
+        val size = clearChatBuffers(rawChatMessages, chatMessages)
         if (size > 0) {
             removeMessages.emit(size)
         }
@@ -2196,7 +2217,11 @@ class ChatViewModel @Inject constructor(
     suspend fun onMessage(message: ChatMessage) {
         val delayMs = effectiveDelayMs()
         if (delayMs > 0L) {
-            viewModelScope.launch { delay(delayMs); processMessage(message) }
+            val sessionGeneration = chatSessionGeneration
+            viewModelScope.launch {
+                delay(delayMs)
+                if (sessionGeneration == chatSessionGeneration) processMessage(message)
+            }
         } else {
             processMessage(message)
         }
@@ -2311,6 +2336,7 @@ class ChatViewModel @Inject constructor(
 
     fun startLiveChat(channelId: String?, channelLogin: String) {
         stopLiveChat()
+        val sessionGeneration = chatSessionGeneration
         val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext)
         val networkLibrary = applicationContext.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         val accountId = getKickAccountId()
@@ -2330,6 +2356,7 @@ class ChatViewModel @Inject constructor(
         seedKickMessageIdsFromCurrentMessages()
         viewModelScope.launch {
             runCatching { kickRepository.getInitialPinnedGift(channelLogin, channelId) }.getOrNull()?.let { update ->
+                if (sessionGeneration != chatSessionGeneration) return@launch
                 if (update.cleared) {
                     clearPinnedGift()
                 } else {
@@ -2342,11 +2369,13 @@ class ChatViewModel @Inject constructor(
         chatReadJob = viewModelScope.launch {
             val resolvedChannel = runCatching {
                 kickRepository.getChannel(channelLogin)
-            }.onFailure {
+            }.recoverCatching { error ->
+                if (error is CancellationException) throw error
                 channelId?.takeIf { it.isNotBlank() }?.let { fallbackChannelId ->
-                    runCatching { kickRepository.getChannel(fallbackChannelId) }
-                }
+                    kickRepository.getChannel(fallbackChannelId)
+                } ?: throw error
             }.getOrNull()
+            currentCoroutineContext().ensureActive()
             val effectiveChannelId = resolvedChannel?.id?.toString()?.takeIf { it.isNotBlank() }
                 ?: channelId?.takeIf { it.isNotBlank() }
             val livestreamId = resolvedChannel?.livestream?.id?.toString()?.takeIf { it.isNotBlank() }
@@ -2361,7 +2390,7 @@ class ChatViewModel @Inject constructor(
             if (debugKickRealtimeChat) {
                 Log.d("KickRealtimeChat", "resolved chatroomId=$kickChatroomId channelId=$effectiveChannelId channelLogin=$channelLogin")
             }
-            if (!isActive) {
+            if (!isActive || sessionGeneration != chatSessionGeneration) {
                 return@launch
             }
             val hasKickWebsiteSession = kickRepository.hasUsableKickWebsiteSession()
@@ -2380,7 +2409,7 @@ class ChatViewModel @Inject constructor(
                     kickRepository.authorizeKickPusherPrivateChannel(socketId, privateChannelName)
                 },
                 trustManager = trustManager,
-                listener = KickPusherChatListener(channelLogin, effectiveChannelId, nameDisplay, showUserNotice, showClearMsg, showClearChat, notifyKickPoints, showPolls, showPredictions, debugKickRealtimeChat),
+                listener = KickPusherChatListener(channelLogin, effectiveChannelId, nameDisplay, showUserNotice, showClearMsg, showClearChat, notifyKickPoints, showPolls, showPredictions, debugKickRealtimeChat, sessionGeneration),
                 debugLogging = debugKickRealtimeChat
             )
             kickPusherChatWebSocket?.connect(this)?.join()
@@ -2396,7 +2425,7 @@ class ChatViewModel @Inject constructor(
             stvEventApi = StvEventApiWebSocket(
                 channelId = channelId,
                 trustManager = trustManager,
-                listener = StvEventApiListener(useWebp, showNamePaints, showStvBadges, showPersonalEmotes, stvLiveUpdates, networkLibrary, isLoggedIn, accountId, channelId, showWebSocketDebugInfo)
+                listener = StvEventApiListener(useWebp, showNamePaints, showStvBadges, showPersonalEmotes, stvLiveUpdates, networkLibrary, isLoggedIn, accountId, channelId, showWebSocketDebugInfo, sessionGeneration)
             )
             stvEventApiJob = stvEventApi?.connect(viewModelScope)
             if (isLoggedIn && !accountId.isNullOrBlank()) {
@@ -2501,32 +2530,35 @@ class ChatViewModel @Inject constructor(
     }
 
     fun stopLiveChat() {
+        chatSessionGeneration++
         markIntentionalChatDisconnect()
         if (applicationContext.prefs().getBoolean(AppConstants.DEBUG_WEBSOCKET_INFO, false)) {
             Log.d("WebSocketRuntime", "disconnect chat snapshot(before)=${WebSocketRuntime.snapshot()}")
         }
         kickChatJob?.cancel()
         kickChatJob = null
+        val readJob = chatReadJob
+        chatReadJob = null
+        readJob?.cancel()
+        val eventJob = stvEventApiJob
+        stvEventApiJob = null
+        eventJob?.cancel()
         synchronized(kickMessageIds) {
             kickMessageIds.clear()
         }
-        // Capture into a local: `kickPusherChatWebSocket = null` below runs synchronously on
-        // this thread, before the dispatched Dispatchers.IO body ever starts, so reading the
-        // field inside the coroutine always resolved null and the disconnect was a no-op. That
-        // leaked one Dispatchers.IO thread parked in a blocking read per teardown, left the
-        // Pusher socket reconnecting forever, and kept the old channel's listener ingesting
-        // messages after every channel switch.
+        // Close the captured session, never whichever socket a subsequent start installs.
         val pusherSocket = kickPusherChatWebSocket
         if (pusherSocket != null) {
-            val jobToCancel = chatReadJob
             MainScope().launch(Dispatchers.IO) {
-                pusherSocket.disconnect(jobToCancel)
+                pusherSocket.disconnect(readJob)
             }
         }
         kickPusherChatWebSocket = null
-        if (stvEventApi != null) {
+        val eventSocket = stvEventApi
+        stvEventApi = null
+        if (eventSocket != null) {
             MainScope().launch(Dispatchers.IO) {
-                stvEventApi?.disconnect(stvEventApiJob)
+                eventSocket.disconnect(eventJob)
             }
         }
         if (applicationContext.prefs().getBoolean(AppConstants.DEBUG_WEBSOCKET_INFO, false)) {
@@ -2557,14 +2589,7 @@ class ChatViewModel @Inject constructor(
         predictionSecondsLeft.value = null
         predictionTimerJob?.cancel()
         viewModelScope.launch {
-            synchronized(chatMessages) {
-                val size = chatMessages.size
-                chatMessages.clear()
-                synchronized(rawChatMessages) {
-                    rawChatMessages.clear()
-                }
-                size
-            }.let {
+            clearChatBuffers(rawChatMessages, chatMessages).let {
                 removeMessages.emit(it)
             }
             onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.disconnected)))
@@ -2597,13 +2622,16 @@ class ChatViewModel @Inject constructor(
         private val showPolls: Boolean,
         private val showPredictions: Boolean,
         private val debugLogging: Boolean,
+        private val sessionGeneration: Long,
     ) : KickPusherChatWebSocket.Listener {
         override suspend fun onConnect() {
+            if (sessionGeneration != chatSessionGeneration) return
             kickRealtimeReconnectAttempt = 0
             DiagnosticLogger.i("KickRealtimeChat", "connected to $channelLogin suppressed from chat timeline")
         }
 
         override suspend fun onChatEvent(eventName: String, channelName: String?, messageJson: String) {
+            if (sessionGeneration != chatSessionGeneration) return
             val normalizedEvent = eventName.trim().lowercase(Locale.ROOT)
             if (eventName.equals("App\\Events\\PollDeleteEvent", ignoreCase = true)) {
                 pollTimer?.cancel()
@@ -2785,6 +2813,7 @@ class ChatViewModel @Inject constructor(
         }
 
         override suspend fun onDisconnect(message: String, fullMsg: String?) {
+            if (sessionGeneration != chatSessionGeneration) return
             if (shouldSuppressIntentionalChatDisconnect(message)) {
                 return
             }
@@ -2816,7 +2845,7 @@ class ChatViewModel @Inject constructor(
                 }
                 viewModelScope.launch {
                     delay(delayMs)
-                    if (chatReadJob?.isActive != true) {
+                    if (sessionGeneration == chatSessionGeneration && autoReconnect && chatReadJob?.isActive != true) {
                         startLiveChat(channelId, channelLogin)
                     }
                 }
@@ -3024,14 +3053,17 @@ class ChatViewModel @Inject constructor(
         private val accountId: String?,
         private val channelId: String?,
         private val showWebSocketDebugInfo: Boolean,
+        private val sessionGeneration: Long,
     ) : StvEventApiWebSocket.Listener {
         override suspend fun onConnect() {
+            if (sessionGeneration != chatSessionGeneration) return
             if (showWebSocketDebugInfo) {
                 onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.websocket_connected).format("7TV Event API")))
             }
         }
 
         override suspend fun onEmoteSetUpdate(body: JSONObject) {
+            if (sessionGeneration != chatSessionGeneration) return
             val result = StvEventApiUtils.parseEmoteSetUpdate(body, useWebp, channelStvEmoteSetId)
             if (result != null) {
                 if (result.channelSet) {
@@ -3073,6 +3105,7 @@ class ChatViewModel @Inject constructor(
         }
 
         override suspend fun onCosmetic(body: JSONObject) {
+            if (sessionGeneration != chatSessionGeneration) return
             val result = StvEventApiUtils.parseCosmetic(body, useWebp)
             if (result != null) {
                 when (result) {
@@ -3097,6 +3130,7 @@ class ChatViewModel @Inject constructor(
         }
 
         override suspend fun onEntitlement(body: JSONObject) {
+            if (sessionGeneration != chatSessionGeneration) return
             val result = StvEventApiUtils.parseEntitlement(body)
             if (result != null) {
                 when (result) {
@@ -3180,10 +3214,12 @@ class ChatViewModel @Inject constructor(
         }
 
         override suspend fun onUpdatePresence(sessionId: String) {
+            if (sessionGeneration != chatSessionGeneration) return
             onUpdatePresence(networkLibrary, sessionId, channelId, true)
         }
 
         override suspend fun onDisconnect(message: String, fullMsg: String?) {
+            if (sessionGeneration != chatSessionGeneration) return
             if (showWebSocketDebugInfo) {
                 onMessage(ChatMessage(
                     systemMsg = ContextCompat.getString(applicationContext, R.string.websocket_disconnected).format("7TV Event API", message),
@@ -4010,14 +4046,7 @@ class ChatViewModel @Inject constructor(
         }
 
         override suspend fun clearMessages() {
-            synchronized(chatMessages) {
-                val size = chatMessages.size
-                chatMessages.clear()
-                synchronized(rawChatMessages) {
-                    rawChatMessages.clear()
-                }
-                size
-            }.let {
+            clearChatBuffers(rawChatMessages, chatMessages).let {
                 removeMessages.emit(it)
             }
         }
@@ -4456,8 +4485,9 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 if (messages.isNotEmpty()) {
+                    val sortedMessages = messages.filter { it.timestamp != null }.sortedBy { it.timestamp }
                     viewModelScope.launch {
-                        chatReplayManagerLocal?.setMessages(messages, startTimeMs)
+                        chatReplayManagerLocal?.setMessages(sortedMessages, startTimeMs)
                     }
                 }
             } catch (_: Exception) {

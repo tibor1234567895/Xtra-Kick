@@ -1,6 +1,8 @@
 package com.xtrakick.app.repository
 
 import com.xtrakick.app.db.LocalFollowsChannelDao
+import com.xtrakick.app.db.AppDatabase
+import androidx.room.withTransaction
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.util.AppConstants
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +16,7 @@ import javax.inject.Singleton
 @Singleton
 class LocalFollowChannelRepository @Inject constructor(
     private val localFollowsChannelDao: LocalFollowsChannelDao,
+    private val database: AppDatabase,
 ) {
 
     private val _followsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -24,11 +27,11 @@ class LocalFollowChannelRepository @Inject constructor(
     }
 
     suspend fun loadFollows() = withContext(Dispatchers.IO) {
-        dedupeFollows(localFollowsChannelDao.getAll())
+        database.withTransaction { dedupeFollows(localFollowsChannelDao.getAll()) }
     }
 
     suspend fun getFollow(userId: String?, userLogin: String?) = withContext(Dispatchers.IO) {
-        findExistingFollow(userId, userLogin)
+        database.withTransaction { findExistingFollow(userId, userLogin) }
     }
 
     suspend fun saveFollow(item: LocalFollowChannel) = withContext(Dispatchers.IO) {
@@ -55,13 +58,34 @@ class LocalFollowChannelRepository @Inject constructor(
         userName: String?,
         channelLogo: String? = null,
     ) = withContext(Dispatchers.IO) {
-        upsertLocalFollowInternal(userId, userLogin, userName, channelLogo)
+        database.withTransaction { upsertLocalFollowInternal(userId, userLogin, userName, channelLogo) }
         notifyFollowsChanged()
     }
 
     suspend fun upsertLocalFollows(items: List<LocalFollowChannel>) = withContext(Dispatchers.IO) {
-        items.forEach { item ->
-            upsertLocalFollowInternal(item.userId, item.userLogin, item.userName, item.channelLogo, item.sourceMask)
+        database.withTransaction {
+            val existing = dedupeFollows(localFollowsChannelDao.getAll())
+            val byId = existing.mapNotNull { item -> item.userId?.let { it to item } }.toMap().toMutableMap()
+            val byLogin = existing.mapNotNull { item -> item.userLogin?.lowercase()?.let { it to item } }.toMap().toMutableMap()
+            items.forEach { item ->
+                if (item.userId.isNullOrBlank() && item.userLogin.isNullOrBlank()) return@forEach
+                val saved = item.userId?.let(byId::get) ?: item.userLogin?.lowercase()?.let(byLogin::get)
+                val result = if (saved == null) {
+                    LocalFollowChannel(item.userId, item.userLogin, item.userName, item.channelLogo, item.sourceMask).also {
+                        it.id = localFollowsChannelDao.insert(it).toInt()
+                    }
+                } else {
+                    saved.apply {
+                        userId = item.userId?.takeIf { it.isNotBlank() } ?: userId
+                        userLogin = item.userLogin?.takeIf { it.isNotBlank() } ?: userLogin
+                        userName = item.userName ?: userName
+                        channelLogo = item.channelLogo ?: channelLogo
+                        sourceMask = sourceMask or item.sourceMask
+                    }.also(localFollowsChannelDao::update)
+                }
+                result.userId?.let { byId[it] = result }
+                result.userLogin?.lowercase()?.let { byLogin[it] = result }
+            }
         }
         if (items.isNotEmpty()) {
             notifyFollowsChanged()
@@ -116,9 +140,11 @@ class LocalFollowChannelRepository @Inject constructor(
     }
 
     suspend fun removeLocalFollow(userId: String?, userLogin: String?) = withContext(Dispatchers.IO) {
+        database.withTransaction {
         findExistingFollow(userId?.takeIf { it.isNotBlank() }, userLogin?.takeIf { it.isNotBlank() })?.let { existing ->
             localFollowsChannelDao.delete(existing)
             notifyFollowsChanged()
+        }
         }
     }
 

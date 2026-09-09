@@ -457,7 +457,7 @@ class LoginActivity : AppCompatActivity() {
 
     private fun logoutAndFinish() {
         lifecycleScope.launch {
-            var revokeSucceeded = false
+            var revokeSucceeded = true
             try {
                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
                 val backendBaseUrl = KickOAuthConfig.getBackendBaseUrl(this@LoginActivity)
@@ -465,29 +465,25 @@ class LoginActivity : AppCompatActivity() {
                 val refreshToken = tokenPrefs().getString(AppConstants.KICK_REFRESH_TOKEN, null)
 
                 if (!backendBaseUrl.isNullOrBlank()) {
-                    if (!accessToken.isNullOrBlank()) {
-                        authRepository.revokeKickToken(
-                            networkLibrary = networkLibrary,
-                            backendBaseUrl = backendBaseUrl,
-                            request = KickBackendRevokeRequest(
-                                token = accessToken,
-                                tokenTypeHint = "access_token",
-                            ),
-                        )
+                    for ((token, hint) in listOf(accessToken to "access_token", refreshToken to "refresh_token")) {
+                        if (token.isNullOrBlank()) continue
+                        try {
+                            authRepository.revokeKickToken(
+                                networkLibrary = networkLibrary,
+                                backendBaseUrl = backendBaseUrl,
+                                request = KickBackendRevokeRequest(token = token, tokenTypeHint = hint),
+                            )
+                        } catch (error: Exception) {
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            revokeSucceeded = false
+                        }
                     }
-                    if (!refreshToken.isNullOrBlank()) {
-                        authRepository.revokeKickToken(
-                            networkLibrary = networkLibrary,
-                            backendBaseUrl = backendBaseUrl,
-                            request = KickBackendRevokeRequest(
-                                token = refreshToken,
-                                tokenTypeHint = "refresh_token",
-                            ),
-                        )
-                    }
+                } else if (!accessToken.isNullOrBlank() || !refreshToken.isNullOrBlank()) {
+                    revokeSucceeded = false
                 }
-                revokeSucceeded = true
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                revokeSucceeded = false
                 // Local state is still cleared below so the user isn't stuck, but don't claim
                 // the server-side revoke worked — the tokens may still be live at Kick.
                 Log.e(TAG, "Kick token revocation failed", e)

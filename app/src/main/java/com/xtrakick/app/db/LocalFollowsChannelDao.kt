@@ -19,7 +19,7 @@ interface LocalFollowsChannelDao {
     fun getByUserIdOrLogin(userId: String?, userLogin: String?): List<LocalFollowChannel>
 
     @Insert
-    fun insert(video: LocalFollowChannel)
+    fun insert(video: LocalFollowChannel): Long
 
     @Query("DELETE FROM local_follows")
     fun deleteAll()

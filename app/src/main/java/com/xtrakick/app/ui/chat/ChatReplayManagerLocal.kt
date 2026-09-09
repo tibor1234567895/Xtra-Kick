@@ -3,7 +3,6 @@ package com.xtrakick.app.ui.chat
 import com.xtrakick.app.model.chat.ChatMessage
 import com.xtrakick.app.util.chat.ChatReplayPacing
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -17,8 +16,16 @@ class ChatReplayManagerLocal(
     private val listener: ChatReplayManager.Listener,
 ) {
     companion object {
+        internal fun messageLowerBound(messages: List<ChatMessage>, timestamp: Long): Int {
+            var low = 0
+            var high = messages.size
+            while (low < high) {
+                val middle = (low + high) ushr 1
+                if ((messages[middle].timestamp ?: Long.MAX_VALUE) < timestamp) low = middle + 1 else high = middle
+            }
+            return low
+        }
         private const val LARGE_SEEK_THRESHOLD_MS = 20_000L
-        private const val PRELOAD_WINDOW_MS = 300_000L
         private const val PRELOAD_MAX_AGE_MS = 90_000L
         private const val PRELOAD_MAX_MESSAGES = 200
         private const val MIN_SYNC_WAIT_MS = 16L
@@ -27,9 +34,10 @@ class ChatReplayManagerLocal(
 
     private var messages: List<ChatMessage> = emptyList()
     private var startTime = 0L
-    private val list = ArrayDeque<ChatMessage>()
+    private var queuedMessages: List<ChatMessage> = emptyList()
+    private var nextMessageIndex = 0
+    private var remainingInBucket = 0
     private var started = false
-    private var isLoading = false
     private var loadJob: Job? = null
     private var messageJob: Job? = null
     private var lastCheckedPosition = 0L
@@ -45,19 +53,14 @@ class ChatReplayManagerLocal(
     private fun resetSpread() {
         spreadBucketStartMs = null
         spreadStaggerMs = 0L
+        remainingInBucket = 0
     }
 
-    /**
-     * Number of queued messages sharing [timestamp], counting from the head.
-     *
-     * Indexed access rather than iteration on purpose: [load] appends to [list] from
-     * [Dispatchers.IO] while this runs on the replay job's dispatcher, and an iterator would be
-     * open to ConcurrentModificationException. Appends only ever land past the range being read.
-     */
+    /** Count a timestamp bucket once, then decrement as messages are emitted. */
     private fun queuedInBucket(timestamp: Long): Int {
         var count = 0
         while (true) {
-            val queued = list.getOrNull(count) ?: break
+            val queued = queuedMessages.getOrNull(nextMessageIndex + count) ?: break
             if (queued.timestamp != timestamp) break
             count++
         }
@@ -73,7 +76,6 @@ class ChatReplayManagerLocal(
     }
 
     fun startLoad() {
-        val currentPosition = getCurrentPosition() ?: 0
         isActive = true
         if (!started) {
             started = true
@@ -84,11 +86,14 @@ class ChatReplayManagerLocal(
     }
 
     fun start() {
+        loadJob?.cancel()
+        messageJob?.cancel()
         isActive = true
         val currentPosition = getCurrentPosition() ?: 0
         lastCheckedPosition = currentPosition
         playbackSpeed = getCurrentSpeed()
-        list.clear()
+        queuedMessages = emptyList()
+        nextMessageIndex = 0
         resetSpread()
         coroutineScope.launch {
             listener.clearMessages()
@@ -103,34 +108,26 @@ class ChatReplayManagerLocal(
     }
 
     private fun load(position: Long, preload: Boolean = false) {
-        isLoading = true
-        loadJob = coroutineScope.launch(Dispatchers.IO) {
+        loadJob?.cancel()
+        loadJob = coroutineScope.launch {
             try {
+                val index = messageLowerBound(messages, position)
                 val preloadMessages = if (preload) {
-                    messages.filter { message ->
-                        message.timestamp?.let { timestamp ->
-                            timestamp in max(position - PRELOAD_MAX_AGE_MS, 0L) until position
-                        } == true
-                    }
-                        .takeLast(PRELOAD_MAX_MESSAGES)
+                    val from = max(messageLowerBound(messages, max(position - PRELOAD_MAX_AGE_MS, 0L)), index - PRELOAD_MAX_MESSAGES)
+                    messages.subList(from, index)
                 } else {
                     emptyList()
                 }
-                val queuedMessages = messages.filter { message ->
-                    message.timestamp?.let { timestamp ->
-                        timestamp >= position
-                    } == true
-                }
                 messageJob?.cancel()
-                list.clear()
-                list.addAll(queuedMessages)
-                isLoading = false
+                queuedMessages = messages.subList(index, messages.size)
+                nextMessageIndex = 0
+                resetSpread()
                 if (preloadMessages.isNotEmpty()) {
                     listener.onChatMessages(preloadMessages)
                 }
                 startJob()
-            } catch (_: Exception) {
-                isLoading = false
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
             }
         }
     }
@@ -138,7 +135,7 @@ class ChatReplayManagerLocal(
     private fun startJob() {
         messageJob = coroutineScope.launch {
             while (isActive) {
-                val message = list.firstOrNull() ?: break
+                val message = queuedMessages.getOrNull(nextMessageIndex) ?: break
                 if (message.timestamp != null) {
                     var currentPosition: Long
                     val bucketStart = message.timestamp
@@ -148,6 +145,7 @@ class ChatReplayManagerLocal(
                     if (bucketStart != spreadBucketStartMs) {
                         spreadBucketStartMs = bucketStart
                         spreadStaggerMs = 0L
+                        remainingInBucket = queuedInBucket(bucketStart)
                     }
                     val stagger = ChatReplayPacing.staggerForEmission(spreadStaggerMs)
                     val messageOffset = bucketStart + stagger
@@ -188,9 +186,10 @@ class ChatReplayManagerLocal(
                     )
                     // Counted before the head is removed below, so the just-emitted message is
                     // included - that is what [advanceStagger] expects.
-                    spreadStaggerMs = ChatReplayPacing.advanceStagger(stagger, queuedInBucket(message.timestamp))
+                    spreadStaggerMs = ChatReplayPacing.advanceStagger(stagger, remainingInBucket)
+                    remainingInBucket--
                 } else if (!isActive) break
-                if (list.isNotEmpty() && list.first() == message) list.removeFirst() else list.remove(message)
+                nextMessageIndex++
             }
         }
     }
@@ -207,7 +206,8 @@ class ChatReplayManagerLocal(
             if (position - lastCheckedPosition !in 0..LARGE_SEEK_THRESHOLD_MS) {
                 loadJob?.cancel()
                 messageJob?.cancel()
-                list.clear()
+                queuedMessages = emptyList()
+                nextMessageIndex = 0
                 resetSpread()
                 coroutineScope.launch {
                     listener.clearMessages()

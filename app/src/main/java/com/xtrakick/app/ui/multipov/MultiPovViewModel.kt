@@ -264,6 +264,8 @@ class MultiPovViewModel @Inject constructor(
 
     fun removeStream(key: String) {
         resolveJobs.remove(key)?.cancel()
+        httpErrorAttempts.remove(key)
+        lastForceResolveAtMs.remove(key)
         _uiState.update { state ->
             val remaining = state.slots.filterNot { it.key == key }
             val focus = when {
@@ -310,9 +312,12 @@ class MultiPovViewModel @Inject constructor(
             return
         }
         // Rate-limit automatic force network hits hard. User Retry bypasses cooldown.
-        if (forceRefresh && !userInitiated && !existingUrl.isNullOrBlank()) {
-            val last = lastForceResolveAtMs[key] ?: 0L
-            if (SystemClock.elapsedRealtime() - last < FORCE_RESOLVE_COOLDOWN_MS) {
+        if (forceRefresh && !userInitiated) {
+            val last = lastForceResolveAtMs[key]
+            if (last != null && SystemClock.elapsedRealtime() - last < FORCE_RESOLVE_COOLDOWN_MS) {
+                if (existingUrl.isNullOrBlank()) {
+                    updateLoadState(key, MultiPovLoadState.Error("Playback retry cooling down. Tap Retry."))
+                }
                 return
             }
         }
@@ -338,7 +343,6 @@ class MultiPovViewModel @Inject constructor(
                     forceRefresh = forceRefresh && (userInitiated || existingUrl.isNullOrBlank()),
                 )?.takeIf { it != stalePlaybackUrl }
                     ?: throw Exception("Kick playback URL unavailable")
-                httpErrorAttempts.remove(key)
                 val previous = _uiState.value.slots.firstOrNull { it.key == key }?.resolvedUrl
                 if (url == previous) {
                     return@launch

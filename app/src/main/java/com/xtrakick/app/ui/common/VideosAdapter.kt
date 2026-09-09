@@ -59,12 +59,15 @@ class VideosAdapter(
         holder.bind(getItem(position))
     }
 
-    private var positions: List<VideoPosition>? = null
+    private var positionsById: Map<Long, Long> = emptyMap()
 
     fun setVideoPositions(positions: List<VideoPosition>) {
-        this.positions = positions
-        if (itemCount != 0) {
-            notifyDataSetChanged()
+        val previous = positionsById
+        positionsById = positions.asReversed().associate { it.id to it.position }
+        if (positionsById == previous) return
+        for (index in 0 until itemCount) {
+            val id = peek(index)?.id?.toLongOrNull() ?: continue
+            if (previous[id] != positionsById[id]) notifyItemChanged(index)
         }
     }
 
@@ -85,7 +88,7 @@ class VideosAdapter(
                 if (item != null) {
                     val context = fragment.requireContext()
                     val getDuration = item.duration?.let { KickApiHelper.getDuration(it) }
-                    val position = item.id?.toLongOrNull()?.let { id -> positions?.find { it.id == id }?.position }
+                    val position = item.id?.toLongOrNull()?.let(positionsById::get)
                     root.setOnClickListener {
                         (fragment.activity as MainActivity).startVideo(item, position)
                     }

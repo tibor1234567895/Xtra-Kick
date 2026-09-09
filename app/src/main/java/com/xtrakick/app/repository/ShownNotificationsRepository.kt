@@ -25,6 +25,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -60,6 +61,7 @@ class ShownNotificationsRepository @Inject constructor(
         val userIdsForPublicApi = mutableSetOf<String>()
         val slugsForFallback = mutableSetOf<String>()
         val keyToBroadcasterUserId = mutableMapOf<String, String>()
+        val broadcasterIdsBySlug = mutableMapOf<String, String>()
 
         for (id in channelIds) {
             val follow = follows.firstOrNull { it.userId == id || it.userLogin?.equals(id, ignoreCase = true) == true }
@@ -72,6 +74,7 @@ class ShownNotificationsRepository @Inject constructor(
                 }
                 if (slug != null) {
                     slugsForFallback.add(slug)
+                    if (bId != null) broadcasterIdsBySlug[slug] = bId
                 }
             } else if (id.all(Char::isDigit)) {
                 userIdsForPublicApi.add(id)
@@ -83,22 +86,27 @@ class ShownNotificationsRepository @Inject constructor(
 
         val resolvedStreams = mutableListOf<Stream>()
         val fetchedKeys = mutableSetOf<String>()
+        val fetchedBroadcasterIds = mutableSetOf<String>()
 
         if (userIdsForPublicApi.isNotEmpty()) {
-            val publicApiResult = runCatching {
-                userIdsForPublicApi.chunked(50).flatMap { batch ->
+            val publicApiResult = userIdsForPublicApi.chunked(50).flatMap { batch ->
+                try {
                     kickPublicApiRepository.getLivestreams(
                         networkLibrary = networkLibrary,
                         headers = headers,
                         broadcasterUserIds = batch,
-                    ).data
+                    ).data.also { fetchedBroadcasterIds.addAll(batch) }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    emptyList()
                 }
-            }.getOrNull()
+            }
 
-            if (publicApiResult != null) {
+            if (fetchedBroadcasterIds.isNotEmpty()) {
                 channelIds.forEach { id ->
                     val bId = keyToBroadcasterUserId[id]
-                    if (bId != null && bId in userIdsForPublicApi) {
+                    if (bId != null && bId in fetchedBroadcasterIds) {
                         fetchedKeys.add(id)
                     }
                 }
@@ -135,9 +143,9 @@ class ShownNotificationsRepository @Inject constructor(
             }
         }
 
-        val unresolvedSlugs = slugsForFallback.filter { slug ->
-            resolvedStreams.none { it.channelLogin?.equals(slug, ignoreCase = true) == true }
-        }
+        val unresolvedSlugs = notificationFallbackSlugs(
+            slugsForFallback, broadcasterIdsBySlug, fetchedBroadcasterIds, resolvedStreams,
+        )
 
         if (unresolvedSlugs.isNotEmpty()) {
             val semaphore = Semaphore(8)
@@ -147,7 +155,10 @@ class ShownNotificationsRepository @Inject constructor(
                         semaphore.withPermit {
                             val channel = runCatching {
                                 this@ShownNotificationsRepository.kickRepository.getChannel(slug, prefetchBadgeCatalog = false)
-                            }.getOrNull()
+                            }.getOrElse { error ->
+                                if (error is CancellationException) throw error
+                                null
+                            }
                             channel?.let { this@ShownNotificationsRepository.kickRepository.toStream(it) } to (channel != null)
                         }
                     }
@@ -339,6 +350,19 @@ class ShownNotificationsRepository @Inject constructor(
     }
 
     companion object {
+        internal fun notificationFallbackSlugs(
+            slugs: Set<String>,
+            broadcasterIdsBySlug: Map<String, String>,
+            fetchedBroadcasterIds: Set<String>,
+            resolvedStreams: List<Stream>,
+        ): List<String> {
+            // A complete successful ID batch also resolves its offline channels.
+            return slugs.filter { slug ->
+                broadcasterIdsBySlug[slug] !in fetchedBroadcasterIds &&
+                    resolvedStreams.none { it.channelLogin?.equals(slug, ignoreCase = true) == true }
+            }
+        }
+
         const val GROUP_KEY = "com.xtrakick.app.LIVE_NOTIFICATIONS"
 
         private const val TAG = "ShownNotifications"

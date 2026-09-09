@@ -206,6 +206,71 @@ class ChatAdapterUtilsTest {
     }
 
     @Test
+    fun staleFailureDoesNotCompleteNewRequest() {
+        val coordinator = ChatAdapterUtils.RequestCoordinator<String, String>(10)
+        val completions = mutableListOf<(String?) -> Unit>()
+        val results = mutableListOf<String?>()
+
+        coordinator.load("same", startLoad = completions::add, callback = results::add)
+        completions[0](null)
+        coordinator.load("same", startLoad = completions::add, callback = results::add)
+        completions[0](null)
+        completions[1]("retry")
+
+        assertEquals(listOf(null, "retry"), results)
+    }
+
+    @Test
+    fun clearedRequestCannotPopulateCacheOrCompleteReplacement() {
+        val coordinator = ChatAdapterUtils.RequestCoordinator<String, String>(10)
+        val completions = mutableListOf<(String?) -> Unit>()
+        val results = mutableListOf<String?>()
+
+        coordinator.load("same", startLoad = completions::add, callback = results::add)
+        coordinator.clear()
+        coordinator.load("same", startLoad = completions::add, callback = results::add)
+        completions[0]("stale")
+        assertTrue(results.isEmpty())
+        completions[1]("current")
+        coordinator.load("same", startLoad = completions::add, callback = results::add)
+
+        assertEquals(2, completions.size)
+        assertEquals(listOf("current", "current"), results)
+    }
+
+    @Test
+    fun loaderStartupExceptionReleasesRequestForRetry() {
+        val coordinator = ChatAdapterUtils.RequestCoordinator<String, String>(10)
+        val results = mutableListOf<String?>()
+        val failure = IllegalStateException("loader failed")
+
+        try {
+            coordinator.load("same", startLoad = { throw failure }, callback = results::add)
+            throw AssertionError("Expected loader failure")
+        } catch (error: IllegalStateException) {
+            assertSame(failure, error)
+        }
+        coordinator.load("same", startLoad = { it("retry") }, callback = results::add)
+
+        assertEquals(listOf(null, "retry"), results)
+    }
+
+    @Test
+    fun clearingCompletedLoadDoesNotEvictCachedImage() {
+        val coordinator = ChatAdapterUtils.RequestCoordinator<String, String>(10)
+        val completions = mutableListOf<(String?) -> Unit>()
+        val results = mutableListOf<String?>()
+
+        coordinator.load("same", startLoad = completions::add, callback = results::add)
+        completions[0]("loaded")
+        completions[0](null)
+        coordinator.load("same", startLoad = completions::add, callback = results::add)
+
+        assertEquals(1, completions.size)
+        assertEquals(listOf("loaded", "loaded"), results)
+    }
+
+    @Test
     fun shortTokenDoesNotSplitConcatenatedEmotes() {
         val emotes = listOf(Emote(name = "a"), Emote(name = "b"))
         assertNull(ChatAdapterUtils.splitConcatenatedThirdPartyEmotes("a", emotes))

@@ -24,7 +24,6 @@ import com.xtrakick.app.R
 import com.xtrakick.app.model.AppUpdateInfo
 import com.xtrakick.app.model.VideoPosition
 import com.xtrakick.app.model.kick.auth.KickBackendIntrospectRequest
-import com.xtrakick.app.model.kick.auth.KickBackendRefreshRequest
 import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.model.ui.Game
 import com.xtrakick.app.model.ui.OfflineVideo
@@ -78,7 +77,7 @@ import okhttp3.Request
 import org.chromium.net.CronetEngine
 import org.chromium.net.apihelpers.RedirectHandlers
 import org.chromium.net.apihelpers.UrlRequestCallbacks
-import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.ensureActive
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Timer
@@ -897,21 +896,11 @@ class MainViewModel @Inject constructor(
                     if (refreshToken.isNullOrBlank()) {
                         throw IllegalStateException("401")
                     }
-                    val refresh = authRepository.refreshKickToken(
-                        networkLibrary = networkLibrary,
-                        backendBaseUrl = backendBaseUrl,
-                        request = KickBackendRefreshRequest(
-                            refreshToken = refreshToken,
-                        ),
+                    kickRepository.getKickPublicApiHeadersWithRefresh(
+                        networkLibrary, forceRefresh = true, expectedAccessToken = accessToken, propagateFailure = true,
                     )
-                    val newAccess = refresh.accessToken?.takeIf { it.isNotBlank() } ?: throw IllegalStateException("401")
-                    activeToken = newAccess
-                    activity.tokenPrefs().edit {
-                        putString(AppConstants.KICK_ACCESS_TOKEN, newAccess)
-                        putString(AppConstants.KICK_REFRESH_TOKEN, refresh.refreshToken ?: refreshToken)
-                        putLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, now + (refresh.expiresIn ?: 0L))
-                        putString(AppConstants.KICK_TOKEN_TYPE, refresh.tokenType)
-                    }
+                    activeToken = activity.tokenPrefs().getString(AppConstants.KICK_ACCESS_TOKEN, null)
+                        ?.takeIf { it.isNotBlank() } ?: throw IllegalStateException("401")
                 }
                 val user = try {
                     authRepository.getKickCurrentUser(networkLibrary, activeToken).data.firstOrNull()
@@ -1037,79 +1026,32 @@ class MainViewModel @Inject constructor(
                 val progressListener = NetworkUtils.ProgressListener { bytesRead ->
                     updateProgress.tryEmit(bytesRead)
                 }
-                val response = when {
-                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                        val response = suspendCancellableCoroutine { continuation ->
-                            val request = httpEngine.get().newUrlRequestBuilder(
-                                url,
-                                cronetExecutor,
-                                HttpEngineUtils.byteArrayUrlCallback(continuation, progressListener)
-                            ).build()
-                            continuation.invokeOnCancellation {
-                                request.cancel()
-                            }
-                            request.start()
+                val packageInstaller = applicationContext.packageManager.packageInstaller
+                val sessionId = packageInstaller.createSession(
+                    PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+                )
+                packageInstaller.openSession(sessionId).use { session ->
+                    try {
+                        session.openWrite("package", 0, -1).use { output ->
+                            playerRepository.downloadTo(networkLibrary, url, output, progressListener)
+                            session.fsync(output)
                         }
-                        if (response.first.httpStatusCode in 200..299) {
-                            response.second
-                        } else null
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        session.commit(
+                            PendingIntent.getActivity(
+                                applicationContext,
+                                0,
+                                Intent(applicationContext, MainActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                    setAction(MainActivity.INTENT_INSTALL_UPDATE)
+                                },
+                                PendingIntent.FLAG_MUTABLE
+                            ).intentSender
+                        )
+                    } catch (error: Exception) {
+                        session.abandon()
+                        throw error
                     }
-                    networkLibrary == "Cronet" && cronetEngine != null -> {
-                        val response = suspendCancellableCoroutine { continuation ->
-                            val request = cronetEngine.get().newUrlRequestBuilder(
-                                url,
-                                NetworkUtils.ByteArrayCronetUrlCallback(continuation, progressListener),
-                                cronetExecutor
-                            ).build()
-                            continuation.invokeOnCancellation {
-                                request.cancel()
-                            }
-                            request.start()
-                        }
-                        if (response.first.httpStatusCode in 200..299) {
-                            response.second
-                        } else null
-                    }
-                    else -> {
-                        okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                            if (response.isSuccessful) {
-                                val output = ByteArrayOutputStream()
-                                response.body.byteStream().use { input ->
-                                    val buffer = ByteArray(32 * 1024)
-                                    var read: Int
-                                    while (input.read(buffer).also { read = it } != -1) {
-                                        output.write(buffer, 0, read)
-                                        progressListener.update(output.size())
-                                    }
-                                }
-                                output.toByteArray()
-                            } else null
-                        }
-                    }
-                }
-                // Dialog was dismissed mid-download; don't prompt the install.
-                if (!isActive) return@launch
-                if (response != null && response.isNotEmpty()) {
-                    val packageInstaller = applicationContext.packageManager.packageInstaller
-                    val sessionId = packageInstaller.createSession(
-                        PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-                    )
-                    val session = packageInstaller.openSession(sessionId)
-                    session.openWrite("package", 0, response.size.toLong()).use {
-                        it.write(response)
-                    }
-                    session.commit(
-                        PendingIntent.getActivity(
-                            applicationContext,
-                            0,
-                            Intent(applicationContext, MainActivity::class.java).apply {
-                                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                                setAction(MainActivity.INTENT_INSTALL_UPDATE)
-                            },
-                            PendingIntent.FLAG_MUTABLE
-                        ).intentSender
-                    )
-                    session.close()
                 }
             } catch (e: Exception) {
 

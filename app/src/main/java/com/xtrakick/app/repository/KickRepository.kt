@@ -234,18 +234,18 @@ class KickRepository @Inject constructor(
     private val kickSubscriberAccessCacheTtlMs = 60_000L
     private val kickEmoteGroupsCacheTtlMs = 60_000L
     private val kickBadgeUrls = ConcurrentHashMap<String, String>()
-    private val channelCache = ConcurrentHashMap<String, Pair<Long, KickChannelResponse>>()
-    private val channelLivestreamCache = ConcurrentHashMap<String, Pair<Long, KickChannelLivestream?>>()
-    private val websiteSearchCache = ConcurrentHashMap<String, Pair<Long, KickWebsiteSearchResponse>>()
-    private val typesenseSearchCache = ConcurrentHashMap<String, Pair<Long, KickTypesenseResult>>()
+    private val channelCache = boundedCache<Pair<Long, KickChannelResponse>>()
+    private val channelLivestreamCache = boundedCache<Pair<Long, KickChannelLivestream?>>()
+    private val websiteSearchCache = boundedCache<Pair<Long, KickWebsiteSearchResponse>>()
+    private val typesenseSearchCache = boundedCache<Pair<Long, KickTypesenseResult>>()
     private val categorySlugById = ConcurrentHashMap<String, String>()
     private val categorySlugByName = ConcurrentHashMap<String, String>()
-    private val kickSubscriberAccessCache = ConcurrentHashMap<String, Pair<Long, Boolean>>()
-    private val kickEmoteGroupsCache = ConcurrentHashMap<String, Pair<Long, List<KickEmoteGroup>>>()
+    private val kickSubscriberAccessCache = boundedCache<Pair<Long, Boolean>>()
+    private val kickEmoteGroupsCache = boundedCache<Pair<Long, List<KickEmoteGroup>>>()
     private val kickInlineBadgeSanitizedCache = ConcurrentHashMap<String, String>()
     private val kickBadgeCatalogRefreshAt = ConcurrentHashMap<String, Long>()
     private val kickBadgeCatalogRefreshInProgress = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
-    private val channelPointRewardsCache = ConcurrentHashMap<String, Pair<Long, ChannelPointRewardsResult>>()
+    private val channelPointRewardsCache = boundedCache<Pair<Long, ChannelPointRewardsResult>>()
     private val kickBadgeSourceStats = ConcurrentHashMap<KickBadgeSource, Int>()
     private val kickChunkBodyCache = ConcurrentHashMap<String, String>()
     private val kickCanonicalBadgeTypes = listOf(
@@ -397,72 +397,106 @@ class KickRepository @Inject constructor(
         )
     }
 
-    suspend fun getKickPublicApiHeadersWithRefresh(networkLibrary: String?, forceRefresh: Boolean = false): Map<String, String> {
+    private val kickRefreshMutex = Mutex()
+
+    private fun <V> boundedCache(): MutableMap<String, V> = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, V>(64, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, V>?): Boolean = size > 256
+        }
+    )
+
+    private fun accountCacheKey(): String = context.tokenPrefs().let {
+        it.getString(AppConstants.KICK_USER_ID, null)
+            ?: it.getString(AppConstants.KICK_USER_LOGIN, null).orEmpty()
+    }
+
+    suspend fun getKickPublicApiHeadersWithRefresh(
+        networkLibrary: String?,
+        forceRefresh: Boolean = false,
+        expectedAccessToken: String? = null,
+        propagateFailure: Boolean = false,
+    ): Map<String, String> {
+        val observedToken = expectedAccessToken ?: context.tokenPrefs().getString(AppConstants.KICK_ACCESS_TOKEN, null)
         val headers = KickApiHelper.getKickPublicApiHeaders(context)
         if (!forceRefresh && !headers[AppConstants.HEADER_TOKEN].isNullOrBlank()) {
             return headers
         }
 
-        val tokenPrefs = context.tokenPrefs()
-        val refreshToken = tokenPrefs.getString(AppConstants.KICK_REFRESH_TOKEN, null)?.takeIf { it.isNotBlank() }
-        if (refreshToken.isNullOrBlank()) {
-            if (isKickAuthDebugEnabled()) {
-                Log.i(tag, "Kick public API headers missing token and no refresh token available")
+        return kickRefreshMutex.withLock {
+            val tokenPrefs = context.tokenPrefs()
+            if (tokenPrefs.getString(AppConstants.KICK_ACCESS_TOKEN, null) != observedToken) {
+                return@withLock KickApiHelper.getKickPublicApiHeaders(context)
             }
-            return headers
-        }
-
-        val backendBaseUrl = KickOAuthConfig.getBackendBaseUrl(context)
-        if (backendBaseUrl.isNullOrBlank()) {
-            if (isKickAuthDebugEnabled()) {
-                Log.i(tag, "Kick public API headers missing token and backend base URL is unavailable")
-            }
-            return headers
-        }
-
-        return try {
-            if (isKickAuthDebugEnabled()) {
-                val reason = if (forceRefresh) "forced" else "missing_token"
-                Log.i(tag, "Kick public API headers attempting refresh reason=$reason")
-            }
-            val now = System.currentTimeMillis() / 1000L
-            val refresh = authRepository.refreshKickToken(
-                networkLibrary = networkLibrary,
-                backendBaseUrl = backendBaseUrl,
-                request = KickBackendRefreshRequest(
-                    refreshToken = refreshToken,
-                ),
-            )
-            val newAccessToken = refresh.accessToken?.takeIf { it.isNotBlank() }
-            if (newAccessToken.isNullOrBlank()) {
+            val refreshToken = tokenPrefs.getString(AppConstants.KICK_REFRESH_TOKEN, null)?.takeIf { it.isNotBlank() }
+            if (refreshToken.isNullOrBlank()) {
                 if (isKickAuthDebugEnabled()) {
-                    Log.w(tag, "Kick token refresh returned blank access token")
+                    Log.i(tag, "Kick public API headers missing token and no refresh token available")
                 }
+                return headers
+            }
+
+            val backendBaseUrl = KickOAuthConfig.getBackendBaseUrl(context)
+            if (backendBaseUrl.isNullOrBlank()) {
+                if (isKickAuthDebugEnabled()) {
+                    Log.i(tag, "Kick public API headers missing token and backend base URL is unavailable")
+                }
+                return headers
+            }
+
+            try {
+                if (isKickAuthDebugEnabled()) {
+                    val reason = if (forceRefresh) "forced" else "missing_token"
+                    Log.i(tag, "Kick public API headers attempting refresh reason=$reason")
+                }
+                val now = System.currentTimeMillis() / 1000L
+                val refresh = authRepository.refreshKickToken(
+                    networkLibrary = networkLibrary,
+                    backendBaseUrl = backendBaseUrl,
+                    request = KickBackendRefreshRequest(
+                        refreshToken = refreshToken,
+                    ),
+                )
+                val newAccessToken = refresh.accessToken?.takeIf { it.isNotBlank() }
+                if (tokenPrefs.getString(AppConstants.KICK_REFRESH_TOKEN, null) != refreshToken ||
+                    tokenPrefs.getString(AppConstants.KICK_ACCESS_TOKEN, null) != observedToken
+                ) {
+                    return@withLock KickApiHelper.getKickPublicApiHeaders(context)
+                }
+                if (newAccessToken.isNullOrBlank()) {
+                    if (isKickAuthDebugEnabled()) {
+                        Log.w(tag, "Kick token refresh returned blank access token")
+                    }
+                    headers
+                } else {
+                    tokenPrefs.edit {
+                        putString(AppConstants.KICK_ACCESS_TOKEN, newAccessToken)
+                        putString(AppConstants.KICK_REFRESH_TOKEN, refresh.refreshToken ?: refreshToken)
+                        putLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, now + (refresh.expiresIn ?: 0L))
+                        putString(AppConstants.KICK_TOKEN_TYPE, refresh.tokenType)
+                    }
+                    val refreshedHeaders = KickApiHelper.getKickPublicApiHeaders(context)
+                    if (isKickAuthDebugEnabled()) {
+                        val outcome = if (refreshedHeaders[AppConstants.HEADER_TOKEN].isNullOrBlank()) "missing_token_after_refresh" else "ok"
+                        Log.i(tag, "Kick token refresh completed for public API headers outcome=$outcome")
+                    }
+                    refreshedHeaders
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (KickAuthRequestException.isUnauthorized(e) &&
+                    tokenPrefs.getString(AppConstants.KICK_REFRESH_TOKEN, null) == refreshToken &&
+                    tokenPrefs.getString(AppConstants.KICK_ACCESS_TOKEN, null) == observedToken
+                ) {
+                    AuthStateHelper.markUnexpectedLogout(context)
+                    AuthStateHelper.clearKickAuth(context)
+                    AuthStateHelper.clearLegacyWebAuth(context)
+                }
+                if (isKickAuthDebugEnabled()) {
+                    Log.w(tag, "Kick token refresh failed for public API headers: ${e.message}")
+                }
+                if (propagateFailure) throw e
                 headers
-            } else {
-                tokenPrefs.edit {
-                    putString(AppConstants.KICK_ACCESS_TOKEN, newAccessToken)
-                    putString(AppConstants.KICK_REFRESH_TOKEN, refresh.refreshToken ?: refreshToken)
-                    putLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, now + (refresh.expiresIn ?: 0L))
-                    putString(AppConstants.KICK_TOKEN_TYPE, refresh.tokenType)
-                }
-                val refreshedHeaders = KickApiHelper.getKickPublicApiHeaders(context)
-                if (isKickAuthDebugEnabled()) {
-                    val outcome = if (refreshedHeaders[AppConstants.HEADER_TOKEN].isNullOrBlank()) "missing_token_after_refresh" else "ok"
-                    Log.i(tag, "Kick token refresh completed for public API headers outcome=$outcome")
-                }
-                refreshedHeaders
             }
-        } catch (e: Exception) {
-            if (KickAuthRequestException.isUnauthorized(e)) {
-                AuthStateHelper.markUnexpectedLogout(context)
-                AuthStateHelper.clearKickAuth(context)
-                AuthStateHelper.clearLegacyWebAuth(context)
-            }
-            if (isKickAuthDebugEnabled()) {
-                Log.w(tag, "Kick token refresh failed for public API headers: ${e.message}")
-            }
-            headers
         }
     }
 
@@ -858,7 +892,7 @@ class KickRepository @Inject constructor(
     suspend fun canAccessKickSubscriberEmotes(channelSlug: String): Boolean = withContext(Dispatchers.IO) {
         val normalizedSlug = channelSlug.trim()
         if (normalizedSlug.isBlank()) return@withContext false
-        val cacheKey = normalizedSlug.lowercase(Locale.ROOT)
+        val cacheKey = accountCacheKey() + "|" + normalizedSlug.lowercase(Locale.ROOT)
         kickSubscriberAccessCache[cacheKey]?.let { (cachedAt, cachedValue) ->
             if (System.currentTimeMillis() - cachedAt <= kickSubscriberAccessCacheTtlMs) {
                 return@withContext cachedValue
@@ -906,7 +940,7 @@ class KickRepository @Inject constructor(
         if (normalizedSlug.isBlank()) {
             return@withContext emptyList()
         }
-        val cacheKey = normalizedSlug.lowercase(Locale.ROOT) + "|" + includeCurrentChannelSubscriberEmotes
+        val cacheKey = accountCacheKey() + "|" + normalizedSlug.lowercase(Locale.ROOT) + "|" + includeCurrentChannelSubscriberEmotes
         kickEmoteGroupsCache[cacheKey]?.let { (cachedAt, cachedGroups) ->
             if (System.currentTimeMillis() - cachedAt <= kickEmoteGroupsCacheTtlMs) {
                 return@withContext cachedGroups
@@ -978,6 +1012,7 @@ class KickRepository @Inject constructor(
         forceRefresh: Boolean = false,
     ): ChannelPointRewardsResult {
         val cacheKey = listOfNotNull(
+            accountCacheKey(),
             channelId?.trim()?.takeIf { it.isNotBlank() },
             channelSlug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
         ).joinToString("|")

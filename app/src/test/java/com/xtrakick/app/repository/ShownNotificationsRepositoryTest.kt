@@ -6,6 +6,7 @@ import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.EVENT_
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.SUMMARY_NOTIFICATION_ID
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.isRequestedLivestream
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.notificationIdFor
+import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.notificationFallbackSlugs
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.shouldSuppressEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,6 +15,48 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ShownNotificationsRepositoryTest {
+
+    @Test
+    fun successfulEmptyBatchDoesNotRefetchOfflineChannels() {
+        assertEquals(
+            emptyList<String>(),
+            notificationFallbackSlugs(setOf("offline"), mapOf("offline" to "101"), setOf("101"), emptyList()),
+        )
+    }
+
+    @Test
+    fun failedBatchAndUnresolvedSlugStillUseFallback() {
+        assertEquals(
+            listOf("failed", "unresolved"),
+            notificationFallbackSlugs(
+                setOf("offline", "failed", "unresolved"),
+                mapOf("offline" to "101", "failed" to "202"),
+                setOf("101"),
+                emptyList(),
+            ),
+        )
+    }
+
+    @Test
+    fun successfulBatchUsesBroadcasterIdNotChannelId() {
+        assertEquals(
+            listOf("channel"),
+            notificationFallbackSlugs(setOf("channel"), mapOf("channel" to "101"), setOf("202"), emptyList()),
+        )
+    }
+
+    @Test
+    fun resolvedLiveSlugDoesNotNeedFallbackEvenWithoutKnownBroadcasterId() {
+        assertEquals(
+            listOf("unresolved"),
+            notificationFallbackSlugs(
+                setOf("live", "unresolved"),
+                emptyMap(),
+                emptySet(),
+                listOf(Stream(channelLogin = "Live")),
+            ),
+        )
+    }
 
     @Test
     fun distinctChannelsGetDistinctIds() {

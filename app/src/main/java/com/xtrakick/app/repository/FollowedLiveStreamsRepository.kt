@@ -7,6 +7,7 @@ import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
+import com.xtrakick.app.util.tokenPrefs
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -14,6 +15,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.json.JSONObject
@@ -89,6 +92,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
     private data class CachePayload(
         val cachedAt: Long = 0L,
         val items: List<CachedFollowedStream> = emptyList(),
+        val account: String? = null,
     )
 
     data class LoadResult(
@@ -106,17 +110,41 @@ class FollowedLiveStreamsRepository @Inject constructor(
         allowPerChannelFallback: Boolean = false,
         onPartial: (List<Stream>) -> Unit = {},
     ): LoadResult {
-        if (!forceRefresh) {
-            val cached = peekCache()
-            if (cached.isNotEmpty()) {
-                onPartial(cached)
-                return LoadResult(items = cached, fromCache = true)
+        val account = accountKey()
+        fun publish(items: List<Stream>) {
+            if (account != accountKey()) throw CancellationException("Following account changed")
+            onPartial(items)
+        }
+        val observedGeneration = loadGeneration
+        return loadMutex.withLock {
+            if ((!forceRefresh || observedGeneration != loadGeneration) &&
+                (!allowPerChannelFallback || lastLoadAllowedFallback)
+            ) {
+                freshCache()?.let {
+                    publish(it)
+                    return@withLock LoadResult(it, true)
+                }
+            }
+            loadLiveFollowedUncached(allowPerChannelFallback, account, ::publish).also {
+                lastLoadAllowedFallback = allowPerChannelFallback
+                loadGeneration++
             }
         }
+    }
+
+    private val loadMutex = Mutex()
+    @Volatile private var loadGeneration = 0L
+    private var lastLoadAllowedFallback = false
+
+    private suspend fun loadLiveFollowedUncached(
+        allowPerChannelFallback: Boolean,
+        account: String,
+        onPartial: (List<Stream>) -> Unit,
+    ): LoadResult {
 
         val follows = localFollowsChannel.loadFollows()
         if (follows.isEmpty()) {
-            persistCache(emptyList())
+            persistCache(emptyList(), account)
             onPartial(emptyList())
             return LoadResult(items = emptyList(), fromCache = false)
         }
@@ -170,7 +198,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
 
         val unresolvedAfterBulk = bulk?.unresolved ?: unresolvedAfterFast
         if (allowPerChannelFallback && unresolvedAfterBulk.isNotEmpty()) {
-            if (sawRateLimit) {
+            if (sawRateLimit || (resolved.isNotEmpty() && unresolvedAfterBulk.size > 6)) {
                 debugWarn("Skipping per-channel fallback: kick API is rate limiting")
             } else {
                 unresolvedAfterBulk.chunked(PER_CHANNEL_BATCH_SIZE).forEach { batch ->
@@ -189,16 +217,20 @@ class FollowedLiveStreamsRepository @Inject constructor(
         }
 
         val finalItems = resolved.values.toList().sortedByViewersDesc()
-        persistCache(finalItems)
+        persistCache(finalItems, account)
         onPartial(finalItems)
         return LoadResult(items = finalItems, fromCache = false)
     }
 
-    fun peekCache(maxAgeMs: Long = CACHE_TTL_MS): List<Stream> {
+    fun peekCache(maxAgeMs: Long = CACHE_TTL_MS): List<Stream> = freshCache(maxAgeMs).orEmpty()
+
+    private fun accountKey(): String = applicationContext.tokenPrefs().getString(AppConstants.KICK_USER_ID, null).orEmpty()
+
+    private fun freshCache(maxAgeMs: Long = CACHE_TTL_MS): List<Stream>? {
         val payload = applicationContext.prefs().getString(CACHE_KEY, null)
             ?.let { encoded -> runCatching { json.decodeFromString<CachePayload>(encoded) }.getOrNull() }
-            ?: return emptyList()
-        if (System.currentTimeMillis() - payload.cachedAt > maxAgeMs) return emptyList()
+            ?: return null
+        if (payload.account != accountKey() || System.currentTimeMillis() - payload.cachedAt > maxAgeMs) return null
         return payload.items.map { it.toStream() }.sortedByViewersDesc()
     }
 
@@ -431,8 +463,10 @@ class FollowedLiveStreamsRepository @Inject constructor(
         )
     }
 
-    private fun persistCache(items: List<Stream>) {
+    private fun persistCache(items: List<Stream>, account: String) {
+        if (account != accountKey()) throw CancellationException("Following account changed")
         val payload = CachePayload(
+            account = account,
             cachedAt = System.currentTimeMillis(),
             items = items.map {
                 CachedFollowedStream(

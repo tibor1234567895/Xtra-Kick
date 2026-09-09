@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineStart
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
@@ -107,7 +109,7 @@ class NotificationChannelsViewModel @Inject constructor(
             if (it.id == entry.id && it.followed == entry.followed) it.copy(enabled = enabled) else it
         }
         toggleJobs.remove(entry.id)?.cancel()
-        toggleJobs[entry.id] = viewModelScope.launch {
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
                 if (enabled) {
                     val canonical = notificationUsersRepository.enableNotificationsForChannel(
@@ -136,9 +138,11 @@ class NotificationChannelsViewModel @Inject constructor(
                 }
                 _updateError.value = context.getString(R.string.live_notification_channels_update_failed)
             } finally {
-                toggleJobs.remove(entry.id)
+                if (toggleJobs[entry.id] === coroutineContext[Job]) toggleJobs.remove(entry.id)
             }
         }
+        toggleJobs[entry.id] = job
+        job.start()
     }
 
     fun enableAll() {
@@ -196,7 +200,7 @@ class NotificationChannelsViewModel @Inject constructor(
         val followed: Boolean,
     )
 
-    private suspend fun loadChannels(): List<ChannelUi> {
+    private suspend fun loadChannels(): List<ChannelUi> = withContext(Dispatchers.Default) {
         val rows = notificationUsersRepository.loadUsers()
         val follows = localFollowChannelRepository.loadFollows()
 
@@ -299,7 +303,7 @@ class NotificationChannelsViewModel @Inject constructor(
             }
         }
 
-        return drafts
+        drafts
             .distinctBy { (it.login ?: it.id).lowercase() }
             .map { draft ->
                 ChannelUi(

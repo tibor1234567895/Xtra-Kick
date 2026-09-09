@@ -3,29 +3,32 @@ package com.xtrakick.app.util
 import android.os.Build
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.IOException
 import java.io.InputStream
-import java.io.InputStreamReader
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.net.Socket
+import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.Timer
 import java.util.zip.Deflater
-import java.util.zip.DeflaterOutputStream
 import java.util.zip.Inflater
-import java.util.zip.InflaterOutputStream
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLSocketFactory
+import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.schedule
 import kotlin.coroutines.cancellation.CancellationException
@@ -40,56 +43,71 @@ class WebSocket(
     private val headers: Map<String, String>? = null,
     private val sendPings: Boolean = false,
 ) {
-    private var socket: Socket? = null
+    @Volatile private var socket: Socket? = null
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
     private var pingTimer: Timer? = null
     private var pongTimer: Timer? = null
-    private var messageByteArray: ByteArray? = null
+    private var messageBytes: ByteArrayOutputStream? = null
+    private val inflater = Inflater(true)
+    private var serverNoContextTakeover = false
     private var useCompression = false
     private var nextFrameCompressed = false
     private var connectionAttempt = 0
     private var delayReconnect = false
     private var isConnected = false
+    private val writeLock = Any()
 
     suspend fun start() = withContext(Dispatchers.IO) {
-        while (isActive) {
+        val cancellationWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
             try {
-                connectionAttempt += 1
-                val error = connect()
-                if (error) {
+                awaitCancellation()
+            } finally {
+                runCatching { socket?.close() }
+            }
+        }
+        try {
+            while (isActive) {
+                try {
+                    connectionAttempt += 1
+                    val error = connect()
+                    if (error) {
+                        close()
+                        return@withContext
+                    }
+                    connectionAttempt = 0
+                    var end = false
+                    while (!end) {
+                        end = readNextFrame()
+                    }
+                } catch (e: CancellationException) {
+                    ensureActive()
+                } catch (e: SSLHandshakeException) {
+                    listener.onDisconnect(this@WebSocket, e.toString(), e.stackTraceToString())
                     close()
                     return@withContext
+                } catch (e: Exception) {
+                    if (socket?.isClosed != true) {
+                        listener.onDisconnect(this@WebSocket, e.toString(), e.stackTraceToString())
+                    }
                 }
-                connectionAttempt = 0
-                var end = false
-                while (!end) {
-                    end = readNextFrame()
-                }
-            } catch (e: CancellationException) {
-                ensureActive()
-            } catch (e: SSLHandshakeException) {
-                listener.onDisconnect(this@WebSocket, e.toString(), e.stackTraceToString())
                 close()
-                return@withContext
-            } catch (e: Exception) {
-                if (socket?.isClosed != true) {
-                    listener.onDisconnect(this@WebSocket, e.toString(), e.stackTraceToString())
+                if (connectionAttempt >= 20) {
+                    return@withContext
+                }
+                if (delayReconnect) {
+                    delayReconnect = false
+                    delay(60000)
+                    WebSocketRuntime.onReconnectScheduled(connectionAttempt, 60000, "rate_limited")
+                } else {
+                    val delayMs = reconnectDelayMs(connectionAttempt)
+                    WebSocketRuntime.onReconnectScheduled(connectionAttempt, delayMs, "retry")
+                    delay(delayMs)
                 }
             }
-            close()
-            if (connectionAttempt >= 20) {
-                return@withContext
-            }
-            if (delayReconnect) {
-                delayReconnect = false
-                delay(60000)
-                WebSocketRuntime.onReconnectScheduled(connectionAttempt, 60000, "rate_limited")
-            } else {
-                val delayMs = reconnectDelayMs(connectionAttempt)
-                WebSocketRuntime.onReconnectScheduled(connectionAttempt, delayMs, "retry")
-                delay(delayMs)
-            }
+        } finally {
+            withContext(NonCancellable) { close() }
+            cancellationWatcher.cancel()
         }
     }
 
@@ -106,10 +124,21 @@ class WebSocket(
                 sslContext.socketFactory
             }
         }
-        socket = socketFactory.createSocket(host, 443)
+        val transport = Socket()
+        socket = transport
+        ensureActive()
+        transport.connect(InetSocketAddress(host, 443), 20_000)
+        val tlsSocket = (socketFactory as SSLSocketFactory).createSocket(transport, host, 443, true) as SSLSocket
+        socket = tlsSocket
+        ensureActive()
+        tlsSocket.sslParameters = tlsSocket.sslParameters.apply {
+            endpointIdentificationAlgorithm = "HTTPS"
+        }
+        tlsSocket.soTimeout = 20_000
+        tlsSocket.startHandshake()
         inputStream = socket?.inputStream
         outputStream = socket?.outputStream
-        val reader = BufferedReader(InputStreamReader(inputStream))
+        val handshakeInput = requireNotNull(inputStream)
         val writer = BufferedWriter(OutputStreamWriter(outputStream))
         val key = Base64.encodeToString(Random.nextBytes(16), Base64.NO_WRAP)
         writer.write("GET /$path HTTP/1.1\r\n")
@@ -125,9 +154,11 @@ class WebSocket(
         writer.write("\r\n")
         writer.flush()
         useCompression = false
-        messageByteArray = null
+        messageBytes = null
+        inflater.reset()
+        serverNoContextTakeover = false
         var validated = false
-        var line = reader.readLine()
+        var line = readHandshakeLine(handshakeInput)
         if (line == null) {
             listener.onDisconnect(this@WebSocket, "Connection closed before websocket handshake completed")
             return@withContext true
@@ -136,15 +167,17 @@ class WebSocket(
             listener.onDisconnect(this@WebSocket, line)
             if (line.startsWith("HTTP/1.1 429", true)) {
                 delayReconnect = true
-                return@withContext false
+                throw IOException("WebSocket handshake rate limited")
             } else if (WebSocketDisconnectUtils.isTransientGatewayFailure(line)) {
-                return@withContext false
+                throw IOException("Transient WebSocket handshake failure")
             } else {
                 return@withContext true
             }
         }
-        line = reader.readLine()
+        line = readHandshakeLine(handshakeInput)
+        var headerCount = 0
         while (!line.isNullOrBlank()) {
+            if (++headerCount > 100) throw IOException("Too many WebSocket handshake headers")
             when {
                 line.startsWith("Sec-WebSocket-Accept", true) -> {
                     val messageDigest = MessageDigest.getInstance("SHA-1")
@@ -155,12 +188,13 @@ class WebSocket(
                     }
                 }
                 line.startsWith("Sec-WebSocket-Extensions", true) -> {
+                    serverNoContextTakeover = line.contains("server_no_context_takeover", true)
                     useCompression = line.substringAfter(": ").split(", ").find {
                         it.startsWith("permessage-deflate", true)
                     } != null
                 }
             }
-            line = reader.readLine()
+            line = readHandshakeLine(handshakeInput)
         }
         if (!validated) {
             listener.onDisconnect(this@WebSocket, "")
@@ -169,6 +203,7 @@ class WebSocket(
         if (sendPings) {
             startPingTimer()
         }
+        tlsSocket.soTimeout = 0
         setConnectedState(true)
         listener.onConnect(this@WebSocket)
         return@withContext false
@@ -220,60 +255,27 @@ class WebSocket(
             LENGTH_SHORT -> {
                 val size = 2
                 val array = ByteArray(size)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    inputStream?.readNBytes(array, 0, size)
-                } else {
-                    inputStream?.let {
-                        var offset = 0
-                        while (offset < size) {
-                            val count = it.read(array, 0 + offset, size - offset)
-                            if (count < 0) {
-                                break
-                            }
-                            offset += count
-                        }
-                    }
-                }
+                DataInputStream(currentInput).readFully(array)
                 ByteBuffer.wrap(array).short.toInt() and 0xffff
             }
             LENGTH_LONG -> {
                 val size = 8
                 val array = ByteArray(size)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    inputStream?.readNBytes(array, 0, size)
-                } else {
-                    inputStream?.let {
-                        var offset = 0
-                        while (offset < size) {
-                            val count = it.read(array, 0 + offset, size - offset)
-                            if (count < 0) {
-                                break
-                            }
-                            offset += count
-                        }
-                    }
+                DataInputStream(currentInput).readFully(array)
+                val longLength = ByteBuffer.wrap(array).long
+                if (longLength < 0 || longLength > MAX_MESSAGE_BYTES) {
+                    throw IOException("WebSocket frame exceeds size limit")
                 }
-                ByteBuffer.wrap(array).long.toInt()
+                longLength.toInt()
             }
             else -> lengthBytes
         }
-        val data = ByteArray(length)
-        if (length > 0) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                inputStream?.readNBytes(data, 0, length)
-            } else {
-                inputStream?.let {
-                    var offset = 0
-                    while (offset < length) {
-                        val count = it.read(data, 0 + offset, length - offset)
-                        if (count < 0) {
-                            break
-                        }
-                        offset += count
-                    }
-                }
-            }
+        if (length > MAX_MESSAGE_BYTES || (isControlFrame && (!isFinalFrame || length > 125))) {
+            throw IOException("Invalid WebSocket frame size")
         }
+        if (secondByte and MASKED_BIT != 0) throw IOException("Masked server frame")
+        val data = ByteArray(length)
+        DataInputStream(currentInput).readFully(data)
         if (isControlFrame) {
             when (opcode) {
                 OPCODE_PING -> {
@@ -295,40 +297,42 @@ class WebSocket(
         } else {
             when (opcode) {
                 OPCODE_TEXT, OPCODE_CONTINUATION -> {
-                    val messageData = if ((opcode == OPCODE_CONTINUATION && nextFrameCompressed) || compressed) {
-                        val decompressedStream = ByteArrayOutputStream()
-                        val inflater = Inflater(true)
-                        val inflaterStream = InflaterOutputStream(decompressedStream, inflater)
-                        inflaterStream.write(data)
-                        inflaterStream.write(0x0000ffff)
-                        inflaterStream.close()
-                        decompressedStream.toByteArray()
-                    } else {
-                        data
+                    if (opcode == OPCODE_TEXT) {
+                        if (messageBytes != null) throw IOException("Unexpected text frame during fragmented message")
+                        messageBytes = ByteArrayOutputStream()
+                        nextFrameCompressed = compressed
+                    } else if (messageBytes == null || compressed) {
+                        throw IOException("Invalid WebSocket continuation")
                     }
-                    messageByteArray.let {
-                        messageByteArray = if (it != null) {
-                            it + messageData
-                        } else {
-                            messageData
-                        }
+                    val accumulator = requireNotNull(messageBytes)
+                    if (accumulator.size().toLong() + data.size > MAX_MESSAGE_BYTES) {
+                        throw IOException("WebSocket message exceeds size limit")
                     }
+                    accumulator.write(data)
                     if (isFinalFrame) {
+                        val completeMessage = if (nextFrameCompressed) inflateMessage(accumulator.toByteArray()) else accumulator.toByteArray()
                         nextFrameCompressed = false
-                        val completeMessage = messageByteArray
-                        messageByteArray = null
-                        if (completeMessage != null) {
-                            listener.onMessage(this@WebSocket, completeMessage.decodeToString())
-                        }
-                    } else {
-                        if (opcode != OPCODE_CONTINUATION) {
-                            nextFrameCompressed = compressed
-                        }
+                        messageBytes = null
+                        listener.onMessage(this@WebSocket, completeMessage.decodeToString())
                     }
                 }
             }
         }
         return@withContext false
+    }
+
+    private fun inflateMessage(data: ByteArray): ByteArray {
+        inflater.setInput(data + byteArrayOf(0, 0, -1, -1))
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (!inflater.needsInput()) {
+            val count = inflater.inflate(buffer)
+            if (output.size().toLong() + count > MAX_MESSAGE_BYTES) throw IOException("WebSocket message exceeds size limit")
+            output.write(buffer, 0, count)
+            if (count == 0 && !inflater.needsInput()) throw IOException("Invalid compressed WebSocket message")
+        }
+        if (serverNoContextTakeover) inflater.reset()
+        return output.toByteArray()
     }
 
     private suspend fun writeControlFrame(opcode: Int, data: ByteArray) = withContext(Dispatchers.IO) {
@@ -346,8 +350,8 @@ class WebSocket(
             }.toByteArray()
             output.write(maskedData)
         }
-        if (socket?.isClosed == false) {
-            outputStream?.let { output.writeTo(it) }
+        synchronized(writeLock) {
+            if (socket?.isClosed == false) outputStream?.let { output.writeTo(it) }
         }
     }
 
@@ -359,14 +363,16 @@ class WebSocket(
             firstByte = firstByte or COMPRESSED_BIT
             val compressedStream = ByteArrayOutputStream()
             val deflater = Deflater(Deflater.DEFAULT_COMPRESSION, true)
-            val deflaterStream = DeflaterOutputStream(compressedStream, deflater)
-            deflaterStream.write(messageBytes)
-            deflaterStream.close()
-            val compressedBytes = compressedStream.toByteArray()
-            if (compressedBytes.takeLast(5) == EMPTY_DEFLATE_BLOCK) {
-                compressedBytes.dropLast(4).toByteArray()
-            } else {
-                compressedBytes + 0x00
+            try {
+                deflater.setInput(messageBytes)
+                val buffer = ByteArray(8192)
+                do {
+                    val count = deflater.deflate(buffer, 0, buffer.size, Deflater.SYNC_FLUSH)
+                    compressedStream.write(buffer, 0, count)
+                } while (count == buffer.size)
+                compressedStream.toByteArray().let { it.copyOf(it.size - 4) }
+            } finally {
+                deflater.end()
             }
         } else {
             messageBytes
@@ -393,12 +399,10 @@ class WebSocket(
         }
         val maskKey = Random.nextBytes(4)
         output.write(maskKey)
-        val maskedData = data.mapIndexed { index, byte ->
-            (byte.toInt() xor maskKey[index % 4].toInt()).toByte()
-        }.toByteArray()
+        val maskedData = ByteArray(data.size) { index -> (data[index].toInt() xor maskKey[index % 4].toInt()).toByte() }
         output.write(maskedData)
-        if (socket?.isClosed == false) {
-            outputStream?.let { output.writeTo(it) }
+        synchronized(writeLock) {
+            if (socket?.isClosed == false) outputStream?.let { output.writeTo(it) }
         }
     }
 
@@ -475,7 +479,22 @@ class WebSocket(
     }
 
     companion object {
+        internal fun readHandshakeLine(input: InputStream): String? {
+            val line = ByteArrayOutputStream()
+            while (line.size() < 8192) {
+                val byte = input.read()
+                if (byte == -1) {
+                    if (line.size() == 0) return null
+                    throw IOException("Truncated WebSocket handshake")
+                }
+                if (byte == 10) return line.toString("US-ASCII").removeSuffix("\r")
+                line.write(byte)
+            }
+            throw IOException("WebSocket handshake line exceeds size limit")
+        }
+
         private const val ACCEPT_UUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+        private const val MAX_MESSAGE_BYTES = 8 * 1024 * 1024
         private const val FIN_BIT = 128
         private const val COMPRESSED_BIT = 64
         private const val OPCODE = 15
@@ -491,7 +510,6 @@ class WebSocket(
         private const val OPCODE_CLOSE = 0x8
         private const val OPCODE_PING = 0x9
         private const val OPCODE_PONG = 0xa
-        private val EMPTY_DEFLATE_BLOCK = listOf(0x00, 0x00, 0x00, 0xFF, 0xFF)
         private const val MINIMUM_DEFLATE_SIZE = 1024
         private const val BASE_RECONNECT_DELAY_MS = 1000L
         private const val MAX_RECONNECT_DELAY_MS = 30000L

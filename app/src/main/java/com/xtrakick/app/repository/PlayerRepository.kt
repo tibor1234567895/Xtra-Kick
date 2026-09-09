@@ -19,10 +19,13 @@ import com.xtrakick.app.model.misc.StvGlobalResponse
 import com.xtrakick.app.model.misc.StvResponse
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.HttpEngineUtils
+import com.xtrakick.app.util.NetworkUtils
+import com.xtrakick.app.util.NetworkUtils.useCancellable
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -49,6 +52,8 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.OutputStream
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.zip.DeflaterOutputStream
@@ -78,6 +83,56 @@ class PlayerRepository @Inject constructor(
 
     val resolutionChangeFlow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 1)
     val qualityChangeFlow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 1)
+
+    suspend fun downloadTo(
+        networkLibrary: String?,
+        url: String,
+        output: OutputStream,
+        progressListener: NetworkUtils.ProgressListener? = null,
+    ) = withContext(Dispatchers.IO) {
+        var bytesRead = 0
+        val progress = NetworkUtils.ProgressListener {
+            bytesRead = it
+            progressListener?.update(it)
+        }
+        val status = when {
+            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                val response = suspendCancellableCoroutine { continuation ->
+                    val request = httpEngine.get().newUrlRequestBuilder(
+                        url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation, progress, output)
+                    ).build()
+                    continuation.invokeOnCancellation { request.cancel() }
+                    request.start()
+                }
+                response.first.httpStatusCode
+            }
+            networkLibrary == "Cronet" && cronetEngine != null -> {
+                val response = suspendCancellableCoroutine { continuation ->
+                    val request = cronetEngine.get().newUrlRequestBuilder(
+                        url, NetworkUtils.ByteArrayCronetUrlCallback(continuation, progress, output), cronetExecutor
+                    ).build()
+                    continuation.invokeOnCancellation { request.cancel() }
+                    request.start()
+                }
+                response.first.httpStatusCode
+            }
+            else -> okHttpClient.newCall(Request.Builder().url(url).build()).useCancellable { response ->
+                if (response.isSuccessful) {
+                    response.body.byteStream().use { input ->
+                        val buffer = ByteArray(32 * 1024)
+                        var count = input.read(buffer)
+                        while (count != -1) {
+                            output.write(buffer, 0, count)
+                            progress.update(Math.addExact(bytesRead, count))
+                            count = input.read(buffer)
+                        }
+                    }
+                }
+                response.code
+            }
+        }
+        if (status !in 200..299 || bytesRead == 0) throw IOException("Update download failed: HTTP $status, $bytesRead bytes")
+    }
 
     suspend fun loadTextFromUrl(networkLibrary: String?, url: String): String? = withContext(Dispatchers.IO) {
         when {
@@ -270,7 +325,7 @@ class PlayerRepository @Inject constructor(
     private val STV_EMOTE_SET_CACHE_TTL_MS = 60L * 60 * 1000     // channel emote set
     private val STV_LOOKUP_CACHE_TTL_MS = 10L * 60 * 1000        // style / presence lookups
     private val STV_CACHE_MAX_ENTRIES = 32
-    private val stvFetchMutex = Mutex()
+    private val stvFetchMutexes = Array(32) { Mutex() }
 
     /**
      * Explicit refresh path (chat emote reload): drop the memory cache so a reload
@@ -298,25 +353,22 @@ class PlayerRepository @Inject constructor(
         stvResponseMemoryCache[url]?.let { (fetchedAtMs, body) ->
             if (now - fetchedAtMs <= ttlMs) return body
         }
-        val fetched = stvFetchMutex.withLock {
+        val fetched = stvFetchMutexes[(url.hashCode() and Int.MAX_VALUE) % stvFetchMutexes.size].withLock {
             // Re-check: another coroutine may have fetched while we waited for the lock.
             stvResponseMemoryCache[url]?.let { (fetchedAtMs, body) ->
                 if (System.currentTimeMillis() - fetchedAtMs <= ttlMs) return@withLock body
-            }
-            if (stvResponseMemoryCache.size >= STV_CACHE_MAX_ENTRIES) {
-                // Evict the stalest entries instead of wiping fresh ones (the global set
-                // entry is the most expensive to refetch).
-                repeat(stvResponseMemoryCache.size - STV_CACHE_MAX_ENTRIES + 1) {
-                    stvResponseMemoryCache.entries
-                        .minByOrNull { it.value.first }
-                        ?.let { stvResponseMemoryCache.remove(it.key) }
-                }
             }
             val body = stvGet(networkLibrary, url)
             if (body != null && body.trimStart().startsWith("{")) {
                 // Only cache JSON-shaped bodies so an error page / CDN response cannot be
                 // replayed from memory later; callers decode it and fall back to disk anyway.
-                stvResponseMemoryCache[url] = System.currentTimeMillis() to body
+                synchronized(stvResponseMemoryCache) {
+                    stvResponseMemoryCache[url] = System.currentTimeMillis() to body
+                    while (stvResponseMemoryCache.size > STV_CACHE_MAX_ENTRIES) {
+                        stvResponseMemoryCache.entries.minByOrNull { it.value.first }
+                            ?.let { stvResponseMemoryCache.remove(it.key) }
+                    }
+                }
             }
             body
         }

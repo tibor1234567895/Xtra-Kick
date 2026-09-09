@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.annotation.RequiresExtension
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
 import java.nio.channels.WritableByteChannel
@@ -25,10 +26,12 @@ object HttpEngineUtils {
     fun byteArrayUrlCallback(
         continuation: Continuation<Pair<UrlResponseInfo, ByteArray>>,
         progressListener: NetworkUtils.ProgressListener? = null,
+        output: OutputStream? = null,
     ): UrlRequest.Callback {
         return object : UrlRequest.Callback {
             private lateinit var mResponseBodyStream: ByteArrayOutputStream
             private lateinit var mResponseBodyChannel: WritableByteChannel
+            private var bytesRead = 0
 
             override fun onRedirectReceived(request: UrlRequest, info: UrlResponseInfo, newLocationUrl: String) {
                 request.followRedirect()
@@ -37,20 +40,27 @@ object HttpEngineUtils {
             override fun onResponseStarted(request: UrlRequest, info: UrlResponseInfo) {
                 val bodyLength = info.headers.asMap[CONTENT_LENGTH_HEADER_NAME]?.takeIf { it.size == 1 }?.getOrNull(0)?.toLongOrNull() ?: -1
                 require(bodyLength <= MAX_ARRAY_SIZE) { "The body is too large and wouldn't fit in a byte array!" }
-                mResponseBodyStream = if (bodyLength >= 0) {
+                mResponseBodyStream = if (output == null && bodyLength >= 0) {
                     ByteArrayOutputStream(bodyLength.toInt())
                 } else {
                     ByteArrayOutputStream()
                 }
-                mResponseBodyChannel = Channels.newChannel(mResponseBodyStream)
+                mResponseBodyChannel = Channels.newChannel(output ?: mResponseBodyStream)
                 request.read(ByteBuffer.allocateDirect(BYTE_BUFFER_CAPACITY))
             }
 
             override fun onReadCompleted(request: UrlRequest, info: UrlResponseInfo, byteBuffer: ByteBuffer) {
                 byteBuffer.flip()
-                mResponseBodyChannel.write(byteBuffer)
+                val count = byteBuffer.remaining()
+                try {
+                    mResponseBodyChannel.write(byteBuffer)
+                } catch (error: IOException) {
+                    request.cancel()
+                    return
+                }
+                bytesRead += count
                 byteBuffer.clear()
-                progressListener?.update(mResponseBodyStream.size())
+                progressListener?.update(bytesRead)
                 request.read(byteBuffer)
             }
 

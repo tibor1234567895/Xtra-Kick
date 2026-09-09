@@ -32,6 +32,7 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.reduceDragSensitivity
+import com.xtrakick.app.util.observeLift
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import dagger.hilt.android.AndroidEntryPoint
@@ -47,6 +48,7 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
     private val binding get() = _binding!!
     private val viewModel: SearchPagerViewModel by viewModels()
     private var firstLaunch = true
+    private var stopObservingLift: (() -> Unit)? = null
 
     override val currentFragment: Fragment?
         get() = childFragmentManager.findFragmentByTag("f${binding.viewPager.currentItem}")
@@ -105,16 +107,8 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
                         childFragmentManager.findFragmentByTag("f${position}")?.let { fragment ->
                             if (requireContext().prefs().getBoolean(AppConstants.UI_THEME_APPBAR_LIFT, true)) {
                                 fragment.view?.findViewById<RecyclerView>(R.id.recyclerView)?.let {
-                                    appBar.setLiftOnScrollTargetView(it)
-                                    it.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-                                        override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                                            super.onScrolled(recyclerView, dx, dy)
-                                            appBar.isLifted = recyclerView.canScrollVertically(-1)
-                                        }
-                                    })
-                                    it.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                                        appBar.isLifted = it.canScrollVertically(-1)
-                                    }
+                                    stopObservingLift?.invoke()
+                                    stopObservingLift = appBar.observeLift(it)
                                 }
                             } else {
                                 appBar.setLiftable(false)
@@ -261,6 +255,8 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
     }
 
     override fun onDestroyView() {
+        stopObservingLift?.invoke()
+        stopObservingLift = null
         super.onDestroyView()
         _binding = null
     }

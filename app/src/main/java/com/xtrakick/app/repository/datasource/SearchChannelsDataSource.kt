@@ -12,6 +12,7 @@ class SearchChannelsDataSource(
     private val useLegacyKickSearch: Boolean,
 ) : PagingSource<Int, User>() {
     private var offset: String? = null
+    private val emittedTypesenseSlugs = mutableSetOf<String>()
 
     companion object {
         private const val KEY_WEBSITE_SEARCH = 10000
@@ -58,6 +59,8 @@ class SearchChannelsDataSource(
                 perPage = pageSize
             )
             val users = result.hits.map { KickWebsiteSearchMapper.toUser(it.document) }
+            if (params.key == null) emittedTypesenseSlugs.clear()
+            result.hits.mapNotNullTo(emittedTypesenseSlugs) { it.document.slug?.lowercase() }
             val totalFound = result.found ?: 0
             val hasMore = (page * pageSize) < totalFound && users.isNotEmpty()
             val nextKey = if (hasMore) {
@@ -82,17 +85,11 @@ class SearchChannelsDataSource(
 
     private suspend fun loadWebsiteSearchResults(): LoadResult<Int, User> {
         offset = null
-        val typesenseSlugs = runCatching {
-            kickRepository.searchTypesenseChannels(query, page = 1, perPage = 50).hits
-                .mapNotNull { it.document.slug?.lowercase() }
-                .toSet()
-        }.getOrDefault(emptySet())
-
         val response = runCatching { kickRepository.searchWebsite(query) }.getOrNull()
         val websiteChannels = response?.channels.orEmpty()
             .filter { ch ->
                 val slug = ch.slug?.lowercase() ?: return@filter true
-                !typesenseSlugs.contains(slug)
+                !emittedTypesenseSlugs.contains(slug)
             }
             .map { KickWebsiteSearchMapper.toUser(it) }
 

@@ -48,6 +48,8 @@ import dagger.Lazy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
@@ -67,6 +69,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import com.xtrakick.app.util.NetworkUtils.useCancellable
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.chromium.net.CronetEngine
@@ -81,6 +84,9 @@ import java.time.Instant
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import kotlin.coroutines.suspendCoroutine
+
+internal fun canReuseDownloadedTrack(name: String, downloadedTracks: Set<String>, isReadable: () -> Boolean): Boolean =
+    name in downloadedTracks && isReadable()
 
 @HiltWorker
 class VideoDownloadWorker @AssistedInject constructor(
@@ -226,7 +232,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                     remainingSegments.add(segment.copy(uri = segment.uri.replace("-unmuted", "-muted")))
                 }
             }
-            val requestSemaphore = Semaphore(context.prefs().getInt(AppConstants.DOWNLOAD_CONCURRENT_LIMIT, 10))
+            val requestSemaphore = Semaphore(context.prefs().getInt(AppConstants.DOWNLOAD_CONCURRENT_LIMIT, 10).coerceIn(1, 32))
             val count = MutableStateFlow(0)
             val jobs = if (offlineVideo.playlistToFile) {
                 val videoFileUri = if (!offlineVideo.url.isNullOrBlank()) {
@@ -238,7 +244,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                             }
                         }
                     } else {
-                        FileOutputStream(fileUri).use { output ->
+                        FileOutputStream(fileUri, true).use { output ->
                             output.channel.truncate(offlineVideo.bytes)
                         }
                     }
@@ -323,11 +329,11 @@ class VideoDownloadWorker @AssistedInject constructor(
                     })
                     fileUri
                 }
-                runBlocking {
+                coroutineScope {
                     val segmentIds = generateSequence(0) { it + 1 }.iterator()
                     remainingSegments.map {
                         val id = segmentIds.next()
-                        launch {
+                        launch(start = CoroutineStart.UNDISPATCHED) {
                             requestSemaphore.withPermit {
                                 when {
                                     networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
@@ -376,7 +382,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                         })
                                     }
                                     else -> {
-                                        okHttpClient.newCall(Request.Builder().url(urlPath + it.uri).build()).execute().use { response ->
+                                        okHttpClient.newCall(Request.Builder().url(urlPath + it.uri).build()).useCancellable { response ->
                                             count.first { turn -> turn == id }
                                             if (isShared) {
                                                 context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!
@@ -499,7 +505,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                         })
                         playlistFileUri
                     }
-                    val downloadedTracks = mutableListOf<String>()
+                    val downloadedTracks = mutableSetOf<String>()
                     val playlists = offlineRepository.getPlaylists().mapNotNull { video ->
                         video.url?.takeIf {
                             it.toUri().scheme == ContentResolver.SCHEME_CONTENT
@@ -517,19 +523,31 @@ class VideoDownloadWorker @AssistedInject constructor(
 
                         }
                     }
-                    runBlocking {
+                    coroutineScope {
                         val segmentIds = generateSequence(0) { it + 1 }.iterator()
                         remainingSegments.map {
                             val id = segmentIds.next()
-                            launch {
+                            launch(start = CoroutineStart.UNDISPATCHED) {
                                 requestSemaphore.withPermit {
                                     val fileUri = (videoDirectoryUri + "%2F" + it.uri).toUri()
+                                    val reusable = canReuseDownloadedTrack(it.uri, downloadedTracks) {
+                                        runCatching {
+                                            context.contentResolver.openInputStream(fileUri)?.use { true } ?: false
+                                        }.getOrDefault(false)
+                                    }
+                                    if (reusable) {
+                                        count.first { turn -> turn == id }
+                                        offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
+                                        count.update { it + 1 }
+                                        setForeground(createForegroundInfo())
+                                        return@withPermit
+                                    }
                                     try {
                                         context.contentResolver.openOutputStream(fileUri)!!
                                     } catch (e: IllegalArgumentException) {
                                         null
                                     }.use { outputStream ->
-                                        if (outputStream == null || !downloadedTracks.contains(it.uri)) {
+                                        if (!reusable) {
                                             when {
                                                 networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                                                     val response = suspendCoroutine { continuation ->
@@ -565,7 +583,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                                     }
                                                 }
                                                 else -> {
-                                                    okHttpClient.newCall(Request.Builder().url(urlPath + it.uri).build()).execute().use { response ->
+                                                    okHttpClient.newCall(Request.Builder().url(urlPath + it.uri).build()).useCancellable { response ->
                                                         if (outputStream != null) {
                                                             outputStream
                                                         } else {
@@ -644,17 +662,17 @@ class VideoDownloadWorker @AssistedInject constructor(
                         })
                         playlistUri
                     }
-                    val downloadedTracks = mutableListOf<String>()
+                    val downloadedTracks = mutableSetOf<String>()
                     val playlists = File(directory).listFiles { it.extension == "m3u8" && it.path != playlistFileUri }
                     playlists?.forEach { file ->
                         val p = PlaylistUtils.parseMediaPlaylist(file.inputStream())
                         p.segments.forEach { downloadedTracks.add(it.uri.substringAfterLast("%2F").substringAfterLast("/")) }
                     }
-                    runBlocking {
+                    coroutineScope {
                         val segmentIds = generateSequence(0) { it + 1 }.iterator()
                         remainingSegments.map {
                             val id = segmentIds.next()
-                            launch {
+                            launch(start = CoroutineStart.UNDISPATCHED) {
                                 requestSemaphore.withPermit {
                                     if (!File(directory + it.uri).exists() || !downloadedTracks.contains(it.uri)) {
                                         when {
@@ -682,7 +700,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                                 }
                                             }
                                             else -> {
-                                                okHttpClient.newCall(Request.Builder().url(urlPath + it.uri).build()).execute().use { response ->
+                                                okHttpClient.newCall(Request.Builder().url(urlPath + it.uri).build()).useCancellable { response ->
                                                     FileOutputStream(directory + it.uri).use { outputStream ->
                                                         response.body.byteStream().use { inputStream ->
                                                             inputStream.copyTo(outputStream)

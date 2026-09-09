@@ -47,7 +47,8 @@ import java.net.URLEncoder
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.suspendCancellableCoroutine
+import com.xtrakick.app.util.NetworkUtils.useCancellable
 
 @Singleton
 class KickPublicApiRepository @Inject constructor(
@@ -73,8 +74,8 @@ class KickPublicApiRepository @Inject constructor(
         val url = "https://api.kick.com$path$query"
         when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                val response = suspendCancellableCoroutine { continuation ->
+                    val request = httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
                         setHttpMethod(method)
                         headers.forEach { addHeader(it.key, it.value) }
                         if (bodyJson != null) {
@@ -82,13 +83,15 @@ class KickPublicApiRepository @Inject constructor(
                             val bytes = bodyJson.toByteArray(Charsets.UTF_8)
                             setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(bytes), cronetExecutor)
                         }
-                    }.build().start()
+                    }.build()
+                    continuation.invokeOnCancellation { request.cancel() }
+                    request.start()
                 }
                 Pair(response.first.httpStatusCode, String(response.second))
             }
             networkLibrary == "Cronet" && cronetEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
+                val response = suspendCancellableCoroutine { continuation ->
+                    val request = cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
                         setHttpMethod(method)
                         headers.forEach { addHeader(it.key, it.value) }
                         if (bodyJson != null) {
@@ -96,7 +99,9 @@ class KickPublicApiRepository @Inject constructor(
                             val bytes = bodyJson.toByteArray(Charsets.UTF_8)
                             setUploadDataProvider(UploadDataProviders.create(bytes), cronetExecutor)
                         }
-                    }.build().start()
+                    }.build()
+                    continuation.invokeOnCancellation { request.cancel() }
+                    request.start()
                 }
                 Pair(response.first.httpStatusCode, String(response.second))
             }
@@ -110,7 +115,7 @@ class KickPublicApiRepository @Inject constructor(
                 } else if (method != "GET") {
                     requestBuilder.method(method, "".toRequestBody(null))
                 }
-                okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+                okHttpClient.newCall(requestBuilder.build()).useCancellable { response ->
                     Pair(response.code, response.body.string())
                 }
             }

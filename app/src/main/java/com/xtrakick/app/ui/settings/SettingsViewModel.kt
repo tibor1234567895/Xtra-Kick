@@ -39,6 +39,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.BufferOverflow
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -424,61 +425,32 @@ class SettingsViewModel @Inject constructor(
     fun downloadUpdate(networkLibrary: String?, url: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val response = when {
-                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                        val response = suspendCoroutine { continuation ->
-                            httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
+                val packageInstaller = applicationContext.packageManager.packageInstaller
+                val sessionId = packageInstaller.createSession(
+                    PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+                )
+                packageInstaller.openSession(sessionId).use { session ->
+                    try {
+                        session.openWrite("package", 0, -1).use { output ->
+                            playerRepository.downloadTo(networkLibrary, url, output)
+                            session.fsync(output)
                         }
-                        if (response.first.httpStatusCode in 200..299) {
-                            response.second
-                        } else null
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        session.commit(
+                            PendingIntent.getActivity(
+                                applicationContext,
+                                0,
+                                Intent(applicationContext, MainActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                    setAction(MainActivity.INTENT_INSTALL_UPDATE)
+                                },
+                                PendingIntent.FLAG_MUTABLE
+                            ).intentSender
+                        )
+                    } catch (error: Exception) {
+                        session.abandon()
+                        throw error
                     }
-                    networkLibrary == "Cronet" && cronetEngine != null -> {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                            val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                            cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                            val response = request.future.get()
-                            if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                response.responseBody as ByteArray
-                            } else null
-                        } else {
-                            val response = suspendCoroutine { continuation ->
-                                cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                            }
-                            if (response.first.httpStatusCode in 200..299) {
-                                response.second
-                            } else null
-                        }
-                    }
-                    else -> {
-                        okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                            if (response.isSuccessful) {
-                                response.body.bytes()
-                            } else null
-                        }
-                    }
-                }
-                if (response != null && response.isNotEmpty()) {
-                    val packageInstaller = applicationContext.packageManager.packageInstaller
-                    val sessionId = packageInstaller.createSession(
-                        PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-                    )
-                    val session = packageInstaller.openSession(sessionId)
-                    session.openWrite("package", 0, response.size.toLong()).use {
-                        it.write(response)
-                    }
-                    session.commit(
-                        PendingIntent.getActivity(
-                            applicationContext,
-                            0,
-                            Intent(applicationContext, MainActivity::class.java).apply {
-                                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                                setAction(MainActivity.INTENT_INSTALL_UPDATE)
-                            },
-                            PendingIntent.FLAG_MUTABLE
-                        ).intentSender
-                    )
-                    session.close()
                 }
             } catch (e: Exception) {
 

@@ -48,19 +48,21 @@ import dagger.Lazy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.Credentials
+import com.xtrakick.app.util.NetworkUtils.useCancellable
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.chromium.net.CronetEngine
@@ -434,7 +436,6 @@ class StreamDownloadWorker @AssistedInject constructor(
         }
         val firstUrls = if (playlist.segments.isNotEmpty()) {
             val urls = playlist.segments.takeLastWhile { it.uri != lastUrl }
-            urls.lastOrNull()?.let { lastUrl = it.uri }
             val streamStartTime = urls.firstOrNull()?.programDateTime
             if (offlineVideo.downloadChat && !streamStartTime.isNullOrBlank()) {
                 runBlocking {
@@ -457,7 +458,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                     }
                 }
             } else {
-                FileOutputStream(fileUri).use { output ->
+                FileOutputStream(fileUri, true).use { output ->
                     output.channel.truncate(offlineVideo.bytes)
                 }
             }
@@ -498,7 +499,10 @@ class StreamDownloadWorker @AssistedInject constructor(
                         val response = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                             val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
                             cronetEngine!!.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                            request.future.get().responseBody as ByteArray
+                            request.future.get().let { result ->
+                                check(result.urlResponseInfo.httpStatusCode in 200..299) { "Segment request failed (${result.urlResponseInfo.httpStatusCode})" }
+                                result.responseBody as ByteArray
+                            }
                         } else {
                             val response = suspendCoroutine { continuation ->
                                 cronetEngine!!.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
@@ -648,87 +652,70 @@ class StreamDownloadWorker @AssistedInject constructor(
             }
             fileUri
         }
-        val requestSemaphore = Semaphore(context.prefs().getInt(AppConstants.DOWNLOAD_CONCURRENT_LIMIT, 10))
+        val requestSemaphore = Semaphore(context.prefs().getInt(AppConstants.DOWNLOAD_CONCURRENT_LIMIT, 10).coerceIn(1, 32))
         if (isShared) {
             context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!
         } else {
-            FileOutputStream(videoFileUri)
+            FileOutputStream(videoFileUri, true)
         }.use { outputStream ->
-            val firstMutexMap = mutableMapOf<Int, Mutex>()
             val firstCount = MutableStateFlow(0)
-            val firstJobs = runBlocking {
-                firstUrls.map {
-                    launch {
+            val firstJobs = coroutineScope {
+                firstUrls.mapIndexed { id, segmentUrl ->
+                    launch(start = CoroutineStart.UNDISPATCHED) {
                         requestSemaphore.withPermit {
                             when {
                                 networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                                     val response = suspendCoroutine { continuation ->
-                                        httpEngine!!.get().newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
+                                        httpEngine!!.get().newUrlRequestBuilder(segmentUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
                                     }
-                                    val mutex = Mutex()
-                                    val id = firstUrls.indexOf(it)
-                                    if (firstCount.value != id) {
-                                        mutex.lock()
-                                        firstMutexMap[id] = mutex
-                                    }
-                                    mutex.withLock {
-                                        outputStream.write(response.second)
-                                        offlineRepository.updateVideo(offlineVideo.apply {
-                                            bytes += response.second.size
-                                            chatBytes = chatPosition
-                                            lastSegmentUrl = lastUrl
-                                        })
-                                    }
+                                    check(response.first.httpStatusCode in 200..299) { "Segment request failed (${response.first.httpStatusCode})" }
+                                    firstCount.first { it == id }
+                                    outputStream.write(response.second)
+                                    offlineRepository.updateVideo(offlineVideo.apply {
+                                        bytes += response.second.size
+                                        chatBytes = chatPosition
+                                        lastSegmentUrl = segmentUrl
+                                    })
                                 }
                                 networkLibrary == "Cronet" && cronetEngine != null -> {
                                     val response = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                                         val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                        cronetEngine!!.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                        request.future.get().responseBody as ByteArray
+                                        cronetEngine!!.get().newUrlRequestBuilder(segmentUrl, request.callback, cronetExecutor).build().start()
+                                        request.future.get().let { result ->
+                                            check(result.urlResponseInfo.httpStatusCode in 200..299) { "Segment request failed (${result.urlResponseInfo.httpStatusCode})" }
+                                            result.responseBody as ByteArray
+                                        }
                                     } else {
                                         val response = suspendCoroutine { continuation ->
-                                            cronetEngine!!.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
+                                            cronetEngine!!.get().newUrlRequestBuilder(segmentUrl, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
                                         }
                                         response.second
                                     }
-                                    val mutex = Mutex()
-                                    val id = firstUrls.indexOf(it)
-                                    if (firstCount.value != id) {
-                                        mutex.lock()
-                                        firstMutexMap[id] = mutex
-                                    }
-                                    mutex.withLock {
-                                        outputStream.write(response)
+                                    firstCount.first { it == id }
+                                    outputStream.write(response)
+                                    offlineRepository.updateVideo(offlineVideo.apply {
+                                        bytes += response.size
+                                        chatBytes = chatPosition
+                                        lastSegmentUrl = segmentUrl
+                                    })
+                                }
+                                else -> {
+                                    okHttpClient.newCall(Request.Builder().url(segmentUrl).build()).useCancellable { response ->
+                                        check(response.isSuccessful) { "Segment request failed (${response.code})" }
+                                        firstCount.first { it == id }
+                                        val writtenBytes = response.body.byteStream().use { inputStream ->
+                                            inputStream.copyTo(outputStream)
+                                        }
                                         offlineRepository.updateVideo(offlineVideo.apply {
-                                            bytes += response.size
+                                            bytes += writtenBytes
                                             chatBytes = chatPosition
-                                            lastSegmentUrl = lastUrl
+                                            lastSegmentUrl = segmentUrl
                                         })
                                     }
                                 }
-                                else -> {
-                                    okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                        val mutex = Mutex()
-                                        val id = firstUrls.indexOf(it)
-                                        if (firstCount.value != id) {
-                                            mutex.lock()
-                                            firstMutexMap[id] = mutex
-                                        }
-                                        mutex.withLock {
-                                            response.body.byteStream().use { inputStream ->
-                                                inputStream.copyTo(outputStream)
-                                            }
-                                            offlineRepository.updateVideo(offlineVideo.apply {
-                                                bytes += response.body.contentLength()
-                                                chatBytes = chatPosition
-                                                lastSegmentUrl = lastUrl
-                                            })
-                                        }
-                                    }
-                                }
                             }
+                            lastUrl = segmentUrl
                             firstCount.update { it + 1 }
-                            firstMutexMap.remove(firstCount.value)?.unlock()
                         }
                     }
                 }
@@ -809,82 +796,64 @@ class StreamDownloadWorker @AssistedInject constructor(
                 }
                 if (playlist.segments.isNotEmpty()) {
                     val urls = playlist.segments.map { it.uri }.takeLastWhile { it != lastUrl }
-                    urls.lastOrNull()?.let { lastUrl = it }
-                    val mutexMap = mutableMapOf<Int, Mutex>()
                     val count = MutableStateFlow(0)
-                    val jobs = runBlocking {
-                        urls.map {
-                            launch {
+                    val jobs = coroutineScope {
+                        urls.mapIndexed { id, segmentUrl ->
+                            launch(start = CoroutineStart.UNDISPATCHED) {
                                 requestSemaphore.withPermit {
                                     when {
                                         networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                                             val response = suspendCoroutine { continuation ->
-                                                httpEngine!!.get().newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
+                                                httpEngine!!.get().newUrlRequestBuilder(segmentUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
                                             }
-                                            val mutex = Mutex()
-                                            val id = urls.indexOf(it)
-                                            if (count.value != id) {
-                                                mutex.lock()
-                                                mutexMap[id] = mutex
-                                            }
-                                            mutex.withLock {
-                                                outputStream.write(response.second)
-                                                offlineRepository.updateVideo(offlineVideo.apply {
-                                                    bytes += response.second.size
-                                                    chatBytes = chatPosition
-                                                    lastSegmentUrl = lastUrl
-                                                })
-                                            }
+                                            check(response.first.httpStatusCode in 200..299) { "Segment request failed (${response.first.httpStatusCode})" }
+                                            count.first { it == id }
+                                            outputStream.write(response.second)
+                                            offlineRepository.updateVideo(offlineVideo.apply {
+                                                bytes += response.second.size
+                                                chatBytes = chatPosition
+                                                lastSegmentUrl = segmentUrl
+                                            })
                                         }
                                         networkLibrary == "Cronet" && cronetEngine != null -> {
                                             val response = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                                                 val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                                cronetEngine!!.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                                request.future.get().responseBody as ByteArray
+                                                cronetEngine!!.get().newUrlRequestBuilder(segmentUrl, request.callback, cronetExecutor).build().start()
+                                                request.future.get().let { result ->
+                                                    check(result.urlResponseInfo.httpStatusCode in 200..299) { "Segment request failed (${result.urlResponseInfo.httpStatusCode})" }
+                                                    result.responseBody as ByteArray
+                                                }
                                             } else {
                                                 val response = suspendCoroutine { continuation ->
-                                                    cronetEngine!!.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
+                                                    cronetEngine!!.get().newUrlRequestBuilder(segmentUrl, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
                                                 }
                                                 response.second
                                             }
-                                            val mutex = Mutex()
-                                            val id = urls.indexOf(it)
-                                            if (count.value != id) {
-                                                mutex.lock()
-                                                mutexMap[id] = mutex
-                                            }
-                                            mutex.withLock {
-                                                outputStream.write(response)
+                                            count.first { it == id }
+                                            outputStream.write(response)
+                                            offlineRepository.updateVideo(offlineVideo.apply {
+                                                bytes += response.size
+                                                chatBytes = chatPosition
+                                                lastSegmentUrl = segmentUrl
+                                            })
+                                        }
+                                        else -> {
+                                            okHttpClient.newCall(Request.Builder().url(segmentUrl).build()).useCancellable { response ->
+                                                check(response.isSuccessful) { "Segment request failed (${response.code})" }
+                                                count.first { it == id }
+                                                val writtenBytes = response.body.byteStream().use { inputStream ->
+                                                    inputStream.copyTo(outputStream)
+                                                }
                                                 offlineRepository.updateVideo(offlineVideo.apply {
-                                                    bytes += response.size
+                                                    bytes += writtenBytes
                                                     chatBytes = chatPosition
-                                                    lastSegmentUrl = lastUrl
+                                                    lastSegmentUrl = segmentUrl
                                                 })
                                             }
                                         }
-                                        else -> {
-                                            okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                                val mutex = Mutex()
-                                                val id = urls.indexOf(it)
-                                                if (count.value != id) {
-                                                    mutex.lock()
-                                                    mutexMap[id] = mutex
-                                                }
-                                                mutex.withLock {
-                                                    response.body.byteStream().use { inputStream ->
-                                                        inputStream.copyTo(outputStream)
-                                                    }
-                                                    offlineRepository.updateVideo(offlineVideo.apply {
-                                                        bytes += response.body.contentLength()
-                                                        chatBytes = chatPosition
-                                                        lastSegmentUrl = lastUrl
-                                                    })
-                                                }
-                                            }
-                                        }
                                     }
+                                    lastUrl = segmentUrl
                                     count.update { it + 1 }
-                                    mutexMap.remove(count.value)?.unlock()
                                 }
                             }
                         }
@@ -1216,7 +1185,10 @@ class StreamDownloadWorker @AssistedInject constructor(
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                                     val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
                                     cronetEngine!!.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                                    request.future.get().responseBody as ByteArray
+                                    request.future.get().let { result ->
+                                        check(result.urlResponseInfo.httpStatusCode in 200..299) { "Segment request failed (${result.urlResponseInfo.httpStatusCode})" }
+                                        result.responseBody as ByteArray
+                                    }
                                 } else {
                                     runBlocking {
                                         val response = suspendCoroutine { continuation ->
@@ -1266,7 +1238,10 @@ class StreamDownloadWorker @AssistedInject constructor(
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                                     val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
                                     cronetEngine!!.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                                    request.future.get().responseBody as ByteArray
+                                    request.future.get().let { result ->
+                                        check(result.urlResponseInfo.httpStatusCode in 200..299) { "Segment request failed (${result.urlResponseInfo.httpStatusCode})" }
+                                        result.responseBody as ByteArray
+                                    }
                                 } else {
                                     runBlocking {
                                         val response = suspendCoroutine { continuation ->
@@ -1317,7 +1292,10 @@ class StreamDownloadWorker @AssistedInject constructor(
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                                     val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
                                     cronetEngine!!.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                                    request.future.get().responseBody as ByteArray
+                                    request.future.get().let { result ->
+                                        check(result.urlResponseInfo.httpStatusCode in 200..299) { "Segment request failed (${result.urlResponseInfo.httpStatusCode})" }
+                                        result.responseBody as ByteArray
+                                    }
                                 } else {
                                     runBlocking {
                                         val response = suspendCoroutine { continuation ->
@@ -1369,7 +1347,10 @@ class StreamDownloadWorker @AssistedInject constructor(
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                                     val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
                                     cronetEngine!!.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                                    request.future.get().responseBody as ByteArray
+                                    request.future.get().let { result ->
+                                        check(result.urlResponseInfo.httpStatusCode in 200..299) { "Segment request failed (${result.urlResponseInfo.httpStatusCode})" }
+                                        result.responseBody as ByteArray
+                                    }
                                 } else {
                                     runBlocking {
                                         val response = suspendCoroutine { continuation ->

@@ -4,6 +4,26 @@ import android.graphics.Rect
 import android.view.View
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
+import com.google.android.material.appbar.AppBarLayout
+
+fun AppBarLayout.observeLift(recyclerView: RecyclerView): () -> Unit {
+    setLiftOnScrollTargetView(recyclerView)
+    val scrollListener = object : RecyclerView.OnScrollListener() {
+        override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+            isLifted = recyclerView.canScrollVertically(-1)
+        }
+    }
+    val layoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+        isLifted = recyclerView.canScrollVertically(-1)
+    }
+    recyclerView.addOnScrollListener(scrollListener)
+    recyclerView.addOnLayoutChangeListener(layoutListener)
+    isLifted = recyclerView.canScrollVertically(-1)
+    return {
+        recyclerView.removeOnScrollListener(scrollListener)
+        recyclerView.removeOnLayoutChangeListener(layoutListener)
+    }
+}
 
 val View.isKeyboardShown: Boolean
     get() {

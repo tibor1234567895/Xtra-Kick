@@ -69,9 +69,13 @@
         <activity
             android:name=".ui.login.LoginActivity"
             android:configChanges="orientation|screenSize"
-            android:exported="true"
+            android:exported="false"
             android:launchMode="singleTask"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.login.KickOAuthCallbackActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
             <!-- No autoVerify: App Links verification requires serving assetlinks.json from
                  the host, which is impossible for localhost/127.0.0.1. Interception is already
                  prevented by PKCE (S256, verifier never leaves the device) plus state
