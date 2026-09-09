@@ -183,7 +183,7 @@
 
         </LinearLayout>
 
-        <!-- Stats Content Body (wrap_content so all rows fit without scrolling) -->
+        <!-- Stats Content Body (wrap_content so all rows fit naturally in parent) -->
         <LinearLayout
             android:id="@+id/statsContentLayout"
             android:layout_width="match_parent"
@@ -447,13 +447,13 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:fontFamily="monospace"
-                    android:maxWidth="130dp"
+                    android:maxWidth="140dp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:textColor="@android:color/white"
                     android:textSize="10.5sp"
                     android:textStyle="bold"
-                    tools:text="avc1.64002A" />
+                    tools:text="avc1.64002A,mp4a.40.2" />
             </LinearLayout>
 
             <!-- Protocol -->
@@ -508,7 +508,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:fontFamily="monospace"
-                    android:maxWidth="130dp"
+                    android:maxWidth="140dp"
                     android:singleLine="true"
                     android:ellipsize="end"
                     android:textColor="@android:color/white"

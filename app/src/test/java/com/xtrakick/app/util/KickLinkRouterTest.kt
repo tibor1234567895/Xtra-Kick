@@ -236,4 +236,30 @@ class KickLinkRouterTest {
         val linkControl = KickLinkRouter.parse("https://kick.com/buddha\nlogin")
         assertNull(linkControl)
     }
+
+    @Test
+    fun testToCategorySlug_withTrailingAcronymsAndParentheticals() {
+        assertEquals("grand-theft-auto-v", KickApiHelper.toCategorySlug("Grand Theft Auto V (GTA)"))
+        assertEquals("grand-theft-auto-v", KickApiHelper.toCategorySlug("Grand Theft Auto V [GTA]"))
+        assertEquals("call-of-duty-warzone", KickApiHelper.toCategorySlug("Call of Duty: Warzone"))
+        assertEquals("tom-clancys-rainbow-six-siege", KickApiHelper.toCategorySlug("Tom Clancy's Rainbow Six Siege"))
+        assertEquals("just-chatting", KickApiHelper.toCategorySlug("Just Chatting"))
+        assertEquals("apex-legends", KickApiHelper.toCategorySlug("Apex Legends"))
+        assertEquals("fortnite", KickApiHelper.toCategorySlug("Fortnite"))
+    }
+
+    @Test
+    fun testToCategorySlug_withSpecialCharactersAndSymbols() {
+        assertEquals("counter-strike-2", KickApiHelper.toCategorySlug("Counter-Strike 2"))
+        assertEquals("league-of-legends", KickApiHelper.toCategorySlug("League of Legends"))
+        assertEquals("dota-2", KickApiHelper.toCategorySlug("Dota 2"))
+        assertEquals("pubg-battlegrounds", KickApiHelper.toCategorySlug("PUBG: BATTLEGROUNDS"))
+    }
+
+    @Test
+    fun testToCategorySlug_withBlankOrNull() {
+        assertNull(KickApiHelper.toCategorySlug(null))
+        assertNull(KickApiHelper.toCategorySlug(""))
+        assertNull(KickApiHelper.toCategorySlug("   "))
+    }
 }

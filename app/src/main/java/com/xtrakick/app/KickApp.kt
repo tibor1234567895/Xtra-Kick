@@ -182,19 +182,21 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         }
     }
 
-    private fun applyKickStreamThumbnailHeaders(
-        requestBuilder: okhttp3.Request.Builder,
-        url: String,
-    ): okhttp3.Request.Builder {
-        if (!url.contains("://stream.kick.com/", ignoreCase = true) &&
-            !url.contains("://images.kick.com/", ignoreCase = true)
-        ) {
-            return requestBuilder
+    private val kickCdnHeaders: Map<String, String> by lazy {
+        mapOf(
+            "Referer" to "https://kick.com/",
+            "User-Agent" to "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36"
+        )
+    }
+
+    private fun kickImageHeaders(url: String): Map<String, String>? {
+        return when {
+            url.contains("://stream.kick.com/", ignoreCase = true) ||
+                url.contains("://images.kick.com/", ignoreCase = true) -> kickStreamThumbnailHeaders()
+            url.contains("://ext.cdn.kick.com/", ignoreCase = true) ||
+                url.contains("://files.kick.com/", ignoreCase = true) -> kickCdnHeaders
+            else -> null
         }
-        kickStreamThumbnailHeaders().forEach { (name, value) ->
-            requestBuilder.header(name, value)
-        }
-        return requestBuilder
     }
 
     @kotlin.OptIn(ExperimentalCoilApi::class)
@@ -218,8 +220,6 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                             it.writeTo(buffer)
                                             buffer.readByteArray()
                                         }
-                                        val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true) ||
-                                            request.url.contains("://images.kick.com/", ignoreCase = true)
                                         val requestMillis = System.currentTimeMillis()
                                         val response = suspendCoroutine { continuation ->
                                             httpEngine!!.get().newUrlRequestBuilder(request.url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
@@ -228,10 +228,8 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                                         addHeader(entry.key, it)
                                                     }
                                                 }
-                                                if (isKickStreamThumbnail) {
-                                                    kickStreamThumbnailHeaders().forEach { (name, value) ->
-                                                        addHeader(name, value)
-                                                    }
+                                                kickImageHeaders(request.url)?.forEach { (name, value) ->
+                                                    addHeader(name, value)
                                                 }
                                                 requestBody?.let {
                                                     setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(requestBody), cronetExecutor)
@@ -266,18 +264,14 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                     object : NetworkClient {
                                         override suspend fun <T> executeRequest(request: NetworkRequest, block: suspend (NetworkResponse) -> T): T {
                                             val cronetRequest = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                            val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true) ||
-                                                request.url.contains("://images.kick.com/", ignoreCase = true)
                                             cronetEngine!!.get().newUrlRequestBuilder(request.url, cronetRequest.callback, cronetExecutor).apply {
                                                 request.headers.asMap().forEach { entry ->
                                                     entry.value.forEach {
                                                         addHeader(entry.key, it)
                                                     }
                                                 }
-                                                if (isKickStreamThumbnail) {
-                                                    kickStreamThumbnailHeaders().forEach { (name, value) ->
-                                                        addHeader(name, value)
-                                                    }
+                                                kickImageHeaders(request.url)?.forEach { (name, value) ->
+                                                    addHeader(name, value)
                                                 }
                                                 request.body?.let {
                                                     val buffer = Buffer()
@@ -317,25 +311,21 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                                 it.writeTo(buffer)
                                                 buffer.readByteArray()
                                             }
-                                            val isKickStreamThumbnail = request.url.contains("://stream.kick.com/", ignoreCase = true) ||
-                                                request.url.contains("://images.kick.com/", ignoreCase = true)
                                             val requestMillis = System.currentTimeMillis()
                                             val response = suspendCoroutine { continuation ->
                                                 cronetEngine!!.get().newUrlRequestBuilder(request.url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
                                                     request.headers.asMap().forEach { entry ->
-                                                    entry.value.forEach {
-                                                        addHeader(entry.key, it)
+                                                        entry.value.forEach {
+                                                            addHeader(entry.key, it)
+                                                        }
                                                     }
-                                                }
-                                                if (isKickStreamThumbnail) {
-                                                    kickStreamThumbnailHeaders().forEach { (name, value) ->
+                                                    kickImageHeaders(request.url)?.forEach { (name, value) ->
                                                         addHeader(name, value)
                                                     }
-                                                }
-                                                requestBody?.let {
-                                                    setUploadDataProvider(UploadDataProviders.create(requestBody), cronetExecutor)
-                                                }
-                                                setHttpMethod(request.method)
+                                                    requestBody?.let {
+                                                        setUploadDataProvider(UploadDataProviders.create(requestBody), cronetExecutor)
+                                                    }
+                                                    setHttpMethod(request.method)
                                                 }.build().start()
                                             }
                                             val responseMillis = System.currentTimeMillis()
@@ -363,11 +353,13 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                         val coilClient = okHttpClient.newBuilder()
                             .addNetworkInterceptor(Interceptor { chain ->
                                 val request = chain.request()
-                                val url = request.url.toString()
-                                if (url.contains("://stream.kick.com/", ignoreCase = true) ||
-                                    url.contains("://images.kick.com/", ignoreCase = true)
-                                ) {
-                                    chain.proceed(applyKickStreamThumbnailHeaders(request.newBuilder(), url).build())
+                                val extraHeaders = kickImageHeaders(request.url.toString())
+                                if (extraHeaders != null) {
+                                    val newReq = request.newBuilder()
+                                    extraHeaders.forEach { (name, value) ->
+                                        newReq.header(name, value)
+                                    }
+                                    chain.proceed(newReq.build())
                                 } else {
                                     chain.proceed(request)
                                 }

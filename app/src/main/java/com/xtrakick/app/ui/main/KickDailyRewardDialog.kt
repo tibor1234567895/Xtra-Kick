@@ -13,6 +13,11 @@ import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
 import androidx.lifecycle.lifecycleScope
 import com.bumptech.glide.Glide
+import com.bumptech.glide.load.DataSource
+import com.bumptech.glide.load.engine.GlideException
+import com.bumptech.glide.load.model.GlideUrl
+import com.bumptech.glide.request.RequestListener
+import com.bumptech.glide.request.target.Target
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.DialogKickDailyRewardBinding
 import com.xtrakick.app.model.kick.KickDailyChallenge
@@ -71,6 +76,7 @@ class KickDailyRewardDialog : DialogFragment() {
     override fun onDestroyView() {
         stopRewardsPolling()
         _binding?.let { currentBinding ->
+            runCatching { currentBinding.rewardCard.setOnClickListener(null) }
             runCatching { Glide.with(this).clear(currentBinding.rewardImage) }
         }
         _binding = null
@@ -282,7 +288,7 @@ class KickDailyRewardDialog : DialogFragment() {
                     runCatching {
                         Glide.with(appContext)
                             .asDrawable()
-                            .load(url)
+                            .load(buildKickGlideUrl(url))
                             .submit(240, 240)
                             .get()
                     }.getOrNull()
@@ -348,14 +354,47 @@ class KickDailyRewardDialog : DialogFragment() {
         val currentBinding = _binding ?: return
         if (!isAdded) return
         currentBinding.rewardImage.animate().cancel()
+        val request = Glide.with(this)
+            .load(buildKickGlideUrl(url))
+            .fitCenter()
+            .listener(object : RequestListener<Drawable> {
+                override fun onLoadFailed(
+                    e: GlideException?,
+                    model: Any?,
+                    target: Target<Drawable>,
+                    isFirstResource: Boolean
+                ): Boolean {
+                    _binding?.let { b ->
+                        b.rewardCard.isClickable = true
+                        b.rewardCard.setOnClickListener {
+                            b.rewardCard.setOnClickListener(null)
+                            b.rewardCard.isClickable = false
+                            showRewardImage(url, isWinner)
+                        }
+                    }
+                    return false
+                }
+
+                override fun onResourceReady(
+                    resource: Drawable,
+                    model: Any,
+                    target: Target<Drawable>?,
+                    dataSource: DataSource,
+                    isFirstResource: Boolean
+                ): Boolean {
+                    _binding?.let { b ->
+                        b.rewardCard.setOnClickListener(null)
+                        b.rewardCard.isClickable = false
+                    }
+                    return false
+                }
+            })
+
         if (isWinner) {
             currentBinding.rewardImage.alpha = 0f
             currentBinding.rewardImage.scaleX = 0.85f
             currentBinding.rewardImage.scaleY = 0.85f
-            Glide.with(this)
-                .load(url)
-                .fitCenter()
-                .into(currentBinding.rewardImage)
+            request.into(currentBinding.rewardImage)
             currentBinding.rewardImage.animate()
                 .alpha(1f)
                 .scaleX(1f)
@@ -364,10 +403,17 @@ class KickDailyRewardDialog : DialogFragment() {
                 .setInterpolator(OvershootInterpolator(1.2f))
                 .start()
         } else {
-            Glide.with(this)
-                .load(url)
-                .fitCenter()
-                .into(currentBinding.rewardImage)
+            request.into(currentBinding.rewardImage)
+        }
+    }
+
+    private fun buildKickGlideUrl(url: String): GlideUrl {
+        return GlideUrl(url) {
+            if (url.contains(".kick.com", ignoreCase = true)) {
+                KICK_IMAGE_HEADERS
+            } else {
+                BASE_IMAGE_HEADERS
+            }
         }
     }
 
@@ -442,6 +488,13 @@ class KickDailyRewardDialog : DialogFragment() {
 
     companion object {
         private const val TAG = "kick_daily_reward"
+        private val BASE_IMAGE_HEADERS = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36"
+        )
+        private val KICK_IMAGE_HEADERS = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36",
+            "Referer" to "https://kick.com/"
+        )
 
         fun show(fragmentManager: FragmentManager) {
             if (fragmentManager.findFragmentByTag(TAG) == null) {

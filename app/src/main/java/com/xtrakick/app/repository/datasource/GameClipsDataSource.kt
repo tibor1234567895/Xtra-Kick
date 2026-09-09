@@ -37,8 +37,9 @@ class GameClipsDataSource(
 
     private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Clip> {
         val slug = gameSlug?.takeIf { it.isNotBlank() }
-            ?: gameName?.trim()?.lowercase()?.replace(' ', '-')
-            ?: throw Exception()
+            ?: kickRepository.resolveCategorySlug(gameId, gameName)
+            ?: KickApiHelper.toCategorySlug(gameName)
+            ?: throw Exception("Could not resolve category slug")
         val kickTime = when (gqlQueryPeriod) {
             ClipsPeriod.LAST_DAY -> "day"
             ClipsPeriod.LAST_WEEK -> "week"

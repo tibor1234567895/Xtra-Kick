@@ -62,6 +62,18 @@ object ChatAdapterUtils {
     /** Neutral grey already used throughout this file for system/notice text. */
     private const val FALLBACK_USERNAME_COLOR = 0xFF999999.toInt()
     private const val DEFAULT_ANIMATED_EMOTE_FPS = 15
+    private val BASE_CHAT_IMAGE_HEADERS = mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME)
+    private val KICK_CHAT_IMAGE_HEADERS = mapOf(
+        "User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME,
+        "Referer" to "https://kick.com/"
+    )
+    private val BASE_COIL_HEADERS = NetworkHeaders.Builder().apply {
+        BASE_CHAT_IMAGE_HEADERS.forEach { (k, v) -> add(k, v) }
+    }.build()
+    private val KICK_COIL_HEADERS = NetworkHeaders.Builder().apply {
+        KICK_CHAT_IMAGE_HEADERS.forEach { (k, v) -> add(k, v) }
+    }.build()
+
     private val animatedFrameSchedulers = Collections.synchronizedMap(
         WeakHashMap<View, AnimatedFrameScheduler>()
     )
@@ -1381,10 +1393,13 @@ object ChatAdapterUtils {
                 data(source)
                 size(targetHeight, targetHeight)
                 crossfade(false)
-                if (image.thirdParty) {
-                    httpHeaders(NetworkHeaders.Builder().apply {
-                        add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build())
+                if (source is String && source.startsWith("http", ignoreCase = true)) {
+                    val headers = if (source.contains(".kick.com", ignoreCase = true)) {
+                        KICK_COIL_HEADERS
+                    } else {
+                        BASE_COIL_HEADERS
+                    }
+                    httpHeaders(headers)
                 }
                 target(
                     onSuccess = {
@@ -1398,8 +1413,13 @@ object ChatAdapterUtils {
     private fun loadGlide(fragment: Fragment, image: Image, source: Any, onLoaded: (Drawable) -> Unit) {
         Glide.with(fragment)
             .load(source.let {
-                if (image.thirdParty && it is String) {
-                    GlideUrl(it) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) }
+                if (it is String && it.startsWith("http", ignoreCase = true)) {
+                    val headers = if (it.contains(".kick.com", ignoreCase = true)) {
+                        KICK_CHAT_IMAGE_HEADERS
+                    } else {
+                        BASE_CHAT_IMAGE_HEADERS
+                    }
+                    GlideUrl(it) { headers }
                 } else it
             })
             .diskCacheStrategy(DiskCacheStrategy.DATA)

@@ -238,6 +238,8 @@ class KickRepository @Inject constructor(
     private val channelLivestreamCache = ConcurrentHashMap<String, Pair<Long, KickChannelLivestream?>>()
     private val websiteSearchCache = ConcurrentHashMap<String, Pair<Long, KickWebsiteSearchResponse>>()
     private val typesenseSearchCache = ConcurrentHashMap<String, Pair<Long, KickTypesenseResult>>()
+    private val categorySlugById = ConcurrentHashMap<String, String>()
+    private val categorySlugByName = ConcurrentHashMap<String, String>()
     private val kickSubscriberAccessCache = ConcurrentHashMap<String, Pair<Long, Boolean>>()
     private val kickEmoteGroupsCache = ConcurrentHashMap<String, Pair<Long, List<KickEmoteGroup>>>()
     private val kickInlineBadgeSanitizedCache = ConcurrentHashMap<String, String>()
@@ -516,17 +518,71 @@ class KickRepository @Inject constructor(
         return searchTypesense(preset = "category_search", query = query, page = page, perPage = perPage)
     }
 
+    fun cacheCategorySlug(id: String?, name: String?, slug: String?) {
+        val cleanSlug = slug?.trim()?.takeIf { it.isNotBlank() } ?: return
+        id?.trim()?.takeIf { it.isNotBlank() }?.let { categorySlugById[it] = cleanSlug }
+        name?.trim()?.takeIf { it.isNotBlank() }?.let { categorySlugByName[it.lowercase(Locale.ROOT)] = cleanSlug }
+    }
+
+    fun getCachedCategorySlug(id: String?): String? {
+        return id?.trim()?.takeIf { it.isNotBlank() }?.let { categorySlugById[it] }
+    }
+
+    fun getCachedCategorySlugByName(name: String?): String? {
+        return name?.trim()?.takeIf { it.isNotBlank() }?.let { categorySlugByName[it.lowercase(Locale.ROOT)] }
+    }
+
+    fun getOrInferCachedCategorySlug(id: String?, name: String?): String? {
+        val cached = getCachedCategorySlug(id) ?: getCachedCategorySlugByName(name)
+        if (!cached.isNullOrBlank()) return cached
+        val inferred = KickApiHelper.toCategorySlug(name) ?: return null
+        cacheCategorySlug(id, name, inferred)
+        return inferred
+    }
+
+    suspend fun resolveCategorySlug(gameId: String?, gameName: String?): String? {
+        val cached = getCachedCategorySlug(gameId) ?: getCachedCategorySlugByName(gameName)
+        if (!cached.isNullOrBlank()) return cached
+
+        val cleanName = gameName?.trim()
+        val cleanId = gameId?.trim()
+
+        if (!cleanId.isNullOrBlank() || !cleanName.isNullOrBlank()) {
+            val typesenseResult = runCatching {
+                if (!cleanId.isNullOrBlank()) {
+                    searchTypesense(preset = "category_search", query = "*", filterBy = "id:=$cleanId", page = 1, perPage = 1)
+                } else {
+                    searchTypesense(preset = "category_search", query = cleanName!!, page = 1, perPage = 1)
+                }
+            }.getOrNull()
+
+            val doc = typesenseResult?.hits?.firstOrNull()?.document
+            val foundSlug = doc?.slug?.trim()?.takeIf { it.isNotBlank() }
+            if (foundSlug != null) {
+                cacheCategorySlug(doc.id ?: cleanId, doc.name ?: cleanName, foundSlug)
+                return foundSlug
+            }
+        }
+
+        val fallbackSlug = KickApiHelper.toCategorySlug(cleanName)
+        if (!fallbackSlug.isNullOrBlank()) {
+            cacheCategorySlug(cleanId, cleanName, fallbackSlug)
+        }
+        return fallbackSlug
+    }
+
     private suspend fun searchTypesense(
         preset: String,
         query: String,
         page: Int,
         perPage: Int,
+        filterBy: String? = null,
     ): KickTypesenseResult {
         val normalizedQuery = query.trim()
-        if (normalizedQuery.isBlank()) {
+        if (normalizedQuery.isBlank() && filterBy.isNullOrBlank()) {
             return KickTypesenseResult()
         }
-        val cacheKey = "$preset:$page:$perPage:${normalizedQuery.lowercase(Locale.ROOT)}"
+        val cacheKey = "$preset:$page:$perPage:${filterBy.orEmpty()}:${normalizedQuery.lowercase(Locale.ROOT)}"
         val now = System.currentTimeMillis()
         typesenseSearchCache[cacheKey]?.let { (cachedAt, cachedResult) ->
             if (now - cachedAt <= searchCacheTtlMs) {
@@ -539,7 +595,8 @@ class KickRepository @Inject constructor(
                     preset = preset,
                     q = normalizedQuery,
                     page = page,
-                    perPage = perPage
+                    perPage = perPage,
+                    filterBy = filterBy,
                 )
             )
         )
@@ -634,7 +691,11 @@ class KickRepository @Inject constructor(
             val channel = item.objOrNull("channel")
             val channelUser = channel?.objOrNull("user")
             val category = item.arrayOrNull("categories")?.firstOrNull() as? JsonObject
+            val categoryId = category?.firstLongOrNull("category_id", "id")?.toString()
+            val categorySlug = category?.primitiveOrNull("slug")
+            val categoryName = category?.primitiveOrNull("name")
             val thumbnail = item.objOrNull("thumbnail")
+            cacheCategorySlug(categoryId, categoryName, categorySlug)
             Stream(
                 id = item.firstLongOrNull("id")?.toString(),
                 source = AppConstants.KICK,
@@ -642,9 +703,9 @@ class KickRepository @Inject constructor(
                 channelLogin = channel?.primitiveOrNull("slug"),
                 channelName = channelUser?.primitiveOrNull("username"),
                 playbackUrl = channel?.primitiveOrNull("playback_url"),
-                gameId = category?.firstLongOrNull("category_id", "id")?.toString(),
-                gameSlug = category?.primitiveOrNull("slug"),
-                gameName = category?.primitiveOrNull("name"),
+                gameId = categoryId,
+                gameSlug = categorySlug,
+                gameName = categoryName,
                 title = item.primitiveOrNull("session_title"),
                 viewerCount = item.intOrNull("viewer_count") ?: item.intOrNull("viewers"),
                 startedAt = normalizeDate(item.primitiveOrNull("start_time")),
@@ -3413,6 +3474,10 @@ class KickRepository @Inject constructor(
 
     fun toStream(item: KickLivestream, gameId: String? = null, gameSlug: String? = null, gameName: String? = null): Stream {
         val category = item.categories?.firstOrNull()
+        val resolvedSlug = gameSlug ?: category?.slug
+        val resolvedId = gameId ?: category?.id?.toString()
+        val resolvedName = gameName ?: category?.name
+        cacheCategorySlug(resolvedId, resolvedName, resolvedSlug)
         val channelLogin = item.channel?.slug ?: item.channel?.user?.username?.lowercase(Locale.ROOT)
         return Stream(
             id = item.id?.toString(),
@@ -3421,9 +3486,9 @@ class KickRepository @Inject constructor(
             channelLogin = channelLogin,
             channelName = item.channel?.user?.username,
             playbackUrl = item.channel?.playbackUrl,
-            gameId = gameId ?: category?.id?.toString(),
-            gameSlug = gameSlug ?: category?.slug,
-            gameName = gameName ?: category?.name,
+            gameId = resolvedId,
+            gameSlug = resolvedSlug,
+            gameName = resolvedName,
             title = item.title,
             viewerCount = item.viewerCount,
             startedAt = normalizeDate(item.createdAt),
@@ -3435,6 +3500,7 @@ class KickRepository @Inject constructor(
 
     fun toStream(channel: KickChannelResponse, livestreamOverride: KickChannelLivestream? = null): Stream {
         val livestream = livestreamOverride ?: channel.livestream
+        cacheCategorySlug(livestream?.category?.id?.toString(), livestream?.category?.name, livestream?.category?.slug)
         return Stream(
             id = livestream?.id?.toString(),
             source = AppConstants.KICK,
@@ -3466,6 +3532,7 @@ class KickRepository @Inject constructor(
     }
 
     fun toGame(item: KickSubcategory): Game {
+        cacheCategorySlug(item.id?.toString(), item.name, item.slug)
         return KickWebsiteSearchMapper.toGame(item)
     }
 

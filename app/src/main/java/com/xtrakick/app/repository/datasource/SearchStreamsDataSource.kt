@@ -113,15 +113,17 @@ class SearchStreamsDataSource(
                             fallback = null
                         ) ?: return@forEach
                         if (streamsByChannel[channelKey] == null) {
+                            val catId = item.category?.id?.toString()
+                            val catName = item.category?.name
                             streamsByChannel[channelKey] = Stream(
                                 id = item.channelId?.toString(),
                                 source = AppConstants.KICK,
                                 channelId = item.broadcasterUserId.toString(),
                                 channelLogin = item.slug ?: matchedChannel.slug,
                                 channelName = matchedChannel.user?.username ?: item.slug,
-                                gameId = item.category?.id?.toString(),
-                                gameSlug = null,
-                                gameName = item.category?.name,
+                                gameId = catId,
+                                gameSlug = kickRepository.getOrInferCachedCategorySlug(catId, catName),
+                                gameName = catName,
                                 title = item.streamTitle,
                                 viewerCount = item.viewerCount,
                                 startedAt = item.startedAt,

@@ -615,6 +615,8 @@ class FollowedStreamsViewModel @Inject constructor(
     }
 
     private fun com.xtrakick.app.model.kick.api.livestream.Livestream.toUiStream(follow: LocalFollowChannel?): Stream {
+        val catId = category?.id?.toString()
+        val catName = category?.name
         return Stream(
             id = channelId?.toString(),
             source = AppConstants.KICK,
@@ -622,9 +624,9 @@ class FollowedStreamsViewModel @Inject constructor(
             channelLogin = slug ?: follow?.userLogin,
             channelName = follow?.userName ?: slug,
             playbackUrl = null,
-            gameId = category?.id?.toString(),
-            gameSlug = null,
-            gameName = category?.name,
+            gameId = catId,
+            gameSlug = kickRepository.getOrInferCachedCategorySlug(catId, catName),
+            gameName = catName,
             title = streamTitle,
             viewerCount = viewerCount,
             startedAt = startedAt,

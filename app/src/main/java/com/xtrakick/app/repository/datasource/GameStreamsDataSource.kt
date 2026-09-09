@@ -6,6 +6,8 @@ import com.xtrakick.app.model.kick.Language
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.KickApiHelper
+import java.util.Locale
 
 class GameStreamsDataSource(
     private val gameId: String?,
@@ -52,21 +54,43 @@ class GameStreamsDataSource(
 
     private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
         val page = params.key ?: 1
-        val slug = gameSlug ?: gameName?.trim()?.lowercase()?.replace(' ', '-')
+        val slug = gameSlug?.takeIf { it.isNotBlank() }
+            ?: kickRepository.resolveCategorySlug(gameId, gameName)
+            ?: KickApiHelper.toCategorySlug(gameName)
         val response = kickRepository.getLivestreams(
             page = page,
             limit = params.loadSize,
             sort = if (gqlSort == "VIEWER_COUNT_ASC") "asc" else "desc",
             subcategory = slug
         )
-        val list = response.data.map {
-            kickRepository.toStream(
-                item = it,
-                gameId = gameId ?: it.categories?.firstOrNull()?.id?.toString(),
-                gameSlug = gameSlug ?: it.categories?.firstOrNull()?.slug,
-                gameName = gameName ?: it.categories?.firstOrNull()?.name
-            )
-        }
+        val normalizedSlug = slug?.trim()?.lowercase(Locale.ROOT)
+        val normalizedName = gameName?.trim()?.lowercase(Locale.ROOT)
+        val list = response.data
+            .filter { item ->
+                // Guard against Kick falling back to global popular livestreams when subcategory is unmatched
+                if (normalizedSlug.isNullOrBlank() && normalizedName.isNullOrBlank() && gameId.isNullOrBlank()) {
+                    return@filter true
+                }
+                val itemCats = item.categories
+                if (itemCats.isNullOrEmpty()) {
+                    true
+                } else {
+                    itemCats.any { cat ->
+                        (gameId != null && cat.id?.toString() == gameId) ||
+                        (normalizedSlug != null && cat.slug?.lowercase(Locale.ROOT) == normalizedSlug) ||
+                        (normalizedName != null && cat.name?.lowercase(Locale.ROOT) == normalizedName)
+                    }
+                }
+            }
+            .map {
+                val itemCat = it.categories?.firstOrNull()
+                kickRepository.toStream(
+                    item = it,
+                    gameId = itemCat?.id?.toString() ?: gameId,
+                    gameSlug = itemCat?.slug ?: slug,
+                    gameName = itemCat?.name ?: gameName
+                )
+            }
         return LoadResult.Page(
             data = list,
             prevKey = null,

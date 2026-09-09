@@ -249,6 +249,21 @@ object KickApiHelper {
         }
     }
 
+    fun toCategorySlug(name: String?): String? {
+        val trimmed = name?.trim() ?: return null
+        if (trimmed.isEmpty()) return null
+
+        var cleaned = trimmed.replace(Regex("\\s*[\\[(][^\\])]*[\\])]$"), "").trim()
+        if (cleaned.isEmpty()) {
+            cleaned = trimmed
+        }
+        cleaned = cleaned.replace(Regex("['\"!?:,.]"), "")
+        cleaned = cleaned.replace(Regex("[\\s&/_+]+"), "-")
+        cleaned = cleaned.replace(Regex("[^a-zA-Z0-9-]"), "")
+        val slug = cleaned.replace(Regex("-+"), "-").trim('-').lowercase(Locale.ROOT)
+        return slug.ifBlank { null }
+    }
+
     fun formatTimeString(context: Context, iso8601date: String): String? {
         return parseIso8601DateUTC(iso8601date)?.let { formatTime(context, it) }
     }

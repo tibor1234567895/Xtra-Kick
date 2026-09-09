@@ -112,6 +112,8 @@ class ShownNotificationsRepository @Inject constructor(
                 }
                 requested.forEach { live ->
                     val broadcasterId = live.broadcasterUserId?.toString() ?: live.channelId?.toString()
+                    val catId = live.category?.id?.toString()
+                    val catName = live.category?.name
                     val stream = Stream(
                         id = null,
                         source = AppConstants.KICK,
@@ -119,9 +121,9 @@ class ShownNotificationsRepository @Inject constructor(
                         channelLogin = live.slug,
                         channelName = live.slug,
                         playbackUrl = null,
-                        gameId = live.category?.id?.toString(),
-                        gameSlug = null,
-                        gameName = live.category?.name,
+                        gameId = catId,
+                        gameSlug = kickRepository.getOrInferCachedCategorySlug(catId, catName),
+                        gameName = catName,
                         title = live.streamTitle,
                         viewerCount = live.viewerCount,
                         startedAt = live.startedAt,

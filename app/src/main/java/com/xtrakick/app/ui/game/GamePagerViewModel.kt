@@ -163,10 +163,11 @@ class GamePagerViewModel @Inject constructor(
 
                         }
                     }
+                    val effectiveGameSlug = gameSlug?.takeIf { it.isNotBlank() } ?: KickApiHelper.toCategorySlug(gameName)
                     localFollowsGame.saveFollow(
                         LocalFollowGame(
                             gameId,
-                            gameSlug,
+                            effectiveGameSlug,
                             gameName,
                             path.takeIf { File(it).exists() } ?: remoteBoxArt
                         )

@@ -14,6 +14,8 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.serialization.json.Json
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import org.chromium.net.CronetEngine
@@ -25,6 +27,7 @@ import java.security.Security
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManagerFactory
@@ -74,6 +77,12 @@ class AppModule {
     @Provides
     fun providesOkHttpClient(application: Application, trustManager: X509TrustManager?): OkHttpClient {
         val builder = OkHttpClient.Builder().apply {
+            fastFallback(true)
+            dispatcher(Dispatcher().apply {
+                maxRequests = 64
+                maxRequestsPerHost = 20
+            })
+            connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
             if (BuildConfig.DEBUG && application.prefs().getBoolean(AppConstants.DEBUG_NETWORK_LOGS, false)) {
                 addInterceptor(HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC })
             }

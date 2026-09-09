@@ -1075,17 +1075,19 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     category.visibility = View.VISIBLE
                     category.text = gameName
                     category.setOnClickListener {
+                        val initialSlug = requireArguments().getString(KEY_GAME_SLUG)?.takeIf { it.isNotBlank() }
+                            ?: KickApiHelper.toCategorySlug(gameName)
                         findNavController().navigate(
                             if (prefs.getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                                 GamePagerFragmentDirections.actionGlobalGamePagerFragment(
                                     gameId = requireArguments().getString(KEY_GAME_ID),
-                                    gameSlug = requireArguments().getString(KEY_GAME_SLUG),
+                                    gameSlug = initialSlug,
                                     gameName = gameName
                                 )
                             } else {
                                 GameMediaFragmentDirections.actionGlobalGameMediaFragment(
                                     gameId = requireArguments().getString(KEY_GAME_ID),
-                                    gameSlug = requireArguments().getString(KEY_GAME_SLUG),
+                                    gameSlug = initialSlug,
                                     gameName = gameName
                                 )
                             }
@@ -2233,6 +2235,14 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 visibility = View.GONE
             }
         }
+        val effectiveSlug = gameSlug?.takeIf { it.isNotBlank() } ?: KickApiHelper.toCategorySlug(gameName)
+        runCatching {
+            requireArguments().apply {
+                gameId?.takeIf { it.isNotBlank() }?.let { putString(KEY_GAME_ID, it) }
+                effectiveSlug?.takeIf { it.isNotBlank() }?.let { putString(KEY_GAME_SLUG, it) }
+                gameName?.takeIf { it.isNotBlank() }?.let { putString(KEY_GAME_NAME, it) }
+            }
+        }
         binding.playerControls.category.apply {
             if (!gameName.isNullOrBlank() && prefs.getBoolean(AppConstants.PLAYER_CATEGORY, true)) {
                 text = gameName
@@ -2242,13 +2252,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         if (prefs.getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                             GamePagerFragmentDirections.actionGlobalGamePagerFragment(
                                 gameId = gameId,
-                                gameSlug = gameSlug,
+                                gameSlug = effectiveSlug,
                                 gameName = gameName
                             )
                         } else {
                             GameMediaFragmentDirections.actionGlobalGameMediaFragment(
                                 gameId = gameId,
-                                gameSlug = gameSlug,
+                                gameSlug = effectiveSlug,
                                 gameName = gameName
                             )
                         }

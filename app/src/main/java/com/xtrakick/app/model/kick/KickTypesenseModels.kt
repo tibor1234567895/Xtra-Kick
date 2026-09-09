@@ -15,6 +15,8 @@ data class KickTypesenseQuery(
     val page: Int,
     @SerialName("per_page")
     val perPage: Int,
+    @SerialName("filter_by")
+    val filterBy: String? = null,
 )
 
 @Serializable

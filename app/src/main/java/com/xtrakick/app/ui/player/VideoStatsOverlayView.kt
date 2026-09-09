@@ -68,11 +68,8 @@ class VideoStatsOverlayView @JvmOverloads constructor(
                         val targetX = (event.rawX + dX).coerceIn(minX, maxX)
                         val targetY = (event.rawY + dY).coerceIn(minY, maxY)
 
-                        animate()
-                            .x(targetX)
-                            .y(targetY)
-                            .setDuration(0)
-                            .start()
+                        x = targetX
+                        y = targetY
                     }
                     true
                 }
@@ -163,6 +160,25 @@ class VideoStatsOverlayView @JvmOverloads constructor(
         }
 
         currentStats?.let { updateStats(it) }
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        if (!changed) return
+        val parentView = parent as? android.view.ViewGroup ?: return
+        val parentWidth = parentView.width.toFloat()
+        val parentHeight = parentView.height.toFloat()
+        if (parentWidth > 0 && parentHeight > 0) {
+            val minVisibleMargin = 48f * resources.displayMetrics.density
+            val minX = -(width.toFloat() - minVisibleMargin)
+            val maxX = (parentWidth - minVisibleMargin).coerceAtLeast(minX)
+            val minY = 0f
+            val maxY = (parentHeight - minVisibleMargin).coerceAtLeast(0f)
+            val clampedX = x.coerceIn(minX, maxX)
+            val clampedY = y.coerceIn(minY, maxY)
+            if (clampedX != x) x = clampedX
+            if (clampedY != y) y = clampedY
+        }
     }
 
     fun updateStats(stats: VideoStatsInfo?) {
