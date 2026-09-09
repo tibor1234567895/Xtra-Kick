@@ -3514,22 +3514,34 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     fun share() {
         val text = when (videoType) {
             STREAM -> {
-                requireArguments().getString(KEY_CHANNEL_LOGIN)?.let { channelLogin ->
+                requireArguments().getString(KEY_CHANNEL_LOGIN)?.takeIf { it.isNotBlank() }?.let { channelLogin ->
                     "https://kick.com/$channelLogin"
                 }
             }
             VIDEO -> {
-                requireArguments().getString(KEY_VIDEO_ID)?.let { videoId ->
+                val identifier = requireArguments().getString(KEY_VIDEO_UUID)?.takeIf { it.isNotBlank() }
+                    ?: requireArguments().getString(KEY_VIDEO_ID)?.takeIf { it.isNotBlank() }
+                identifier?.let { videoId ->
                     val position = getCurrentPosition()?.takeIf { it > 0L }?.let { position ->
                         val totalSeconds = position / 1000
                         String.format(Locale.US, "?t=%02dh%02dm%02ds", totalSeconds / 3600, (totalSeconds % 3600) / 60, totalSeconds % 60)
                     } ?: ""
-                    "https://kick.com/video/$videoId$position"
+                    val channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)?.takeIf { it.isNotBlank() }
+                    if (channelLogin != null) {
+                        "https://kick.com/$channelLogin/videos/$videoId$position"
+                    } else {
+                        "https://kick.com/videos/$videoId$position"
+                    }
                 }
             }
             CLIP -> {
-                requireArguments().getString(KEY_CLIP_ID)?.let { clipId ->
-                    "https://kick.com/clip/$clipId"
+                requireArguments().getString(KEY_CLIP_ID)?.takeIf { it.isNotBlank() }?.let { clipId ->
+                    val channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)?.takeIf { it.isNotBlank() }
+                    if (channelLogin != null) {
+                        "https://kick.com/$channelLogin/clips/$clipId"
+                    } else {
+                        "https://kick.com/clips/$clipId"
+                    }
                 }
             }
             else -> null
@@ -3817,6 +3829,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         return bundleOf(
             KEY_TYPE to VIDEO,
             KEY_VIDEO_ID to item.id,
+            KEY_VIDEO_UUID to (item.uuid ?: item.slug),
             KEY_VIDEO_SOURCE to (item.source ?: AppConstants.KICK),
             KEY_TITLE to item.title,
             KEY_UPLOAD_DATE to item.uploadDate,
@@ -3925,6 +3938,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         protected const val KEY_RESOLVED_STREAM_URL = "resolvedStreamUrl"
         protected const val KEY_FORCE_STANDARD_LIVE_ENGINE = "forceStandardLiveEngine"
         protected const val KEY_VIDEO_ID = "videoId"
+        protected const val KEY_VIDEO_UUID = "videoUuid"
         protected const val KEY_VIDEO_SOURCE = "videoSource"
         protected const val KEY_CLIP_REPLAY_START_TIME = "clipReplayStartTime"
         protected const val KEY_CLIP_ID = "clipId"

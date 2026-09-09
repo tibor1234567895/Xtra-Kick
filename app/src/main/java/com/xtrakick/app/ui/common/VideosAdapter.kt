@@ -231,21 +231,24 @@ class VideosAdapter(
                                     R.id.download -> showDownloadDialog(item)
                                     R.id.bookmark -> saveBookmark(item)
                                     R.id.share -> {
-                                        val shareUrl = if (item.source.equals(AppConstants.KICK, true)) {
-                                            item.url
-                                                ?: item.channelLogin?.let { login -> item.id?.let { id -> "https://kick.com/$login/videos/$id" } }
-                                                ?: "https://kick.com/${item.channelLogin ?: ""}"
-                                        } else {
-                                            "https://kick.com/videos/${item.id}"
+                                        val shareId = item.uuid ?: item.slug ?: item.id
+                                        val channelLogin = item.channelLogin?.takeIf { it.isNotBlank() }
+                                        val shareUrl = when {
+                                            !shareId.isNullOrBlank() && channelLogin != null -> "https://kick.com/$channelLogin/videos/$shareId"
+                                            !shareId.isNullOrBlank() -> "https://kick.com/videos/$shareId"
+                                            channelLogin != null -> "https://kick.com/$channelLogin"
+                                            else -> null
                                         }
-                                        context.startActivity(Intent.createChooser(Intent().apply {
-                                            action = Intent.ACTION_SEND
-                                            putExtra(Intent.EXTRA_TEXT, shareUrl)
-                                            item.title?.let {
-                                                putExtra(Intent.EXTRA_TITLE, it)
-                                            }
-                                            type = "text/plain"
-                                        }, null))
+                                        if (shareUrl != null) {
+                                            context.startActivity(Intent.createChooser(Intent().apply {
+                                                action = Intent.ACTION_SEND
+                                                putExtra(Intent.EXTRA_TEXT, shareUrl)
+                                                item.title?.let {
+                                                    putExtra(Intent.EXTRA_TITLE, it)
+                                                }
+                                                type = "text/plain"
+                                            }, null))
+                                        }
                                     }
                                     else -> menu.close()
                                 }

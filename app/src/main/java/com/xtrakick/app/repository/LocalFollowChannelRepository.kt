@@ -52,6 +52,28 @@ class LocalFollowChannelRepository @Inject constructor(
         notifyFollowsChanged()
     }
 
+    suspend fun clearKickFollows() = withContext(Dispatchers.IO) {
+        val changed = database.withTransaction {
+            val existing = dedupeFollows(localFollowsChannelDao.getAll())
+            var modified = false
+            existing.forEach { item ->
+                if (item.isKickFollow) {
+                    if ((item.sourceMask and AppConstants.FOLLOW_SOURCE_MASK_LOCAL) != 0) {
+                        item.sourceMask = item.sourceMask and AppConstants.FOLLOW_SOURCE_MASK_KICK.inv()
+                        localFollowsChannelDao.update(item)
+                    } else {
+                        localFollowsChannelDao.delete(item)
+                    }
+                    modified = true
+                }
+            }
+            modified
+        }
+        if (changed) {
+            notifyFollowsChanged()
+        }
+    }
+
     suspend fun upsertLocalFollow(
         userId: String?,
         userLogin: String?,

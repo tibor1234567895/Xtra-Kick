@@ -232,7 +232,7 @@ class KickFollowImporter @Inject constructor(
                 userLogin = follow.login,
                 userName = follow.name,
                 channelLogo = follow.profilePicture,
-                sourceMask = AppConstants.FOLLOW_SOURCE_MASK_LOCAL or AppConstants.FOLLOW_SOURCE_MASK_KICK,
+                sourceMask = AppConstants.FOLLOW_SOURCE_MASK_KICK,
             )
         })
         Log.i(LOG_TAG, "Kick follow import stored follows count=${dedupedFollows.size}")
@@ -281,7 +281,7 @@ class KickFollowImporter @Inject constructor(
                     userLogin = login,
                     userName = name,
                     channelLogo = profileImageUrl,
-                    sourceMask = AppConstants.FOLLOW_SOURCE_MASK_LOCAL or AppConstants.FOLLOW_SOURCE_MASK_KICK,
+                    sourceMask = AppConstants.FOLLOW_SOURCE_MASK_KICK,
                 )
             }
             localFollowsChannel.upsertLocalFollows(enrichedFollows)

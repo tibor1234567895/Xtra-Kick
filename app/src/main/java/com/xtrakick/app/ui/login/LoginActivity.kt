@@ -32,6 +32,7 @@ import com.xtrakick.app.model.kick.auth.KickBackendExchangeRequest
 import com.xtrakick.app.model.kick.auth.KickBackendRevokeRequest
 import com.xtrakick.app.repository.AuthRepository
 import com.xtrakick.app.repository.KickAuthRequestException
+import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.ui.following.KickFollowImporter
 import com.xtrakick.app.ui.settings.SettingsActivity
 import com.xtrakick.app.util.AuthStateHelper
@@ -62,6 +63,9 @@ class LoginActivity : AppCompatActivity() {
 
     @Inject
     lateinit var followImporter: KickFollowImporter
+
+    @Inject
+    lateinit var localFollowChannelRepository: LocalFollowChannelRepository
 
     private lateinit var binding: ActivityLoginBinding
     private var callbackHandled = false
@@ -487,6 +491,10 @@ class LoginActivity : AppCompatActivity() {
                 // Local state is still cleared below so the user isn't stuck, but don't claim
                 // the server-side revoke worked — the tokens may still be live at Kick.
                 Log.e(TAG, "Kick token revocation failed", e)
+            }
+            localFollowChannelRepository.clearKickFollows()
+            prefs().edit {
+                remove(AppConstants.KICK_FOLLOW_MARK_DONE)
             }
             AuthStateHelper.clearUnexpectedLogoutNotice(this@LoginActivity)
             AuthStateHelper.clearKickAuth(this@LoginActivity)

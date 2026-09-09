@@ -595,6 +595,10 @@ class MainActivity : AppCompatActivity() {
         AuthStateHelper.clearUnexpectedLogoutNotice(this)
         if (!AuthStateHelper.isKickLoggedIn(this)) {
             Toast.makeText(this, R.string.token_expired, Toast.LENGTH_LONG).show()
+            lifecycleScope.launch {
+                localFollowChannelRepository.clearKickFollows()
+                prefs.edit().remove(AppConstants.KICK_FOLLOW_MARK_DONE).apply()
+            }
         }
     }
 

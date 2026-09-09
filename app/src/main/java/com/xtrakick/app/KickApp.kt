@@ -12,6 +12,8 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.annotation.ExperimentalCoilApi
+import coil3.gif.AnimatedImageDecoder
+import coil3.gif.GifDecoder
 import coil3.network.NetworkClient
 import coil3.network.NetworkFetcher
 import coil3.network.NetworkHeaders
@@ -208,6 +210,11 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                 logger(DiagnosticCoilLogger(coil3.util.Logger.Level.Error))
             }
             components {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    add(AnimatedImageDecoder.Factory())
+                } else {
+                    add(GifDecoder.Factory())
+                }
                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
                 when {
                     networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {

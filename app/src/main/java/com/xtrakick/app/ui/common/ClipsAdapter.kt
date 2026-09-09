@@ -186,14 +186,24 @@ class ClipsAdapter(
                                 when (it.itemId) {
                                     R.id.download -> showDownloadDialog(item)
                                     R.id.share -> {
-                                        context.startActivity(Intent.createChooser(Intent().apply {
-                                            action = Intent.ACTION_SEND
-                                            putExtra(Intent.EXTRA_TEXT, "https://kick.com/${item.channelLogin}/clip/${item.id}")
-                                            item.title?.let {
-                                                putExtra(Intent.EXTRA_TITLE, it)
-                                            }
-                                            type = "text/plain"
-                                        }, null))
+                                        val clipId = item.id?.takeIf { it.isNotBlank() }
+                                        val channelLogin = item.channelLogin?.takeIf { it.isNotBlank() }
+                                        val shareUrl = when {
+                                            clipId != null && channelLogin != null -> "https://kick.com/$channelLogin/clips/$clipId"
+                                            clipId != null -> "https://kick.com/clips/$clipId"
+                                            channelLogin != null -> "https://kick.com/$channelLogin"
+                                            else -> null
+                                        }
+                                        if (shareUrl != null) {
+                                            context.startActivity(Intent.createChooser(Intent().apply {
+                                                action = Intent.ACTION_SEND
+                                                putExtra(Intent.EXTRA_TEXT, shareUrl)
+                                                item.title?.let {
+                                                    putExtra(Intent.EXTRA_TITLE, it)
+                                                }
+                                                type = "text/plain"
+                                            }, null))
+                                        }
                                     }
                                     else -> menu.close()
                                 }
