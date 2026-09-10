@@ -139,6 +139,31 @@ class Media3Fragment : PlayerFragment() {
         return null
     }
 
+    private fun updatePlayPauseButton(player: Player? = this.player): Boolean {
+        if (view == null) return true
+        if (player != null && player.playbackState == Player.STATE_ENDED) {
+            binding.playerControls.playPause.setImageResource(R.drawable.baseline_replay_black_48)
+            binding.playerControls.playPause.contentDescription = getString(R.string.replay)
+            binding.playerControls.playPause.visibility = View.VISIBLE
+            return true
+        }
+        val showPlayButton = Util.shouldShowPlayButton(player)
+        if (showPlayButton) {
+            binding.playerControls.playPause.setImageResource(R.drawable.baseline_play_arrow_black_48)
+            binding.playerControls.playPause.contentDescription = null
+            binding.playerControls.playPause.visibility = View.VISIBLE
+        } else {
+            binding.playerControls.playPause.setImageResource(R.drawable.baseline_pause_black_48)
+            binding.playerControls.playPause.contentDescription = null
+            binding.playerControls.playPause.visibility = if (videoType == STREAM && !prefs.getBoolean(AppConstants.PLAYER_PAUSE, false)) {
+                View.GONE
+            } else {
+                View.VISIBLE
+            }
+        }
+        return showPlayButton
+    }
+
     override fun onStart() {
         super.onStart()
         controllerFuture = MediaController.Builder(
@@ -167,54 +192,36 @@ class Media3Fragment : PlayerFragment() {
                     if (playbackState == Player.STATE_READY) {
                         maybeSyncToLiveEdge(player, "onPlaybackStateChanged")
                     }
-                    val showPlayButton = Util.shouldShowPlayButton(player)
-                    if (showPlayButton) {
-                        binding.playerControls.playPause.setImageResource(R.drawable.baseline_play_arrow_black_48)
-                        binding.playerControls.playPause.visibility = View.VISIBLE
-                    } else {
-                        binding.playerControls.playPause.setImageResource(R.drawable.baseline_pause_black_48)
-                        if (videoType == STREAM && !prefs.getBoolean(AppConstants.PLAYER_PAUSE, false)) {
-                            binding.playerControls.playPause.visibility = View.GONE
-                        }
-                    }
+                    val showPlayButton = updatePlayPauseButton()
                     setPipActions(!showPlayButton)
                     updateProgress()
                     controllerAutoHide = !showPlayButton
-                    if (videoType != STREAM && useController && playbackState == Player.STATE_ENDED) {
-                        showController()
+                    if (showPlayButton) {
+                        if (videoType != STREAM && useController && playbackState == Player.STATE_ENDED) {
+                            showController()
+                        }
+                    } else {
+                        rescheduleHideController()
                     }
                 }
 
                 override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                     binding.bufferingIndicator.isVisible = player?.playbackState == Player.STATE_BUFFERING
-                    val showPlayButton = Util.shouldShowPlayButton(player)
-                    if (showPlayButton) {
-                        binding.playerControls.playPause.setImageResource(R.drawable.baseline_play_arrow_black_48)
-                        binding.playerControls.playPause.visibility = View.VISIBLE
-                    } else {
-                        binding.playerControls.playPause.setImageResource(R.drawable.baseline_pause_black_48)
-                        if (videoType == STREAM && !prefs.getBoolean(AppConstants.PLAYER_PAUSE, false)) {
-                            binding.playerControls.playPause.visibility = View.GONE
-                        }
-                    }
+                    val showPlayButton = updatePlayPauseButton()
                     setPipActions(!showPlayButton)
                     updateProgress()
                     controllerAutoHide = !showPlayButton
-                    if (videoType != STREAM && useController && player?.playbackState == Player.STATE_ENDED) {
-                        showController()
+                    if (showPlayButton) {
+                        if (videoType != STREAM && useController && player?.playbackState == Player.STATE_ENDED) {
+                            showController()
+                        }
+                    } else {
+                        rescheduleHideController()
                     }
                 }
 
                 override fun onAvailableCommandsChanged(availableCommands: Player.Commands) {
-                    if (Util.shouldShowPlayButton(player)) {
-                        binding.playerControls.playPause.setImageResource(R.drawable.baseline_play_arrow_black_48)
-                        binding.playerControls.playPause.visibility = View.VISIBLE
-                    } else {
-                        binding.playerControls.playPause.setImageResource(R.drawable.baseline_pause_black_48)
-                        if (videoType == STREAM && !prefs.getBoolean(AppConstants.PLAYER_PAUSE, false)) {
-                            binding.playerControls.playPause.visibility = View.GONE
-                        }
-                    }
+                    updatePlayPauseButton()
                     updateDurationDisplay()
                     updateProgress()
                 }
@@ -224,10 +231,11 @@ class Media3Fragment : PlayerFragment() {
                 }
 
                 override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                    updatePlayPauseButton()
                     updateDurationDisplay()
                     updateProgress()
                     if (reason == Player.DISCONTINUITY_REASON_SEEK) {
-                        chatFragment?.updatePosition(newPosition.positionMs)
+                        activeChatFragment()?.seekTo(newPosition.positionMs)
                     }
                 }
 
@@ -543,15 +551,7 @@ class Media3Fragment : PlayerFragment() {
                     requireView().keepScreenOn = player.isPlaying
                 }
                 updateProgress()
-                if (Util.shouldShowPlayButton(player)) {
-                    binding.playerControls.playPause.setImageResource(R.drawable.baseline_play_arrow_black_48)
-                    binding.playerControls.playPause.visibility = View.VISIBLE
-                } else {
-                    binding.playerControls.playPause.setImageResource(R.drawable.baseline_pause_black_48)
-                    if (videoType == STREAM && !prefs.getBoolean(AppConstants.PLAYER_PAUSE, false)) {
-                        binding.playerControls.playPause.visibility = View.GONE
-                    }
-                }
+                updatePlayPauseButton()
             }
             if ((isInitialized || !enableNetworkCheck) && !viewModel.started) {
                 playerDebugLog(
@@ -684,7 +684,6 @@ class Media3Fragment : PlayerFragment() {
             )
             if (playbackPosition != null && playbackPosition > 0L) {
                 chatFragment?.updatePosition(playbackPosition)
-                chatFragment?.startReplayChatLoad(playbackPosition)
             }
         }
     }
@@ -771,15 +770,20 @@ class Media3Fragment : PlayerFragment() {
 
     override fun playPause() {
         player?.let { player ->
-            if (player.isPlaying || player.playWhenReady) {
+            if (player.playbackState == Player.STATE_ENDED) {
+                player.seekToDefaultPosition()
+                player.play()
+                controllerAutoHide = true
+                rescheduleHideController()
+            } else if (player.isPlaying || player.playWhenReady) {
                 player.pause()
             } else {
                 if (player.playbackState == Player.STATE_IDLE) {
                     player.prepare()
-                } else if (player.playbackState == Player.STATE_ENDED) {
-                    player.seekToDefaultPosition()
                 }
                 player.play()
+                controllerAutoHide = true
+                rescheduleHideController()
             }
         } ?: Util.handlePlayPauseButtonAction(player)
     }
@@ -793,12 +797,12 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun seek(position: Long) {
-        if (videoType != STREAM) {
-            chatFragment?.updatePosition(position)
-            chatFragment?.startReplayChatLoad(position)
-        }
         player?.seekTo(position)
+        activeChatFragment()?.seekTo(position)
     }
+
+    override fun isHoldToSpeedAvailable(): Boolean =
+        videoType == VIDEO || videoType == CLIP || videoType == OFFLINE_VIDEO
 
     override fun seekToLivePosition() {
         player?.seekToDefaultPosition()

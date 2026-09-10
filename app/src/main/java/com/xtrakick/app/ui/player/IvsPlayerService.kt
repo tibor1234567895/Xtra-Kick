@@ -314,7 +314,7 @@ class IvsPlayerService : Service() {
         val ivsPlayer = Player.Factory.create(this).apply {
             setLogLevel(Player.LogLevel.ERROR)
             setLiveLowLatencyEnabled(true)
-            setRebufferToLive(true)
+            setRebufferToLive(false)
             setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
         }
         player = ivsPlayer
@@ -325,11 +325,15 @@ class IvsPlayerService : Service() {
                 override fun onStateChanged(state: Player.State) {
                     if (state == Player.State.PLAYING) {
                         hasStablePlayback = true
+                        retryCount = 0
                         suspendedByFocusLoss = false
                         startKickViewerWatchIfNeeded()
                         requestAudioFocus()
                     } else {
                         stopKickViewerWatch()
+                    }
+                    if (state == Player.State.READY && playbackRequested && !suspendedByFocusLoss) {
+                        player?.play()
                     }
                     if (state == Player.State.ENDED && boundClients == 0) {
                         // Unbound session (background/headset-restored) ended — tear down
@@ -364,7 +368,9 @@ class IvsPlayerService : Service() {
                     updateNotification()
                 }
 
-                override fun onRebuffering() = Unit
+                override fun onRebuffering() {
+                    player?.setRebufferToLive(false)
+                }
 
                 override fun onError(exception: PlayerException) {
                     playerDebugWarn(
@@ -374,12 +380,12 @@ class IvsPlayerService : Service() {
                     updatePlaybackState(error = true)
                     updateNotification()
                     val retryUrl = currentUrl
-                    // One blind same-URL retry from the service; when a fragment is
-                    // bound it also handles errors (fresh-URL reload / engine fallback),
-                    // so service and fragment must not race two recovery paths.
+                    // Blind same-URL retries from the service while unbound in background;
+                    // when a fragment is bound it handles errors (fresh-URL reload / engine fallback).
                     val fragmentHandlesRecovery = boundClients > 0
-                    if (!fragmentHandlesRecovery && !retryUrl.isNullOrBlank() && retryCount < 1 && !hasStablePlayback) {
+                    if (!fragmentHandlesRecovery && !retryUrl.isNullOrBlank() && retryCount < 2) {
                         retryCount += 1
+                        playerDebugLog("onError in background, retrying count=$retryCount url=$retryUrl")
                         ivsPlayer.load(Uri.parse(retryUrl))
                         ivsPlayer.play()
                     } else {
@@ -515,7 +521,7 @@ class IvsPlayerService : Service() {
         // Don't acquire locks pre-emptively — wait for BUFFERING/PLAYING callback.
         player?.apply {
             setLiveLowLatencyEnabled(true)
-            setRebufferToLive(true)
+            setRebufferToLive(false)
             setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
             load(Uri.parse(url))
             play()

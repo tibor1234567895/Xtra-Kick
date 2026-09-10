@@ -63,12 +63,23 @@
         android:icon="@drawable/exo_ic_speed"
         app:singleLineTitle="false" />
 
-    <EditTextPreference
+    <com.xtrakick.app.ui.settings.ValueEditTextPreference
         android:defaultValue="0.25\n0.5\n0.75\n1.0\n1.25\n1.5\n1.75\n2.0\n3.0\n4.0\n8.0"
         android:key="player_speed_list"
         android:title="@string/playback_speeds"
         app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
+        app:singleLineTitle="false"
+        app:widgetLayout="@layout/preference_value_widget" />
+
+    <com.xtrakick.app.ui.settings.ValueListPreference
+        android:defaultValue="2.0"
+        android:entries="@array/holdToSpeedEntries"
+        android:entryValues="@array/holdToSpeedValues"
+        android:key="player_hold_to_speed"
+        android:title="@string/hold_to_speed"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false"
+        app:widgetLayout="@layout/preference_value_widget" />
 
     <SwitchPreferenceCompat
         android:defaultValue="true"

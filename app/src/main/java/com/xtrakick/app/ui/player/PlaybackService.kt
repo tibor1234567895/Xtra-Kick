@@ -244,6 +244,7 @@ class PlaybackService : MediaSessionService() {
             setHandleAudioBecomingNoisy(prefs().getBoolean(AppConstants.PLAYER_HANDLE_AUDIO_BECOMING_NOISY, true))
             setSeekBackIncrementMs((prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10) * 1000)
             setSeekForwardIncrementMs((prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10) * 1000)
+            setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
         }.build()
         logBufferDebug(
             "PlaybackService created with latency=${LiveLatencySettings.describe(activeLatencyConfig)}"

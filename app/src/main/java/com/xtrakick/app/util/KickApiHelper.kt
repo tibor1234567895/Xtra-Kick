@@ -37,6 +37,11 @@ object KickApiHelper {
     var checkedValidation = false
     var checkedUpdates = false
 
+    fun getThumbnailCacheKey(): String {
+        val minutes = System.currentTimeMillis() / 60_000L
+        return (minutes - (minutes % 5)).toString()
+    }
+
     fun getTemplateUrl(url: String?, type: String): String? {
         if (url.isNullOrBlank() || url.startsWith("https://files.kick.com/images/default-thumbnail")) {
             return when (type) {

@@ -147,6 +147,7 @@
     <string name="player_pause">Show pause button on livestreams</string>
     <string name="token_random_deviceid">Random device ID</string>
     <string name="playback_speed">Playback speed</string>
+    <string name="hold_to_speed">Hold-to-play speed</string>
     <string name="quality">Quality</string>
     <string name="saved_value">Saved value</string>
     <string name="video_type_archive">Past broadcast</string>
@@ -166,9 +167,6 @@
     <string name="chat_mode_subs_only">Subs only</string>
     <string name="chat_mode_emote_only">Emote only</string>
     <string name="chat_mode_unique">Unique chat</string>
-    <string name="chat_join">Connected to %s</string>
-    <string name="resolution_auto_changed">Resolution auto-changed to %s</string>
-    <string name="quality_auto_changed">Auto quality: %s</string>
     <string name="copy_clip">Copy to clipboard</string>
     <string name="chat_clear">Chat has been cleared by a moderator.</string>
     <string name="chat_timeout">%1$s has been timed out for %2$s.</string>
@@ -504,6 +502,7 @@
     <string name="aspect_ratio">Aspect ratio</string>
     <string name="player_menu">Player menu</string>
     <string name="restart_player">Restart player</string>
+    <string name="replay">Replay</string>
     <string name="retry_ivs">Retry low latency player</string>
     <string name="sub_only_summary">For sub-only content</string>
     <string name="follow_button">Follow button</string>
@@ -553,7 +552,6 @@
     <string name="viewers_high">Viewers (descending)</string>
     <string name="viewers_low">Viewers (ascending)</string>
     <string name="search_videos">Search videos</string>
-    <string name="points_earned">Received %d channel points</string>
     <string name="connect_chat">Connect to chat</string>
     <string name="raid_text">Raiding %1$s with %2$d viewers</string>
     <string name="raid_join">Join</string>
@@ -1029,7 +1027,6 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="debug_reset_update_timestamps_summary">Clear all update check and skip timestamps to simulate a fresh install</string>
     <string name="debug_reset_update_timestamps_success">Update check history reset</string>
     <string name="followed_live_auto_refresh">Auto-refresh live streams</string>
-    <string name="followed_live_auto_refresh_summary">Automatically update stream positions, viewer counts, and thumbnails while viewing</string>
     <string name="followed_live_refresh_on_return">Refresh when returning to tab</string>
     <string name="followed_live_refresh_on_return_summary">Check for live updates when returning from watching a stream or switching tabs</string>
     <string name="auto_refresh_30s">30 seconds</string>
@@ -1039,6 +1036,7 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="show_video_stats">Show video stats</string>
     <string name="hide_video_stats">Hide video stats</string>
     <string name="video_stats">Video stats</string>
+    <string name="stat_separator" translatable="false">|</string>
     <string name="video_stats_copied">Video stats copied to clipboard</string>
     <string name="video_stats_toggle_compact">Toggle compact view</string>
     <string name="video_stats_toggle_opacity">Toggle transparency</string>

@@ -16,11 +16,11 @@ class LiveLatencySettingsTest {
         LiveLatencySettings.applyPreset(prefs, LiveLatencySettings.PROFILE_BALANCED)
 
         assertEquals(LiveLatencySettings.PROFILE_BALANCED, prefs.getString(AppConstants.PLAYER_LATENCY_PROFILE, null))
-        assertEquals("3500", prefs.getString(AppConstants.PLAYER_BUFFER_MIN, null))
-        assertEquals("9000", prefs.getString(AppConstants.PLAYER_BUFFER_MAX, null))
-        assertEquals("500", prefs.getString(AppConstants.PLAYER_BUFFER_PLAYBACK, null))
-        assertEquals("1000", prefs.getString(AppConstants.PLAYER_BUFFER_REBUFFER, null))
-        assertEquals("1100", prefs.getString(AppConstants.PLAYER_LIVE_TARGET_OFFSET, null))
+        assertEquals("4000", prefs.getString(AppConstants.PLAYER_BUFFER_MIN, null))
+        assertEquals("15000", prefs.getString(AppConstants.PLAYER_BUFFER_MAX, null))
+        assertEquals("800", prefs.getString(AppConstants.PLAYER_BUFFER_PLAYBACK, null))
+        assertEquals("1500", prefs.getString(AppConstants.PLAYER_BUFFER_REBUFFER, null))
+        assertEquals("1600", prefs.getString(AppConstants.PLAYER_LIVE_TARGET_OFFSET, null))
         assertEquals("1.0", prefs.getString(AppConstants.PLAYER_LIVE_MIN_SPEED, null))
         assertEquals("1.18", prefs.getString(AppConstants.PLAYER_LIVE_MAX_SPEED, null))
     }
@@ -39,10 +39,10 @@ class LiveLatencySettingsTest {
 
         assertTrue(changed)
         assertEquals("7777", prefs.getString(AppConstants.PLAYER_BUFFER_MIN, null))
-        assertEquals("6000", prefs.getString(AppConstants.PLAYER_BUFFER_MAX, null))
-        assertEquals("250", prefs.getString(AppConstants.PLAYER_BUFFER_PLAYBACK, null))
-        assertEquals("700", prefs.getString(AppConstants.PLAYER_BUFFER_REBUFFER, null))
-        assertEquals("850", prefs.getString(AppConstants.PLAYER_LIVE_TARGET_OFFSET, null))
+        assertEquals("8000", prefs.getString(AppConstants.PLAYER_BUFFER_MAX, null))
+        assertEquals("500", prefs.getString(AppConstants.PLAYER_BUFFER_PLAYBACK, null))
+        assertEquals("1000", prefs.getString(AppConstants.PLAYER_BUFFER_REBUFFER, null))
+        assertEquals("1000", prefs.getString(AppConstants.PLAYER_LIVE_TARGET_OFFSET, null))
         assertEquals("1.0", prefs.getString(AppConstants.PLAYER_LIVE_MIN_SPEED, null))
         assertEquals("1.25", prefs.getString(AppConstants.PLAYER_LIVE_MAX_SPEED, null))
     }

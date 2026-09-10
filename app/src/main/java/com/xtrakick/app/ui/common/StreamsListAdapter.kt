@@ -135,13 +135,11 @@ class StreamsListAdapter(
                 val resolvedThumbnail = item.thumbnail
                 if (!resolvedThumbnail.isNullOrBlank()) {
                     thumbnail.visibility = View.VISIBLE
-                    val minutes = System.currentTimeMillis() / 60000L
-                    val lastMinute = minutes % 10
-                    val key = if (lastMinute < 5) minutes - lastMinute else minutes - (lastMinute - 5)
+                    val key = KickApiHelper.getThumbnailCacheKey()
                     fragment.requireContext().imageLoader.enqueue(
                         ImageRequest.Builder(fragment.requireContext()).apply {
                             data(resolvedThumbnail)
-                            memoryCacheKeyExtra("minutes", key.toString())
+                            memoryCacheKeyExtra("minutes", key)
                             diskCachePolicy(CachePolicy.DISABLED)
                             placeholder(thumbnail.drawable?.asImage())
                             crossfade(true)

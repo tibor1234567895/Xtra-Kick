@@ -887,7 +887,7 @@ class MainActivity : AppCompatActivity() {
         viewModel.isPlayerOpened = true
         viewModel.isMultiPovOpened = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
+            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).setSeamlessResizeEnabled(true).build())
         }
     }
 
@@ -916,7 +916,7 @@ class MainActivity : AppCompatActivity() {
         closeMultiPovInternal()
         viewModel.isPlayerOpened = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
+            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).setSeamlessResizeEnabled(true).build())
         }
     }
 
@@ -1015,7 +1015,7 @@ class MainActivity : AppCompatActivity() {
             packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
         ) {
-            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(true).build())
+            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(true).setSeamlessResizeEnabled(true).build())
         }
     }
 
@@ -1032,7 +1032,7 @@ class MainActivity : AppCompatActivity() {
         viewModel.isPlayerOpened = false
         viewModel.isMultiPovOpened = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
+            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).setSeamlessResizeEnabled(true).build())
         }
         viewModel.sleepTimer?.cancel()
         viewModel.sleepTimerEndTime = 0L

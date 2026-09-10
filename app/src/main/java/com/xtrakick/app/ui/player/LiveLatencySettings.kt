@@ -3,6 +3,7 @@ package com.xtrakick.app.ui.player
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.core.content.edit
+import kotlin.math.roundToInt
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -37,6 +38,11 @@ object LiveLatencySettings {
     const val PROFILE_BALANCED = "balanced"
     const val PROFILE_STABLE = "stable"
     const val DEFAULT_PROFILE = PROFILE_BALANCED
+
+    const val MIN_SAFE_FORWARD_BUFFER_MS = 750L
+    const val REBUFFER_GRACE_PERIOD_MS = 5_000L
+    const val CATCHUP_DRIFT_THRESHOLD_MS = 500L
+    const val CATCHUP_TARGET_MARGIN_MS = 150L
 
     private val rawLatencyKeys = listOf(
         AppConstants.PLAYER_BUFFER_MIN,
@@ -157,6 +163,40 @@ object LiveLatencySettings {
             "minSpeed=${config.minPlaybackSpeed ?: "off"} maxSpeed=${config.maxPlaybackSpeed ?: "off"}"
     }
 
+    /**
+     * Calculates the proportional playback speed for IVS live latency catch-up.
+     * Returns null if catch-up should NOT engage (forward buffer too small,
+     * in cooldown grace period, or within target margin).
+     */
+    fun calculateIvsCatchupSpeed(
+        latencyMs: Long,
+        targetOffsetMs: Long,
+        forwardBufferMs: Long,
+        isInGracePeriod: Boolean,
+        maxSpeedLimit: Float = 1.18f,
+        isCurrentlyCatchingUp: Boolean = false
+    ): Float? {
+        if (isInGracePeriod || forwardBufferMs < MIN_SAFE_FORWARD_BUFFER_MS) {
+            return null
+        }
+        val targetMargin = targetOffsetMs + CATCHUP_TARGET_MARGIN_MS
+        val driftThreshold = targetOffsetMs + CATCHUP_DRIFT_THRESHOLD_MS
+
+        if (isCurrentlyCatchingUp && latencyMs <= targetMargin) {
+            return null
+        }
+        if (!isCurrentlyCatchingUp && latencyMs <= driftThreshold) {
+            return null
+        }
+
+        val drift = (latencyMs - targetOffsetMs).coerceAtLeast(0L)
+        // Responsive proportional speedup: scales smoothly up to maxSpeedLimit (e.g. 1.18x-1.25x)
+        // so streams 2-3s behind catch up within 8-12 seconds instead of taking over 40 seconds.
+        val speedBump = (drift.toFloat() / 1500f * 0.12f)
+        val calculated = (1.04f + speedBump).coerceIn(1.04f, maxSpeedLimit.coerceIn(1.04f, 1.25f))
+        return (calculated * 100f).roundToInt() / 100f
+    }
+
     private fun migrateLegacyOverrides(prefs: SharedPreferences) {
         if (prefs.getBoolean(MIGRATION_KEY, false)) {
             return
@@ -174,11 +214,11 @@ object LiveLatencySettings {
     private fun defaultsForProfile(profile: String?): LiveLatencyDefaults {
         return when (profile) {
             PROFILE_LOWEST -> LiveLatencyDefaults(
-                minBufferMs = 2_000,
-                maxBufferMs = 6_000,
-                playbackBufferMs = 250,
-                rebufferMs = 700,
-                targetOffsetMs = 850,
+                minBufferMs = 2_500,
+                maxBufferMs = 8_000,
+                playbackBufferMs = 500,
+                rebufferMs = 1_000,
+                targetOffsetMs = 1_000,
                 minPlaybackSpeed = 1.00f,
                 maxPlaybackSpeed = 1.25f
             )
@@ -192,11 +232,11 @@ object LiveLatencySettings {
                 maxPlaybackSpeed = 1.05f
             )
             else -> LiveLatencyDefaults(
-                minBufferMs = 3_500,
-                maxBufferMs = 9_000,
-                playbackBufferMs = 500,
-                rebufferMs = 1_000,
-                targetOffsetMs = 1_100,
+                minBufferMs = 4_000,
+                maxBufferMs = 15_000,
+                playbackBufferMs = 800,
+                rebufferMs = 1_500,
+                targetOffsetMs = 1_600,
                 minPlaybackSpeed = 1.00f,
                 maxPlaybackSpeed = 1.18f
             )

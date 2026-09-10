@@ -2872,13 +2872,31 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 val lastIndex = result.second
                                 val removeCount = result.third
                                 adapter?.let { adapter ->
+                                    // Positions are computed pre-emit; a seek reset can clear the
+                                    // list mid-flight and leave them stale. Fall back to a full
+                                    // rebind instead of a range RecyclerView cannot reconcile.
+                                    val liveSize = synchronized(viewModel.chatMessages) {
+                                        viewModel.chatMessages.size
+                                    }
                                     if (removeCount > 0) {
-                                        adapter.notifyItemRangeRemoved(0, removeCount)
+                                        runCatching {
+                                            adapter.notifyItemRangeRemoved(0, removeCount)
+                                        }.onFailure {
+                                            adapter.notifyDataSetChanged()
+                                        }
                                     }
                                     val appendPosition = ChatListParityUtils.appendPositionAfterHeadRemoval(lastIndex, removeCount)
-                                    adapter.notifyItemInserted(appendPosition)
-                                    if (!isChatTouched && binding.btnDown.isGone) {
-                                        scrollChatToBottom(appendPosition)
+                                    if (appendPosition < 0 || appendPosition >= liveSize) {
+                                        adapter.notifyDataSetChanged()
+                                    } else {
+                                        runCatching {
+                                            adapter.notifyItemInserted(appendPosition)
+                                        }.onFailure {
+                                            adapter.notifyDataSetChanged()
+                                        }
+                                    }
+                                    if (!isChatTouched && binding.btnDown.isGone && liveSize > 0) {
+                                        scrollChatToBottom(liveSize - 1)
                                     }
                                 }
                                 messageDialog?.newMessage(message)
@@ -2909,9 +2927,22 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 val messages = result.first
                                 val insertStart = result.second
                                 adapter?.let { adapter ->
-                                    adapter.notifyItemRangeInserted(insertStart, messages.size)
-                                    if (!isChatTouched && binding.btnDown.isGone) {
-                                        scrollChatToBottom(insertStart + messages.size - 1)
+                                    // Same staleness hazard as newMessage: a seek reset between
+                                    // the buffer write and this collection invalidates insertStart.
+                                    val liveSize = synchronized(viewModel.chatMessages) {
+                                        viewModel.chatMessages.size
+                                    }
+                                    if (messages.isNotEmpty() && insertStart >= 0 && insertStart + messages.size <= liveSize) {
+                                        runCatching {
+                                            adapter.notifyItemRangeInserted(insertStart, messages.size)
+                                        }.onFailure {
+                                            adapter.notifyDataSetChanged()
+                                        }
+                                    } else {
+                                        adapter.notifyDataSetChanged()
+                                    }
+                                    if (!isChatTouched && binding.btnDown.isGone && liveSize > 0) {
+                                        scrollChatToBottom((insertStart + messages.size - 1).coerceIn(0, liveSize - 1))
                                     }
                                 }
                                 messageDialog?.addMessages(messages)
@@ -2922,7 +2953,15 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.removeMessages.collect { size ->
-                                adapter?.notifyItemRangeRemoved(0, size)
+                                adapter?.let { adapter ->
+                                    if (size > 0) {
+                                        runCatching {
+                                            adapter.notifyItemRangeRemoved(0, size)
+                                        }.onFailure {
+                                            adapter.notifyDataSetChanged()
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -3034,6 +3073,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val args = requireArguments()
         val channelId = args.getString(KEY_CHANNEL_ID)
         val channelLogin = args.getString(KEY_CHANNEL_LOGIN)
+        refreshKickRewardState()
         if (args.getBoolean(KEY_IS_LIVE)) {
             viewModel.resumeLive(channelId, channelLogin)
         } else {
@@ -3083,8 +3123,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         )
     }
 
-    fun startReplayChatLoad(seekPosition: Long? = null) {
-        viewModel.startReplayChatLoad(seekPosition)
+    fun startReplayChatLoad(seekPosition: Long? = null, forceNewSession: Boolean = false) {
+        viewModel.startReplayChatLoad(seekPosition, forceNewSession)
     }
 
     fun updateKickReplayStartTime(startTime: String?) {
@@ -3097,6 +3137,10 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     fun updatePosition(position: Long) {
         viewModel.updatePosition(position)
+    }
+
+    fun seekTo(position: Long) {
+        viewModel.seekTo(position)
     }
 
     fun updateSpeed(speed: Float) {

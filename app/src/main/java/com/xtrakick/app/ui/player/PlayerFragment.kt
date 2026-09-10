@@ -6,11 +6,14 @@ import android.animation.ValueAnimator
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.annotation.SuppressLint
+import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -24,6 +27,7 @@ import android.os.SystemClock
 import android.text.format.DateFormat
 import android.text.format.DateUtils
 import android.util.TypedValue
+import android.view.Display
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -36,6 +40,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.ViewPropertyAnimator
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.FrameLayout
@@ -45,6 +50,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.trackPipAnimationHintView
 import androidx.annotation.OptIn
 import androidx.appcompat.widget.TooltipCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.xtrakick.app.util.bundleOf
 import androidx.core.view.ViewCompat
@@ -103,6 +109,21 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+internal fun shouldArmHoldToSpeed(
+    isMaximized: Boolean,
+    available: Boolean,
+    isVideoZoomed: Boolean,
+    zoomGestureActive: Boolean,
+    offlineOverlayVisible: Boolean,
+    scrubbing: Boolean
+): Boolean = isMaximized && available && !isVideoZoomed && !zoomGestureActive &&
+    !offlineOverlayVisible && !scrubbing
+
+internal fun formatHoldToSpeedLabel(factor: Float): String {
+    val text = if (factor % 1f == 0f) factor.toInt().toString() else factor.toString()
+    return "${text}x"
+}
+
 @OptIn(UnstableApi::class)
 @AndroidEntryPoint
 abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment.OnSortOptionChanged, IntegrityDialog.CallbackListener {
@@ -114,6 +135,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     protected val binding get() = _binding!!
     protected val viewModel: PlayerViewModel by viewModels()
     protected var chatFragment: ChatFragment? = null
+
+    /** Attached chat fragment; the cached field can reference a replaced instance. */
+    protected fun activeChatFragment(): ChatFragment? {
+        chatFragment?.takeIf { it.isAdded }?.let { return it }
+        return childFragmentManager.findFragmentById(R.id.chatFragmentContainer) as? ChatFragment
+    }
 
     protected var videoType: String? = null
     private var isPortrait = false
@@ -154,6 +181,16 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private var backgroundColor: Int? = null
     private var backgroundVisible = false
     private var wasInPictureInPictureMode = false
+    private var isScreenOff = false
+    private var screenReceiverRegistered = false
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> isScreenOff = true
+                Intent.ACTION_SCREEN_ON -> isScreenOff = false
+            }
+        }
+    }
     private var videoZoomScale = 1f
     private var videoZoomTranslationX = 0f
     private var videoZoomTranslationY = 0f
@@ -170,6 +207,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private var videoZoomFillMode = false
     private var videoZoomFillHintAnimation: ViewPropertyAnimator? = null
     private var videoZoomIndicatorAnimation: ViewPropertyAnimator? = null
+    private var holdToSpeedActive = false
+    private var holdToSpeedPreviousSpeed: Float? = null
+    private var holdToSpeedDownX = -1f
+    private var holdToSpeedDownY = -1f
+    private val holdToSpeedEngageAction = Runnable { engageHoldToSpeed() }
     protected var previousNetworkType: NetworkMonitor.NetworkType? = null
     protected var automaticQualityChangeInProgress = false
 
@@ -197,6 +239,73 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     open fun seek(position: Long) {}
     open fun seekToLivePosition() {}
     open fun setPlaybackSpeed(speed: Float) {}
+
+    /** Hold-for-2x is only meaningful where speed does not fight the live edge. */
+    open fun isHoldToSpeedAvailable(): Boolean = false
+
+    private fun engageHoldToSpeed() {
+        holdToSpeedDownX = -1f
+        if (!canEngageHoldToSpeed()) {
+            return
+        }
+        val factor = holdToSpeedFactor()
+        val current = getCurrentSpeed() ?: 1f
+        if (factor <= current + 0.01f) {
+            return
+        }
+        holdToSpeedPreviousSpeed = current
+        holdToSpeedActive = true
+        isTap = false
+        setPlaybackSpeed(factor)
+        binding.dragView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        showHoldToSpeedIndicator(formatHoldToSpeedLabel(factor))
+    }
+
+    private fun canEngageHoldToSpeed(): Boolean {
+        if (holdToSpeedActive || !isAdded || _binding == null) return false
+        return shouldArmHoldToSpeed(isMaximized, isHoldToSpeedAvailable(), isVideoZoomed(), videoZoomGestureActive, binding.offlineOverlay.isVisible, binding.playerControls.progressBar.isPressed)
+    }
+
+    private fun disengageHoldToSpeed() {
+        _binding?.dragView?.removeCallbacks(holdToSpeedEngageAction)
+        holdToSpeedDownX = -1f
+        if (!holdToSpeedActive) {
+            return
+        }
+        holdToSpeedActive = false
+        setPlaybackSpeed(holdToSpeedPreviousSpeed ?: 1f)
+        holdToSpeedPreviousSpeed = null
+        _binding?.dragView?.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+        hideHoldToSpeedIndicator()
+    }
+
+    private fun holdToSpeedFactor(): Float =
+        prefs.getString(AppConstants.PLAYER_HOLD_TO_SPEED, "2.0")?.toFloatOrNull()
+            ?.takeIf { it > 0f }?.coerceIn(1.25f, 4f) ?: 2f
+
+    private fun showHoldToSpeedIndicator(label: String) {
+        val indicator = _binding?.speedIndicator ?: return
+        indicator.text = label
+        indicator.contentDescription = label
+        indicator.visibility = View.VISIBLE
+        indicator.animate().setListener(null)
+        indicator.animate().cancel()
+        indicator.alpha = 1f
+    }
+
+    private fun hideHoldToSpeedIndicator() {
+        _binding?.speedIndicator?.apply {
+            animate().setListener(null)
+            animate().cancel()
+            animate().alpha(0f).setDuration(120L).setListener(
+                object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        visibility = View.GONE
+                    }
+                }
+            )
+        }
+    }
     open fun changeVolume(volume: Float) {
         updateVolumeButtonVisual(volume)
     }
@@ -267,6 +376,22 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentPlayerBinding.inflate(inflater, container, false)
+        if (!screenReceiverRegistered) {
+            screenReceiverRegistered = try {
+                ContextCompat.registerReceiver(
+                    requireContext(),
+                    screenStateReceiver,
+                    IntentFilter().apply {
+                        addAction(Intent.ACTION_SCREEN_OFF)
+                        addAction(Intent.ACTION_SCREEN_ON)
+                    },
+                    ContextCompat.RECEIVER_NOT_EXPORTED
+                )
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
         return binding.root
     }
 
@@ -611,6 +736,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     } else {
                         controllerTapDetector.onTouchEvent(event)
                     }
+                    if (event.actionMasked == MotionEvent.ACTION_DOWN &&
+                        shouldArmHoldToSpeed(isMaximized, isHoldToSpeedAvailable(), isVideoZoomed(), videoZoomGestureActive, offlineOverlay.isVisible, playerControls.progressBar.isPressed)
+                    ) {
+                        holdToSpeedDownX = event.x
+                        holdToSpeedDownY = event.y
+                        dragView.postDelayed(holdToSpeedEngageAction, longPressTimeout.toLong())
+                    }
                 } else {
                     chatDragActive = false
                     chatDragCandidate = false
@@ -634,6 +766,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             }
 
             fun upAction(event: MotionEvent) {
+                disengageHoldToSpeed()
                 if (isMaximized) {
                     if (chatDragActive) {
                         endChatDrag(event)
@@ -800,6 +933,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             }
                         }
                         MotionEvent.ACTION_POINTER_DOWN -> {
+                            disengageHoldToSpeed()
                             if (activePointerId == -1) {
                                 val pointerIndex = event.actionIndex
                                 val pointerId = event.getPointerId(pointerIndex)
@@ -844,6 +978,14 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     -1
                                 }
                                 if (pointerIndex != -1) {
+                                    if (holdToSpeedDownX >= 0f && !holdToSpeedActive) {
+                                        val dx = event.getX(pointerIndex) - holdToSpeedDownX
+                                        val dy = event.getY(pointerIndex) - holdToSpeedDownY
+                                        if (dx * dx + dy * dy > touchSlop * touchSlop) {
+                                            dragView.removeCallbacks(holdToSpeedEngageAction)
+                                            holdToSpeedDownX = -1f
+                                        }
+                                    }
                                     if (!chatDragActive) {
                                         beginChatDragIfNeeded(event, pointerIndex)
                                     }
@@ -2546,6 +2688,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
+    protected fun rescheduleHideController() {
+        if (_binding != null && controllerAutoHide && controllerHideOnTouch && !binding.playerControls.progressBar.isPressed) {
+            binding.playerControls.root.removeCallbacks(controllerHideAction)
+            binding.playerControls.root.postDelayed(controllerHideAction, 3000)
+        }
+    }
+
     protected fun showController(force: Boolean = false) {
         if (_binding != null && binding.offlineOverlay.isVisible) {
             return
@@ -2715,25 +2864,43 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         return quality != AUDIO_ONLY_QUALITY && quality != CHAT_ONLY_QUALITY
     }
 
+    protected fun isScreenLockedOrOff(): Boolean {
+        if (isScreenOff) return true
+        val context = context ?: return false
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        if (powerManager?.isInteractive == false) return true
+        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        if (keyguardManager?.isKeyguardLocked == true) return true
+        val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                context.display
+            } catch (_: Exception) {
+                null
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            (context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.defaultDisplay
+        }
+        return display?.state != null && display.state != Display.STATE_ON
+    }
+
     protected fun shouldContinuePlaybackInBackground(): Boolean {
-        if ((activity as? com.xtrakick.app.ui.main.MainActivity)?.isLaunchingSettings() == true) {
+        if ((activity as? MainActivity)?.isLaunchingSettings() == true) {
             return true
         }
-        val isInteractive = (requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
-        val isInPipMode = when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> requireActivity().isInPictureInPictureMode
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> !useController && isMaximized
-            else -> false
+        val isInPipMode = activity?.isInPictureInPictureMode == true
+        if (!isInPipMode && prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO, true)) {
+            return true
         }
-        return when {
-            isInPipMode -> {
-                (isInteractive && prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO_PIP_CLOSED, false)) ||
-                    (!isInteractive && prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO_PIP_LOCKED, true))
+        val isLockedOrOff = isScreenLockedOrOff()
+        return if (isInPipMode) {
+            if (isLockedOrOff) {
+                prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO_PIP_LOCKED, true)
+            } else {
+                prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO_PIP_CLOSED, false)
             }
-            else -> {
-                (isInteractive && prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO, true)) ||
-                    (!isInteractive && prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO_LOCKED, true))
-            }
+        } else {
+            isLockedOrOff && prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO_LOCKED, true)
         }
     }
 
@@ -2742,11 +2909,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             return false
         }
         val activity = activity ?: return false
-        val isInPipMode = when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> activity.isInPictureInPictureMode
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> !useController && isMaximized
-            else -> false
-        }
+        val isInPipMode = activity.isInPictureInPictureMode
         return wasInPictureInPictureMode &&
             !isInPipMode &&
             !activity.isChangingConfigurations &&
@@ -2764,6 +2927,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         ) {
             requireActivity().setPictureInPictureParams(
                 PictureInPictureParams.Builder().apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        setSeamlessResizeEnabled(true)
+                    }
                     setActions(listOf(
                         RemoteAction(
                             Icon.createWithResource(requireContext(), R.drawable.baseline_audiotrack_black_24),
@@ -2809,11 +2975,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     override fun onResume() {
         super.onResume()
-        val isInPIPMode = when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> requireActivity().isInPictureInPictureMode
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> !useController && isMaximized
-            else -> false
-        }
+        isScreenOff = false
+        val isInPIPMode = activity?.isInPictureInPictureMode == true
         if (isInPIPMode) {
             if (isPortrait) {
                 binding.chatLayout.visibility = View.GONE
@@ -2821,6 +2984,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 hideChatLayout()
             }
             useController = false
+        } else {
+            clearPipDismissState()
         }
     }
 
@@ -3060,11 +3225,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             } else {
                 disableBackground()
             }
-            val isInPIPMode = when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> requireActivity().isInPictureInPictureMode
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> !useController && isMaximized
-                else -> false
-            }
+            val isInPIPMode = activity?.isInPictureInPictureMode == true
             if (!isInPIPMode) {
                 (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(chatLayout.windowToken, 0)
                 chatLayout.clearFocus()
@@ -3374,6 +3535,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     fun minimize() {
+        disengageHoldToSpeed()
         with(binding) {
             resetVideoZoom(false)
             isMaximized = false
@@ -3903,6 +4065,14 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     override fun onDestroyView() {
+        disengageHoldToSpeed()
+        if (screenReceiverRegistered) {
+            try {
+                requireContext().unregisterReceiver(screenStateReceiver)
+            } catch (_: Exception) {}
+            screenReceiverRegistered = false
+        }
+        isScreenOff = false
         videoStatsActiveInSession = false
         _binding?.videoStatsOverlay?.removeCallbacks(updateVideoStatsAction)
         super.onDestroyView()

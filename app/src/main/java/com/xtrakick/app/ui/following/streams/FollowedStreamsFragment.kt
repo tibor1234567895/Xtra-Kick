@@ -17,6 +17,9 @@ import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.SimpleItemAnimator
+import coil3.imageLoader
+import coil3.request.CachePolicy
+import coil3.request.ImageRequest
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.CommonRecyclerViewLayoutBinding
 import com.xtrakick.app.databinding.SortBarBinding
@@ -44,6 +47,8 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
     private lateinit var listAdapter: ListAdapter<Stream, out RecyclerView.ViewHolder>
     private var wasRefreshing = false
     private var scrollToTopAfterSort = false
+    private var lastPreloadKey: String? = null
+    private var lastPreloadItemsSignature: List<String?>? = null
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = CommonRecyclerViewLayoutBinding.inflate(inflater, container, false)
@@ -98,6 +103,10 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
 
     private fun maybeRefreshOnReturn() {
         if (!isAdded || isHidden) return
+        val items = viewModel.uiState.value.items
+        if (items.isNotEmpty()) {
+            preloadThumbnails(items)
+        }
         val prefs = requireContext().prefs()
         val refreshOnReturn = prefs.getBoolean(AppConstants.FOLLOWED_LIVE_REFRESH_ON_RETURN, true)
         if (refreshOnReturn) {
@@ -117,6 +126,9 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
                             binding.recyclerView.scrollToPosition(0)
                             scrollToTopAfterSort = false
                         }
+                    }
+                    if (state.items.isNotEmpty()) {
+                        preloadThumbnails(state.items)
                     }
                     binding.progressBar.isVisible = state.isInitialLoading && state.items.isEmpty()
                     binding.swipeRefresh.isRefreshing = state.isRefreshing && state.items.isNotEmpty()
@@ -197,8 +209,39 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
         }
     }
 
+    private fun preloadThumbnails(items: List<Stream>) {
+        val appContext = context?.applicationContext ?: return
+        val key = KickApiHelper.getThumbnailCacheKey()
+        val candidateItems = items.take(PRELOAD_THUMBNAIL_LIMIT)
+        val signature = candidateItems.map { it.channelId ?: it.channelLogin ?: it.id }
+        if (key == lastPreloadKey && signature == lastPreloadItemsSignature) {
+            return
+        }
+        lastPreloadKey = key
+        lastPreloadItemsSignature = signature
+
+        val imageLoader = appContext.imageLoader
+        candidateItems.forEach { item ->
+            val resolvedThumbnail = item.thumbnail
+            if (!resolvedThumbnail.isNullOrBlank()) {
+                val request = ImageRequest.Builder(appContext)
+                    .data(resolvedThumbnail)
+                    .memoryCacheKeyExtra("minutes", key)
+                    .diskCachePolicy(CachePolicy.DISABLED)
+                    .build()
+                imageLoader.enqueue(request)
+            }
+        }
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
+        lastPreloadKey = null
+        lastPreloadItemsSignature = null
         _binding = null
+    }
+
+    private companion object {
+        private const val PRELOAD_THUMBNAIL_LIMIT = 25
     }
 }

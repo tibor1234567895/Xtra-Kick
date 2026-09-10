@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/value"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_gravity="center_vertical"
+    android:ellipsize="end"
+    android:maxLines="1"
+    android:textAppearance="?android:attr/textAppearanceListItem"
+    android:textColor="?android:attr/textColorSecondary" />
