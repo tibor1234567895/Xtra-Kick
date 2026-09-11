@@ -24,4 +24,30 @@ object WebSocketDisconnectUtils {
             message.contains("504 Gateway Time-out", ignoreCase = true) ||
             message.contains("504 Gateway Timeout", ignoreCase = true)
     }
+
+    /**
+     * Raw socket failures (lost Wi-Fi, airplane mode, NAT timeouts). Callers should show
+     * a friendly reconnecting note instead of the raw message. Host-resolution failures
+     * are excluded — they keep existing silent handling.
+     */
+    @JvmStatic
+    fun isTransportError(message: String?): Boolean {
+        if (message.isNullOrBlank()) {
+            return false
+        }
+        return message.contains("SocketException", ignoreCase = true) ||
+            message.contains("SocketTimeoutException", ignoreCase = true) ||
+            message.contains("ConnectException", ignoreCase = true) ||
+            message.contains("NoRouteToHostException", ignoreCase = true) ||
+            message.contains("software caused connection abort", ignoreCase = true) ||
+            message.contains("connection reset", ignoreCase = true) ||
+            message.contains("broken pipe", ignoreCase = true) ||
+            message.contains("socket closed", ignoreCase = true) ||
+            message.contains("connection timed out", ignoreCase = true) ||
+            message.contains("network is unreachable", ignoreCase = true) ||
+            message.contains("ENETUNREACH", ignoreCase = true) ||
+            message.contains("ETIMEDOUT", ignoreCase = true) ||
+            message.contains("ECONNRESET", ignoreCase = true) ||
+            message.contains("EPIPE", ignoreCase = true)
+    }
 }

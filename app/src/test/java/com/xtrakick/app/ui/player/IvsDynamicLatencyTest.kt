@@ -55,7 +55,8 @@ class IvsDynamicLatencyTest {
 
     @Test
     fun engagesWithGentleSpeedForModerateDrift() {
-        // Latency 1450ms -> drift = 600ms
+        // Latency 1450ms -> drift = 600ms: 1.02 + (600/1500 * 0.06) = 1.044 -> 1.04x,
+        // a creep that stays inaudible in speech pacing.
         val speed = LiveLatencySettings.calculateIvsCatchupSpeed(
             latencyMs = 1450L,
             targetOffsetMs = targetOffsetMs,
@@ -66,12 +67,12 @@ class IvsDynamicLatencyTest {
         )
 
         assertNotNull(speed)
-        assertEquals(1.09f, speed!!, 0.001f)
+        assertEquals(1.04f, speed!!, 0.001f)
     }
 
     @Test
     fun scalesProportionallyWithDriftAndRespectsMaxSpeedLimit() {
-        // Latency 2850ms -> drift = 2000ms: 1.04 + (2000/1500 * 0.12) = 1.04 + 0.16 = 1.20, capped at maxSpeedLimit 1.15
+        // Latency 2850ms -> drift = 2000ms: 1.02 + (2000/1500 * 0.06) = 1.10, capped at maxSpeedLimit 1.15
         val moderateSpeed = LiveLatencySettings.calculateIvsCatchupSpeed(
             latencyMs = 2850L,
             targetOffsetMs = targetOffsetMs,
@@ -81,7 +82,7 @@ class IvsDynamicLatencyTest {
             isCurrentlyCatchingUp = true
         )
         assertNotNull(moderateSpeed)
-        assertEquals(1.15f, moderateSpeed!!, 0.001f)
+        assertEquals(1.10f, moderateSpeed!!, 0.001f)
 
         // Latency 10000ms -> drift = 9150ms, should cap at maxSpeedLimit
         val cappedSpeed = LiveLatencySettings.calculateIvsCatchupSpeed(

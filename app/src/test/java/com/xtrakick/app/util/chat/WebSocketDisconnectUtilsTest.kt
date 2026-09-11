@@ -35,4 +35,22 @@ class WebSocketDisconnectUtilsTest {
         assertFalse(WebSocketDisconnectUtils.isTransientGatewayFailure("HTTP/1.1 401 Unauthorized"))
         assertFalse(WebSocketDisconnectUtils.isTransientGatewayFailure("java.net.UnknownHostException"))
     }
+
+    @Test
+    fun detectsTransportErrors() {
+        assertTrue(WebSocketDisconnectUtils.isTransportError("java.net.SocketException: Software caused connection abort"))
+        assertTrue(WebSocketDisconnectUtils.isTransportError("java.net.SocketTimeoutException: timeout"))
+        assertTrue(WebSocketDisconnectUtils.isTransportError("java.net.ConnectException: Connection refused"))
+        assertTrue(WebSocketDisconnectUtils.isTransportError("recvfrom failed: ECONNRESET (Connection reset by peer)"))
+        assertTrue(WebSocketDisconnectUtils.isTransportError("sendto failed: EPIPE (Broken pipe)"))
+    }
+
+    @Test
+    fun ignoresNonTransportErrors() {
+        assertFalse(WebSocketDisconnectUtils.isTransportError(null))
+        assertFalse(WebSocketDisconnectUtils.isTransportError(""))
+        assertFalse(WebSocketDisconnectUtils.isTransportError("HTTP/1.1 502 Bad Gateway"))
+        assertFalse(WebSocketDisconnectUtils.isTransportError("java.net.UnknownHostException"))
+        assertFalse(WebSocketDisconnectUtils.isTransportError("End of input at character 0"))
+    }
 }

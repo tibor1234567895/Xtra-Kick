@@ -64,6 +64,23 @@ class IvsPlayerFragment : PlayerFragment() {
         }
     }
 
+    /**
+     * Serializes player mutations onto the service executor (direct call when unbound),
+     * so fragment touches can't race the service's load/play on another thread.
+     */
+    private fun runIvsOp(opName: String, block: (Player) -> Unit) {
+        val service = playbackService
+        if (service != null) {
+            service.runPlayerOp(opName, block)
+        } else {
+            try {
+                player?.let(block)
+            } catch (e: Exception) {
+                playerDebugWarn("player op $opName failed: ${e.message}")
+            }
+        }
+    }
+
     override fun onStart() {
         super.onStart()
         val callback = object : SurfaceHolder.Callback {
@@ -116,13 +133,21 @@ class IvsPlayerFragment : PlayerFragment() {
                     override fun onStateChanged(state: Player.State) {
                         binding.bufferingIndicator.isVisible = state == Player.State.BUFFERING
                         if (state != Player.State.PLAYING) {
-                            resetCatchupState(player)
+                            resetCatchupState()
                         }
                         if (state == Player.State.BUFFERING) {
-                            player?.setRebufferToLive(false)
+                            runIvsOp("fragment-stay-buffering") { it.setRebufferToLive(false) }
+                            val bufferingPlayer = player
+                            if (bufferingPlayer != null) {
+                                playerDebugLog(
+                                    "fragment buffering liveLatency=${bufferingPlayer.liveLatency} " +
+                                        "buffered=${bufferingPlayer.bufferedPosition} " +
+                                        "position=${bufferingPlayer.position}"
+                                )
+                            }
                         } else if (state == Player.State.PLAYING) {
                             lastBufferRecoveryTimeMs = SystemClock.uptimeMillis()
-                            player?.setRebufferToLive(false)
+                            runIvsOp("fragment-stay-playing") { it.setRebufferToLive(false) }
                         }
                         if (state == Player.State.READY || state == Player.State.PLAYING) {
                             if (!viewModel.loaded.value) {
@@ -146,8 +171,8 @@ class IvsPlayerFragment : PlayerFragment() {
 
                     override fun onRebuffering() {
                         binding.bufferingIndicator.isVisible = true
-                        resetCatchupState(player)
-                        player?.setRebufferToLive(false)
+                        resetCatchupState()
+                        runIvsOp("fragment-stay-rebuffer") { it.setRebufferToLive(false) }
                     }
 
                     override fun onSeekCompleted(position: Long) {
@@ -177,10 +202,6 @@ class IvsPlayerFragment : PlayerFragment() {
                 }
                 player?.addListener(listener)
                 playerListener = listener
-                if (viewModel.restoreQuality) {
-                    viewModel.restoreQuality = false
-                    changeQuality(viewModel.previousQuality)
-                }
                 if (resumeOnStart && player?.state != Player.State.PLAYING) {
                     boundService.play()
                     resumeOnStart = false
@@ -371,13 +392,24 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun seek(position: Long) {
-        player?.seekTo(position)
+        runIvsOp("fragment-seek") { it.seekTo(position) }
     }
 
     override fun seekToLivePosition() {
         val ivsPlayer = player ?: return
+        // A fresh load starts a couple segments back, so reloading near-live lands
+        // FURTHER from the edge (e.g. 1.7s -> 2.4s). Skip unless genuinely behind.
+        val latency = ivsPlayer.liveLatency.takeIf { it > 0L }
+        val target = LiveLatencySettings.resolve(prefs).targetOffsetMs
+        if (ivsPlayer.duration <= 0L && latency != null && latency <= target + GO_LIVE_SKIP_THRESHOLD_MS) {
+            context?.let {
+                Toast.makeText(it, R.string.ivs_already_live, Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+        // Only an explicit tap jumps to live; auto paths always resume in place.
         ivsPlayer.setRebufferToLive(true)
-        resetCatchupState(ivsPlayer)
+        resetCatchupState()
         val duration = ivsPlayer.duration
         if (duration > 0L) {
             ivsPlayer.seekTo(duration)
@@ -391,12 +423,12 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun setPlaybackSpeed(speed: Float) {
-        player?.setPlaybackRate(speed)
+        runIvsOp("fragment-set-rate") { it.setPlaybackRate(speed) }
     }
 
     override fun changeVolume(volume: Float) {
         super.changeVolume(volume)
-        player?.setVolume(volume)
+        runIvsOp("fragment-set-volume") { it.setVolume(volume) }
         prefs.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
     }
 
@@ -415,7 +447,9 @@ class IvsPlayerFragment : PlayerFragment() {
                 val forwardBufferMs = (bufferedPosition - currentPosition).coerceAtLeast(0L)
                 val now = SystemClock.uptimeMillis()
                 val isInGracePeriod = (now - lastBufferRecoveryTimeMs) < LiveLatencySettings.REBUFFER_GRACE_PERIOD_MS
-                val maxSpeed = (latencyConfig.maxPlaybackSpeed ?: DEFAULT_MAX_CATCHUP_SPEED).coerceIn(1.04f, 1.25f)
+                // Only the lowest-latency profile may exceed 1.08x (max 1.12x).
+                val profile = prefs.getString(AppConstants.PLAYER_LATENCY_PROFILE, LiveLatencySettings.DEFAULT_PROFILE)
+                val maxSpeed = LiveLatencySettings.maxIvsCatchupSpeed(profile, latencyConfig.maxPlaybackSpeed)
 
                 val desiredSpeed = LiveLatencySettings.calculateIvsCatchupSpeed(
                     latencyMs = latency,
@@ -429,17 +463,17 @@ class IvsPlayerFragment : PlayerFragment() {
                 if (desiredSpeed != null) {
                     if (ivsPlayer.playbackRate != desiredSpeed) {
                         playerDebugLog("IVS catch-up: latency=${latency}ms buf=${forwardBufferMs}ms -> setting speed to ${desiredSpeed}x")
-                        ivsPlayer.setPlaybackRate(desiredSpeed)
+                        runIvsOp("fragment-catchup-rate") { it.setPlaybackRate(desiredSpeed) }
                         isCatchingUp = true
                     }
                 } else {
                     if (isCatchingUp) {
                         playerDebugLog("IVS catch-up: latency=${latency}ms buf=${forwardBufferMs}ms target (~${targetOffsetMs}ms), restoring speed to 1.0x")
                     }
-                    resetCatchupState(ivsPlayer)
+                    resetCatchupState()
                 }
             } else {
-                resetCatchupState(ivsPlayer)
+                resetCatchupState()
             }
 
             if (root.isVisible && !progressBar.isPressed) {
@@ -533,6 +567,9 @@ class IvsPlayerFragment : PlayerFragment() {
         val wasAudioOnly = viewModel.quality == AUDIO_ONLY_QUALITY
         if (!wasAudioOnly) {
             viewModel.previousQuality = viewModel.quality
+        } else {
+            // Explicit choice sticks across lock/unlock and background returns.
+            viewModel.restoreQuality = false
         }
         viewModel.quality = selectedQuality
         if (wasAudioOnly) {
@@ -615,7 +652,7 @@ class IvsPlayerFragment : PlayerFragment() {
         binding.playerControls.root.removeCallbacks(updateProgressAction)
         val service = playbackService
         val ivsPlayer = service?.player
-        resetCatchupState(ivsPlayer)
+        resetCatchupState()
         playerListener?.let { ivsPlayer?.removeListener(it) }
         playerListener = null
         surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
@@ -640,7 +677,7 @@ class IvsPlayerFragment : PlayerFragment() {
         }
         binding.playerControls.root.removeCallbacks(updateProgressAction)
         val ivsPlayer = player
-        resetCatchupState(ivsPlayer)
+        resetCatchupState()
         val shouldKeepPlaying = ivsPlayer?.let { shouldContinueIvsInBackground(it) } ?: false
         playerDebugLog(
             "onStop state=${ivsPlayer?.state} shouldKeepPlaying=$shouldKeepPlaying urlPresent=${!currentUrl.isNullOrBlank()} recoveryInProgress=$recoveryInProgress"
@@ -806,16 +843,16 @@ class IvsPlayerFragment : PlayerFragment() {
         }
     }
 
-    private fun resetCatchupState(targetPlayer: Player?) {
-        if (isCatchingUp) {
-            isCatchingUp = false
-            targetPlayer?.setPlaybackRate(1.0f)
-        }
+    private fun resetCatchupState() {
+        if (!isCatchingUp) return
+        isCatchingUp = false
+        runIvsOp("fragment-catchup-reset") { it.setPlaybackRate(1.0f) }
     }
 
     companion object {
         private const val TAG = "IvsPlayerFragment"
-        private const val DEFAULT_MAX_CATCHUP_SPEED = 1.15f
+        // Reloads start a couple segments back; skip when already near-live.
+        private const val GO_LIVE_SKIP_THRESHOLD_MS = 2_000L
 
         fun newInstance(item: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean): IvsPlayerFragment {
             return IvsPlayerFragment().apply {

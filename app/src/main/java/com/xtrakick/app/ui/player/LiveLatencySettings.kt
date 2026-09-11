@@ -40,9 +40,15 @@ object LiveLatencySettings {
     const val DEFAULT_PROFILE = PROFILE_BALANCED
 
     const val MIN_SAFE_FORWARD_BUFFER_MS = 750L
-    const val REBUFFER_GRACE_PERIOD_MS = 5_000L
+    // Post-rebuffer cooldown before catch-up may engage: let the SDK refill first
+    // instead of speeding straight into another stall.
+    const val REBUFFER_GRACE_PERIOD_MS = 8_000L
     const val CATCHUP_DRIFT_THRESHOLD_MS = 500L
     const val CATCHUP_TARGET_MARGIN_MS = 150L
+    // Catch-up ceilings: under ~8% tempo shift is inaudible, so only the lowest
+    // profile exceeds 1.08x (max 1.12x). Slower convergence is the price.
+    const val MAX_IVS_CATCHUP_SPEED_DEFAULT = 1.08f
+    const val MAX_IVS_CATCHUP_SPEED_LOWEST_PROFILE = 1.12f
 
     private val rawLatencyKeys = listOf(
         AppConstants.PLAYER_BUFFER_MIN,
@@ -173,7 +179,7 @@ object LiveLatencySettings {
         targetOffsetMs: Long,
         forwardBufferMs: Long,
         isInGracePeriod: Boolean,
-        maxSpeedLimit: Float = 1.18f,
+        maxSpeedLimit: Float = 1.08f,
         isCurrentlyCatchingUp: Boolean = false
     ): Float? {
         if (isInGracePeriod || forwardBufferMs < MIN_SAFE_FORWARD_BUFFER_MS) {
@@ -190,11 +196,21 @@ object LiveLatencySettings {
         }
 
         val drift = (latencyMs - targetOffsetMs).coerceAtLeast(0L)
-        // Responsive proportional speedup: scales smoothly up to maxSpeedLimit (e.g. 1.18x-1.25x)
-        // so streams 2-3s behind catch up within 8-12 seconds instead of taking over 40 seconds.
-        val speedBump = (drift.toFloat() / 1500f * 0.12f)
-        val calculated = (1.04f + speedBump).coerceIn(1.04f, maxSpeedLimit.coerceIn(1.04f, 1.25f))
+        // Gentle curve: 1.02x + 0.06x per 1500ms drift. Past ~1.08x is audible,
+        // so don't raise the cap to converge faster.
+        val speedBump = (drift.toFloat() / 1500f * 0.06f)
+        val calculated = (1.02f + speedBump).coerceIn(1.02f, maxSpeedLimit.coerceIn(1.02f, 1.12f))
         return (calculated * 100f).roundToInt() / 100f
+    }
+
+    /** Profile-aware ceiling: stale prefs overrides can't push catch-up past it. */
+    fun maxIvsCatchupSpeed(profile: String?, configuredMax: Float?): Float {
+        val ceiling = if (profile == PROFILE_LOWEST) {
+            MAX_IVS_CATCHUP_SPEED_LOWEST_PROFILE
+        } else {
+            MAX_IVS_CATCHUP_SPEED_DEFAULT
+        }
+        return (configuredMax ?: MAX_IVS_CATCHUP_SPEED_DEFAULT).coerceIn(1.02f, ceiling)
     }
 
     private fun migrateLegacyOverrides(prefs: SharedPreferences) {
@@ -220,7 +236,7 @@ object LiveLatencySettings {
                 rebufferMs = 1_000,
                 targetOffsetMs = 1_000,
                 minPlaybackSpeed = 1.00f,
-                maxPlaybackSpeed = 1.25f
+                maxPlaybackSpeed = 1.12f
             )
             PROFILE_STABLE -> LiveLatencyDefaults(
                 minBufferMs = 15_000,
@@ -238,7 +254,7 @@ object LiveLatencySettings {
                 rebufferMs = 1_500,
                 targetOffsetMs = 1_600,
                 minPlaybackSpeed = 1.00f,
-                maxPlaybackSpeed = 1.18f
+                maxPlaybackSpeed = 1.08f
             )
         }
     }

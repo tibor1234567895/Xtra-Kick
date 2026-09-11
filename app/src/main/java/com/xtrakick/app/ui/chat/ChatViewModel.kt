@@ -2944,6 +2944,8 @@ class ChatViewModel @Inject constructor(
             }
             val isHostResolutionFailure = WebSocketDisconnectUtils.isHostResolutionFailure(message)
             val isTransientGatewayFailure = WebSocketDisconnectUtils.isTransientGatewayFailure(message)
+            val isTransportError = !isHostResolutionFailure &&
+                WebSocketDisconnectUtils.isTransportError(message)
             if (isTransientGatewayFailure) {
                 DiagnosticLogger.w(
                     "KickRealtimeChat",
@@ -2958,7 +2960,7 @@ class ChatViewModel @Inject constructor(
                         fullMsg = fullMsg
                     )
                 )
-            } else if (isTransientGatewayFailure && shouldEmitDisconnect) {
+            } else if ((isTransientGatewayFailure || isTransportError) && shouldEmitDisconnect) {
                 onMessage(ChatMessage(systemMsg = ContextCompat.getString(applicationContext, R.string.chat_reconnecting).format(channelLogin), fullMsg = fullMsg))
             }
             if (!channelLogin.isBlank() && autoReconnect && !isHostResolutionFailure) {

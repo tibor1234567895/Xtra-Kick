@@ -22,7 +22,7 @@ class LiveLatencySettingsTest {
         assertEquals("1500", prefs.getString(AppConstants.PLAYER_BUFFER_REBUFFER, null))
         assertEquals("1600", prefs.getString(AppConstants.PLAYER_LIVE_TARGET_OFFSET, null))
         assertEquals("1.0", prefs.getString(AppConstants.PLAYER_LIVE_MIN_SPEED, null))
-        assertEquals("1.18", prefs.getString(AppConstants.PLAYER_LIVE_MAX_SPEED, null))
+        assertEquals("1.08", prefs.getString(AppConstants.PLAYER_LIVE_MAX_SPEED, null))
     }
 
     @Test
@@ -44,7 +44,7 @@ class LiveLatencySettingsTest {
         assertEquals("1000", prefs.getString(AppConstants.PLAYER_BUFFER_REBUFFER, null))
         assertEquals("1000", prefs.getString(AppConstants.PLAYER_LIVE_TARGET_OFFSET, null))
         assertEquals("1.0", prefs.getString(AppConstants.PLAYER_LIVE_MIN_SPEED, null))
-        assertEquals("1.25", prefs.getString(AppConstants.PLAYER_LIVE_MAX_SPEED, null))
+        assertEquals("1.12", prefs.getString(AppConstants.PLAYER_LIVE_MAX_SPEED, null))
     }
 
     @Test
@@ -78,6 +78,30 @@ class LiveLatencySettingsTest {
 
         assertEquals(1.0f, config.minPlaybackSpeed)
         assertEquals(1.05f, config.maxPlaybackSpeed)
+    }
+
+    @Test
+    fun maxIvsCatchupSpeedCapsNonLowestProfiles() {
+        assertEquals(
+            1.08f,
+            LiveLatencySettings.maxIvsCatchupSpeed(LiveLatencySettings.PROFILE_BALANCED, 1.25f),
+            0.001f
+        )
+        assertEquals(
+            1.08f,
+            LiveLatencySettings.maxIvsCatchupSpeed(LiveLatencySettings.PROFILE_STABLE, null),
+            0.001f
+        )
+        assertEquals(
+            1.08f,
+            LiveLatencySettings.maxIvsCatchupSpeed(null, 1.30f),
+            0.001f
+        )
+        assertEquals(
+            1.12f,
+            LiveLatencySettings.maxIvsCatchupSpeed(LiveLatencySettings.PROFILE_LOWEST, 1.25f),
+            0.001f
+        )
     }
 }
 

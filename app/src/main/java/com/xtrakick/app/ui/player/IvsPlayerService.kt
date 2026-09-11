@@ -26,6 +26,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import androidx.annotation.OptIn
@@ -37,8 +38,10 @@ import androidx.media3.datasource.DataSourceBitmapLoader
 import androidx.media3.session.CacheBitmapLoader
 import androidx.media3.session.DefaultMediaNotificationProvider
 import com.xtrakick.app.BuildConfig
+import com.amazonaws.ivs.player.MediaPlayer
 import com.amazonaws.ivs.player.Player
 import com.amazonaws.ivs.player.PlayerException
+import com.amazonaws.ivs.player.Source
 import com.xtrakick.app.R
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.ui.main.MainActivity
@@ -54,6 +57,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.net.ssl.X509TrustManager
 
@@ -110,6 +114,111 @@ class IvsPlayerService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
     private var wifiLockSafetyRunnable: Runnable? = null
     private var dynamicsProcessing: DynamicsProcessing? = null
+
+    /**
+     * Serializes every player mutation (load/play/pause/seek/volume/surface) onto one
+     * thread: the IVS engine fires callbacks on its own threads, so touching the player
+     * from main + callbacks concurrently races load/play/seek ordering into rebuffering.
+     */
+    private val playerExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "IvsPlayerOp")
+    }
+
+    fun runPlayerOp(opName: String, block: (Player) -> Unit) {
+        val current = player ?: return
+        try {
+            playerExecutor.execute {
+                try {
+                    block(current)
+                } catch (e: Exception) {
+                    playerDebugWarn("player op $opName failed: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            playerDebugWarn("player op $opName rejected: ${e.message}")
+        }
+    }
+
+    /**
+     * Warms an IVS source (playlists fetched, nothing playing). A later [playStream] or
+     * backoff retry for the same URL swaps it in via loadSource(), saving 1-2 playlist
+     * round trips. Capped; evicted on tune-away/stop/destroy.
+     */
+    private val preloadedSources = LinkedHashMap<String, Source>()
+
+    fun preloadStream(url: String) {
+        if (url.isBlank()) return
+        runPlayerOp("preload") { player ->
+            val mediaPlayer = player as? MediaPlayer ?: return@runPlayerOp
+            synchronized(preloadedSources) {
+                if (preloadedSources.containsKey(url)) return@runPlayerOp
+            }
+            try {
+                mediaPlayer.preload(
+                    Uri.parse(url),
+                    object : Source.Listener {
+                        override fun onLoad(source: Source) {
+                            synchronized(preloadedSources) {
+                                val existing = preloadedSources.put(url, source)
+                                if (existing != null && existing !== source) {
+                                    releaseSourceQuietly(existing)
+                                }
+                                while (preloadedSources.size > MAX_PRELOADED_SOURCES) {
+                                    val oldest = preloadedSources.keys.firstOrNull()
+                                    val removed = oldest?.let { preloadedSources.remove(it) }
+                                    if (removed != null) releaseSourceQuietly(removed) else break
+                                }
+                            }
+                            playerDebugLog("preloaded url=$url")
+                        }
+
+                        override fun onError(error: Source.LoadError) {
+                            playerDebugLog(
+                                "preload failed url=$url type=${error.errorType} code=${error.code} message=${error.message}"
+                            )
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                playerDebugWarn("preload failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Player-executor only. True when a warm source was used. */
+    private fun usePreloadedSource(player: Player, url: String): Boolean {
+        val cached = synchronized(preloadedSources) { preloadedSources[url] } ?: return false
+        val mediaPlayer = player as? MediaPlayer ?: return false
+        return try {
+            mediaPlayer.loadSource(cached)
+            playerDebugLog("playStream using preloaded source url=$url")
+            true
+        } catch (e: Exception) {
+            playerDebugWarn("preloaded loadSource failed, falling back to load: ${e.message}")
+            synchronized(preloadedSources) {
+                if (preloadedSources[url] === cached) preloadedSources.remove(url)
+            }
+            releaseSourceQuietly(cached)
+            false
+        }
+    }
+
+    /** Thread-safe; call on the player executor to keep load/play ordering. */
+    private fun evictPreloadedSources() {
+        val evicted = synchronized(preloadedSources) {
+            val all = preloadedSources.values.toList()
+            preloadedSources.clear()
+            all
+        }
+        evicted.forEach(::releaseSourceQuietly)
+    }
+
+    private fun releaseSourceQuietly(source: Source) {
+        try {
+            source.release()
+        } catch (_: Exception) {
+        }
+    }
     private val kickViewerWatchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var kickViewerWatch: KickViewerWatchWebSocket? = null
     private var kickViewerWatchJob: Job? = null
@@ -188,7 +297,8 @@ class IvsPlayerService : Service() {
                 // volume first — CAN_DUCK may have ducked it, and a manual resume from
                 // the notification would otherwise play at 20%.
                 suspendedByFocusLoss = false
-                player?.setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
+                val restoreVolume = prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f
+                runPlayerOp("audiofocus-loss-volume") { it.setVolume(restoreVolume) }
                 pause(clearPlaybackRequest = true)
                 updatePlaybackState()
                 updateNotification()
@@ -200,11 +310,13 @@ class IvsPlayerService : Service() {
                 updateNotification()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                player?.setVolume((prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f) * 0.2f)
+                val duckedVolume = (prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f) * 0.2f
+                runPlayerOp("audiofocus-duck") { it.setVolume(duckedVolume) }
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
                 suspendedByFocusLoss = false
-                player?.setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
+                val restoreVolume = prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f
+                runPlayerOp("audiofocus-gain-volume") { it.setVolume(restoreVolume) }
                 if (playbackRequested) {
                     play()
                     updatePlaybackState()
@@ -352,6 +464,13 @@ class IvsPlayerService : Service() {
                         "state=$state backgroundPlaybackEnabled=$backgroundPlaybackEnabled " +
                             "surfaceAttached=$surfaceAttached urlPresent=${!currentUrl.isNullOrBlank()}"
                     )
+                    if (state == Player.State.BUFFERING) {
+                        playerDebugLog(
+                            "buffering liveLatency=${ivsPlayer.liveLatency} " +
+                                "buffered=${ivsPlayer.bufferedPosition} position=${ivsPlayer.position} " +
+                                "bwEstimate=${ivsPlayer.bandwidthEstimate}"
+                        )
+                    }
                     if (state == Player.State.PLAYING) {
                         applicationHandler?.removeCallbacks(liveSeekbarTicker)
                         applicationHandler?.post(liveSeekbarTicker)
@@ -369,7 +488,13 @@ class IvsPlayerService : Service() {
                 }
 
                 override fun onRebuffering() {
-                    player?.setRebufferToLive(false)
+                    // Resume in place; jumping to live just re-stalls on weak networks.
+                    runPlayerOp("rebuffer-stay") { it.setRebufferToLive(false) }
+                    playerDebugLog(
+                        "rebuffering liveLatency=${ivsPlayer.liveLatency} " +
+                            "buffered=${ivsPlayer.bufferedPosition} position=${ivsPlayer.position} " +
+                            "bwEstimate=${ivsPlayer.bandwidthEstimate}"
+                    )
                 }
 
                 override fun onError(exception: PlayerException) {
@@ -385,9 +510,25 @@ class IvsPlayerService : Service() {
                     val fragmentHandlesRecovery = boundClients > 0
                     if (!fragmentHandlesRecovery && !retryUrl.isNullOrBlank() && retryCount < 2) {
                         retryCount += 1
-                        playerDebugLog("onError in background, retrying count=$retryCount url=$retryUrl")
-                        ivsPlayer.load(Uri.parse(retryUrl))
-                        ivsPlayer.play()
+                        // Back off: instant reloads re-enter BUFFERING on a depleted
+                        // connection and burn the ABR bandwidth estimate just collected.
+                        val delayMs = 1_000L * retryCount
+                        playerDebugLog("onError in background, retrying count=$retryCount in ${delayMs}ms url=$retryUrl")
+                        // Preload now; the delayed retry below is enqueued behind it on
+                        // the same FIFO executor, so it swaps the warm source.
+                        preloadStream(retryUrl)
+                        applicationHandler?.postDelayed({
+                            if (currentUrl == retryUrl) {
+                                runPlayerOp("background-retry") {
+                                    it.setLiveLowLatencyEnabled(true)
+                                    it.setRebufferToLive(false)
+                                    if (!usePreloadedSource(it, retryUrl)) {
+                                        it.load(Uri.parse(retryUrl))
+                                    }
+                                    it.play()
+                                }
+                            }
+                        }, delayMs)
                     } else {
                         releasePlaybackLocks()
                         if (!surfaceAttached) {
@@ -436,7 +577,7 @@ class IvsPlayerService : Service() {
                     override fun onStop() {
                         playbackRequested = false
                         abandonAudioFocus()
-                        player?.pause()
+                        runPlayerOp("session-stop-pause") { it.pause() }
                         releasePlaybackLocks()
                         clearLastPlaybackRequestIfCurrent()
                         updatePlaybackState()
@@ -445,15 +586,15 @@ class IvsPlayerService : Service() {
                     }
 
                     override fun onSeekTo(pos: Long) {
-                        player?.seekTo(pos)
+                        runPlayerOp("session-seek") { it.seekTo(pos) }
                     }
 
                     override fun onSkipToNext() {
-                        player?.let { it.seekTo(it.position + fastForwardMs) }
+                        runPlayerOp("session-skip-next") { it.seekTo(it.position + fastForwardMs) }
                     }
 
                     override fun onSkipToPrevious() {
-                        player?.let { it.seekTo((it.position - rewindMs).coerceAtLeast(0L)) }
+                        runPlayerOp("session-skip-prev") { it.seekTo((it.position - rewindMs).coerceAtLeast(0L)) }
                     }
 
                     override fun onFastForward() {
@@ -519,12 +660,15 @@ class IvsPlayerService : Service() {
         disarmIdleStop()
         requestAudioFocus()
         // Don't acquire locks pre-emptively — wait for BUFFERING/PLAYING callback.
-        player?.apply {
-            setLiveLowLatencyEnabled(true)
-            setRebufferToLive(false)
-            setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
-            load(Uri.parse(url))
-            play()
+        runPlayerOp("playStream-load-play") {
+            it.setLiveLowLatencyEnabled(true)
+            it.setRebufferToLive(false)
+            it.setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
+            if (!usePreloadedSource(it, url)) {
+                evictPreloadedSources()
+                it.load(Uri.parse(url))
+            }
+            it.play()
         }
         updatePlaybackState()
         updateMetadata()
@@ -673,7 +817,7 @@ class IvsPlayerService : Service() {
 
     fun attachSurface(surface: android.view.Surface?) {
         surfaceAttached = surface != null
-        player?.setSurface(surface)
+        runPlayerOp("attachSurface attached=$surfaceAttached") { it.setSurface(surface) }
         playerDebugLog("attachSurface attached=$surfaceAttached")
         // The stream may already be dead (READY/IDLE/ENDED) from while the surface
         // was attached; no state change will fire after detach, so re-evaluate here.
@@ -697,7 +841,7 @@ class IvsPlayerService : Service() {
         disarmIdleStop()
         requestAudioFocus()
         // Locks will be acquired on PLAYING/BUFFERING state change.
-        player?.play()
+        runPlayerOp("play") { it.play() }
         // If player is already in PLAYING/BUFFERING, acquire now; otherwise wait for callback.
         player?.state?.let { syncLocksWithState(it) }
         updatePlaybackState()
@@ -710,7 +854,7 @@ class IvsPlayerService : Service() {
             abandonAudioFocus()
         }
         disarmDeadStreamWatchdog()
-        player?.pause()
+        runPlayerOp("pause") { it.pause() }
         releasePlaybackLocks()
         armIdleStop()
         updatePlaybackState()
@@ -722,7 +866,11 @@ class IvsPlayerService : Service() {
         playbackRequested = false
         disarmDeadStreamWatchdog()
         abandonAudioFocus()
-        player?.pause()
+        runPlayerOp("reset-pause") {
+            it.pause()
+            // A fresh URL is about to arrive; drop any warm source for the stale one.
+            evictPreloadedSources()
+        }
         releasePlaybackLocks()
         updatePlaybackState()
         updateNotification()
@@ -746,8 +894,18 @@ class IvsPlayerService : Service() {
         disarmDeadStreamWatchdog()
         surfaceAttached = false
         abandonAudioFocus()
-        player?.setSurface(null)
-        player?.pause()
+        // Queued behind in-flight load/play so play() can't resurrect after stop.
+        runPlayerOp("stop") {
+            try {
+                it.setSurface(null)
+            } catch (_: Exception) {
+            }
+            try {
+                it.pause()
+            } catch (_: Exception) {
+            }
+            evictPreloadedSources()
+        }
         releasePlaybackLocks()
         updatePlaybackState()
         updateNotification()
@@ -1011,11 +1169,11 @@ class IvsPlayerService : Service() {
                         }
                         KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
                             val fastForwardMs = (prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10) * 1000
-                            player?.let { it.seekTo(it.position + fastForwardMs) }
+                            runPlayerOp("media-next") { it.seekTo(it.position + fastForwardMs) }
                         }
                         KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_MEDIA_REWIND -> {
                             val rewindMs = (prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10) * 1000
-                            player?.let { it.seekTo((it.position - rewindMs).coerceAtLeast(0L)) }
+                            runPlayerOp("media-prev") { it.seekTo((it.position - rewindMs).coerceAtLeast(0L)) }
                         }
                     }
                 }
@@ -1126,8 +1284,52 @@ class IvsPlayerService : Service() {
         session?.release()
         abandonAudioFocus()
         releaseDynamicsProcessing()
-        player?.release()
+        // Pause when active, wait up to 1s for a safe release state, then detach
+        // and release. Releasing straight from PLAYING/BUFFERING stalls the next load.
+        val doomed = player
         player = null
+        playerExecutor.shutdownNow()
+        Thread({
+            val target = doomed ?: return@Thread
+            try {
+                try {
+                    val state = target.state
+                    if (state == Player.State.PLAYING || state == Player.State.BUFFERING) {
+                        target.pause()
+                    }
+                } catch (_: Exception) {
+                }
+                val deadline = SystemClock.uptimeMillis() + SAFE_RELEASE_WAIT_MS
+                while (SystemClock.uptimeMillis() < deadline) {
+                    val state = try {
+                        target.state
+                    } catch (_: Exception) {
+                        null
+                    } ?: break
+                    if (state == Player.State.IDLE ||
+                        state == Player.State.READY ||
+                        state == Player.State.ENDED
+                    ) {
+                        break
+                    }
+                    try {
+                        Thread.sleep(SAFE_RELEASE_POLL_MS)
+                    } catch (_: InterruptedException) {
+                        break
+                    }
+                }
+                try {
+                    target.setSurface(null)
+                } catch (_: Exception) {
+                }
+                evictPreloadedSources()
+                try {
+                    target.release()
+                } catch (_: Exception) {
+                }
+            } catch (_: Exception) {
+            }
+        }, "IvsPlayerRelease").start()
         releasePlaybackLocks()
         wakeLock = null
         wifiLock = null
@@ -1150,5 +1352,12 @@ class IvsPlayerService : Service() {
 
         /** Grace period before a background READY/IDLE player is declared a dead stream. */
         private const val DEAD_STREAM_TIMEOUT_MS = 30_000L
+
+        /** Cap on warm sources held for preload → loadSource swaps. */
+        private const val MAX_PRELOADED_SOURCES = 2
+
+        /** Pre-release wait budget for reaching a safe player state. */
+        private const val SAFE_RELEASE_WAIT_MS = 1_000L
+        private const val SAFE_RELEASE_POLL_MS = 50L
     }
 }
