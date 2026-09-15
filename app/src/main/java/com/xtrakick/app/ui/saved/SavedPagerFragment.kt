@@ -13,6 +13,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.doOnLayout
 import androidx.core.view.updateLayoutParams
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.ui.AppBarConfiguration
@@ -28,6 +29,7 @@ import com.xtrakick.app.ui.login.LoginActivity
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.ui.saved.downloads.DownloadsFragment
 import com.xtrakick.app.ui.search.SearchPagerFragmentDirections
+import com.xtrakick.app.ui.settings.SettingsViewModel
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
@@ -44,6 +46,8 @@ class SavedPagerFragment : Fragment(), Scrollable, FragmentHost {
     private var _binding: FragmentMediaPagerBinding? = null
     private val binding get() = _binding!!
     private val viewModel: SavedPagerViewModel by viewModels()
+    private val settingsViewModel: SettingsViewModel by activityViewModels()
+    private val leftoverUi by lazy { LeftoverFilesUi(this, settingsViewModel) }
     private var firstLaunch = true
     private var stopObservingLift: (() -> Unit)? = null
     private var folderResultLauncher: ActivityResultLauncher<Intent>? = null
@@ -132,9 +136,14 @@ class SavedPagerFragment : Fragment(), Scrollable, FragmentHost {
                         })
                         true
                     }
+                    R.id.cleanLeftoverFiles -> {
+                        leftoverUi.open()
+                        true
+                    }
                     else -> false
                 }
             }
+            leftoverUi.attachResultToasts()
             val tabList = requireContext().prefs().getString(AppConstants.UI_SAVED_TABS, null).let { tabPref ->
                 val defaultTabs = AppConstants.DEFAULT_SAVED_TABS.split(',')
                 if (tabPref != null) {
@@ -189,6 +198,7 @@ class SavedPagerFragment : Fragment(), Scrollable, FragmentHost {
                             }
                             toolbar.menu.findItem(R.id.importFolders).isVisible = fragment is DownloadsFragment
                             toolbar.menu.findItem(R.id.importFiles).isVisible = fragment is DownloadsFragment
+                            toolbar.menu.findItem(R.id.cleanLeftoverFiles).isVisible = fragment is DownloadsFragment
                         }
                     }
                 }

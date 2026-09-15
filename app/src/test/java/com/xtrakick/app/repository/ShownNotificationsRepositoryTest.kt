@@ -178,4 +178,17 @@ class ShownNotificationsRepositoryTest {
         assertFalse(shouldSuppressEvent(existingStartedAt = null, liveStartedAt = 1_000_000L, nowMs = 2_000_000L))
         assertFalse(shouldSuppressEvent(existingStartedAt = null, liveStartedAt = null, nowMs = 2_000_000L))
     }
+
+    @Test
+    fun notificationStreamPreservesAvatarUrl() {
+        val streamWithAvatar = Stream(
+            channelId = "101941",
+            channelLogin = "4head",
+            profileImageUrl = "https://files.kick.com/images/user/101941/profile_image/conversion/avatar.webp"
+        )
+        assertEquals(
+            "https://files.kick.com/images/user/101941/profile_image/conversion/avatar.webp",
+            streamWithAvatar.channelLogo
+        )
+    }
 }

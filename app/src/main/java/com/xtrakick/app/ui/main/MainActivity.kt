@@ -785,7 +785,18 @@ class MainActivity : AppCompatActivity() {
                     val login = stream.channelLogin
                     if (!login.isNullOrBlank() && stream.source.equals(AppConstants.KICK, true)) {
                         lifecycleScope.launch {
-                            val livestream = runCatching { kickRepository.getChannelLivestream(login) }.getOrNull()
+                            if (stream.profileImageUrl.isNullOrBlank()) {
+                                stream.profileImageUrl = runCatching {
+                                    localFollowChannelRepository.getFollow(stream.channelId, login)?.channelLogo
+                                }.getOrNull()?.takeIf { it.isNotBlank() }
+                            }
+                            val livestream = if (stream.profileImageUrl.isNullOrBlank()) {
+                                val channel = runCatching { kickRepository.getChannel(login) }.getOrNull()
+                                channel?.user?.profileImage?.takeIf { it.isNotBlank() }?.let { stream.profileImageUrl = it }
+                                channel?.livestream
+                            } else {
+                                runCatching { kickRepository.getChannelLivestream(login) }.getOrNull()
+                            }
                             if (livestream != null) {
                                 startStream(stream)
                             } else {

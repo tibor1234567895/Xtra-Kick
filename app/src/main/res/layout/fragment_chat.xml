@@ -173,6 +173,8 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:completionThreshold="1"
+                android:dropDownAnchor="@id/messageView"
+                android:dropDownWidth="match_parent"
                 android:imeOptions="actionSend|flagNoFullscreen"
                 android:importantForAutofill="no"
                 android:inputType="textCapSentences|textAutoCorrect"

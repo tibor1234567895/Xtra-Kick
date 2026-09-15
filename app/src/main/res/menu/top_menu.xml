@@ -42,4 +42,8 @@
         android:id="@+id/importFiles"
         android:title="@string/import_files"
         android:visible="false" />
+    <item
+        android:id="@+id/cleanLeftoverFiles"
+        android:title="@string/leftover_files"
+        android:visible="false" />
 </menu>

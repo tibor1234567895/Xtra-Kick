@@ -61,6 +61,7 @@ import kotlin.math.floor
 class Media3Fragment : PlayerFragment() {
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var screenOffResumeFuture: ListenableFuture<MediaController>? = null
     private val player: MediaController?
         get() = controllerFuture?.let { if (it.isDone && !it.isCancelled) it.get() else null }
     private var playerListener: Player.Listener? = null
@@ -166,6 +167,8 @@ class Media3Fragment : PlayerFragment() {
 
     override fun onStart() {
         super.onStart()
+        screenOffResumeFuture?.let { runCatching { MediaController.releaseFuture(it) } }
+        screenOffResumeFuture = null
         controllerFuture = MediaController.Builder(
             requireContext(),
             SessionToken(
@@ -346,7 +349,7 @@ class Media3Fragment : PlayerFragment() {
                                         if (videoType == STREAM) {
                                             map[CHAT_ONLY_QUALITY] = Pair(getString(R.string.chat_only), null)
                                         }
-                                        viewModel.qualities = map.toList()
+                                        val sorted = map.toList()
                                             .sortedByDescending {
                                                 it.first.substringAfter("p", "").takeWhile { it.isDigit() }.toIntOrNull()
                                             }
@@ -360,10 +363,16 @@ class Media3Fragment : PlayerFragment() {
                                                 it.first == "auto"
                                             }
                                             .toMap()
+                                        val previousQuality = viewModel.quality
+                                        viewModel.qualities = sorted
                                         if (BuildConfig.DEBUG) {
                                             Log.d("KickVodQuality", "fragment map=${viewModel.qualities.map { "${it.key}:${it.value.first}" }}")
                                         }
-                                        setDefaultQuality()
+                                        if (previousQuality == null || !sorted.containsKey(previousQuality)) {
+                                            setDefaultQuality()
+                                        } else {
+                                            viewModel.quality = previousQuality
+                                        }
                                         changePlayerMode()
                                         if (viewModel.quality == AUDIO_ONLY_QUALITY) {
                                             changeQuality(viewModel.quality)
@@ -572,6 +581,17 @@ class Media3Fragment : PlayerFragment() {
             startPlayer()
         }
         super.initialize()
+    }
+
+    override fun updateChannelLogo(logo: String?) {
+        val clean = logo?.takeIf { it.isNotBlank() } ?: return
+        player?.sendCustomCommand(
+            SessionCommand(
+                PlaybackService.UPDATE_CHANNEL_LOGO,
+                bundleOf(PlaybackService.CHANNEL_LOGO to clean)
+            ),
+            Bundle.EMPTY
+        )
     }
 
     override fun startStream(url: String?) {
@@ -1259,6 +1279,15 @@ class Media3Fragment : PlayerFragment() {
                 } else {
                     viewModel.resume = player.playWhenReady
                     player.pause()
+                    if (viewModel.resume) {
+                        lastBackgroundPauseAtMs = 0L
+                        noteBackgroundPause()
+                        DiagnosticLogger.i(
+                            TAG,
+                            "Media3 onStop paused shouldKeep=false resume=true locked=${isScreenLockedOrOff()} " +
+                                "pip=${activity?.isInPictureInPictureMode}"
+                        )
+                    }
                 }
                 // Detach the video surface before the UI view's native window/Surface is destroyed by the system
                 player.clearVideoSurface()
@@ -1279,8 +1308,57 @@ class Media3Fragment : PlayerFragment() {
         clearPipDismissState()
     }
 
+    override fun onScreenOffWhileStopped() {
+        if (!viewModel.resume || !isAdded) return
+        // Late SCREEN_OFF after an "unlocked" pause decision: resume background
+        // audio now that lock is confirmed. Mirror the keep-path transition so
+        // onStart restores the previous quality correctly.
+        viewModel.resume = false
+        if (viewModel.quality != AUDIO_ONLY_QUALITY) {
+            viewModel.restoreQuality = true
+            viewModel.previousQuality = viewModel.quality
+            viewModel.quality = AUDIO_ONLY_QUALITY
+        }
+        try {
+            DiagnosticLogger.i(
+                TAG,
+                "Media3 late screen-off resume pip=${activity?.isInPictureInPictureMode}"
+            )
+            val appContext = requireContext().applicationContext
+            val future = MediaController.Builder(
+                appContext,
+                SessionToken(appContext, ComponentName(appContext, PlaybackService::class.java))
+            ).buildAsync()
+            screenOffResumeFuture?.let { runCatching { MediaController.releaseFuture(it) } }
+            screenOffResumeFuture = future
+            future.addListener({
+                try {
+                    val controller = future.get()
+                    if (controller.currentMediaItem != null &&
+                        controller.playbackState != Player.STATE_ENDED &&
+                        controller.playbackState != Player.STATE_IDLE
+                    ) {
+                        if (prefs.getBoolean(AppConstants.PLAYER_DISABLE_BACKGROUND_VIDEO, true)) {
+                            controller.trackSelectionParameters =
+                                controller.trackSelectionParameters.buildUpon().apply {
+                                    setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
+                                }.build()
+                        }
+                        controller.playWhenReady = true
+                        runCatching { controller.prepare() }
+                    }
+                } catch (_: Exception) {
+                }
+            }, MoreExecutors.directExecutor())
+        } catch (e: Exception) {
+            DiagnosticLogger.w(TAG, "Media3 late screen-off resume failed: ${e.message}")
+        }
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
+        screenOffResumeFuture?.let { runCatching { MediaController.releaseFuture(it) } }
+        screenOffResumeFuture = null
         player?.let {
             if (it.isConnected) {
                 it.clearVideoSurface()

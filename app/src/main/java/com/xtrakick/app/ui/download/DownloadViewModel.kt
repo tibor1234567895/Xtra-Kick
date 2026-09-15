@@ -7,20 +7,28 @@ import androidx.lifecycle.viewModelScope
 import com.xtrakick.app.R
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.PlayerRepository
+import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
+import com.xtrakick.app.util.m3u8.PlaylistUtils
+import com.xtrakick.app.util.prefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.net.URI
 import javax.inject.Inject
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 @HiltViewModel
 class DownloadViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
     private val playerRepository: PlayerRepository,
     private val kickRepository: KickRepository,
+    private val okHttpClient: OkHttpClient,
 ) : ViewModel() {
 
     val integrity = MutableStateFlow<String?>(null)
@@ -31,6 +39,39 @@ class DownloadViewModel @Inject constructor(
     val dismiss = MutableStateFlow(false)
     var backupQualities: List<String>? = null
     var selectedQuality: String? = null
+
+    private val bitrateCache = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    // Size estimate for a quality: measure one representative segment (HEAD,
+    // falling back to a GET's headers) and scale its bitrate over the duration.
+    suspend fun estimateDownloadSize(playlistUrl: String, rangeSeconds: Long?): Long? = withContext(Dispatchers.IO) {
+        runCatching {
+            val playlistText = playerRepository.loadTextFromUrl(
+                applicationContext.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                playlistUrl
+            ) ?: return@runCatching null
+            val playlist = PlaylistUtils.parseMediaPlaylist(playlistText.byteInputStream())
+            if (playlist.segments.isEmpty()) return@runCatching null
+            val playlistDurationSeconds = playlist.segments.sumOf { it.duration.toDouble() }
+            val bitrate = bitrateCache.getOrPut(playlistUrl) {
+                val segment = playlist.segments[playlist.segments.size / 2]
+                val segmentUrl = if (segment.uri.startsWith("http")) {
+                    segment.uri
+                } else {
+                    playlistUrl.substringBeforeLast('/') + "/" + segment.uri
+                }
+                val segmentDurationSeconds = segment.duration.toDouble().coerceAtLeast(0.5)
+                val contentLength = okHttpClient.newCall(Request.Builder().url(segmentUrl).head().build()).execute().use { response ->
+                    response.header("Content-Length")?.toLongOrNull()
+                } ?: okHttpClient.newCall(Request.Builder().url(segmentUrl).build()).execute().use { response ->
+                    response.header("Content-Length")?.toLongOrNull()
+                } ?: return@runCatching null
+                (contentLength * 8 / segmentDurationSeconds).toLong()
+            }
+            val seconds = rangeSeconds?.toDouble() ?: playlistDurationSeconds
+            ((bitrate * seconds) / 8).toLong()
+        }.getOrNull()
+    }
 
     fun setStream(
         networkLibrary: String?,

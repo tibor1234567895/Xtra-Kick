@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.KeyguardManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -47,16 +48,9 @@ import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
-import com.xtrakick.app.util.chat.KickViewerWatchWebSocket
 import com.google.common.util.concurrent.FutureCallback
 import com.google.common.util.concurrent.Futures
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.net.ssl.X509TrustManager
@@ -219,58 +213,31 @@ class IvsPlayerService : Service() {
         } catch (_: Exception) {
         }
     }
-    private val kickViewerWatchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var kickViewerWatch: KickViewerWatchWebSocket? = null
-    private var kickViewerWatchJob: Job? = null
-    private var activeKickChannelId: String? = null
-    private var activeKickLivestreamId: String? = null
-    private var activeKickChannelLogin: String? = null
+    private val watchOwner by lazy {
+        KickViewerWatchOwner(
+            kickRepository = kickRepository,
+            trustManager = trustManager,
+            debugLogging = BuildConfig.DEBUG,
+            isRewardsEnabled = { prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true) },
+            isPlaying = { player?.state == Player.State.PLAYING },
+        )
+    }
     private val rewardsPreferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == AppConstants.KICK_DAILY_REWARDS_ENABLED) {
-            if (prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)) {
-                if (player?.state == Player.State.PLAYING) {
-                    startKickViewerWatchIfNeeded()
-                }
-            } else {
-                stopKickViewerWatch()
-            }
+            watchOwner.onRewardsToggle(prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true))
         }
     }
 
     private fun startKickViewerWatchIfNeeded() {
-        val channelId = activeKickChannelId?.takeIf { it.isNotBlank() }
-        val livestreamId = activeKickLivestreamId?.takeIf { it.isNotBlank() }
-        val channelLogin = activeKickChannelLogin?.takeIf { it.isNotBlank() }
-        playerDebugLog("viewer metadata channelId=$channelId livestreamId=$livestreamId channelLogin=$channelLogin")
-        if (channelId == null && livestreamId == null && channelLogin == null) return
-        if (!prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)) return
-        if (kickViewerWatchJob?.isActive == true) return
-        kickViewerWatch = KickViewerWatchWebSocket(
-            kickRepository,
-            channelId,
-            livestreamId,
-            channelLogin,
-            trustManager,
-            debugLogging = BuildConfig.DEBUG,
-        ).also { kickViewerWatchJob = it.start(kickViewerWatchScope) }
+        watchOwner.startIfNeeded()
     }
 
     private fun stopKickViewerWatch() {
-        val watch = kickViewerWatch ?: return
-        kickViewerWatch = null
-        kickViewerWatchJob?.cancel()
-        kickViewerWatchJob = null
-        kickViewerWatchScope.launch { watch.stop() }
+        watchOwner.stop()
     }
 
     fun setKickViewerMetadata(channelId: String?, livestreamId: String?, channelLogin: String?) {
-        stopKickViewerWatch()
-        activeKickChannelId = channelId
-        activeKickLivestreamId = livestreamId
-        activeKickChannelLogin = channelLogin
-        if (player?.state == Player.State.PLAYING) {
-            startKickViewerWatchIfNeeded()
-        }
+        watchOwner.setMetadata(channelId, livestreamId, channelLogin)
     }
     private var dynamicsProcessingAudioSessionId: Int? = null
     private var audioManager: AudioManager? = null
@@ -348,6 +315,20 @@ class IvsPlayerService : Service() {
     private fun abandonAudioFocus() {
         val am = audioManager ?: return
         audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+    }
+
+    private fun isDeviceLockedOrScreenOff(): Boolean {
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (powerManager?.isInteractive == false) return true
+            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            if (keyguardManager?.isKeyguardLocked == true) return true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                if (keyguardManager?.isDeviceLocked == true) return true
+            }
+        } catch (_: Exception) {
+        }
+        return false
     }
 
     private fun acquirePlaybackLocks() {
@@ -675,6 +656,15 @@ class IvsPlayerService : Service() {
         updateNotification()
     }
 
+    fun updateChannelLogo(logo: String?) {
+        val clean = logo?.takeIf { it.isNotBlank() } ?: return
+        if (this.channelLogo != clean) {
+            this.channelLogo = clean
+            updateMetadata()
+            updateNotification()
+        }
+    }
+
     private fun saveLastPlaybackRequest(
         url: String,
         title: String?,
@@ -884,10 +874,7 @@ class IvsPlayerService : Service() {
     }
 
     fun stopPlayback() {
-        stopKickViewerWatch()
-        activeKickChannelId = null
-        activeKickLivestreamId = null
-        activeKickChannelLogin = null
+        watchOwner.clearMetadata()
         backgroundPlaybackEnabled = false
         playbackRequested = false
         suspendedByFocusLoss = false
@@ -1188,6 +1175,20 @@ class IvsPlayerService : Service() {
                     updatePlaybackState()
                     updateNotification()
                 }
+                INTENT_RESUME_BACKGROUND_IF_LOCKED -> {
+                    // Late SCREEN_OFF arrived after onStop paused for "unlocked PiP".
+                    // Only resume audio when the device is actually locked/off now.
+                    if (isDeviceLockedOrScreenOff() && !currentUrl.isNullOrBlank()) {
+                        val state = player?.state
+                        if (state != null && state != Player.State.PLAYING && state != Player.State.ENDED) {
+                            playerDebugLog("late screen-off resume state=$state background=$backgroundPlaybackEnabled")
+                            backgroundPlaybackEnabled = true
+                            play()
+                            updatePlaybackState()
+                            updateNotification()
+                        }
+                    }
+                }
             }
         }
         return START_STICKY
@@ -1272,10 +1273,7 @@ class IvsPlayerService : Service() {
     }
 
     override fun onDestroy() {
-        kickViewerWatchJob?.cancel()
-        kickViewerWatchJob = null
-        kickViewerWatch = null
-        kickViewerWatchScope.cancel()
+        watchOwner.release()
         metadataBitmapCallback = null
         notificationBitmapCallback = null
         applicationHandler?.removeCallbacksAndMessages(null)
@@ -1343,6 +1341,7 @@ class IvsPlayerService : Service() {
         private const val REQUEST_CODE_RESUME = 0
         private const val REQUEST_CODE_PLAY_PAUSE = 1
         private const val INTENT_PLAY_PAUSE = "com.xtrakick.app.IVS_PLAY_PAUSE"
+        const val INTENT_RESUME_BACKGROUND_IF_LOCKED = "com.xtrakick.app.IVS_RESUME_BACKGROUND_IF_LOCKED"
         private const val LAST_PLAYBACK_CHANNEL_ID = "last_playback_channel_id"
         private const val LAST_PLAYBACK_LIVESTREAM_ID = "last_playback_livestream_id"
         private const val LAST_PLAYBACK_CHANNEL_LOGIN = "last_playback_channel_login"

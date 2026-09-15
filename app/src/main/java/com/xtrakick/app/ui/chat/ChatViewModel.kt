@@ -474,6 +474,12 @@ class ChatViewModel @Inject constructor(
             this.streamId = streamId
             kickLivePollingFallbackActive = false
             kickInitialRoomStateLoaded = false
+            synchronized(channelBadges) {
+                channelBadges.clear()
+            }
+            synchronized(globalBadges) {
+                globalBadges.clear()
+            }
             startLiveChat(channelId, channelLogin)
             addChatter(channelName)
             loadEmotes(channelId, channelLogin)
@@ -502,6 +508,14 @@ class ChatViewModel @Inject constructor(
         if (chatReplayManager == null && chatReplayManagerLocal == null) {
             messageLimit = applicationContext.prefs().getInt(AppConstants.CHAT_LIMIT, 600)
             kickInitialRoomStateLoaded = false
+            if (chatUrl == null) {
+                synchronized(channelBadges) {
+                    channelBadges.clear()
+                }
+                synchronized(globalBadges) {
+                    globalBadges.clear()
+                }
+            }
             loadKickInitialRoomStateIfNeeded(channelId, channelLogin)
             startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, kickReplayFallback, kickReplayStartTime, kickReplayUrl)
             if (videoId != null || kickReplayFallback) {
@@ -576,7 +590,9 @@ class ChatViewModel @Inject constructor(
         val useWebp = applicationContext.prefs().getBoolean(AppConstants.CHAT_USE_WEBP, true)
         val enableIntegrity = applicationContext.prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false)
         synchronized(thirdPartyEmotes) {
-            thirdPartyEmotes.clear()
+            if (chatReplayManagerLocal == null && thirdPartyEmotes.none { it.localData != null }) {
+                thirdPartyEmotes.clear()
+            }
         }
         kickEmoteGroups.value = emptyList()
         if (!channelLogin.isNullOrBlank()) {
@@ -601,13 +617,19 @@ class ChatViewModel @Inject constructor(
             }
         }
         synchronized(globalBadges) {
-            globalBadges.clear()
+            if (chatReplayManagerLocal == null && globalBadges.none { it.localData != null }) {
+                globalBadges.clear()
+            }
         }
         synchronized(channelBadges) {
-            channelBadges.clear()
+            if (chatReplayManagerLocal == null && channelBadges.none { it.localData != null }) {
+                channelBadges.clear()
+            }
         }
         synchronized(cheerEmotes) {
-            cheerEmotes.clear()
+            if (chatReplayManagerLocal == null && cheerEmotes.none { it.localData != null }) {
+                cheerEmotes.clear()
+            }
         }
         if (applicationContext.prefs().getBoolean(AppConstants.CHAT_ENABLE_STV, true)) {
             val saved = savedGlobalStvEmotes
@@ -880,28 +902,32 @@ class ChatViewModel @Inject constructor(
     }
 
     fun getEmoteBytes(chatUrl: String, localData: Pair<Long, Int>): ByteArray? {
-        if (localData.first < 0 || localData.second !in 1..(8 * 1024 * 1024)) return null
-        return if (chatUrl.toUri().scheme == ContentResolver.SCHEME_CONTENT) {
-            applicationContext.contentResolver.openInputStream(chatUrl.toUri())?.bufferedReader()
-        } else {
-            FileInputStream(File(chatUrl)).bufferedReader()
-        }?.use { fileReader ->
-            val buffer = CharArray(localData.second)
-            var remaining = localData.first
-            while (remaining > 0) {
-                val skipped = fileReader.skip(remaining)
-                if (skipped > 0) remaining -= skipped
-                else if (fileReader.read() == -1) return null
-                else remaining--
-            }
-            var offset = 0
-            while (offset < buffer.size) {
-                val count = fileReader.read(buffer, offset, buffer.size - offset)
-                if (count == -1) return null
-                offset += count
-            }
-            Base64.decode(buffer.concatToString(), Base64.NO_WRAP or Base64.NO_PADDING)
+        if (localData.first < 0 || localData.second !in 1..(8 * 1024 * 1024)) {
+            return null
         }
+        return runCatching {
+            (if (chatUrl.toUri().scheme == ContentResolver.SCHEME_CONTENT) {
+                applicationContext.contentResolver.openInputStream(chatUrl.toUri())?.bufferedReader()
+            } else {
+                FileInputStream(File(chatUrl)).bufferedReader()
+            })?.use { fileReader ->
+                val buffer = CharArray(localData.second)
+                var remaining = localData.first
+                while (remaining > 0) {
+                    val skipped = fileReader.skip(remaining)
+                    if (skipped > 0) remaining -= skipped
+                    else if (fileReader.read() == -1) return null
+                    else remaining--
+                }
+                var offset = 0
+                while (offset < buffer.size) {
+                    val count = fileReader.read(buffer, offset, buffer.size - offset)
+                    if (count == -1) return null
+                    offset += count
+                }
+                Base64.decode(buffer.concatToString(), Base64.NO_WRAP or Base64.NO_PADDING)
+            }
+        }.getOrNull()
     }
 
     fun reloadEmotes(channelId: String?, channelLogin: String?) {

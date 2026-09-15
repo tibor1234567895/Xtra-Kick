@@ -673,8 +673,8 @@ class MainViewModel @Inject constructor(
                 )
             ).toInt()
             WorkManager.getInstance(applicationContext).enqueueUniqueWork(
-                "download",
-                ExistingWorkPolicy.APPEND_OR_REPLACE,
+                VideoDownloadWorker.workName(videoId),
+                ExistingWorkPolicy.REPLACE,
                 OneTimeWorkRequestBuilder<VideoDownloadWorker>()
                     .setInputData(workDataOf(VideoDownloadWorker.KEY_VIDEO_ID to videoId))
                     .addTag(videoId.toString())
@@ -830,8 +830,8 @@ class MainViewModel @Inject constructor(
                 )
             ).toInt()
             WorkManager.getInstance(applicationContext).enqueueUniqueWork(
-                "download",
-                ExistingWorkPolicy.APPEND_OR_REPLACE,
+                VideoDownloadWorker.workName(videoId),
+                ExistingWorkPolicy.REPLACE,
                 OneTimeWorkRequestBuilder<VideoDownloadWorker>()
                     .setInputData(workDataOf(VideoDownloadWorker.KEY_VIDEO_ID to videoId))
                     .addTag(videoId.toString())

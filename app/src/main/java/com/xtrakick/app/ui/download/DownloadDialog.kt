@@ -40,6 +40,7 @@ import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.io.File
@@ -157,6 +158,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
     private val viewModel: DownloadViewModel by viewModels()
     private var sharedPath: String? = null
     private var directoryResultLauncher: ActivityResultLauncher<Intent>? = null
+    private var sizeEstimateJob: Job? = null
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         _binding = DialogVideoDownloadBinding.inflate(layoutInflater)
@@ -332,10 +334,11 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                 } ?: array.first()
                 setSimpleItems(array)
                 setText(selectedQuality, false)
+                setOnItemClickListener { _, _, _, _ -> updateSizeEstimate(qualities, totalDuration) }
             }
             if (type == VIDEO) {
                 timeLayout.visibility = View.VISIBLE
-                val defaultFrom = DateUtils.formatElapsedTime(currentPosition / 1000L).let { if (it.length == 5) "00:$it" else it }
+                val defaultFrom = "00:00:00"
                 val totalTime = DateUtils.formatElapsedTime(totalDuration / 1000L)
                 val defaultTo = totalTime.let { if (it.length != 5) it else "00:$it" }
                 duration.text = getString(R.string.duration, totalTime)
@@ -344,6 +347,9 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                 timeFrom.editText?.doOnTextChanged { text, _, _, _ -> if (text?.length == 8) timeTo.requestFocus() }
                 addTextChangeListener(timeFrom.editText)
                 addTextChangeListener(timeTo.editText)
+                timeFrom.editText?.doOnTextChanged { _, _, _, _ -> updateSizeEstimate(qualities, totalDuration) }
+                timeTo.editText?.doOnTextChanged { _, _, _, _ -> updateSizeEstimate(qualities, totalDuration) }
+                updateSizeEstimate(qualities, totalDuration)
             }
             with(storageSelectionContainer) {
                 if (Environment.getExternalStorageState() == Environment.MEDIA_MOUNTED) {
@@ -482,67 +488,61 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                             )
                         }
                         VIDEO -> {
-                            val from = timeFrom.editText?.takeIf { !it.text.isEmpty() }?.let { editText ->
-                                parseTime(editText.text).also {
-                                    if (it == null) {
-                                        editText.requestFocus()
-                                        editText.error = getString(R.string.invalid_time)
-                                        return@setOnClickListener
-                                    }
-                                }
-                            } ?: currentPosition
-                            val to = timeTo.editText?.takeIf { !it.text.isEmpty() }?.let { editText ->
-                                parseTime(editText.text).also {
-                                    if (it == null) {
-                                        editText.requestFocus()
-                                        editText.error = getString(R.string.invalid_time)
-                                        return@setOnClickListener
-                                    }
-                                }
-                            } ?: totalDuration
-                            when {
-                                to > totalDuration -> {
-                                    timeTo.requestFocus()
-                                    timeTo.editText?.error = getString(R.string.to_is_longer)
-                                    return@setOnClickListener
-                                }
-                                from < to -> {
-                                    (requireActivity() as? MainActivity)?.downloadVideo(
-                                        filesDir = requireContext().filesDir.path,
-                                        id = requireArguments().getString(KEY_VIDEO_ID),
-                                        title = requireArguments().getString(KEY_TITLE),
-                                        uploadDate = requireArguments().getString(KEY_UPLOAD_DATE),
-                                        type = requireArguments().getString(KEY_VIDEO_TYPE),
-                                        channelId = requireArguments().getString(KEY_CHANNEL_ID),
-                                        channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
-                                        channelName = requireArguments().getString(KEY_CHANNEL_NAME),
-                                        channelLogo = requireArguments().getString(KEY_CHANNEL_LOGO),
-                                        thumbnail = requireArguments().getString(KEY_THUMBNAIL),
-                                        gameId = requireArguments().getString(KEY_GAME_ID),
-                                        gameSlug = requireArguments().getString(KEY_GAME_SLUG),
-                                        gameName = requireArguments().getString(KEY_GAME_NAME),
-                                        url = quality.value.second,
-                                        downloadPath = path,
-                                        quality = quality.key,
-                                        from = from,
-                                        to = to,
-                                        downloadChat = downloadChat,
-                                        downloadChatEmotes = downloadChatEmotes,
-                                        playlistToFile = requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_PLAYLIST_TO_FILE, false),
-                                        wifiOnly = requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_WIFI_ONLY, false)
-                                    )
-                                }
-                                from >= to -> {
+                            val fromText = timeFrom.editText?.text?.toString()?.trim().orEmpty()
+                            val toText = timeTo.editText?.text?.toString()?.trim().orEmpty()
+                            val isFullRange = fromText.isEmpty() && toText.isEmpty()
+                            val from = if (fromText.isNotEmpty()) {
+                                parseTime(fromText) ?: run {
                                     timeFrom.requestFocus()
-                                    timeFrom.editText?.error = getString(R.string.from_is_greater)
+                                    timeFrom.editText?.error = getString(R.string.invalid_time)
                                     return@setOnClickListener
                                 }
-                                else -> {
+                            } else 0L
+                            val to = if (toText.isNotEmpty()) {
+                                parseTime(toText) ?: run {
                                     timeTo.requestFocus()
-                                    timeTo.editText?.error = getString(R.string.to_is_lesser)
+                                    timeTo.editText?.error = getString(R.string.invalid_time)
                                     return@setOnClickListener
+                                }
+                            } else totalDuration
+                            if (!isFullRange) {
+                                when {
+                                    totalDuration > 0 && to > totalDuration -> {
+                                        timeTo.requestFocus()
+                                        timeTo.editText?.error = getString(R.string.to_is_longer)
+                                        return@setOnClickListener
+                                    }
+                                    from >= to -> {
+                                        timeFrom.requestFocus()
+                                        timeFrom.editText?.error = getString(R.string.from_is_greater)
+                                        return@setOnClickListener
+                                    }
                                 }
                             }
+                            (requireActivity() as? MainActivity)?.downloadVideo(
+                                filesDir = requireContext().filesDir.path,
+                                id = requireArguments().getString(KEY_VIDEO_ID),
+                                title = requireArguments().getString(KEY_TITLE),
+                                uploadDate = requireArguments().getString(KEY_UPLOAD_DATE),
+                                type = requireArguments().getString(KEY_VIDEO_TYPE),
+                                channelId = requireArguments().getString(KEY_CHANNEL_ID),
+                                channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
+                                channelName = requireArguments().getString(KEY_CHANNEL_NAME),
+                                channelLogo = requireArguments().getString(KEY_CHANNEL_LOGO),
+                                thumbnail = requireArguments().getString(KEY_THUMBNAIL),
+                                gameId = requireArguments().getString(KEY_GAME_ID),
+                                gameSlug = requireArguments().getString(KEY_GAME_SLUG),
+                                gameName = requireArguments().getString(KEY_GAME_NAME),
+                                url = quality.value.second,
+                                downloadPath = path,
+                                quality = quality.key,
+                                from = from,
+                                to = to,
+                                downloadChat = downloadChat,
+                                downloadChatEmotes = downloadChatEmotes,
+                                playlistToFile = requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_PLAYLIST_TO_FILE, false),
+                                wifiOnly = requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_WIFI_ONLY, false)
+                            )
                         }
                         CLIP -> {
                             (requireActivity() as? MainActivity)?.downloadClip(
@@ -601,6 +601,42 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                     }
                 }
                 dismiss()
+            }
+        }
+    }
+
+    private fun updateSizeEstimate(qualities: Map<String, Pair<String, String>>, totalDuration: Long) {
+        val url = qualities.entries.find { it.value.first == binding.spinner.editText?.text.toString() }?.value?.second
+        if (url.isNullOrBlank()) {
+            binding.sizeEstimate.isVisible = false
+            return
+        }
+        val fromText = binding.timeFrom.editText?.text?.toString()?.trim().orEmpty()
+        val toText = binding.timeTo.editText?.text?.toString()?.trim().orEmpty()
+        val rangeSeconds = when {
+            fromText.isEmpty() && toText.isEmpty() -> null
+            else -> {
+                val from = if (fromText.isNotEmpty()) parseTime(fromText) else 0L
+                val to = if (toText.isNotEmpty()) parseTime(toText) else totalDuration
+                ((to ?: 0L) - (from ?: 0L)).takeIf { it > 0 }?.div(1000L)
+            }
+        }
+        sizeEstimateJob?.cancel()
+        binding.sizeEstimate.isVisible = true
+        binding.sizeEstimate.text = getString(R.string.estimated_size, "…")
+        // Fragment lifecycleScope: init() runs from onCreateDialog before the
+        // fragment view exists, so viewLifecycleOwner would throw here. The binding
+        // is already inflated by then and is nulled in onDestroyView.
+        sizeEstimateJob = lifecycleScope.launch {
+            val bytes = viewModel.estimateDownloadSize(url, rangeSeconds)
+            val currentBinding = _binding ?: return@launch
+            if (bytes == null || bytes <= 0L) {
+                currentBinding.sizeEstimate.isVisible = false
+            } else {
+                currentBinding.sizeEstimate.text = getString(
+                    R.string.estimated_size,
+                    android.text.format.Formatter.formatFileSize(requireContext(), bytes)
+                )
             }
         }
     }

@@ -362,9 +362,23 @@ class SettingsActivity : AppCompatActivity() {
                     val list = mutableListOf<String>()
                     result.data?.clipData?.let { clipData ->
                         for (i in 0 until clipData.itemCount) {
-                            clipData.getItemAt(i).uri?.toString()?.let(list::add)
+                            clipData.getItemAt(i).uri?.let { uri ->
+                                runCatching {
+                                    requireContext().contentResolver.takePersistableUriPermission(
+                                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                    )
+                                }
+                                list.add(uri.toString())
+                            }
                         }
-                    } ?: result.data?.data?.toString()?.let(list::add)
+                    } ?: result.data?.data?.let { uri ->
+                        runCatching {
+                            requireContext().contentResolver.takePersistableUriPermission(
+                                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        }
+                        list.add(uri.toString())
+                    }
                     viewModel.restoreSettings(
                         list = list,
                         networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
@@ -443,12 +457,15 @@ class SettingsActivity : AppCompatActivity() {
                 true
             }
             findPreference<Preference>("action_backup_settings")?.setOnPreferenceClickListener {
-                backupResultLauncher?.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE))
+                backupResultLauncher?.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+                })
                 true
             }
             findPreference<Preference>("action_restore_settings")?.setOnPreferenceClickListener {
                 restoreResultLauncher?.launch(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
                     type = "*/*"
                     putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                 })
@@ -483,6 +500,20 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
             (requireActivity() as? SettingsActivity)?.getSelectedSearchItem()?.let { scrollToPreference(it) }
+            viewLifecycleOwner.lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    viewModel.backupStatus.collectLatest { message ->
+                        Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            viewLifecycleOwner.lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    viewModel.restoreStatus.collectLatest { message ->
+                        Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
                     viewModel.updateInfo.collectLatest { updateInfo ->
@@ -1714,15 +1745,23 @@ class SettingsActivity : AppCompatActivity() {
             requireContext().getAlertDialogBuilder()
                 .setTitle(getString(R.string.leftover_files))
                 .setMessage(getString(R.string.leftover_files_message, found.count, formatBytes(found.bytes)))
-                // Restore is the non-destructive option, so it gets the affirmative button.
-                .setPositiveButton(getString(R.string.leftover_files_restore)) { _, _ ->
-                    viewModel.importDownloads()
+                // Restore only handles app-storage entries; shared-folder leftovers
+                // support delete only, so hide it when nothing is restorable.
+                .apply {
+                    if (found.restorableCount > 0) {
+                        // Restore is the non-destructive option, so it gets the affirmative button.
+                        setPositiveButton(getString(R.string.leftover_files_restore)) { _, _ ->
+                            viewModel.importDownloads()
+                        }
+                    }
                 }
                 .setNegativeButton(getString(android.R.string.cancel), null)
                 .setNeutralButton(getString(R.string.leftover_files_delete)) { _, _ ->
+                    val listed = found.names.take(12).joinToString("\n")
+                    val extra = (found.count - found.names.size).takeIf { it > 0 }?.let { "\n… (+$it more)" }.orEmpty()
                     requireContext().getAlertDialogBuilder()
                         .setTitle(getString(R.string.leftover_files_delete))
-                        .setMessage(getString(R.string.leftover_files_delete_confirm, found.count, formatBytes(found.bytes)))
+                        .setMessage(getString(R.string.leftover_files_delete_confirm, found.count, formatBytes(found.bytes)) + "\n\n" + listed + extra)
                         .setPositiveButton(getString(R.string.yes)) { _, _ -> viewModel.deleteLeftoverFiles() }
                         .setNegativeButton(getString(android.R.string.cancel), null)
                         .show()

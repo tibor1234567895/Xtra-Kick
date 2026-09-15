@@ -83,6 +83,8 @@ class AutoCompleteAdapter<T>(
         return view
     }
 
+    var onResultsPublished: ((Int) -> Unit)? = null
+
     override fun getFilter(): Filter = filter
 
     private val filter: Filter = object : Filter() {
@@ -110,12 +112,14 @@ class AutoCompleteAdapter<T>(
 
         @Suppress("UNCHECKED_CAST")
         override fun publishResults(constraint: CharSequence?, results: FilterResults?) {
+            val count = results?.count ?: 0
             objects = (results?.values as? List<T?>)?.toMutableList() ?: mutableListOf()
-            if (results != null && results.count > 0) {
+            if (results != null && count > 0) {
                 notifyDataSetChanged()
             } else {
                 notifyDataSetInvalidated()
             }
+            onResultsPublished?.invoke(count)
         }
     }
 
@@ -132,12 +136,11 @@ class AutoCompleteAdapter<T>(
             val scored = ArrayList<ScoredItem<T>>(items.size.coerceAtMost(MAX_AUTOCOMPLETE_RESULTS * 2))
             for (item in items) {
                 if (item == null) continue
-                val (itemPrefix, name) = when (item) {
-                    is Emote -> ':' to (item.name ?: continue)
-                    is Chatter -> '@' to (item.name ?: continue)
+                val name = when {
+                    prefix == ':' && item is Emote -> item.name ?: continue
+                    prefix == '@' && item is Chatter -> item.name ?: continue
                     else -> continue
                 }
-                if (itemPrefix != prefix) continue
                 val rank = getMatchRank(queryBody, name)
                 if (rank >= 0) {
                     scored.add(ScoredItem(item, rank, name))

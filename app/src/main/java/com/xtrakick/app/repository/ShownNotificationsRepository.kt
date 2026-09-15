@@ -57,6 +57,8 @@ class ShownNotificationsRepository @Inject constructor(
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         val headers = KickApiHelper.getKickPublicApiHeaders(context)
         val follows = runCatching { localFollowChannelRepository.loadFollows() }.getOrDefault(emptyList())
+        val followByUserId = follows.mapNotNull { f -> f.userId?.takeIf { it.isNotBlank() }?.let { it to f } }.toMap()
+        val followBySlug = follows.mapNotNull { f -> f.userLogin?.takeIf { it.isNotBlank() }?.lowercase()?.let { it to f } }.toMap()
 
         val userIdsForPublicApi = mutableSetOf<String>()
         val slugsForFallback = mutableSetOf<String>()
@@ -64,7 +66,7 @@ class ShownNotificationsRepository @Inject constructor(
         val broadcasterIdsBySlug = mutableMapOf<String, String>()
 
         for (id in channelIds) {
-            val follow = follows.firstOrNull { it.userId == id || it.userLogin?.equals(id, ignoreCase = true) == true }
+            val follow = followByUserId[id] ?: followBySlug[id.lowercase()]
             if (follow != null) {
                 val bId = follow.userId?.takeIf { it.all(Char::isDigit) }
                 val slug = follow.userLogin?.takeIf { it.isNotBlank() }?.lowercase()
@@ -122,6 +124,8 @@ class ShownNotificationsRepository @Inject constructor(
                     val broadcasterId = live.broadcasterUserId?.toString() ?: live.channelId?.toString()
                     val catId = live.category?.id?.toString()
                     val catName = live.category?.name
+                    val follow = (broadcasterId?.let { followByUserId[it] })
+                        ?: (live.slug?.lowercase()?.let { followBySlug[it] })
                     val stream = Stream(
                         id = null,
                         source = AppConstants.KICK,
@@ -136,7 +140,7 @@ class ShownNotificationsRepository @Inject constructor(
                         viewerCount = live.viewerCount,
                         startedAt = live.startedAt,
                         thumbnailUrl = live.thumbnail,
-                        profileImageUrl = live.profilePicture,
+                        profileImageUrl = live.profilePicture ?: follow?.channelLogo,
                     )
                     resolvedStreams.add(stream)
                 }
@@ -334,13 +338,17 @@ class ShownNotificationsRepository @Inject constructor(
             Log.i(TAG, "dropping duplicate live event for $userIdStr/$cleanSlug from $source: already shown")
             return@withContext
         }
+        val effectiveAvatar = secureAvatar
+            ?: resolution?.user?.profileImage?.takeIf { it.startsWith("https://", ignoreCase = true) }
+            ?: runCatching { localFollowChannelRepository.getFollow(canonicalId, cleanSlug)?.channelLogo }
+                .getOrNull()?.takeIf { it.startsWith("https://", ignoreCase = true) }
         val stream = Stream(
             source = AppConstants.KICK,
             channelId = canonicalId,
             channelLogin = cleanSlug,
             channelName = cleanSlug,
             title = cleanTitle,
-            profileImageUrl = secureAvatar,
+            profileImageUrl = effectiveAvatar,
         )
         shownNotificationsDao.insertList(listOf(ShownNotification(canonicalId, liveStartedAt ?: nowMs)))
         Log.i(TAG, "posting live event for $userIdStr/$cleanSlug from $source (canonical=$canonicalId)")

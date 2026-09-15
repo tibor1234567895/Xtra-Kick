@@ -36,6 +36,7 @@
     <string name="log_in">Log in</string>
     <string name="log_out">Log out</string>
     <string name="specify_time">Specify time</string>
+    <string name="estimated_size">Estimated size: ~%1$s</string>
     <string name="from">From:</string>
     <string name="to">To:</string>
     <string name="duration">Duration: %s</string>
@@ -655,6 +656,7 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="leftover_files_delete_confirm">Permanently delete %1$d leftover file(s) and free %2$s? This cannot be undone.</string>
     <string name="leftover_files_restored">Restored %1$d download(s)</string>
     <string name="leftover_files_deleted">Freed %1$s</string>
+    <string name="leftover_files_kept">Entry removed, files kept on storage</string>
     <string name="move_to_shared_storage">Move to shared storage</string>
     <string name="move_to_app_storage">Move to app storage</string>
     <string name="download_moving">Moving: %d%%</string>
@@ -687,6 +689,12 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="text_size">Text size</string>
     <string name="backup_settings">Backup settings and data</string>
     <string name="restore_settings">Restore settings and data</string>
+    <string name="backup_success">Backup saved (%1$d file(s))</string>
+    <string name="backup_failed">Backup failed: %1$s</string>
+    <string name="restore_success">Restore done — restarting app</string>
+    <string name="restore_failed">Restore failed: %1$s</string>
+    <string name="restore_needs_both">Select both backup files (settings + data)</string>
+    <string name="restore_invalid">Unrecognized backup files</string>
     <string name="share">Share</string>
     <string name="check_updates">Check for updates</string>
     <string name="no_updates_found">No updates found</string>

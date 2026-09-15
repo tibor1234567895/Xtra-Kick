@@ -20,12 +20,17 @@ import com.xtrakick.app.util.m3u8.PlaylistUtils
 import com.xtrakick.app.util.m3u8.Segment
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import kotlin.math.max
 
@@ -33,6 +38,9 @@ import kotlin.math.max
 class DownloadsViewModel @Inject internal constructor(
     @param:ApplicationContext private val applicationContext: Context,
     private val repository: OfflineRepository,
+    // Process-lifetime scope: file deletion must survive leaving the Downloads screen,
+    // otherwise segment files are orphaned while the DB row still gets removed.
+    private val externalScope: CoroutineScope,
 ) : ViewModel() {
 
     var selectedVideo: OfflineVideo? = null
@@ -764,7 +772,7 @@ class DownloadsViewModel @Inject internal constructor(
         val videoUrl = video.url
         if (!videosInUse.contains(video)) {
             videosInUse.add(video)
-            viewModelScope.launch(Dispatchers.IO) {
+            externalScope.launch(Dispatchers.IO) {
                 repository.updateVideo(video.apply {
                     progress = 0
                     maxProgress = 100
@@ -804,18 +812,31 @@ class DownloadsViewModel @Inject internal constructor(
 
                                 }
                             }
+                            val tracks = tracksToDelete.toList()
                             repository.updateVideo(video.apply {
-                                maxProgress = tracksToDelete.count()
+                                maxProgress = tracks.size
                             })
-                            tracksToDelete.forEach {
-                                try {
-                                    DocumentsContract.deleteDocument(applicationContext.contentResolver, it.uri.toUri())
-                                } catch (e: Exception) {
+                            val deletedCount = AtomicInteger(0)
+                            coroutineScope {
+                                val deleteSemaphore = Semaphore(6)
+                                tracks.forEach { track ->
+                                    launch {
+                                        deleteSemaphore.withPermit {
+                                            try {
+                                                DocumentsContract.deleteDocument(applicationContext.contentResolver, track.uri.toUri())
+                                            } catch (_: Exception) {
 
+                                            }
+                                            val deleted = deletedCount.incrementAndGet()
+                                            // Batched Room writes: one per ~50 segments instead of one per segment.
+                                            if (deleted % 50 == 0 || deleted == tracks.size) {
+                                                repository.updateVideo(video.apply {
+                                                    progress = deleted
+                                                })
+                                            }
+                                        }
+                                    }
                                 }
-                                repository.updateVideo(video.apply {
-                                    progress += 1
-                                })
                             }
                             try {
                                 DocumentsContract.deleteDocument(applicationContext.contentResolver, videoUrl.toUri())
@@ -859,14 +880,17 @@ class DownloadsViewModel @Inject internal constructor(
                                         val p = PlaylistUtils.parseMediaPlaylist(it.inputStream())
                                         tracksToDelete.removeAll(p.segments.toSet())
                                     }
+                                    val tracks = tracksToDelete.toList()
                                     repository.updateVideo(video.apply {
-                                        maxProgress = tracksToDelete.count()
+                                        maxProgress = tracks.size
                                     })
-                                    tracksToDelete.forEach {
-                                        File(it.uri).delete()
-                                        repository.updateVideo(video.apply {
-                                            progress += 1
-                                        })
+                                    tracks.forEachIndexed { index, track ->
+                                        File(track.uri).delete()
+                                        if ((index + 1) % 50 == 0 || index + 1 == tracks.size) {
+                                            repository.updateVideo(video.apply {
+                                                progress = index + 1
+                                            })
+                                        }
                                     }
                                     playlistFile.delete()
                                     if (playlists.isEmpty()) {
@@ -882,7 +906,7 @@ class DownloadsViewModel @Inject internal constructor(
                 }
             }.invokeOnCompletion {
                 videosInUse.remove(video)
-                viewModelScope.launch(Dispatchers.IO) {
+                externalScope.launch(Dispatchers.IO) {
                     repository.deleteVideo(video, keepFiles)
                 }
             }

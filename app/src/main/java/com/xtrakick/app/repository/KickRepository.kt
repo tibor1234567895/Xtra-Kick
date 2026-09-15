@@ -4332,7 +4332,7 @@ class KickRepository @Inject constructor(
         return channel.chatroom?.id?.toString()
     }
 
-    private fun cacheKickBadgeUrls(channel: KickChannelResponse): Boolean {
+    internal fun cacheKickBadgeUrls(channel: KickChannelResponse): Boolean {
         var changed = false
         val scopeIds = listOfNotNull(
             channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() },
@@ -4391,7 +4391,7 @@ class KickRepository @Inject constructor(
         return changed
     }
 
-    private fun resolveKickBadgeUrl(type: String, version: String, chatScopeId: String? = null): String? {
+    internal fun resolveKickBadgeUrl(type: String, version: String, chatScopeId: String? = null): String? {
         val channelSpecific = isKickChannelSpecificBadgeType(type)
         kickBadgeTypeCandidates(type).forEach { candidate ->
             if (chatScopeId != null) {
@@ -4460,7 +4460,7 @@ class KickRepository @Inject constructor(
         }
     }
 
-    private fun resolveKickInlineBadgeUrl(normalizedType: String, version: String? = null): String? {
+    internal fun resolveKickInlineBadgeUrl(normalizedType: String, version: String? = null): String? {
         val dataUri = KickInlineBadgeData.forBadge(normalizedType, version) ?: return null
         val cacheKey = if (version != null) "$normalizedType:$version" else normalizedType
         return kickInlineBadgeSanitizedCache.computeIfAbsent(cacheKey) {
@@ -4608,7 +4608,7 @@ class KickRepository @Inject constructor(
         }
     }
 
-    private suspend fun prefetchKickBadgeCatalog(channel: KickChannelResponse) {
+    internal suspend fun prefetchKickBadgeCatalog(channel: KickChannelResponse) {
         val slug = channel.slug?.trim()?.takeIf { it.isNotBlank() } ?: return
         val scopeIds = listOfNotNull(
             channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() },

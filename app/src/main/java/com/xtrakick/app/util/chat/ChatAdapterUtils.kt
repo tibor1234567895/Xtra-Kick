@@ -49,6 +49,7 @@ import com.xtrakick.app.model.chat.StvBadge
 import com.xtrakick.app.model.chat.StvUser
 import com.xtrakick.app.model.chat.ChatBadge
 import com.xtrakick.app.model.chat.ChatEmote
+import com.xtrakick.app.repository.KickInlineBadgeData
 import com.xtrakick.app.ui.view.CenteredImageSpan
 import com.xtrakick.app.ui.view.NamePaintImageSpan
 import com.xtrakick.app.ui.view.NamePaintSpan
@@ -660,6 +661,7 @@ object ChatAdapterUtils {
                         ))
                     } else if (showKickBadges) {
                         val kickBadgeUrl = chatBadge.url4x ?: chatBadge.url3x ?: chatBadge.url2x ?: chatBadge.url1x
+                            ?: KickInlineBadgeData.forBadge(chatBadge.setId.removePrefix("kick:"), chatBadge.version)
                         if (!kickBadgeUrl.isNullOrBlank()) {
                             builder.append(". ")
                             builder.setSpan(ForegroundColorSpan(Color.TRANSPARENT), builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -681,7 +683,7 @@ object ChatAdapterUtils {
                                 }, builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
                             }
                             images.add(Image(
-                                url1x = chatBadge.url1x,
+                                url1x = chatBadge.url1x ?: kickBadgeUrl,
                                 url2x = chatBadge.url2x,
                                 url3x = chatBadge.url3x,
                                 url4x = chatBadge.url4x,
@@ -1379,7 +1381,10 @@ object ChatAdapterUtils {
     private fun loadImage(imageLibrary: String?, fragment: Fragment, image: Image, emoteQuality: String, targetHeight: Int, onLoaded: (Drawable) -> Unit) {
         image.localDataLoader?.let { load ->
             fragment.viewLifecycleOwner.lifecycleScope.launch {
-                val source = withContext(Dispatchers.IO) { runCatching { load() }.getOrNull() } ?: return@launch
+                val source = withContext(Dispatchers.IO) {
+                    runCatching { load() }.getOrNull()
+                }
+                if (source == null) return@launch
                 loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { it?.let(onLoaded) }
             }
             return
@@ -1428,12 +1433,19 @@ object ChatAdapterUtils {
                     httpHeaders(headers)
                 }
                 target(
-                    onError = { onLoaded(null) },
+                    onError = {
+                        onLoaded(null)
+                    },
                     onSuccess = {
                         onLoaded((it.asDrawable(fragment.resources)))
                     },
                 )
-                listener(onCancel = { onLoaded(null) })
+                listener(
+                    onError = { _, _ -> },
+                    onCancel = {
+                        onLoaded(null)
+                    }
+                )
             }.build()
         )
     }

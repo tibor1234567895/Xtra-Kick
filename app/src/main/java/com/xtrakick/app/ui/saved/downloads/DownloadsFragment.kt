@@ -21,6 +21,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.fragment.app.viewModels
+import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -33,6 +34,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import com.google.android.material.snackbar.Snackbar
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.CommonRecyclerViewLayoutBinding
 import com.xtrakick.app.databinding.StorageSelectionBinding
@@ -41,6 +43,8 @@ import com.xtrakick.app.ui.common.PagedListFragment
 import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.download.StreamDownloadWorker
 import com.xtrakick.app.ui.download.VideoDownloadWorker
+import com.xtrakick.app.ui.saved.LeftoverFilesUi
+import com.xtrakick.app.ui.settings.SettingsViewModel
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
@@ -55,6 +59,8 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
     private var _binding: CommonRecyclerViewLayoutBinding? = null
     private val binding get() = _binding!!
     private val viewModel: DownloadsViewModel by viewModels()
+    private val settingsViewModel: SettingsViewModel by activityViewModels()
+    private val leftoverUi by lazy { LeftoverFilesUi(this, settingsViewModel) }
     private lateinit var pagingAdapter: PagingDataAdapter<OfflineVideo, out RecyclerView.ViewHolder>
     override var enableNetworkCheck = false
     private var fileResultLauncher: ActivityResultLauncher<Intent>? = null
@@ -138,8 +144,8 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
                 }
             } else {
                 WorkManager.getInstance(requireContext()).enqueueUniqueWork(
-                    "download",
-                    ExistingWorkPolicy.APPEND_OR_REPLACE,
+                    VideoDownloadWorker.workName(it.id),
+                    ExistingWorkPolicy.REPLACE,
                     OneTimeWorkRequestBuilder<VideoDownloadWorker>()
                         .setInputData(workDataOf(VideoDownloadWorker.KEY_VIDEO_ID to it.id))
                         .addTag(it.id.toString())
@@ -236,8 +242,8 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
             viewLifecycleOwner.lifecycleScope.launch {
                 viewModel.redownloadChat(it)
                 WorkManager.getInstance(requireContext()).enqueueUniqueWork(
-                    "download",
-                    ExistingWorkPolicy.APPEND_OR_REPLACE,
+                    VideoDownloadWorker.workName(it.id),
+                    ExistingWorkPolicy.REPLACE,
                     OneTimeWorkRequestBuilder<VideoDownloadWorker>()
                         .setInputData(workDataOf(
                             VideoDownloadWorker.KEY_VIDEO_ID to it.id,
@@ -280,7 +286,7 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
             val delete = getString(R.string.delete)
             val checkBox = CheckBox(requireContext()).apply {
                 text = getString(R.string.keep_files)
-                isChecked = true
+                isChecked = false
             }
             val checkBoxView = LinearLayout(requireContext()).apply {
                 addView(checkBox)
@@ -291,7 +297,14 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
                 .setTitle(delete)
                 .setMessage(getString(R.string.are_you_sure))
                 .setView(checkBoxView)
-                .setPositiveButton(delete) { _, _ -> viewModel.delete(it, checkBox.isChecked) }
+                .setPositiveButton(delete) { _, _ ->
+                    viewModel.delete(it, checkBox.isChecked)
+                    if (checkBox.isChecked) {
+                        Snackbar.make(binding.root, getString(R.string.leftover_files_kept), Snackbar.LENGTH_LONG)
+                            .setAction(R.string.leftover_files_delete) { leftoverUi.open() }
+                            .show()
+                    }
+                }
                 .setNegativeButton(getString(android.R.string.cancel), null)
                 .show()
         })

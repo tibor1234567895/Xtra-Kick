@@ -83,6 +83,16 @@
                 android:textColor="?android:attr/textColorSecondary"
                 tools:text="Duration 69:13:37" />
 
+            <TextView
+                android:id="@+id/sizeEstimate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:layout_marginTop="5dp"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?android:attr/textColorSecondary"
+                tools:text="Estimated size: ~1.2 GB" />
+
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

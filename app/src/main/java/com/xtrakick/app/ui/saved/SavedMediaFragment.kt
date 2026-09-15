@@ -13,6 +13,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
+import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.ui.AppBarConfiguration
@@ -29,6 +30,7 @@ import com.xtrakick.app.ui.saved.bookmarks.BookmarksFragment
 import com.xtrakick.app.ui.saved.downloads.DownloadsFragment
 import com.xtrakick.app.ui.saved.filters.FiltersFragment
 import com.xtrakick.app.ui.search.SearchPagerFragmentDirections
+import com.xtrakick.app.ui.settings.SettingsViewModel
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
@@ -46,6 +48,8 @@ class SavedMediaFragment : Fragment(), Scrollable, FragmentHost {
     private var _binding: FragmentMediaBinding? = null
     private val binding get() = _binding!!
     private val viewModel: SavedPagerViewModel by viewModels()
+    private val settingsViewModel: SettingsViewModel by activityViewModels()
+    private val leftoverUi by lazy { LeftoverFilesUi(this, settingsViewModel) }
     private var folderResultLauncher: ActivityResultLauncher<Intent>? = null
     private var fileResultLauncher: ActivityResultLauncher<Intent>? = null
 
@@ -136,9 +140,14 @@ class SavedMediaFragment : Fragment(), Scrollable, FragmentHost {
                         })
                         true
                     }
+                    R.id.cleanLeftoverFiles -> {
+                        leftoverUi.open()
+                        true
+                    }
                     else -> false
                 }
             }
+            leftoverUi.attachResultToasts()
             val tabList = requireContext().prefs().getString(AppConstants.UI_SAVED_TABS, null).let { tabPref ->
                 val defaultTabs = AppConstants.DEFAULT_SAVED_TABS.split(',')
                 if (tabPref != null) {
@@ -217,6 +226,7 @@ class SavedMediaFragment : Fragment(), Scrollable, FragmentHost {
                     }
                     toolbar.menu.findItem(R.id.importFolders).isVisible = f is DownloadsFragment
                     toolbar.menu.findItem(R.id.importFiles).isVisible = f is DownloadsFragment
+                    toolbar.menu.findItem(R.id.cleanLeftoverFiles).isVisible = f is DownloadsFragment
                 }
             }, false)
             ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->

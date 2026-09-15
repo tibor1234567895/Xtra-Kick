@@ -21,6 +21,7 @@ import coil3.network.NetworkRequest
 import coil3.network.NetworkResponse
 import coil3.network.NetworkResponseBody
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.svg.SvgDecoder
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.DiagnosticCoilLogger
@@ -210,6 +211,7 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                 logger(DiagnosticCoilLogger(coil3.util.Logger.Level.Error))
             }
             components {
+                add(SvgDecoder.Factory())
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     add(AnimatedImageDecoder.Factory())
                 } else {

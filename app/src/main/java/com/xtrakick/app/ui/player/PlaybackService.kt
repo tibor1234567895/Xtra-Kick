@@ -39,6 +39,7 @@ import androidx.media3.exoplayer.upstream.ParsingLoadable
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.model.VideoPosition
@@ -53,7 +54,6 @@ import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.prefs
-import com.xtrakick.app.util.chat.KickViewerWatchWebSocket
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import dagger.Lazy
@@ -61,7 +61,6 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -136,49 +135,27 @@ class PlaybackService : MediaSessionService() {
     private var lastSavedPosition: Long? = null
     private var savePositionTimer: Timer? = null
     private var idleStopTimer: Timer? = null
-    private val kickViewerWatchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var kickViewerWatch: KickViewerWatchWebSocket? = null
-    private var kickViewerWatchJob: Job? = null
-    private var activeKickChannelId: String? = null
-    private var activeKickLivestreamId: String? = null
-    private var activeKickChannelLogin: String? = null
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val watchOwner by lazy {        KickViewerWatchOwner(
+            kickRepository = kickRepository,
+            trustManager = trustManager,
+            debugLogging = BuildConfig.DEBUG,
+            isRewardsEnabled = { prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true) },
+            isPlaying = { mediaSession?.player?.isPlaying == true },
+        )
+    }
     private val rewardsPreferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == AppConstants.KICK_DAILY_REWARDS_ENABLED) {
-            if (prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)) {
-                if (mediaSession?.player?.isPlaying == true) {
-                    startKickViewerWatchIfNeeded()
-                }
-            } else {
-                stopKickViewerWatch()
-            }
+            watchOwner.onRewardsToggle(prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true))
         }
     }
 
     private fun startKickViewerWatchIfNeeded() {
-        val channelId = activeKickChannelId?.takeIf { it.isNotBlank() }
-        val livestreamId = activeKickLivestreamId?.takeIf { it.isNotBlank() }
-        val channelLogin = activeKickChannelLogin?.takeIf { it.isNotBlank() }
-        if (channelId == null && livestreamId == null && channelLogin == null) return
-        if (!prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)) return
-        if (kickViewerWatchJob?.isActive == true) return
-        kickViewerWatch = KickViewerWatchWebSocket(
-            kickRepository = kickRepository,
-            channelId = channelId,
-            livestreamId = livestreamId,
-            channelLogin = channelLogin,
-            trustManager = trustManager,
-            debugLogging = BuildConfig.DEBUG,
-        ).also { watch ->
-            kickViewerWatchJob = watch.start(kickViewerWatchScope)
-        }
+        watchOwner.startIfNeeded()
     }
 
     private fun stopKickViewerWatch() {
-        val watch = kickViewerWatch ?: return
-        kickViewerWatch = null
-        kickViewerWatchJob?.cancel()
-        kickViewerWatchJob = null
-        kickViewerWatchScope.launch { watch.stop() }
+        watchOwner.stop()
     }
 
     /**
@@ -406,6 +383,7 @@ class PlaybackService : MediaSessionService() {
                             add(SessionCommand(GET_ERROR_CODE, Bundle.EMPTY))
                             add(SessionCommand(GET_MEDIA_PLAYLIST, Bundle.EMPTY))
                             add(SessionCommand(GET_MULTIVARIANT_PLAYLIST, Bundle.EMPTY))
+                            add(SessionCommand(UPDATE_CHANNEL_LOGO, Bundle.EMPTY))
                         }.build()
                         val playerCommands = Player.Commands.Builder()
                             .addAllCommands()
@@ -420,15 +398,13 @@ class PlaybackService : MediaSessionService() {
                                 val title = customCommand.customExtras.getString(TITLE)
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
-                                stopKickViewerWatch()
                                 val isKick = customCommand.customExtras.getBoolean(IS_KICK_STREAM, false)
                                     || customCommand.customExtras.getString(IS_KICK_STREAM).equals(AppConstants.KICK, ignoreCase = true)
-                                activeKickChannelId = customCommand.customExtras.getString(CHANNEL_ID)?.takeIf { isKick }
-                                activeKickLivestreamId = customCommand.customExtras.getString(LIVESTREAM_ID)?.takeIf { isKick }
-                                activeKickChannelLogin = customCommand.customExtras.getString(CHANNEL_LOGIN)?.takeIf { isKick }
-                                if (session.player.isPlaying) {
-                                    startKickViewerWatchIfNeeded()
-                                }
+                                watchOwner.setMetadata(
+                                    customCommand.customExtras.getString(CHANNEL_ID)?.takeIf { isKick },
+                                    customCommand.customExtras.getString(LIVESTREAM_ID)?.takeIf { isKick },
+                                    customCommand.customExtras.getString(CHANNEL_LOGIN)?.takeIf { isKick },
+                                )
                                 logBufferDebug(
                                     "START_STREAM received channel=$channelName uriPresent=${!uri.isNullOrBlank()}"
                                 )
@@ -553,10 +529,7 @@ class PlaybackService : MediaSessionService() {
                                 val title = customCommand.customExtras.getString(TITLE)
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
-                                stopKickViewerWatch()
-                                activeKickChannelId = null
-                                activeKickLivestreamId = null
-                                activeKickChannelLogin = null
+                                watchOwner.clearMetadata()
                                 val newId = customCommand.customExtras.getLong(VIDEO_ID).takeIf { it != 0L }
                                 val newIdString = customCommand.customExtras.getString(VIDEO_ID_STRING)
                                     ?: newId?.toString()
@@ -620,10 +593,7 @@ class PlaybackService : MediaSessionService() {
                                 val title = customCommand.customExtras.getString(TITLE)
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
-                                stopKickViewerWatch()
-                                activeKickChannelId = null
-                                activeKickLivestreamId = null
-                                activeKickChannelLogin = null
+                                watchOwner.clearMetadata()
                                 videoId = null
                                 currentVideoIdString = null
                                 offlineVideoId = null
@@ -677,13 +647,14 @@ class PlaybackService : MediaSessionService() {
                             }
                             START_OFFLINE_VIDEO -> {
                                 val uri = customCommand.customExtras.getString(URI)
+                                if (uri.isNullOrBlank()) {
+                                    DiagnosticLogger.w(TAG, "START_OFFLINE_VIDEO ignored: missing uri")
+                                    Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
+                                } else {
                                 val title = customCommand.customExtras.getString(TITLE)
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
-                                stopKickViewerWatch()
-                                activeKickChannelId = null
-                                activeKickLivestreamId = null
-                                activeKickChannelLogin = null
+                                watchOwner.clearMetadata()
                                 val newId = customCommand.customExtras.getInt(VIDEO_ID).takeIf { it != 0 }
                                 val position = if (offlineVideoId == newId && session.player.currentMediaItem != null) {
                                     session.player.currentPosition
@@ -699,7 +670,7 @@ class PlaybackService : MediaSessionService() {
                                 session.player.setMediaItem(
                                     MediaItem.Builder().apply {
                                         setMediaId(uri.orEmpty())
-                                        setUri(uri?.toUri())
+                                        setUri(uri.toUri())
                                         setMediaMetadata(
                                             MediaMetadata.Builder().apply {
                                                 setTitle(title)
@@ -714,6 +685,23 @@ class PlaybackService : MediaSessionService() {
                                 session.player.prepare()
                                 session.player.playWhenReady = true
                                 session.player.seekTo(position)
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                                }
+                            }
+                            UPDATE_CHANNEL_LOGO -> {
+                                val logo = customCommand.customExtras.getString(CHANNEL_LOGO)
+                                if (!logo.isNullOrBlank()) {
+                                    val currentItem = session.player.currentMediaItem
+                                    if (currentItem != null && currentItem.mediaMetadata.artworkUri == null) {
+                                        val updatedMetadata = currentItem.mediaMetadata.buildUpon()
+                                            .setArtworkUri(logo.toUri())
+                                            .build()
+                                        val updatedItem = currentItem.buildUpon()
+                                            .setMediaMetadata(updatedMetadata)
+                                            .build()
+                                        session.player.replaceMediaItem(session.player.currentMediaItemIndex, updatedItem)
+                                    }
+                                }
                                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                             }
                             TOGGLE_DYNAMICS_PROCESSING -> {
@@ -864,7 +852,7 @@ class PlaybackService : MediaSessionService() {
                 val position = player.currentPosition
                 val vid = videoId
                 val offId = offlineVideoId
-                kickViewerWatchScope.launch {
+                ioScope.launch {
                     if (vid != null) {
                         playerRepository.saveVideoPosition(VideoPosition(vid, position))
                     } else if (offId != null) {
@@ -884,7 +872,7 @@ class PlaybackService : MediaSessionService() {
                     lastSavedPosition = currentPosition
                     val vid = videoId
                     val offId = offlineVideoId
-                    kickViewerWatchScope.launch {
+                    ioScope.launch {
                         if (vid != null) {
                             playerRepository.saveVideoPosition(VideoPosition(vid, currentPosition))
                         } else if (offId != null) {
@@ -905,10 +893,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        kickViewerWatchJob?.cancel()
-        kickViewerWatchJob = null
-        kickViewerWatch = null
-        kickViewerWatchScope.cancel()
+        watchOwner.release()
+        ioScope.cancel()
         sleepTimer?.cancel()
         sleepTimer = null
         savePositionTimer?.cancel()
@@ -1003,6 +989,7 @@ class PlaybackService : MediaSessionService() {
         const val GET_ERROR_CODE = "getErrorCode"
         const val GET_MEDIA_PLAYLIST = "getMediaPlaylist"
         const val GET_MULTIVARIANT_PLAYLIST = "getMultivariantPlaylist"
+        const val UPDATE_CHANNEL_LOGO = "updateChannelLogo"
 
         const val RESULT = "result"
         const val URI = "uri"

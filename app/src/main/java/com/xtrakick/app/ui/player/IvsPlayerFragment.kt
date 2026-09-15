@@ -334,10 +334,23 @@ class IvsPlayerFragment : PlayerFragment() {
         }
         map[AUDIO_ONLY_QUALITY] = getString(R.string.audio_only) to null
         if (map != viewModel.qualities) {
+            val previousQuality = viewModel.quality
             viewModel.qualities = map
-            setDefaultQuality()
+            // Preserve an explicit manual selection across ladder refreshes
+            // (e.g. post-rebuffer repopulate). Only fall back to default when
+            // the current key vanished; otherwise re-applying the same quality
+            // would flicker renditions after every stall.
+            if (previousQuality == null || !map.containsKey(previousQuality)) {
+                setDefaultQuality()
+            } else {
+                viewModel.quality = previousQuality
+            }
             changePlayerMode()
-            changeQuality(viewModel.quality)
+            if (viewModel.quality != previousQuality || !qualitiesByKey.containsKey(previousQuality)) {
+                changeQuality(viewModel.quality)
+            } else {
+                setQualityText()
+            }
         }
     }
 
@@ -368,6 +381,11 @@ class IvsPlayerFragment : PlayerFragment() {
                 .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
         )
         updatePlayingState()
+    }
+
+    override fun updateChannelLogo(logo: String?) {
+        val clean = logo?.takeIf { it.isNotBlank() } ?: return
+        playbackService?.updateChannelLogo(clean)
     }
 
     override fun getCurrentPosition(): Long? = player?.position
@@ -684,6 +702,7 @@ class IvsPlayerFragment : PlayerFragment() {
         )
         if (ivsPlayer != null) {
             if (shouldKeepPlaying) {
+                lastBackgroundPauseAtMs = 0L
                 playbackService?.setBackgroundPlaybackEnabled(true)
                 playbackService?.attachSurface(null)
                 resumeOnStart = false
@@ -698,6 +717,14 @@ class IvsPlayerFragment : PlayerFragment() {
                     playbackService?.pause(clearPlaybackRequest = false)
                     updatePlayingState()
                 }
+                if (resumeOnStart) {
+                    noteBackgroundPause()
+                    DiagnosticLogger.i(
+                        TAG,
+                        "IVS onStop paused shouldKeep=false resumeOnStart=true locked=${isScreenLockedOrOff()} " +
+                            "pip=${activity?.isInPictureInPictureMode}"
+                    )
+                }
             }
             backgroundAudioTransitionRequested = false
             playerListener?.let { ivsPlayer.removeListener(it) }
@@ -707,6 +734,25 @@ class IvsPlayerFragment : PlayerFragment() {
         serviceConnection = null
         playbackService = null
         clearPipDismissState()
+    }
+
+    override fun onScreenOffWhileStopped() {
+        if (!resumeOnStart || !isAdded) return
+        val url = currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL)
+        if (url.isNullOrBlank()) return
+        // Service survived paused (playbackRequested kept). Nudge it to resume
+        // audio now that the device is confirmed locked/off.
+        try {
+            DiagnosticLogger.i(TAG, "IVS late screen-off resume pip=${activity?.isInPictureInPictureMode}")
+            requireContext().startService(
+                Intent(requireContext(), IvsPlayerService::class.java).apply {
+                    action = IvsPlayerService.INTENT_RESUME_BACKGROUND_IF_LOCKED
+                }
+            )
+            resumeOnStart = false
+        } catch (e: Exception) {
+            DiagnosticLogger.w(TAG, "IVS late screen-off resume failed: ${e.message}")
+        }
     }
 
     override fun onDestroyView() {

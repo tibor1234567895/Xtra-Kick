@@ -1,11 +1,16 @@
 package com.xtrakick.app.util
 
+import android.net.http.HttpEngine
 import android.net.http.HttpException
 import android.net.http.UploadDataProvider
 import android.net.http.UploadDataSink
 import android.net.http.UrlRequest
 import android.net.http.UrlResponseInfo
 import android.os.Build
+import android.os.ext.SdkExtensions
+import dagger.Lazy
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import androidx.annotation.RequiresExtension
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.CoroutineStart
@@ -25,9 +30,11 @@ import okio.Buffer
 import okio.BufferedSource
 import okio.ForwardingSource
 import okio.buffer
+import org.chromium.net.CronetEngine
 import org.chromium.net.CronetException
 import org.chromium.net.UrlRequest as CronetUrlRequest
 import org.chromium.net.UrlResponseInfo as CronetUrlResponseInfo
+import java.util.concurrent.ExecutorService
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.OutputStream
@@ -50,22 +57,28 @@ import kotlin.coroutines.resumeWithException
 // - progress reporting interceptors / callbacks
 // - a coroutine cancellable wrapper around OkHttp Call.execute()
 object NetworkUtils {
-    suspend fun <T> Call.useCancellable(block: suspend (Response) -> T): T = coroutineScope {
+    // With cancelCallOnCancellation = false the HTTP call finishes normally even when
+    // the coroutine is cancelled; the caller's result is discarded. Used by downloads
+    // whose segment writes are idempotent so that stopping a download does not
+    // abruptly tear down many TLS connections at once.
+    suspend fun <T> Call.useCancellable(cancelCallOnCancellation: Boolean = true, block: suspend (Response) -> T): T = coroutineScope {
         val call = this@useCancellable
-        val cancellationWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
-            try {
-                awaitCancellation()
-            } finally {
-                call.cancel()
+        val cancellationWatcher = if (cancelCallOnCancellation) {
+            launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    call.cancel()
+                }
             }
-        }
+        } else null
         try {
             withContext(Dispatchers.IO) { call.execute().use { block(it) } }
         } catch (error: Exception) {
             ensureActive()
             throw error
         } finally {
-            cancellationWatcher.cancel()
+            cancellationWatcher?.cancel()
         }
     }
 
@@ -426,4 +439,49 @@ object NetworkUtils {
                 },
             )
         }
+
+    /**
+     * Small-file GET across the three engines. Preserves current behavior:
+     * no timeout, follow redirects, OkHttp fallback. Cancellable.
+     */
+    suspend fun fetchBytesRaw(
+        httpEngine: Lazy<HttpEngine>?,
+        cronetEngine: Lazy<CronetEngine>?,
+        executor: ExecutorService,
+        okHttp: OkHttpClient,
+        networkLibrary: String?,
+        url: String,
+    ): Pair<Int, ByteArray> {
+        if (networkLibrary == "HttpEngine" &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+            httpEngine != null
+        ) {
+            val response = suspendCancellableCoroutine { continuation ->
+                val request = httpEngine.get().newUrlRequestBuilder(
+                    url,
+                    executor,
+                    HttpEngineUtils.byteArrayUrlCallback(continuation)
+                ).build()
+                continuation.invokeOnCancellation { request.cancel() }
+                request.start()
+            }
+            return response.first.httpStatusCode to response.second
+        }
+        if (networkLibrary == "Cronet" && cronetEngine != null) {
+            val response = suspendCancellableCoroutine { continuation ->
+                val request = cronetEngine.get().newUrlRequestBuilder(
+                    url,
+                    getByteArrayCronetCallback(continuation),
+                    executor
+                ).build()
+                continuation.invokeOnCancellation { request.cancel() }
+                request.start()
+            }
+            return response.first.httpStatusCode to response.second
+        }
+        return okHttp.newCall(Request.Builder().url(url).build()).useCancellable { response ->
+            response.code to response.body.bytes()
+        }
+    }
 }

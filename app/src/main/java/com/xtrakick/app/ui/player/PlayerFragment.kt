@@ -183,10 +183,28 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private var wasInPictureInPictureMode = false
     private var isScreenOff = false
     private var screenReceiverRegistered = false
+    protected var lastBackgroundPauseAtMs: Long = 0L
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                Intent.ACTION_SCREEN_OFF -> isScreenOff = true
+                Intent.ACTION_SCREEN_OFF -> {
+                    isScreenOff = true
+                    // Late SCREEN_OFF can arrive after onStop already paused for
+                    // "unlocked PiP" (PIP_CLOSED=false). If locked prefs would keep
+                    // playing, resume in background instead of staying silent.
+                    if (isAdded && view != null && !isResumed) {
+                        val sincePause = SystemClock.uptimeMillis() - lastBackgroundPauseAtMs
+                        if (lastBackgroundPauseAtMs > 0L && sincePause in 0..15_000L) {
+                            try {
+                                if (shouldContinuePlaybackInBackground()) {
+                                    lastBackgroundPauseAtMs = 0L
+                                    onScreenOffWhileStopped()
+                                }
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                }
                 Intent.ACTION_SCREEN_ON -> isScreenOff = false
             }
         }
@@ -239,6 +257,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     open fun seek(position: Long) {}
     open fun seekToLivePosition() {}
     open fun setPlaybackSpeed(speed: Float) {}
+    open fun updateChannelLogo(logo: String?) {}
 
     /** Hold-for-2x is only meaningful where speed does not fight the live edge. */
     open fun isHoldToSpeedAvailable(): Boolean = false
@@ -1371,6 +1390,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             viewModel.stream.collectLatest { stream ->
                                 if (stream != null) {
                                     stream.id?.let { chatFragment?.updateStreamId(it) }
+                                    val logo = stream.channelLogo
+                                    if (!logo.isNullOrBlank() && requireArguments().getString(KEY_CHANNEL_LOGO).isNullOrBlank()) {
+                                        requireArguments().putString(KEY_CHANNEL_LOGO, logo)
+                                        updateChannelLogo(logo)
+                                    }
                                     if (prefs.getBoolean(AppConstants.CHAT_DISABLE, false) ||
                                         !prefs.getBoolean(AppConstants.CHAT_PUBSUB_ENABLED, true) ||
                                         viewersText.text.isNullOrBlank()
@@ -2648,9 +2672,19 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         val targetQuality = targetQualityString?.split("p")
         return targetQuality?.getOrNull(0)?.takeWhile { it.isDigit() }?.toIntOrNull()?.let { targetResolution ->
             val targetFps = targetQuality.getOrNull(1)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 30
+            // Sort high->low so insertion order (localized labels, suffixed IVS
+            // keys like "720p60 2.5 Mbps") can't flip the match.
             val selectableQualities = viewModel.qualities.keys.filter {
                 it != AUDIO_ONLY_QUALITY && it != CHAT_ONLY_QUALITY
-            }
+            }.sortedWith(
+                compareByDescending<String> {
+                    it.substringBefore("p").takeWhile { c -> c.isDigit() }.toIntOrNull() ?: -1
+                }.thenByDescending {
+                    it.substringAfter("p", "").takeWhile { c -> c.isDigit() }.toIntOrNull() ?: 30
+                }.thenBy {
+                    it
+                }
+            )
             val fallbackQuality = selectableQualities.lastOrNull()
             selectableQualities.find { qualityString ->
                 val quality = qualityString.split("p")
@@ -2871,6 +2905,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         if (powerManager?.isInteractive == false) return true
         val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
         if (keyguardManager?.isKeyguardLocked == true) return true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            try {
+                if (keyguardManager?.isDeviceLocked == true) return true
+            } catch (_: Exception) {
+            }
+        }
         val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
                 context.display
@@ -2882,6 +2922,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             (context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.defaultDisplay
         }
         return display?.state != null && display.state != Display.STATE_ON
+    }
+
+    protected fun noteBackgroundPause() {
+        lastBackgroundPauseAtMs = SystemClock.uptimeMillis()
+    }
+
+    protected open fun onScreenOffWhileStopped() {
     }
 
     protected fun shouldContinuePlaybackInBackground(): Boolean {

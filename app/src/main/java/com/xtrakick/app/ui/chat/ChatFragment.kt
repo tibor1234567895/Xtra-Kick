@@ -2424,6 +2424,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 }
                             }
                         }
+                        val density = resources.displayMetrics.density
+                        val rowHeight = (52 * density).toInt()
+                        val maxHeight = (220 * density).toInt()
+                        editText.dropDownAnchor = messageView.id
+                        editText.dropDownWidth = ViewGroup.LayoutParams.MATCH_PARENT
+
                         autoCompleteAdapter = AutoCompleteAdapter(
                             requireContext(),
                             R.layout.auto_complete_emotes_list_item,
@@ -2431,6 +2437,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             viewModel.autoCompleteList,
                         ).apply {
                             setNotifyOnChange(false)
+                            onResultsPublished = { count ->
+                                val targetHeight = if (count > 0) {
+                                    (count * rowHeight).coerceIn(rowHeight, maxHeight)
+                                } else {
+                                    ViewGroup.LayoutParams.WRAP_CONTENT
+                                }
+                                editText.dropDownHeight = targetHeight
+                            }
                             editText.setAdapter(this)
 
                             var previousSize = 0

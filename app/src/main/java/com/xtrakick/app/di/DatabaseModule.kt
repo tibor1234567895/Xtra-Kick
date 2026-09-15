@@ -23,6 +23,9 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import javax.inject.Singleton
 
 @Module
@@ -37,6 +40,12 @@ class DatabaseModule {
     // The DAO providers below are deliberately not @Singleton: AppDatabase is already a
     // singleton and Room caches each DAO inside the generated implementation, so scoping
     // them only added a DoubleCheck wrapper per DAO.
+
+    // Process-lifetime scope for work that must outlive the screen that started it,
+    // e.g. deleting a download's segment files after the Downloads list is closed.
+    @Singleton
+    @Provides
+    fun providesApplicationScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Provides
     fun providesVideosDao(database: AppDatabase): VideosDao = database.videos()
