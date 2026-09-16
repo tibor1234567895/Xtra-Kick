@@ -120,6 +120,7 @@ class MainActivity : AppCompatActivity() {
         const val INTENT_OPEN_PLAYER = "com.xtrakick.app.OPEN_PLAYER"
         const val INTENT_START_AUDIO_ONLY = "com.xtrakick.app.START_AUDIO_ONLY"
         const val INTENT_PLAY_PAUSE_PLAYER = "com.xtrakick.app.PLAY_PAUSE_PLAYER"
+        const val INTENT_MUTE_UNMUTE_PLAYER = "com.xtrakick.app.MUTE_UNMUTE_PLAYER"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -152,6 +153,9 @@ class MainActivity : AppCompatActivity() {
                 }
                 INTENT_PLAY_PAUSE_PLAYER -> {
                     playerFragment?.playPause()
+                }
+                INTENT_MUTE_UNMUTE_PLAYER -> {
+                    playerFragment?.toggleMute()
                 }
             }
         }
@@ -435,6 +439,7 @@ class MainActivity : AppCompatActivity() {
             IntentFilter().apply {
                 addAction(INTENT_START_AUDIO_ONLY)
                 addAction(INTENT_PLAY_PAUSE_PLAYER)
+                addAction(INTENT_MUTE_UNMUTE_PLAYER)
             },
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
@@ -786,16 +791,25 @@ class MainActivity : AppCompatActivity() {
                     if (!login.isNullOrBlank() && stream.source.equals(AppConstants.KICK, true)) {
                         lifecycleScope.launch {
                             if (stream.profileImageUrl.isNullOrBlank()) {
-                                stream.profileImageUrl = runCatching {
-                                    localFollowChannelRepository.getFollow(stream.channelId, login)?.channelLogo
-                                }.getOrNull()?.takeIf { it.isNotBlank() }
+                                stream.profileImageUrl = kickRepository.getCachedChannel(login)?.user?.profileImage
+                                    ?: runCatching {
+                                        localFollowChannelRepository.getFollow(stream.channelId, login)?.channelLogo
+                                    }.getOrNull()?.takeIf { it.isNotBlank() }
                             }
+                            var canonicalId = stream.channelId
                             val livestream = if (stream.profileImageUrl.isNullOrBlank()) {
                                 val channel = runCatching { kickRepository.getChannel(login) }.getOrNull()
+                                channel?.id?.toString()?.let { canonicalId = it }
                                 channel?.user?.profileImage?.takeIf { it.isNotBlank() }?.let { stream.profileImageUrl = it }
-                                channel?.livestream
+                                channel?.livestream ?: runCatching { kickRepository.getChannelLivestream(login) }.getOrNull()
                             } else {
                                 runCatching { kickRepository.getChannelLivestream(login) }.getOrNull()
+                            }
+                            stream.profileImageUrl?.takeIf { it.isNotBlank() }?.let { logo ->
+                                val existing = runCatching { localFollowChannelRepository.getFollow(canonicalId, login) }.getOrNull()
+                                if (existing != null && existing.channelLogo != logo) {
+                                    localFollowChannelRepository.upsertLocalFollow(canonicalId, login, stream.channelName, logo)
+                                }
                             }
                             if (livestream != null) {
                                 startStream(stream)

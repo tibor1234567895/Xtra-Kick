@@ -140,7 +140,9 @@ class ShownNotificationsRepository @Inject constructor(
                         viewerCount = live.viewerCount,
                         startedAt = live.startedAt,
                         thumbnailUrl = live.thumbnail,
-                        profileImageUrl = live.profilePicture ?: follow?.channelLogo,
+                        profileImageUrl = live.profilePicture
+                            ?: follow?.channelLogo
+                            ?: live.slug?.let { kickRepository.getCachedChannel(it)?.user?.profileImage },
                     )
                     resolvedStreams.add(stream)
                 }

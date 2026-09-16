@@ -934,10 +934,18 @@ class SettingsActivity : AppCompatActivity() {
                 (requireActivity() as? SettingsActivity)?.setResult()
                 true
             }
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-                findPreference<SwitchPreferenceCompat>(AppConstants.PLAYER_PICTURE_IN_PICTURE)?.isVisible = false
-            } else {
-                findPreference<SwitchPreferenceCompat>(AppConstants.PLAYER_PICTURE_IN_PICTURE)?.onPreferenceChangeListener = changeListener
+            val isPipSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+            listOf(
+                AppConstants.PLAYER_PICTURE_IN_PICTURE,
+                AppConstants.PIP_SHOW_AUDIO_ONLY,
+                AppConstants.PIP_SHOW_MUTE,
+                AppConstants.PIP_REDUCED_VOLUME_LEVEL
+            ).forEach { key ->
+                findPreference<Preference>(key)?.apply {
+                    isVisible = isPipSupported
+                    if (isPipSupported) onPreferenceChangeListener = changeListener
+                }
             }
             findPreference<SwitchPreferenceCompat>(AppConstants.PLAYER_BACKGROUND_AUDIO)?.onPreferenceChangeListener = changeListener
             findPreference<SwitchPreferenceCompat>(AppConstants.PLAYER_BACKGROUND_AUDIO_LOCKED)?.onPreferenceChangeListener = changeListener

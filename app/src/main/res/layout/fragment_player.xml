@@ -35,6 +35,13 @@
                     android:layout_height="match_parent"
                     android:visibility="gone" />
 
+                <ImageView
+                    android:id="@+id/playerFreezeFrame"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:scaleType="fitCenter"
+                    android:visibility="gone" />
+
             </androidx.media3.ui.AspectRatioFrameLayout>
 
             <androidx.media3.ui.SubtitleView

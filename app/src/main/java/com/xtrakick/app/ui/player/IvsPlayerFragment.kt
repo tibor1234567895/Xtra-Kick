@@ -146,8 +146,15 @@ class IvsPlayerFragment : PlayerFragment() {
                                 )
                             }
                         } else if (state == Player.State.PLAYING) {
+                            clearFreezeFrame()
                             lastBufferRecoveryTimeMs = SystemClock.uptimeMillis()
                             runIvsOp("fragment-stay-playing") { it.setRebufferToLive(false) }
+                        } else if ((state == Player.State.READY || state == Player.State.ENDED) &&
+                            playbackService?.isPlaybackRequested() == false &&
+                            lastPausedTimestampMs == 0L
+                        ) {
+                            noteStreamPaused()
+                            captureFreezeFrame()
                         }
                         if (state == Player.State.READY || state == Player.State.PLAYING) {
                             if (!viewModel.loaded.value) {
@@ -396,9 +403,17 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun playPause() {
         when (player?.state) {
-            Player.State.PLAYING -> playbackService?.pause(clearPlaybackRequest = true)
+            Player.State.PLAYING -> {
+                noteStreamPaused()
+                captureFreezeFrame()
+                playbackService?.pause(clearPlaybackRequest = true)
+            }
             Player.State.READY,
-            Player.State.ENDED -> playbackService?.play()
+            Player.State.ENDED -> {
+                if (!isPausedLiveStreamStale() || !reloadIvsLiveStreamWithFreshUrl("stale pause resume")) {
+                    playbackService?.play()
+                }
+            }
             Player.State.IDLE -> {
                 if (!reloadIvsLiveStreamWithFreshUrl("idle play")) {
                     currentUrl?.let { startStream(it) } ?: playbackService?.play()
@@ -445,9 +460,9 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun changeVolume(volume: Float) {
-        super.changeVolume(volume)
         runIvsOp("fragment-set-volume") { it.setVolume(volume) }
         prefs.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
+        super.changeVolume(volume)
     }
 
     override fun updateProgress() {
@@ -667,6 +682,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun close() {
+        clearFreezeFrame()
         binding.playerControls.root.removeCallbacks(updateProgressAction)
         val service = playbackService
         val ivsPlayer = service?.player

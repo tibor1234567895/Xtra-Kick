@@ -33,11 +33,13 @@ import android.view.KeyEvent
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
-import androidx.media3.common.util.BitmapLoader
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DataSourceBitmapLoader
-import androidx.media3.session.CacheBitmapLoader
 import androidx.media3.session.DefaultMediaNotificationProvider
+import coil3.imageLoader
+import coil3.request.Disposable
+import coil3.request.ImageRequest
+import coil3.request.target
+import coil3.toBitmap
 import com.xtrakick.app.BuildConfig
 import com.amazonaws.ivs.player.MediaPlayer
 import com.amazonaws.ivs.player.Player
@@ -48,8 +50,6 @@ import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
-import com.google.common.util.concurrent.FutureCallback
-import com.google.common.util.concurrent.Futures
 import dagger.hilt.android.AndroidEntryPoint
 import java.util.concurrent.Executors
 import javax.inject.Inject
@@ -93,9 +93,10 @@ class IvsPlayerService : Service() {
     private var session: MediaSession? = null
     private var notificationManager: NotificationManager? = null
     private var applicationHandler: Handler? = null
-    private var bitmapLoader: BitmapLoader? = null
-    private var metadataBitmapCallback: FutureCallback<Bitmap>? = null
-    private var notificationBitmapCallback: FutureCallback<Bitmap>? = null
+    private var currentArtworkBitmap: Bitmap? = null
+    private var loadedArtworkUrl: String? = null
+    private var loadingArtworkUrl: String? = null
+    private var artworkDisposable: Disposable? = null
     private var backgroundPlaybackEnabled = false
     private var hasStablePlayback = false
     private var playbackRequested = false
@@ -628,6 +629,10 @@ class IvsPlayerService : Service() {
         this.title = title
         this.channelName = channelName
         this.channelLogo = channelLogo
+        if (channelLogo != loadedArtworkUrl) {
+            currentArtworkBitmap = null
+            loadedArtworkUrl = null
+        }
         setKickViewerMetadata(channelId, livestreamId, channelLogin)
         this.startedAtMs = streamStartedAtMs ?: 0L
         saveLastPlaybackRequest(url, title, channelName, channelLogo, startedAtMs, channelId, livestreamId, channelLogin)
@@ -651,6 +656,7 @@ class IvsPlayerService : Service() {
             }
             it.play()
         }
+        channelLogo?.takeIf { it.isNotBlank() }?.let { loadArtwork(it) }
         updatePlaybackState()
         updateMetadata()
         updateNotification()
@@ -660,8 +666,15 @@ class IvsPlayerService : Service() {
         val clean = logo?.takeIf { it.isNotBlank() } ?: return
         if (this.channelLogo != clean) {
             this.channelLogo = clean
+            if (loadedArtworkUrl != clean) {
+                currentArtworkBitmap = null
+                loadedArtworkUrl = null
+                loadArtwork(clean)
+            }
             updateMetadata()
             updateNotification()
+        } else if (currentArtworkBitmap == null) {
+            loadArtwork(clean)
         }
     }
 
@@ -943,34 +956,42 @@ class IvsPlayerService : Service() {
         )
     }
 
-    private fun updateMetadata() {
-        val bitmap = channelLogo?.let { channelLogo ->
-            val loader = bitmapLoader ?: CacheBitmapLoader(DataSourceBitmapLoader.Builder(this).build()).also { bitmapLoader = it }
-            loader.loadBitmap(Uri.parse(channelLogo)).let { bitmapFuture ->
-                metadataBitmapCallback = null
-                if (bitmapFuture.isDone) {
-                    try {
-                        bitmapFuture.get()
-                    } catch (_: Exception) {
-                        null
-                    }
-                } else {
-                    val callback = object : FutureCallback<Bitmap> {
-                        override fun onSuccess(result: Bitmap) {
-                            if (this == metadataBitmapCallback) {
-                                setMetadata(result)
-                            }
-                        }
+    private fun loadArtwork(url: String) {
+        if (url.isBlank()) return
+        if (loadedArtworkUrl == url && currentArtworkBitmap != null) return
+        if (loadingArtworkUrl == url) return
 
-                        override fun onFailure(t: Throwable) = Unit
+        artworkDisposable?.dispose()
+        artworkDisposable = null
+        loadingArtworkUrl = url
+
+        artworkDisposable = imageLoader.enqueue(
+            ImageRequest.Builder(this)
+                .data(url)
+                .target(
+                    onSuccess = { image ->
+                        loadingArtworkUrl = null
+                        artworkDisposable = null
+                        if (this.channelLogo == url) {
+                            val bitmap = image.toBitmap()
+                            currentArtworkBitmap = bitmap
+                            loadedArtworkUrl = url
+                            setMetadata(bitmap)
+                            sendNotification(bitmap)
+                        }
+                    },
+                    onError = {
+                        loadingArtworkUrl = null
+                        artworkDisposable = null
                     }
-                    metadataBitmapCallback = callback
-                    applicationHandler?.let { Futures.addCallback(bitmapFuture, callback, it::post) }
-                    null
-                }
-            }
-        }
-        setMetadata(bitmap)
+                )
+                .build()
+        )
+    }
+
+    private fun updateMetadata() {
+        channelLogo?.takeIf { it.isNotBlank() }?.let(::loadArtwork)
+        setMetadata(currentArtworkBitmap)
     }
 
     private fun setMetadata(bitmap: Bitmap?) {
@@ -987,8 +1008,9 @@ class IvsPlayerService : Service() {
                     putText(MediaMetadata.METADATA_KEY_TITLE, title)
                     putText(MediaMetadata.METADATA_KEY_ARTIST, channelName)
                     if (bitmap != null) {
-                        putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, bitmap)
+                        putBitmap(MediaMetadata.METADATA_KEY_ART, bitmap)
                         putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, bitmap)
+                        putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, bitmap)
                     }
                     // expose the stream uptime as a synthetic timeline so system UI
                     // can render a seekbar for live streams too
@@ -1006,33 +1028,8 @@ class IvsPlayerService : Service() {
     }
 
     private fun updateNotification() {
-        val bitmap = channelLogo?.let { channelLogo ->
-            val loader = bitmapLoader ?: CacheBitmapLoader(DataSourceBitmapLoader.Builder(this).build()).also { bitmapLoader = it }
-            loader.loadBitmap(Uri.parse(channelLogo)).let { bitmapFuture ->
-                notificationBitmapCallback = null
-                if (bitmapFuture.isDone) {
-                    try {
-                        bitmapFuture.get()
-                    } catch (_: Exception) {
-                        null
-                    }
-                } else {
-                    val callback = object : FutureCallback<Bitmap> {
-                        override fun onSuccess(result: Bitmap) {
-                            if (this == notificationBitmapCallback) {
-                                sendNotification(result)
-                            }
-                        }
-
-                        override fun onFailure(t: Throwable) = Unit
-                    }
-                    notificationBitmapCallback = callback
-                    applicationHandler?.let { Futures.addCallback(bitmapFuture, callback, it::post) }
-                    null
-                }
-            }
-        }
-        sendNotification(bitmap)
+        channelLogo?.takeIf { it.isNotBlank() }?.let(::loadArtwork)
+        sendNotification(currentArtworkBitmap)
     }
 
     private fun sendNotification(bitmap: Bitmap?) {
@@ -1274,8 +1271,11 @@ class IvsPlayerService : Service() {
 
     override fun onDestroy() {
         watchOwner.release()
-        metadataBitmapCallback = null
-        notificationBitmapCallback = null
+        artworkDisposable?.dispose()
+        artworkDisposable = null
+        loadingArtworkUrl = null
+        currentArtworkBitmap = null
+        loadedArtworkUrl = null
         applicationHandler?.removeCallbacksAndMessages(null)
         wifiLockSafetyRunnable = null
         notificationManager?.cancel(NOTIFICATION_ID)

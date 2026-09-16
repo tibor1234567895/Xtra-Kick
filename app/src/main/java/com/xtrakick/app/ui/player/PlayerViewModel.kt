@@ -211,7 +211,7 @@ class PlayerViewModel @Inject constructor(
                     }
                 }
             }
-        } else if (viewerCount == null) {
+        } else if (viewerCount == null || stream.value?.channelLogo.isNullOrBlank()) {
             viewModelScope.launch {
                 try {
                     updateStream(channelId, channelLogin, networkLibrary, kickPublicApiHeaders, kickWebHeaders, enableIntegrity)

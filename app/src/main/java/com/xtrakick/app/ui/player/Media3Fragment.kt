@@ -246,7 +246,17 @@ class Media3Fragment : PlayerFragment() {
                     chatFragment?.updateSpeed(playbackParameters.speed)
                 }
 
+                override fun onRenderedFirstFrame() {
+                    clearFreezeFrame()
+                }
+
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (isPlaying) {
+                        clearFreezeFrame()
+                    } else if (player?.playWhenReady == false && lastPausedTimestampMs == 0L) {
+                        noteStreamPaused()
+                        captureFreezeFrame()
+                    }
                     updateProgress()
                     if (!prefs.getBoolean(AppConstants.PLAYER_KEEP_SCREEN_ON_WHEN_PAUSED, false) && canEnterPictureInPicture()) {
                         requireView().keepScreenOn = isPlaying
@@ -791,17 +801,25 @@ class Media3Fragment : PlayerFragment() {
     override fun playPause() {
         player?.let { player ->
             if (player.playbackState == Player.STATE_ENDED) {
+                clearFreezeFrame()
                 player.seekToDefaultPosition()
                 player.play()
                 controllerAutoHide = true
                 rescheduleHideController()
             } else if (player.isPlaying || player.playWhenReady) {
+                noteStreamPaused()
+                captureFreezeFrame()
                 player.pause()
             } else {
-                if (player.playbackState == Player.STATE_IDLE) {
-                    player.prepare()
+                if (isPausedLiveStreamStale()) {
+                    player.seekToDefaultPosition()
+                    reloadKickStreamWithFreshResolvedUrl(reason = "stale pause resume", delayMs = 0L)
+                } else {
+                    if (player.playbackState == Player.STATE_IDLE) {
+                        player.prepare()
+                    }
+                    player.play()
                 }
-                player.play()
                 controllerAutoHide = true
                 rescheduleHideController()
             }
@@ -833,9 +851,9 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun changeVolume(volume: Float) {
-        super.changeVolume(volume)
         player?.volume = volume
         prefs.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
+        super.changeVolume(volume)
     }
 
     override fun updateProgress() {
@@ -1230,6 +1248,7 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun close() {
+        clearFreezeFrame()
         savePosition()
         player?.pause()
         player?.stop()

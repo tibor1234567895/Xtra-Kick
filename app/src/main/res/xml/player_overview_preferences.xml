@@ -10,6 +10,36 @@
 
     <SwitchPreferenceCompat
         android:defaultValue="true"
+        android:dependency="player_picture_in_picture"
+        android:key="pip_show_audio_only"
+        android:summary="@string/pip_show_audio_only_summary"
+        android:title="@string/pip_show_audio_only"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:dependency="player_picture_in_picture"
+        android:key="pip_show_mute"
+        android:summary="@string/pip_show_mute_summary"
+        android:title="@string/pip_show_mute"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SeekBarPreference
+        android:defaultValue="0"
+        android:dependency="pip_show_mute"
+        android:key="pip_reduced_volume_level"
+        android:max="50"
+        android:summary="@string/pip_reduced_volume_level_summary"
+        android:title="@string/pip_reduced_volume_level"
+        app:iconSpaceReserved="false"
+        app:min="0"
+        app:showSeekBarValue="true"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
         android:key="player_background_audio"
         android:title="@string/use_background_audio"
         app:iconSpaceReserved="false"

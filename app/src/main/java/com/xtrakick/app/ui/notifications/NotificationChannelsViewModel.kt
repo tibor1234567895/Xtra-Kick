@@ -118,7 +118,7 @@ class NotificationChannelsViewModel @Inject constructor(
                     if (canonical != null) {
                         onChannelsEnabled()
                         if (entry.followed) {
-                            localFollowChannelRepository.upsertLocalFollow(canonical, entry.login, entry.name)
+                            localFollowChannelRepository.upsertLocalFollow(canonical, entry.login, entry.name, entry.logoUrl)
                         }
                         if (canonical != entry.id) {
                             _channels.value = _channels.value?.map {
@@ -288,7 +288,7 @@ class NotificationChannelsViewModel @Inject constructor(
                     val draft = drafts[matchedIndex]
                     drafts[matchedIndex] = draft.copy(id = row.channelId, rowId = row.channelId)
                     viewModelScope.launch(Dispatchers.IO) {
-                        localFollowChannelRepository.upsertLocalFollow(row.channelId, draft.login, draft.name)
+                        localFollowChannelRepository.upsertLocalFollow(row.channelId, draft.login, draft.name, draft.logoUrl)
                     }
                 } else if (resolved?.login != null) {
                     drafts.add(Draft(

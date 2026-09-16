@@ -615,6 +615,16 @@
     <string name="unfollow">Unfollow</string>
     <string name="mute">Mute</string>
     <string name="muted">Muted</string>
+    <string name="unmute">Unmute</string>
+    <string name="pip_controls">Picture-in-Picture controls</string>
+    <string name="pip_show_audio_only">Audio-Only action</string>
+    <string name="pip_show_audio_only_summary">Show Audio-Only quick action in PiP</string>
+    <string name="pip_show_mute">Mute/Unmute action</string>
+    <string name="pip_show_mute_summary">Show Mute/Unmute quick action in PiP</string>
+    <string name="pip_reduced_volume_level">Reduced volume level</string>
+    <string name="pip_reduced_volume_level_summary">Lower volume to this percentage instead of muting (0% = mute)</string>
+    <string name="lower_volume">Lower volume</string>
+    <string name="restore_volume">Restore volume</string>
     <string name="search_user">Get user by ID/login</string>
     <string name="dynamic_dark">Dynamic dark</string>
     <string name="dynamic_light">Dynamic light</string>

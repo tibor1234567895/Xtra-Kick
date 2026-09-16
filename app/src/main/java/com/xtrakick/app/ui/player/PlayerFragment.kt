@@ -18,16 +18,20 @@ import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.text.format.DateFormat
 import android.text.format.DateUtils
 import android.util.TypedValue
 import android.view.Display
+import android.view.PixelCopy
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -325,8 +329,45 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             )
         }
     }
+    protected var lastPipPlaying: Boolean = true
+    private var preMuteVolume: Float? = null
+    protected var isVolumeReduced: Boolean = false
+
+    private fun getPipReducedVolume(): Float =
+        prefs.getInt(AppConstants.PIP_REDUCED_VOLUME_LEVEL, 0).coerceIn(0, 50) / 100f
+
+    private fun isVolumeDuckedOrMuted(currentVol: Float, targetVol: Float): Boolean =
+        isVolumeReduced || currentVol <= 0f || (targetVol > 0f && currentVol <= targetVol)
+
+    open fun toggleMute() {
+        val targetVol = getPipReducedVolume()
+        val currentVol = getCurrentVolume() ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
+
+        if (isVolumeDuckedOrMuted(currentVol, targetVol)) {
+            isVolumeReduced = false
+            val minRestore = if (targetVol > 0f) targetVol else 0f
+            val restore = preMuteVolume?.takeIf { it > minRestore }
+                ?: prefs.getFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, -1f).takeIf { it > minRestore }
+                ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100).takeIf { it > (minRestore * 100).toInt() }?.toFloat()?.div(100f) ?: 1f)
+            changeVolume(restore)
+        } else {
+            isVolumeReduced = true
+            preMuteVolume = currentVol
+            prefs.edit { putFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, currentVol) }
+            changeVolume(targetVol)
+        }
+    }
+
     open fun changeVolume(volume: Float) {
+        if (volume > getPipReducedVolume()) {
+            preMuteVolume = volume
+            prefs.edit { putFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, volume) }
+            isVolumeReduced = false
+        }
         updateVolumeButtonVisual(volume)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity?.isInPictureInPictureMode == true) {
+            setPipActions(lastPipPlaying)
+        }
     }
 
     fun updateVolumeButtonVisual(volumeFraction: Float? = getCurrentVolume()) {
@@ -1391,7 +1432,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 if (stream != null) {
                                     stream.id?.let { chatFragment?.updateStreamId(it) }
                                     val logo = stream.channelLogo
-                                    if (!logo.isNullOrBlank() && requireArguments().getString(KEY_CHANNEL_LOGO).isNullOrBlank()) {
+                                    if (!logo.isNullOrBlank() && requireArguments().getString(KEY_CHANNEL_LOGO) != logo) {
                                         requireArguments().putString(KEY_CHANNEL_LOGO, logo)
                                         updateChannelLogo(logo)
                                     }
@@ -2968,53 +3009,90 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     protected fun setPipActions(playing: Boolean) {
+        lastPipPlaying = playing
+        val act = activity ?: return
+        val ctx = context ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
+            act.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
         ) {
-            requireActivity().setPictureInPictureParams(
+            act.setPictureInPictureParams(
                 PictureInPictureParams.Builder().apply {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         setSeamlessResizeEnabled(true)
                     }
-                    setActions(listOf(
-                        RemoteAction(
-                            Icon.createWithResource(requireContext(), R.drawable.baseline_audiotrack_black_24),
-                            getString(R.string.audio_only),
-                            getString(R.string.audio_only),
-                            PendingIntent.getBroadcast(
-                                requireContext(),
-                                REQUEST_CODE_AUDIO_ONLY,
-                                Intent(MainActivity.INTENT_START_AUDIO_ONLY).setPackage(requireContext().packageName),
-                                PendingIntent.FLAG_IMMUTABLE
+                    val actions = mutableListOf<RemoteAction>()
+
+                    if (prefs.getBoolean(AppConstants.PIP_SHOW_AUDIO_ONLY, true)) {
+                        actions.add(
+                            RemoteAction(
+                                Icon.createWithResource(ctx, R.drawable.baseline_audiotrack_black_24),
+                                getString(R.string.audio_only),
+                                getString(R.string.audio_only),
+                                PendingIntent.getBroadcast(
+                                    ctx,
+                                    REQUEST_CODE_AUDIO_ONLY,
+                                    Intent(MainActivity.INTENT_START_AUDIO_ONLY).setPackage(ctx.packageName),
+                                    PendingIntent.FLAG_IMMUTABLE
+                                )
                             )
-                        ),
+                        )
+                    }
+
+                    actions.add(
                         if (playing) {
                             RemoteAction(
-                                Icon.createWithResource(requireContext(), R.drawable.baseline_pause_black_48),
+                                Icon.createWithResource(ctx, R.drawable.baseline_pause_black_48),
                                 getString(R.string.pause),
                                 getString(R.string.pause),
                                 PendingIntent.getBroadcast(
-                                    requireContext(),
+                                    ctx,
                                     REQUEST_CODE_PLAY_PAUSE,
-                                    Intent(MainActivity.INTENT_PLAY_PAUSE_PLAYER).setPackage(requireContext().packageName),
+                                    Intent(MainActivity.INTENT_PLAY_PAUSE_PLAYER).setPackage(ctx.packageName),
                                     PendingIntent.FLAG_IMMUTABLE
                                 )
                             )
                         } else {
                             RemoteAction(
-                                Icon.createWithResource(requireContext(), R.drawable.baseline_play_arrow_black_48),
+                                Icon.createWithResource(ctx, R.drawable.baseline_play_arrow_black_48),
                                 getString(R.string.resume),
                                 getString(R.string.resume),
                                 PendingIntent.getBroadcast(
-                                    requireContext(),
+                                    ctx,
                                     REQUEST_CODE_PLAY_PAUSE,
-                                    Intent(MainActivity.INTENT_PLAY_PAUSE_PLAYER).setPackage(requireContext().packageName),
+                                    Intent(MainActivity.INTENT_PLAY_PAUSE_PLAYER).setPackage(ctx.packageName),
                                     PendingIntent.FLAG_IMMUTABLE
                                 )
                             )
                         }
-                    ))
+                    )
+
+                    if (prefs.getBoolean(AppConstants.PIP_SHOW_MUTE, true)) {
+                        val targetVol = getPipReducedVolume()
+                        val currentVol = getCurrentVolume() ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
+                        val isLowered = isVolumeDuckedOrMuted(currentVol, targetVol)
+
+                        val iconRes = PlayerVolumeDialog.getVolumeIconRes(currentVol)
+                        val actionTitle = when {
+                            isLowered -> if (targetVol == 0f) getString(R.string.unmute) else getString(R.string.restore_volume)
+                            else -> if (targetVol == 0f) getString(R.string.mute) else getString(R.string.lower_volume)
+                        }
+                        actions.add(
+                            RemoteAction(
+                                Icon.createWithResource(ctx, iconRes),
+                                actionTitle,
+                                actionTitle,
+                                PendingIntent.getBroadcast(
+                                    ctx,
+                                    REQUEST_CODE_MUTE_UNMUTE,
+                                    Intent(MainActivity.INTENT_MUTE_UNMUTE_PLAYER).setPackage(ctx.packageName),
+                                    PendingIntent.FLAG_IMMUTABLE
+                                )
+                            )
+                        )
+                    }
+
+                    setActions(actions)
                 }.build()
             )
         }
@@ -3139,6 +3217,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     private fun loadStream(forceRefresh: Boolean = false, stalePlaybackUrl: String? = null) {
+        clearFreezeFrame()
         if (forceRefresh) {
             hideOfflineOverlay()
         }
@@ -3315,6 +3394,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 (chatFragment?.childFragmentManager?.findFragmentByTag("imageDialog") as? BottomSheetDialogFragment)?.dismiss()
                 videoStatsOverlay.visibility = View.GONE
                 videoStatsOverlay.removeCallbacks(updateVideoStatsAction)
+                setPipActions(lastPipPlaying)
             } else {
                 useController = true
                 // System PiP hides chat while active; restore the user's landscape preference on exit.
@@ -3354,13 +3434,76 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         return String.format(Locale.US, "%.1fx", scale.coerceIn(MIN_VIDEO_ZOOM_SCALE, MAX_VIDEO_ZOOM_SCALE))
     }
 
+    protected var lastPausedTimestampMs: Long = 0L
+    private var freezeFrameBitmap: Bitmap? = null
+    private var isFreezeFrameActive = false
+
+    protected fun captureFreezeFrame() {
+        val binding = _binding ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val surfaceView = binding.playerSurface
+        val surface = surfaceView.holder.surface
+        if (surface == null || !surface.isValid || surfaceView.width <= 0 || surfaceView.height <= 0) {
+            return
+        }
+        isFreezeFrameActive = true
+        try {
+            val bitmap = Bitmap.createBitmap(surfaceView.width, surfaceView.height, Bitmap.Config.ARGB_8888)
+            PixelCopy.request(
+                surfaceView,
+                bitmap,
+                { copyResult ->
+                    if (copyResult == PixelCopy.SUCCESS && isFreezeFrameActive) {
+                        _binding?.let { b ->
+                            val oldBitmap = freezeFrameBitmap
+                            freezeFrameBitmap = bitmap
+                            b.playerFreezeFrame.setImageBitmap(bitmap)
+                            b.playerFreezeFrame.isVisible = true
+                            oldBitmap?.recycle()
+                        } ?: bitmap.recycle()
+                    } else {
+                        bitmap.recycle()
+                    }
+                },
+                surfaceView.handler ?: Handler(Looper.getMainLooper())
+            )
+        } catch (_: Exception) {
+            // Ignore capture failures (e.g. OOM or invalid surface during transition)
+        }
+    }
+
+    protected fun clearFreezeFrame() {
+        isFreezeFrameActive = false
+        lastPausedTimestampMs = 0L
+        _binding?.let { b ->
+            b.playerFreezeFrame.isVisible = false
+            b.playerFreezeFrame.setImageDrawable(null)
+        }
+        freezeFrameBitmap?.recycle()
+        freezeFrameBitmap = null
+    }
+
+    protected fun noteStreamPaused() {
+        lastPausedTimestampMs = SystemClock.uptimeMillis()
+    }
+
+    protected fun isPausedLiveStreamStale(staleThresholdMs: Long = 30_000L): Boolean =
+        videoType == STREAM &&
+            lastPausedTimestampMs > 0L &&
+            (SystemClock.uptimeMillis() - lastPausedTimestampMs) >= staleThresholdMs
+
     private fun applyVideoZoom() {
         val binding = _binding ?: return
         val zoomView = getVideoZoomView()
-        listOf(binding.aspectRatioFrameLayout, binding.playerSurface, binding.playerTexture).forEach { view ->
+        listOf(
+            binding.aspectRatioFrameLayout,
+            binding.playerSurface,
+            binding.playerTexture,
+            binding.playerFreezeFrame
+        ).forEach { view ->
             view.pivotX = 0f
             view.pivotY = 0f
-            if (view == zoomView) {
+            if (view == zoomView || (zoomView == binding.playerSurface && view == binding.playerFreezeFrame)) {
                 view.scaleX = videoZoomScale
                 view.scaleY = videoZoomScale
                 view.translationX = videoZoomTranslationX
@@ -4122,6 +4265,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         isScreenOff = false
         videoStatsActiveInSession = false
         _binding?.videoStatsOverlay?.removeCallbacks(updateVideoStatsAction)
+        clearFreezeFrame()
         super.onDestroyView()
         _binding = null
     }
@@ -4135,6 +4279,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         private const val REQUEST_CODE_SPEED = 1
         private const val REQUEST_CODE_AUDIO_ONLY = 2
         private const val REQUEST_CODE_PLAY_PAUSE = 3
+        private const val REQUEST_CODE_MUTE_UNMUTE = 4
         private const val MIN_VIDEO_ZOOM_SCALE = 1f
         private const val MAX_VIDEO_ZOOM_SCALE = 8f
         private const val VIDEO_ZOOM_EPSILON = 0.01f

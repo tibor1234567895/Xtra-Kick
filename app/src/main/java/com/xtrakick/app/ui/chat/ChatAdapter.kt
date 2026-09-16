@@ -527,7 +527,7 @@ class ChatAdapter(
                     doOnLayout {
                         if (boundSeq != bindSeq || !isBoundTo(bindKey)) return@doOnLayout
                         val layout = layout ?: return@doOnLayout
-                        if (expanded && previewKey != null) {
+                        if (expanded) {
                             truncatableReplyPreviewKeys.add(previewKey)
                             updateReplyExpandUi(showExpand = true, expanded = true)
                             return@doOnLayout

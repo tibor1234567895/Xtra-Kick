@@ -28,6 +28,7 @@ class FcmSyncManager @Inject constructor(
         private const val FCM_LAST_SYNCED_SIGNATURE = "fcm_last_synced_signature_v1"
     }
 
+    @Suppress("DEPRECATION")
     suspend fun syncSubscriptions(tokenOverride: String? = null): Boolean = withContext(Dispatchers.IO) {
         // Debug builds (.test) are blocked by the Firebase API-key allowlist and must stay
         // out of the prod subscription store until a staging backend exists.
@@ -99,6 +100,7 @@ class FcmSyncManager @Inject constructor(
         }.getOrDefault(false)
     }
 
+    @Suppress("DEPRECATION")
     suspend fun unsubscribe(tokenOverride: String? = null): Boolean = withContext(Dispatchers.IO) {
         val baseUrl = BuildConfig.KICK_OAUTH_BACKEND_BASE_URL.trim().trimEnd('/')
         if (baseUrl.isEmpty() || !baseUrl.startsWith("https://")) return@withContext false
