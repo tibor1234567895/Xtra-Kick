@@ -1,12 +1,12 @@
 package com.xtrakick.app.ui.view
 
 import android.content.Context
+import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ArrayAdapter
-import android.widget.Filter
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
 import coil3.imageLoader
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
@@ -24,27 +24,52 @@ import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
 
-class AutoCompleteAdapter<T>(
-    context: Context,
-    resource: Int,
-    textViewResourceId: Int,
-    private val originalValues: MutableList<T?>
-): ArrayAdapter<T?>(context, resource, textViewResourceId) {
+class AutoCompleteAdapter(
+    private val context: Context,
+    private val onItemClick: (Any) -> Unit
+) : RecyclerView.Adapter<AutoCompleteAdapter.ViewHolder>() {
 
-    private var objects = originalValues
+    private var items: List<Any> = emptyList()
     private val imageLibrary = context.prefs().getString(AppConstants.CHAT_IMAGE_LIBRARY, "0")
 
-    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val view = super.getView(position, convertView, parent)
-        val item = getItem(position)
-        val imageView = view.findViewById<ImageView>(R.id.image)
-        val nameView = view.findViewById<TextView>(R.id.name)
+    fun setItems(newItems: List<Any>) {
+        items = newItems
+        notifyDataSetChanged()
+    }
 
-        if (item is Emote) {
-            nameView?.text = item.name
-            imageView?.let { targetView ->
-                targetView.visibility = View.VISIBLE
-                targetView.setImageDrawable(null)
+    override fun getItemCount(): Int = items.size
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        val view = LayoutInflater.from(parent.context).inflate(
+            R.layout.auto_complete_emotes_list_item,
+            parent,
+            false
+        )
+        return ViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+        holder.bind(items[position])
+    }
+
+    inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val imageView: ImageView = itemView.findViewById(R.id.image)
+        private val nameView: TextView = itemView.findViewById(R.id.name)
+
+        init {
+            itemView.setOnClickListener {
+                val pos = bindingAdapterPosition
+                if (pos != RecyclerView.NO_POSITION && pos < items.size) {
+                    onItemClick(items[pos])
+                }
+            }
+        }
+
+        fun bind(item: Any) {
+            if (item is Emote) {
+                nameView.text = item.name
+                imageView.visibility = View.VISIBLE
+                imageView.setImageDrawable(null)
                 val thumbnailUrl = item.url1x ?: item.url2x ?: item.url3x ?: item.url4x
                 if (imageLibrary == "0" || (imageLibrary == "1" && !item.format.equals("webp", true))) {
                     context.imageLoader.enqueue(
@@ -56,7 +81,7 @@ class AutoCompleteAdapter<T>(
                                 }.build())
                             }
                             crossfade(true)
-                            target(targetView)
+                            target(imageView)
                         }.build()
                     )
                 } else {
@@ -70,69 +95,34 @@ class AutoCompleteAdapter<T>(
                         )
                         .diskCacheStrategy(DiskCacheStrategy.DATA)
                         .transition(DrawableTransitionOptions.withCrossFade())
-                        .into(targetView)
+                        .into(imageView)
                 }
-            }
-        } else {
-            imageView?.apply {
-                setImageDrawable(null)
-                visibility = View.GONE
-            }
-            nameView?.text = (item as? Chatter)?.name ?: item?.toString()
-        }
-        return view
-    }
-
-    var onResultsPublished: ((Int) -> Unit)? = null
-
-    override fun getFilter(): Filter = filter
-
-    private val filter: Filter = object : Filter() {
-        override fun performFiltering(constraint: CharSequence?): FilterResults {
-            if (constraint.isNullOrBlank() || (constraint[0] != ':' && constraint[0] != '@')) {
-                return FilterResults()
-            }
-            val list = synchronized(originalValues) {
-                originalValues.toList()
-            }
-            val prefix = constraint[0]
-            val rawQuery = constraint.substring(1)
-            val queryBody = if (prefix == ':' && rawQuery.endsWith(':')) {
-                rawQuery.dropLast(1)
             } else {
-                rawQuery
+                imageView.setImageDrawable(null)
+                imageView.visibility = View.GONE
+                nameView.text = (item as? Chatter)?.name ?: item.toString()
             }
-
-            val sortedResults = rankAndSort(list, prefix, queryBody)
-            return FilterResults().apply {
-                values = sortedResults
-                count = sortedResults.size
-            }
-        }
-
-        @Suppress("UNCHECKED_CAST")
-        override fun publishResults(constraint: CharSequence?, results: FilterResults?) {
-            val count = results?.count ?: 0
-            objects = (results?.values as? List<T?>)?.toMutableList() ?: mutableListOf()
-            if (results != null && count > 0) {
-                notifyDataSetChanged()
-            } else {
-                notifyDataSetInvalidated()
-            }
-            onResultsPublished?.invoke(count)
         }
     }
 
-    override fun getCount(): Int = objects.size
-
-    override fun getItem(position: Int): T? = objects[position]
-
-    private class ScoredItem<T>(val item: T, val rank: Int, val name: String)
+    private class ScoredItem<T>(
+        val item: T,
+        val rank: Int,
+        val name: String,
+    ) : Comparable<ScoredItem<*>> {
+        override fun compareTo(other: ScoredItem<*>): Int {
+            val rankDiff = rank.compareTo(other.rank)
+            if (rankDiff != 0) return rankDiff
+            val lenDiff = name.length.compareTo(other.name.length)
+            if (lenDiff != 0) return lenDiff
+            return name.compareTo(other.name, ignoreCase = true)
+        }
+    }
 
     companion object {
         const val MAX_AUTOCOMPLETE_RESULTS = 60
 
-        internal fun <T> rankAndSort(items: List<T?>, prefix: Char, queryBody: String): List<T> {
+        fun <T> rankAndSort(items: List<T?>, prefix: Char, queryBody: String): List<T> {
             val scored = ArrayList<ScoredItem<T>>(items.size.coerceAtMost(MAX_AUTOCOMPLETE_RESULTS * 2))
             for (item in items) {
                 if (item == null) continue
@@ -147,11 +137,7 @@ class AutoCompleteAdapter<T>(
                 }
             }
 
-            scored.sortWith(
-                compareBy<ScoredItem<T>> { it.rank }
-                    .thenBy { it.name.length }
-                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }
-            )
+            scored.sort()
 
             val limit = scored.size.coerceAtMost(MAX_AUTOCOMPLETE_RESULTS)
             val result = ArrayList<T>(limit)
@@ -161,15 +147,7 @@ class AutoCompleteAdapter<T>(
             return result
         }
 
-        internal fun getItemName(item: Any?): String {
-            return when (item) {
-                is Emote -> item.name.orEmpty()
-                is Chatter -> item.name.orEmpty()
-                else -> item?.toString().orEmpty().removePrefix(":").removePrefix("@")
-            }
-        }
-
-        internal fun getMatchRank(query: String, target: String): Int {
+        fun getMatchRank(query: String, target: String): Int {
             if (query.isEmpty()) return 1
             if (target.equals(query, ignoreCase = true)) return 0
             if (target.startsWith(query, ignoreCase = true)) return 1
@@ -178,7 +156,7 @@ class AutoCompleteAdapter<T>(
             return -1
         }
 
-        internal fun matchesSubsequence(query: String, target: String): Boolean {
+        fun matchesSubsequence(query: String, target: String): Boolean {
             if (target.length < query.length) return false
             var qIdx = 0
             for (tIdx in 0 until target.length) {

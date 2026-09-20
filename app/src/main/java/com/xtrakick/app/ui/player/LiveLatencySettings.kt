@@ -144,10 +144,15 @@ object LiveLatencySettings {
         }.build()
     }
 
-    fun toLiveConfiguration(config: LiveLatencyConfig): MediaItem.LiveConfiguration {
+    fun toLiveConfiguration(config: LiveLatencyConfig, catchupEnabled: Boolean = true): MediaItem.LiveConfiguration {
         return MediaItem.LiveConfiguration.Builder().apply {
-            config.minPlaybackSpeed?.let { setMinPlaybackSpeed(it) }
-            config.maxPlaybackSpeed?.let { setMaxPlaybackSpeed(it) }
+            if (catchupEnabled) {
+                config.minPlaybackSpeed?.let { setMinPlaybackSpeed(it) }
+                config.maxPlaybackSpeed?.let { setMaxPlaybackSpeed(it) }
+            } else {
+                setMinPlaybackSpeed(1.0f)
+                setMaxPlaybackSpeed(1.0f)
+            }
             setTargetOffsetMs(config.targetOffsetMs)
         }.build()
     }

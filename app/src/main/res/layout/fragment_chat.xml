@@ -95,6 +95,31 @@
                     app:tint="?attr/colorControlNormal"
                     tools:visibility="visible" />
             </LinearLayout>
+
+            <FrameLayout
+                android:id="@+id/autoCompleteContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:background="?android:colorBackground"
+                android:elevation="6dp"
+                android:visibility="gone">
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_gravity="top"
+                    android:background="?android:attr/listDivider" />
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/autoCompleteRecyclerView"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_marginTop="1dp"
+                    android:clipToPadding="false"
+                    android:overScrollMode="ifContentScrolls"
+                    tools:listitem="@layout/auto_complete_emotes_list_item" />
+            </FrameLayout>
         </FrameLayout>
 
         <TextView
@@ -173,8 +198,6 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:completionThreshold="1"
-                android:dropDownAnchor="@id/messageView"
-                android:dropDownWidth="match_parent"
                 android:imeOptions="actionSend|flagNoFullscreen"
                 android:importantForAutofill="no"
                 android:inputType="textCapSentences|textAutoCorrect"

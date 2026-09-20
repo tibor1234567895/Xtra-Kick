@@ -1682,9 +1682,10 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         // Immersive tiles: no permanent labels/X. Focus ring is a brief flash only.
         tile.focusBorder.isVisible = slot.isFocused && focusFlashKey == slot.key
         tile.tileChrome.isVisible = false
+        val isActuallyPlaying = playbackController?.isPlaying(slot.key) == true
         when (val load = slot.loadState) {
             MultiPovLoadState.Loading -> {
-                tile.loadingIndicator.isVisible = true
+                tile.loadingIndicator.isVisible = !isActuallyPlaying
                 tile.errorText.isVisible = false
             }
             MultiPovLoadState.Ready -> {
@@ -1693,12 +1694,14 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             }
             is MultiPovLoadState.Error -> {
                 tile.loadingIndicator.isVisible = false
-                tile.errorText.isVisible = true
-                tile.errorText.text = getString(
-                    R.string.multipov_error_with_retry,
-                    load.message,
-                    getString(R.string.multipov_retry),
-                )
+                tile.errorText.isVisible = !isActuallyPlaying
+                if (!isActuallyPlaying) {
+                    tile.errorText.text = getString(
+                        R.string.multipov_error_with_retry,
+                        load.message,
+                        getString(R.string.multipov_retry),
+                    )
+                }
             }
             MultiPovLoadState.Offline -> {
                 tile.loadingIndicator.isVisible = false

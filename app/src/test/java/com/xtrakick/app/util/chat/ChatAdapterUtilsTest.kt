@@ -108,7 +108,7 @@ class ChatAdapterUtilsTest {
             url3x = "https://files.kick.com/emotes/37217/fullsize",
             url4x = "https://files.kick.com/emotes/37217/fullsize",
             isEmote = true,
-            isAnimated = true,
+            isAnimated = false,
             start = 0,
             end = 1,
         )
@@ -117,6 +117,33 @@ class ChatAdapterUtilsTest {
         val key4x = ChatAdapterUtils.chatImageKeyForTest(image, "4", 30)
 
         assertEquals(key1x, key4x)
+    }
+
+    @Test
+    fun doesNotCreateChatImageKeyForAnimatedImage() {
+        val image = Image(
+            url1x = "https://files.kick.com/emotes/37217/fullsize",
+            isEmote = true,
+            isAnimated = true,
+            start = 0,
+            end = 1,
+        )
+
+        assertNull(ChatAdapterUtils.chatImageKeyForTest(image, "1", 30))
+    }
+
+    @Test
+    fun doesNotCreateChatImageKeyForGifFormat() {
+        val image = Image(
+            url1x = "https://files.kick.com/emotes/37217/fullsize",
+            format = "gif",
+            isEmote = true,
+            isAnimated = false,
+            start = 0,
+            end = 1,
+        )
+
+        assertNull(ChatAdapterUtils.chatImageKeyForTest(image, "1", 30))
     }
 
     @Test

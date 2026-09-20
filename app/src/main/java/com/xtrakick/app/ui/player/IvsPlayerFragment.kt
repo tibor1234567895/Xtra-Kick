@@ -45,12 +45,17 @@ class IvsPlayerFragment : PlayerFragment() {
     private val qualitiesByKey = linkedMapOf<String, Quality>()
     private var currentUrl: String? = null
     private var recoveryInProgress = false
+    private var sameUrlRetryAttempted = false
     private var resumeOnStart = false
     private var backgroundAudioTransitionRequested = false
     private var isCatchingUp = false
     private var pendingAutomaticQualityLog: String? = null
     private var pendingAutomaticQualityTransport: NetworkMonitor.NetworkType? = null
     private var lastBufferRecoveryTimeMs = 0L
+    private val rebufferBreaker = RebufferCircuitBreaker()
+    private var networkLossGraceRunnable: Runnable? = null
+    private var networkPauseApplied = false
+    private var lastBandwidthKbps: Long? = null
 
     private fun playerDebugLog(message: String) {
         if (BuildConfig.DEBUG && prefs.getBoolean(AppConstants.DEBUG_PLAYER_BUFFER_LOGS, false)) {
@@ -136,7 +141,6 @@ class IvsPlayerFragment : PlayerFragment() {
                             resetCatchupState()
                         }
                         if (state == Player.State.BUFFERING) {
-                            runIvsOp("fragment-stay-buffering") { it.setRebufferToLive(false) }
                             val bufferingPlayer = player
                             if (bufferingPlayer != null) {
                                 playerDebugLog(
@@ -145,10 +149,19 @@ class IvsPlayerFragment : PlayerFragment() {
                                         "position=${bufferingPlayer.position}"
                                 )
                             }
+                            // A lone stall is normal; a cluster after playback started means
+                            // the session is stuck (stale URL, wedged estimator) —
+                            // reload with a fresh URL.
+                            if (!recoveryInProgress &&
+                                lastBufferRecoveryTimeMs > 0L &&
+                                rebufferBreaker.record(SystemClock.uptimeMillis())
+                            ) {
+                                playerDebugLog("repeated rebuffering, reloading with fresh URL")
+                                reloadIvsLiveStreamWithFreshUrl("repeated rebuffering")
+                            }
                         } else if (state == Player.State.PLAYING) {
                             clearFreezeFrame()
                             lastBufferRecoveryTimeMs = SystemClock.uptimeMillis()
-                            runIvsOp("fragment-stay-playing") { it.setRebufferToLive(false) }
                         } else if ((state == Player.State.READY || state == Player.State.ENDED) &&
                             playbackService?.isPlaybackRequested() == false &&
                             lastPausedTimestampMs == 0L
@@ -179,7 +192,6 @@ class IvsPlayerFragment : PlayerFragment() {
                     override fun onRebuffering() {
                         binding.bufferingIndicator.isVisible = true
                         resetCatchupState()
-                        runIvsOp("fragment-stay-rebuffer") { it.setRebufferToLive(false) }
                     }
 
                     override fun onSeekCompleted(position: Long) {
@@ -312,6 +324,7 @@ class IvsPlayerFragment : PlayerFragment() {
         }
         updateProgress()
         if (isPlaying) {
+            sameUrlRetryAttempted = false
             rescheduleHideController()
         }
         if (videoType != STREAM && useController) {
@@ -365,8 +378,14 @@ class IvsPlayerFragment : PlayerFragment() {
         val resolvedUrl = url?.takeIf { it.isNotBlank() } ?: return
         hideOfflineOverlay()
         recoveryInProgress = false
+        if (currentUrl != resolvedUrl) {
+            sameUrlRetryAttempted = false
+        }
         currentUrl = resolvedUrl
         requireArguments().putString(KEY_RESOLVED_STREAM_URL, resolvedUrl)
+        rebufferBreaker.reset()
+        lastBandwidthKbps = null
+        lastBufferRecoveryTimeMs = 0L
         viewModel.playlistUrl = null
         viewModel.loaded.value = false
         binding.playerSurface.visibility = View.VISIBLE
@@ -468,7 +487,7 @@ class IvsPlayerFragment : PlayerFragment() {
     override fun updateProgress() {
         with(binding.playerControls) {
             val latency = player?.liveLatency?.takeIf { it > 0L }
-            val catchupEnabled = prefs.getBoolean(AppConstants.PLAYER_IVS_LATENCY_CATCHUP, false)
+            val catchupEnabled = prefs.getBoolean(AppConstants.PLAYER_IVS_LATENCY_CATCHUP, true)
             val latencyConfig = if (catchupEnabled) LiveLatencySettings.resolve(prefs) else null
             val targetOffsetMs = latencyConfig?.targetOffsetMs
             updateLatency(latency, targetOffsetMs)
@@ -543,23 +562,31 @@ class IvsPlayerFragment : PlayerFragment() {
 
         val bw = ivsPlayer.bandwidthEstimate.takeIf { it > 0 }
         val bandwidthEstimate = bw?.let {
-            // Convert bytes/sec to bits/sec if raw value is byte-scale, or format as Kbps
-            val bwKbps = if (it < 100_000_000L && it * 8 <= 1_000_000_000L) {
-                // IVS Android reports bandwidthEstimate in bytes/sec
-                (it * 8) / 1000
-            } else {
-                it / 1000
-            }
-            "$bwKbps Kbps"
+            // SDK reports bits/sec. The raw estimate measures burst capacity
+            // and swings wildly (1M-192M seen on one link), so smooth it into
+            // a usable trend gauge instead of displaying every spike raw.
+            val bwKbps = it / 1000
+            val smoothed = lastBandwidthKbps?.let { last ->
+                (last * SMOOTHED_BANDWIDTH_OLD_WEIGHT + bwKbps * (1f - SMOOTHED_BANDWIDTH_OLD_WEIGHT)).toLong()
+            } ?: bwKbps
+            lastBandwidthKbps = smoothed
+            "$smoothed Kbps"
         }
 
         val liveFps = stats.frameRate.takeIf { it > 0 }
         val targetFps = q.framerate.takeIf { it > 0 }
-        val fpsStr = when {
+        val fpsBase = when {
             liveFps != null && targetFps != null -> "${targetFps.toInt()} (live: $liveFps)"
             targetFps != null -> "${targetFps.toInt()}"
             liveFps != null -> "$liveFps"
             else -> null
+        }
+        // Surface catch-up so latency paydown is visible in stats, not mystery.
+        val fpsStr = if (isCatchingUp && fpsBase != null) {
+            val rate = ivsPlayer.playbackRate
+            "$fpsBase @${String.format(Locale.US, "%.2f", rate)}x"
+        } else {
+            fpsBase
         }
 
         val dropped = stats.droppedFrames
@@ -608,12 +635,20 @@ class IvsPlayerFragment : PlayerFragment() {
         if (wasAudioOnly) {
             exitAudioOnlyMode()
         }
-        val ivsPlayer = player ?: return
+        if (player == null) return
+        // A manual pick acts as a ceiling over adaptive mode (like the official
+        // app): the player may dip below on trouble and climbs back on its own
+        // instead of stalling on a locked rendition.
         when (selectedQuality) {
-            AUTO_QUALITY -> ivsPlayer.setAutoQualityMode(true)
+            AUTO_QUALITY -> runIvsOp("quality-auto") {
+                it.setAutoQualityMode(true)
+                it.setAutoMaxQuality(null)
+            }
             else -> qualitiesByKey[selectedQuality]?.let { quality ->
-                ivsPlayer.setAutoQualityMode(false)
-                ivsPlayer.setQuality(quality, true)
+                runIvsOp("quality-ceiling") {
+                    it.setAutoQualityMode(true)
+                    it.setAutoMaxQuality(quality)
+                }
             }
         }
         persistSelectedQuality(selectedQuality)
@@ -683,6 +718,8 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun close() {
         clearFreezeFrame()
+        cancelNetworkLossGrace()
+        networkPauseApplied = false
         binding.playerControls.root.removeCallbacks(updateProgressAction)
         val service = playbackService
         val ivsPlayer = service?.player
@@ -710,6 +747,8 @@ class IvsPlayerFragment : PlayerFragment() {
             return
         }
         binding.playerControls.root.removeCallbacks(updateProgressAction)
+        cancelNetworkLossGrace()
+        networkPauseApplied = false
         val ivsPlayer = player
         resetCatchupState()
         val shouldKeepPlaying = ivsPlayer?.let { shouldContinueIvsInBackground(it) } ?: false
@@ -779,16 +818,35 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun onNetworkRestored() {
-        if (isResumed && videoType == STREAM && currentUrl != null) {
-            startStream(currentUrl)
+        cancelNetworkLossGrace()
+        // Only a sustained outage pauses + reloads. Brief validation flaps
+        // (roam, revalidation, doze) ride through inside the IVS SDK.
+        if (networkPauseApplied) {
+            networkPauseApplied = false
+            if (isResumed && videoType == STREAM && currentUrl != null) {
+                startStream(currentUrl)
+            }
         }
     }
 
     override fun onNetworkLost() {
         if (videoType == STREAM && isResumed && playbackService?.isBackgroundPlaybackEnabled() != true) {
-            player?.pause()
-            updatePlayingState()
+            cancelNetworkLossGrace()
+            val runnable = Runnable {
+                networkLossGraceRunnable = null
+                if (!isAdded) return@Runnable
+                networkPauseApplied = true
+                player?.pause()
+                updatePlayingState()
+            }
+            networkLossGraceRunnable = runnable
+            view?.postDelayed(runnable, NETWORK_LOSS_GRACE_MS)
         }
+    }
+
+    private fun cancelNetworkLossGrace() {
+        networkLossGraceRunnable?.let { view?.removeCallbacks(it) }
+        networkLossGraceRunnable = null
     }
 
     private fun isStreamOfflineError(exception: PlayerException): Boolean {
@@ -806,6 +864,7 @@ class IvsPlayerFragment : PlayerFragment() {
     private fun handleIvsStreamOffline() {
         if (!isAdded) return
         recoveryInProgress = false
+        sameUrlRetryAttempted = false
         playbackService?.stopPlayback()
         if (!reloadIvsLiveStreamWithFreshUrl("offline check")) {
             showOfflineOverlay(R.string.stream_ended)
@@ -830,6 +889,15 @@ class IvsPlayerFragment : PlayerFragment() {
                 TAG,
                 "IVS playback error recovery: retrying IVS with fresh Kick URL stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)}"
             )
+            return
+        }
+        if (!sameUrlRetryAttempted && !resolvedUrl.isNullOrBlank()) {
+            sameUrlRetryAttempted = true
+            DiagnosticLogger.w(
+                TAG,
+                "IVS playback error recovery: retrying same URL in IVS stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)}"
+            )
+            startStream(resolvedUrl)
             return
         }
         if (showMessage) {
@@ -915,6 +983,12 @@ class IvsPlayerFragment : PlayerFragment() {
         private const val TAG = "IvsPlayerFragment"
         // Reloads start a couple segments back; skip when already near-live.
         private const val GO_LIVE_SKIP_THRESHOLD_MS = 2_000L
+        // Brief VALIDATED-capability flaps recover on their own; only pause the
+        // player when the loss outlasts this grace period.
+        private const val NETWORK_LOSS_GRACE_MS = 4_000L
+        // Weight of the previous value when smoothing the jumpy SDK bandwidth
+        // estimate into a readable trend.
+        private const val SMOOTHED_BANDWIDTH_OLD_WEIGHT = 0.7f
 
         fun newInstance(item: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean): IvsPlayerFragment {
             return IvsPlayerFragment().apply {

@@ -74,6 +74,7 @@ import com.xtrakick.app.R
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.databinding.FragmentChatBinding
 import com.xtrakick.app.model.chat.ChatMessage
+import com.xtrakick.app.model.chat.Chatter
 import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.model.chat.PinnedGift
 import com.xtrakick.app.model.chat.Poll
@@ -166,7 +167,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
     }
 
-    private var autoCompleteAdapter: AutoCompleteAdapter<Any>? = null
+    private var autoCompleteAdapter: AutoCompleteAdapter? = null
+    private val spaceTokenizer = SpaceTokenizer()
     private var emoteSectionAdapter: EmoteSectionAdapter? = null
     private var emoteSearchQuery = ""
     private val emoteSectionExpansion = mutableMapOf<String, Boolean>()
@@ -175,6 +177,10 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     private val backPressedCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
+            if (_binding?.autoCompleteContainer?.isVisible == true) {
+                hideAutoComplete()
+                return
+            }
             toggleEmoteMenu(false)
         }
     }
@@ -2406,6 +2412,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         viewModel.restorePinnedGift()
                     }
                     btnDown.setOnClickListener {
+                        hideAutoComplete()
                         view.post {
                             val lastIndex = synchronized(viewModel.chatMessages) {
                                 viewModel.chatMessages.lastIndex
@@ -2424,36 +2431,24 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 }
                             }
                         }
-                        val density = resources.displayMetrics.density
-                        val rowHeight = (52 * density).toInt()
-                        val maxHeight = (220 * density).toInt()
-                        editText.dropDownAnchor = messageView.id
-                        editText.dropDownWidth = ViewGroup.LayoutParams.MATCH_PARENT
 
-                        autoCompleteAdapter = AutoCompleteAdapter(
-                            requireContext(),
-                            R.layout.auto_complete_emotes_list_item,
-                            R.id.name,
-                            viewModel.autoCompleteList,
-                        ).apply {
-                            setNotifyOnChange(false)
-                            onResultsPublished = { count ->
-                                val targetHeight = if (count > 0) {
-                                    (count * rowHeight).coerceIn(rowHeight, maxHeight)
-                                } else {
-                                    ViewGroup.LayoutParams.WRAP_CONTENT
-                                }
-                                editText.dropDownHeight = targetHeight
+                        autoCompleteAdapter = AutoCompleteAdapter(requireContext()) { item ->
+                            insertAutoComplete(item)
+                        }
+                        autoCompleteRecyclerView.apply {
+                            layoutManager = LinearLayoutManager(requireContext())
+                            adapter = autoCompleteAdapter
+                        }
+                        (autoCompleteContainer.parent as? View)?.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+                            if ((bottom - top) != (oldBottom - oldTop) && autoCompleteContainer.isVisible) {
+                                updateAutoComplete(editText.text)
                             }
-                            editText.setAdapter(this)
-
-                            var previousSize = 0
-                            editText.setOnFocusChangeListener { _, hasFocus ->
-                                if (hasFocus && count != previousSize) {
-                                    previousSize = count
-                                    notifyDataSetChanged()
-                                }
-                                setNotifyOnChange(hasFocus)
+                        }
+                        editText.setOnFocusChangeListener { _, hasFocus ->
+                            if (!hasFocus) {
+                                hideAutoComplete()
+                            } else {
+                                updateAutoComplete(editText.text)
                             }
                         }
                         editText.addTextChangedListener(onTextChanged = { text, _, _, _ ->
@@ -2464,8 +2459,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 send.visibility = View.GONE
                                 clear.visibility = View.GONE
                             }
+                            updateAutoComplete(text)
                         })
-                        editText.setTokenizer(SpaceTokenizer())
+                        editText.setTokenizer(spaceTokenizer)
                         editText.setOnKeyListener { _, keyCode, event ->
                             if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_ENTER) {
                                 sendMessage()
@@ -2477,9 +2473,11 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             val text = editText.text.toString().trimEnd()
                             editText.setText(text.substring(0, max(text.lastIndexOf(' '), 0)))
                             editText.setSelection(editText.length())
+                            hideAutoComplete()
                         }
                         clear.setOnLongClickListener {
                             editText.text.clear()
+                            hideAutoComplete()
                             true
                         }
                         replyView.visibility = View.GONE
@@ -3210,10 +3208,11 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
     }
 
-    fun emoteMenuIsVisible() = binding.emoteMenu.isVisible
+    fun emoteMenuIsVisible() = _binding?.emoteMenu?.isVisible == true
 
     fun toggleEmoteMenu(enable: Boolean) {
         if (enable) {
+            hideAutoComplete()
             binding.emoteMenu.visibility = View.VISIBLE
         } else {
             binding.emoteMenu.visibility = View.GONE
@@ -3222,9 +3221,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     }
 
     fun toggleBackPressedCallback(enable: Boolean) {
-        if (enable) {
-            requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backPressedCallback)
+        val shouldEnable = enable || _binding?.autoCompleteContainer?.isVisible == true
+        if (shouldEnable) {
+            if (!backPressedCallback.isEnabled) {
+                backPressedCallback.isEnabled = true
+                requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backPressedCallback)
+            }
         } else {
+            backPressedCallback.isEnabled = false
             backPressedCallback.remove()
         }
     }
@@ -3233,8 +3237,87 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         binding.editText.text.append(emote.name).append(' ')
     }
 
+    private fun hideAutoComplete() {
+        _binding?.autoCompleteContainer?.visibility = View.GONE
+        autoCompleteAdapter?.setItems(emptyList())
+        toggleBackPressedCallback(emoteMenuIsVisible())
+    }
+
+    private fun updateAutoComplete(text: CharSequence?) {
+        val binding = _binding ?: return
+        if (text.isNullOrEmpty() || !binding.editText.hasFocus()) {
+            hideAutoComplete()
+            return
+        }
+        val cursor = binding.editText.selectionEnd.coerceAtLeast(0)
+        val start = spaceTokenizer.findTokenStart(text, cursor)
+        val token = if (cursor >= start) text.subSequence(start, cursor).toString() else ""
+        if (token.isEmpty() || (token[0] != ':' && token[0] != '@')) {
+            hideAutoComplete()
+            return
+        }
+
+        val prefix = token[0]
+        val queryBody = if (prefix == ':' && token.endsWith(':') && token.length > 1) {
+            token.substring(1, token.length - 1)
+        } else {
+            token.substring(1)
+        }
+
+        val list = synchronized(viewModel.autoCompleteList) {
+            viewModel.autoCompleteList.toList()
+        }
+        val matches = AutoCompleteAdapter.rankAndSort(list, prefix, queryBody)
+        if (matches.isEmpty()) {
+            hideAutoComplete()
+        } else {
+            autoCompleteAdapter?.setItems(matches)
+            val density = resources.displayMetrics.density
+            val rowHeight = (44 * density).toInt()
+            val parentHeight = (binding.autoCompleteContainer.parent as? View)?.height ?: 0
+            val topSafetyMargin = (8 * density).toInt()
+            val maxAvailableHeight = if (parentHeight > 0) {
+                (parentHeight - topSafetyMargin).coerceAtLeast(rowHeight)
+            } else {
+                (180 * density).toInt()
+            }
+            val defaultMaxHeight = (180 * density).toInt()
+            val effectiveMaxHeight = minOf(defaultMaxHeight, maxAvailableHeight)
+            val desiredHeight = matches.size * rowHeight + (1 * density).toInt()
+            val targetHeight = minOf(desiredHeight, effectiveMaxHeight)
+
+            binding.autoCompleteContainer.updateLayoutParams {
+                height = targetHeight
+            }
+            binding.autoCompleteRecyclerView.scrollToPosition(0)
+            binding.autoCompleteContainer.visibility = View.VISIBLE
+            toggleBackPressedCallback(true)
+        }
+    }
+
+    private fun insertAutoComplete(item: Any) {
+        val binding = _binding ?: return
+        val text = binding.editText.text ?: return
+        val cursor = binding.editText.selectionEnd.coerceAtLeast(0)
+        val start = spaceTokenizer.findTokenStart(text, cursor)
+        val end = spaceTokenizer.findTokenEnd(text, cursor)
+
+        val replacement = when (item) {
+            is Emote -> "${item.name.orEmpty()} "
+            is Chatter -> "@${item.name.orEmpty()} "
+            else -> "${item.toString().removePrefix(":")} "
+        }
+
+        val safeStart = start.coerceIn(0, text.length)
+        val safeEnd = end.coerceIn(safeStart, text.length)
+        text.replace(safeStart, safeEnd, replacement)
+        binding.editText.setSelection((safeStart + replacement.length).coerceAtMost(text.length))
+        hideAutoComplete()
+    }
+
     private fun sendMessage(replyId: String? = null): Boolean {
         with(binding) {
+            hideAutoComplete()
             (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
             editText.clearFocus()
             toggleEmoteMenu(false)

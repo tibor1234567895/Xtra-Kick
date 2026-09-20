@@ -103,6 +103,26 @@ class LiveLatencySettingsTest {
             0.001f
         )
     }
+
+    @Test
+    fun toLiveConfigurationWithCatchupEnabledSetsConfiguredSpeeds() {
+        val config = LiveLatencySettings.preset(LiveLatencySettings.PROFILE_LOWEST)
+        val liveConfig = LiveLatencySettings.toLiveConfiguration(config, catchupEnabled = true)
+
+        assertEquals(1.00f, liveConfig.minPlaybackSpeed, 0.001f)
+        assertEquals(1.12f, liveConfig.maxPlaybackSpeed, 0.001f)
+        assertEquals(1000L, liveConfig.targetOffsetMs)
+    }
+
+    @Test
+    fun toLiveConfigurationWithCatchupDisabledLocksPlaybackSpeedToOne() {
+        val config = LiveLatencySettings.preset(LiveLatencySettings.PROFILE_LOWEST)
+        val liveConfig = LiveLatencySettings.toLiveConfiguration(config, catchupEnabled = false)
+
+        assertEquals(1.0f, liveConfig.minPlaybackSpeed, 0.001f)
+        assertEquals(1.0f, liveConfig.maxPlaybackSpeed, 0.001f)
+        assertEquals(1000L, liveConfig.targetOffsetMs)
+    }
 }
 
 private class FakeSharedPreferences(

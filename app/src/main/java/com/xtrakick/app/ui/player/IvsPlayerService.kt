@@ -470,8 +470,9 @@ class IvsPlayerService : Service() {
                 }
 
                 override fun onRebuffering() {
-                    // Resume in place; jumping to live just re-stalls on weak networks.
-                    runPlayerOp("rebuffer-stay") { it.setRebufferToLive(false) }
+                    // Deliberately hands-off: the stall policy is the SDK default
+                    // (resume in place). Recovery for clusters lives in the
+                    // fragment's circuit breaker.
                     playerDebugLog(
                         "rebuffering liveLatency=${ivsPlayer.liveLatency} " +
                             "buffered=${ivsPlayer.bufferedPosition} position=${ivsPlayer.position} " +

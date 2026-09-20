@@ -11,6 +11,7 @@ import com.xtrakick.app.R
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.model.chat.Badge
 import com.xtrakick.app.model.chat.ChannelPointReward
+import com.xtrakick.app.model.chat.ChatEmote
 import com.xtrakick.app.model.chat.ChatMessage
 import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.model.chat.PinnedGift
@@ -3683,36 +3684,7 @@ class KickRepository @Inject constructor(
         val targetUser = extractKickTargetUser(message)
         val actorUser = extractKickModeratorUser(message)
         val rawContent = message.content ?: message.message ?: message.text ?: message.body ?: extractKickMessageContent(deletedMessageObject)
-        val extractedEmotes = mutableListOf<com.xtrakick.app.model.chat.ChatEmote>()
-        var content = rawContent
-        if (content != null) {
-            val sb = StringBuilder()
-            var lastIndex = 0
-            emoteRegex.findAll(content).forEach { matchResult ->
-                val start = matchResult.range.first
-                val end = matchResult.range.last + 1
-                sb.append(content.substring(lastIndex, start))
-                val id = matchResult.groups[1]?.value ?: ""
-                val name = matchResult.groups[2]?.value ?: ""
-                
-                val emoteBegin = sb.codePointCount(0, sb.length)
-                val emoteEnd = emoteBegin + name.codePointCount(0, name.length) - 1
-                extractedEmotes.add(com.xtrakick.app.model.chat.ChatEmote(
-                    id = id,
-                    name = name,
-                    url1x = "https://files.kick.com/emotes/$id/fullsize",
-                    url2x = "https://files.kick.com/emotes/$id/fullsize",
-                    url3x = "https://files.kick.com/emotes/$id/fullsize",
-                    url4x = "https://files.kick.com/emotes/$id/fullsize",
-                    begin = emoteBegin,
-                    end = emoteEnd
-                ))
-                sb.append(name)
-                lastIndex = end
-            }
-            sb.append(content.substring(lastIndex))
-            content = sb.toString()
-        }
+        val (content, extractedEmotes) = extractContentAndEmotes(rawContent)
         val identityBadges = selectedKickIdentityBadges(message.sender?.identity)
         val syntheticBadges = syntheticKickBadgesFromSender(message.sender)
         val allBadges = mergeKickMessageBadges(
@@ -3899,7 +3871,7 @@ class KickRepository @Inject constructor(
             message = effectiveMessage,
             color = message.sender?.identity?.color,
             badges = badges,
-            emotes = extractedEmotes.takeIf { it.isNotEmpty() },
+            emotes = extractedEmotes,
             systemMsg = systemMsg,
             msgId = when (moderationType) {
                 KickModerationType.DELETE_MESSAGE -> "kick_clearmsg"
@@ -4021,12 +3993,28 @@ class KickRepository @Inject constructor(
             message.threadParentId,
             message.threadId
         ) ?: return null
-        val replyUser = extractUserFromObject(replyObject)
+        val senderObject = replyObject?.firstObjectOrNull("sender", "user")
+            ?: metadata?.firstObjectOrNull("original_sender", "sender", "user")
+            ?: message.replyToMessage.asJsonObjectOrNull()?.firstObjectOrNull("sender", "user")
+            ?: message.replyTo.asJsonObjectOrNull()?.firstObjectOrNull("sender", "user")
+            ?: replyObject
+        val replyUser = extractUserFromObject(senderObject)
+        val userLogin = replyUser?.login
+            ?: senderObject?.firstPrimitiveOrNull("user_login", "username", "slug", "login")
+            ?: metadata?.firstPrimitiveOrNull("original_sender_username", "original_sender_slug", "original_user_login")
+        val userName = replyUser?.name
+            ?: senderObject?.firstPrimitiveOrNull("display_name", "user_name", "name")
+            ?: metadata?.firstPrimitiveOrNull("original_sender_name", "original_display_name", "original_sender_username")
+            ?: userLogin
+
+        val rawReplyContent = extractKickRawContent(replyObject)
+        val (replyContent, replyEmotes) = extractContentAndEmotes(rawReplyContent)
         return Reply(
             threadParentId = threadParentId,
-            userLogin = replyUser?.login ?: replyObject?.firstPrimitiveOrNull("user_login", "username", "slug", "login"),
-            userName = replyUser?.name ?: replyObject?.firstPrimitiveOrNull("display_name", "user_name", "name"),
-            message = extractKickMessageContent(replyObject)
+            userLogin = userLogin,
+            userName = userName,
+            message = replyContent,
+            emotes = replyEmotes
         )
     }
 
@@ -4101,13 +4089,64 @@ class KickRepository @Inject constructor(
         return KickResolvedUser(id = id, login = login, name = name)
     }
 
-    private fun extractKickMessageContent(obj: JsonObject?): String? {
+    private fun extractContentAndEmotes(rawContent: String?): Pair<String?, List<ChatEmote>?> {
+        if (rawContent.isNullOrEmpty() || !rawContent.contains("[emote:")) {
+            return rawContent to null
+        }
+        val extractedEmotes = mutableListOf<ChatEmote>()
+        val sb = StringBuilder(rawContent.length)
+        var lastIndex = 0
+        var currentCodePointCount = 0
+        emoteRegex.findAll(rawContent).forEach { matchResult ->
+            val start = matchResult.range.first
+            val end = matchResult.range.last + 1
+            if (start > lastIndex) {
+                val segment = rawContent.substring(lastIndex, start)
+                sb.append(segment)
+                currentCodePointCount += segment.codePointCount(0, segment.length)
+            }
+            val id = matchResult.groups[1]?.value ?: ""
+            val name = matchResult.groups[2]?.value ?: ""
+
+            val emoteBegin = currentCodePointCount
+            val nameCodePoints = name.codePointCount(0, name.length)
+            val emoteEnd = emoteBegin + nameCodePoints - 1
+            val url = "https://files.kick.com/emotes/$id/fullsize"
+            extractedEmotes.add(
+                ChatEmote(
+                    id = id,
+                    name = name,
+                    url1x = url,
+                    url2x = url,
+                    url3x = url,
+                    url4x = url,
+                    begin = emoteBegin,
+                    end = emoteEnd
+                )
+            )
+            sb.append(name)
+            currentCodePointCount += nameCodePoints
+            lastIndex = end
+        }
+        if (lastIndex < rawContent.length) {
+            sb.append(rawContent.substring(lastIndex))
+        }
+        val processedContent = sb.toString()
+        return processedContent to extractedEmotes.takeIf { it.isNotEmpty() }
+    }
+
+    private fun extractKickRawContent(obj: JsonObject?): String? {
         obj ?: return null
         return firstNonBlank(
             obj.firstPrimitiveOrNull("content", "message", "text", "body"),
             obj.firstObjectOrNull("message")?.firstPrimitiveOrNull("content", "message", "text", "body"),
             obj.firstObjectOrNull("content")?.firstPrimitiveOrNull("text", "body", "message")
-        )?.replace(emoteRegex) { result -> result.groupValues.getOrElse(1) { "" } }
+        )
+    }
+
+    private fun extractKickMessageContent(obj: JsonObject?): String? {
+        val raw = extractKickRawContent(obj) ?: return null
+        return extractContentAndEmotes(raw).first
     }
 
     private fun extractKickModerationDurationSeconds(message: KickMessage, eventName: String? = null): Long? {

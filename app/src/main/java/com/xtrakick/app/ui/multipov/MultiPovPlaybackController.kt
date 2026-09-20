@@ -23,6 +23,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.BehindLiveWindowException
@@ -52,6 +53,7 @@ class MultiPovPlaybackController(
     private val onHttpError: (key: String, responseCode: Int, url: String?) -> Unit = { _, _, _ -> },
 ) {
     private val players = linkedMapOf<String, ExoPlayer>()
+    private val playerListeners = linkedMapOf<String, Player.Listener>()
     private val trackSelectors = linkedMapOf<String, DefaultTrackSelector>()
     /** Last applied constraint signature per slot — avoids thrashing on every UI render. */
     private val appliedConstraintKeys = linkedMapOf<String, String>()
@@ -209,7 +211,11 @@ class MultiPovPlaybackController(
                 }
                 return
             }
+            val existingSurface = surfaces[key]
+            val existingAspect = aspectFrames[key]
             releasePlayer(key)
+            if (existingSurface != null) surfaces[key] = existingSurface
+            if (existingAspect != null) aspectFrames[key] = existingAspect
         }
         if (focused) focusedKey = key
         try {
@@ -222,8 +228,11 @@ class MultiPovPlaybackController(
             }
             val player = createPlayer(trackSelector = trackSelector)
             player.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
-            player.addListener(object : Player.Listener {
+            players[key] = player
+            trackSelectors[key] = trackSelector
+            val listener = object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (players[key] !== player) return
                     when (playbackState) {
                         Player.STATE_IDLE -> Unit
                         Player.STATE_BUFFERING -> onLoadState(key, MultiPovLoadState.Loading)
@@ -236,7 +245,20 @@ class MultiPovPlaybackController(
                     }
                 }
 
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (players[key] !== player) return
+                    if (isPlaying) {
+                        onLoadState(key, MultiPovLoadState.Ready)
+                    }
+                }
+
+                override fun onRenderedFirstFrame() {
+                    if (players[key] !== player) return
+                    onLoadState(key, MultiPovLoadState.Ready)
+                }
+
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
+                    if (players[key] !== player) return
                     if (videoSize.height > 0) {
                         val ratio = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
                         aspectFrames[key]?.setAspectRatio(ratio)
@@ -244,12 +266,18 @@ class MultiPovPlaybackController(
                 }
 
                 override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                    if (players[key] !== player) return
                     if (compressorEnabled[key] == true && key == focusedKey) {
                         attachCompressor(key, audioSessionId)
                     }
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
+                    // Stale player guard: ignore callbacks from replaced/released players
+                    if (players[key] !== player) return
+                    // If this player is actively playing frames, ignore non-fatal codec query warnings
+                    if (player.isPlaying) return
+
                     // Live window slid past our position — jump back, but rate-limit to avoid seek storms.
                     if (isBehindLiveWindow(error)) {
                         recoverBehindLiveWindow(key)
@@ -260,7 +288,7 @@ class MultiPovPlaybackController(
                     // expired-URL recovery below never fired.
                     val responseCode = httpResponseCode(error)
                     if (responseCode == 403 || responseCode == 404) {
-                        val failedUrl = players[key]?.currentMediaItem?.localConfiguration?.uri?.toString() ?: url
+                        val failedUrl = player.currentMediaItem?.localConfiguration?.uri?.toString() ?: url
                         onLoadState(key, MultiPovLoadState.Error("URL expired (HTTP $responseCode)"))
                         onHttpError(key, responseCode, failedUrl)
                         return
@@ -274,7 +302,10 @@ class MultiPovPlaybackController(
                     }
                     onLoadState(key, MultiPovLoadState.Error(message))
                 }
-            })
+            }
+            player.addListener(listener)
+            playerListeners[key] = listener
+
             val httpFactory = OkHttpDataSource.Factory(okHttpClient, null) { false }
                 .setDefaultRequestProperties(kickPlaybackHeaders())
             val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
@@ -293,8 +324,6 @@ class MultiPovPlaybackController(
             player.volume = if (focused) volumeFor(key) else 0f
             player.prepare()
             player.playWhenReady = key !in userPaused
-            players[key] = player
-            trackSelectors[key] = trackSelector
             // Seed signature so the next ensurePlaying/render doesn't immediately re-set params.
             appliedConstraintKeys[key] = constraintSignature(focused = focused, key = key)
             surfaces[key]?.let { player.setVideoTextureView(it) }
@@ -322,8 +351,8 @@ class MultiPovPlaybackController(
     fun isPlaying(key: String?): Boolean {
         if (key == null) return false
         val player = players[key] ?: return false
-        return player.playWhenReady && player.playbackState != Player.STATE_IDLE &&
-            player.playbackState != Player.STATE_ENDED && key !in userPaused
+        return (player.isPlaying || (player.playWhenReady && player.playbackState == Player.STATE_READY)) &&
+            key !in userPaused
     }
 
     fun togglePlayPause(key: String?): Boolean {
@@ -426,13 +455,17 @@ class MultiPovPlaybackController(
 
     fun releasePlayer(key: String) {
         releaseCompressor(key)
+        val listener = playerListeners.remove(key)
         val texture = surfaces[key]
         players.remove(key)?.let { player ->
+            listener?.let { player.removeListener(it) }
             if (texture != null) {
                 player.clearVideoTextureView(texture)
             } else {
                 player.clearVideoSurface()
             }
+            player.stop()
+            player.clearMediaItems()
             player.release()
         }
         trackSelectors.remove(key)
@@ -452,6 +485,7 @@ class MultiPovPlaybackController(
         focusAnimator?.cancel()
         focusAnimator = null
         players.keys.toList().forEach { releasePlayer(it) }
+        playerListeners.clear()
         surfaces.clear()
         aspectFrames.clear()
         trackSelectors.clear()
@@ -514,7 +548,9 @@ class MultiPovPlaybackController(
             .setPrioritizeTimeOverSizeThresholds(true)
             .setBackBuffer(minB, /* retainBackBufferFromKeyframe = */ true)
             .build()
-        return ExoPlayer.Builder(context)
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+        return ExoPlayer.Builder(context, renderersFactory)
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
             .setAudioAttributes(AudioAttributes.DEFAULT, false)
@@ -627,7 +663,7 @@ class MultiPovPlaybackController(
             .setMaxVideoSize(Int.MAX_VALUE, maxHeight)
             .setMaxVideoBitrate(maxBitrate)
             .setForceHighestSupportedBitrate(false)
-            .setAllowVideoMixedMimeTypeAdaptiveness(true)
+            .setAllowVideoMixedMimeTypeAdaptiveness(false)
             .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !focused)
             .build()
     }

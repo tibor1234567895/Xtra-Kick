@@ -1319,26 +1319,48 @@ class ChatViewModel @Inject constructor(
     ): ChatMessage? {
         val reply = message.reply?.takeIf { !it.threadParentId.isNullOrBlank() } ?: return null
         val previewMessage = replyParent?.message ?: reply.message ?: replyParent?.systemMsg ?: return null
+        val previewEmotes = replyParent?.emotes ?: reply.emotes
+        val effectiveReplyParent = replyParent ?: ChatMessage(
+            id = reply.threadParentId,
+            userLogin = reply.userLogin,
+            userName = reply.userName,
+            message = previewMessage,
+            emotes = previewEmotes,
+            timestamp = message.timestamp,
+        )
         val previewReply = Reply(
             threadParentId = reply.threadParentId,
-            userLogin = replyParent?.userLogin ?: reply.userLogin,
-            userName = replyParent?.userName ?: reply.userName,
-            message = previewMessage
+            userLogin = effectiveReplyParent.userLogin,
+            userName = effectiveReplyParent.userName,
+            message = previewMessage,
+            emotes = previewEmotes,
         )
         return ChatMessage(
             reply = previewReply,
             isReply = true,
-            replyParent = replyParent,
+            replyParent = effectiveReplyParent,
+            emotes = previewEmotes,
             timestamp = message.timestamp,
             fullMsg = message.fullMsg
         )
     }
 
     private fun buildKickDisplayMessages(messages: List<ChatMessage>): List<ChatMessage> {
-        val parentsById = synchronized(chatMessages) {
-            chatMessages.filter { !it.isReply && it.id != null }.associateBy { it.id }.toMutableMap()
+        val parentsById = LinkedHashMap<String, ChatMessage>()
+        synchronized(chatMessages) {
+            for (msg in chatMessages) {
+                val id = msg.id
+                if (!msg.isReply && id != null) {
+                    parentsById[id] = msg
+                }
+            }
         }
-        messages.filter { !it.isReply && it.id != null }.forEach { parentsById[it.id] = it }
+        for (msg in messages) {
+            val id = msg.id
+            if (!msg.isReply && id != null) {
+                parentsById[id] = msg
+            }
+        }
         return buildList {
             messages.forEach { message ->
                 buildReplyPreviewMessage(message, replyParent = parentsById[message.reply?.threadParentId])?.let(::add)

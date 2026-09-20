@@ -96,16 +96,16 @@ class TopStreamsFragment : PagedListFragment(), Scrollable, StreamsSortDialog.On
                 }
             }
             if (requireContext().prefs().getBoolean(AppConstants.UI_THEME_APPBAR_LIFT, true)) {
-                recyclerViewLayout.recyclerView.let {
-                    appBar.setLiftOnScrollTargetView(it)
-                    it.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                recyclerViewLayout.recyclerView.let { rv ->
+                    appBar.setLiftOnScrollTargetView(rv)
+                    rv.addOnScrollListener(object : RecyclerView.OnScrollListener() {
                         override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                             super.onScrolled(recyclerView, dx, dy)
                             appBar.isLifted = recyclerView.canScrollVertically(-1)
                         }
                     })
-                    it.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                        appBar.isLifted = it.canScrollVertically(-1)
+                    rv.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                        appBar.isLifted = rv.canScrollVertically(-1)
                     }
                 }
             } else {

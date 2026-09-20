@@ -430,7 +430,8 @@ class PlaybackService : MediaSessionService() {
                                 val proxyMultivariantPlaylist = prefs().getBoolean(AppConstants.PROXY_MULTIVARIANT_PLAYLIST, false)
                                 val validProxyConfiguration = PlaybackProxyUtils.isValidProxyConfiguration(proxyHost, proxyPort)
                                 val streamLatencyConfig = activeLatencyConfig
-                                logBufferDebug("Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(streamLatencyConfig)}")
+                                val catchupEnabled = if (isKick) prefs().getBoolean(AppConstants.PLAYER_IVS_LATENCY_CATCHUP, true) else true
+                                logBufferDebug("Starting live stream with lowLatencyHls=true latency=${LiveLatencySettings.describe(streamLatencyConfig)} catchupEnabled=$catchupEnabled")
                                 if (proxyMultivariantPlaylist && !validProxyConfiguration) {
                                     PlaybackProxyUtils.logInvalidProxyConfiguration("playback_service", proxyHost, proxyPort)
                                 }
@@ -494,7 +495,7 @@ class PlaybackService : MediaSessionService() {
                                         MediaItem.Builder().apply {
                                             setMediaId(uri.orEmpty())
                                             setUri(uri?.toUri())
-                                            setLiveConfiguration(LiveLatencySettings.toLiveConfiguration(streamLatencyConfig))
+                                            setLiveConfiguration(LiveLatencySettings.toLiveConfiguration(streamLatencyConfig, catchupEnabled))
                                             setMediaMetadata(
                                                 MediaMetadata.Builder().apply {
                                                     setTitle(title)

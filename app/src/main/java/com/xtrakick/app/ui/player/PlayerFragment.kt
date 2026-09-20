@@ -842,17 +842,28 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         return
                     }
                     chatDragCandidate = false
-                    if (offlineOverlay.isVisible) {
-                        offlineOverlay.dispatchTouchEvent(event)
-                    } else if (playerControls.progressBar.isPressed) {
+                    if (playerControls.progressBar.isPressed) {
                         playerControls.root.dispatchTouchEvent(event)
                     } else {
                         if (slidingLayout.translationY in touchSlopRange) {
-                            if (playerControls.root.isVisible) {
+                            if (offlineOverlay.isVisible) {
+                                offlineOverlay.dispatchTouchEvent(event)
+                            } else if (playerControls.root.isVisible) {
                                 playerControls.root.dispatchTouchEvent(event)
                             } else {
                                 controllerTapDetector.onTouchEvent(event)
                             }
+                        } else if (offlineOverlay.isVisible) {
+                            val cancel = MotionEvent.obtain(
+                                event.downTime,
+                                event.eventTime,
+                                MotionEvent.ACTION_CANCEL,
+                                event.x,
+                                event.y,
+                                event.metaState
+                            )
+                            offlineOverlay.dispatchTouchEvent(cancel)
+                            cancel.recycle()
                         }
                         val minimizeThreshold = slidingLayout.height / 5
                         if (slidingLayout.translationY < minimizeThreshold) {

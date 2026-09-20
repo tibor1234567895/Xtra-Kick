@@ -78,6 +78,7 @@ object ChatAdapterUtils {
     private val KICK_COIL_HEADERS = NetworkHeaders.Builder().apply {
         KICK_CHAT_IMAGE_HEADERS.forEach { (k, v) -> add(k, v) }
     }.build()
+    private val REPLYING_TO_PREFIX_REGEX = Regex("^Replying to\\s+")
 
     private val animatedFrameSchedulers = Collections.synchronizedMap(
         WeakHashMap<View, AnimatedFrameScheduler>()
@@ -331,7 +332,7 @@ object ChatAdapterUtils {
         val source: String,
         val targetHeight: Int,
         val isEmote: Boolean,
-        val isAnimated: Boolean,
+        val isAnimated: Boolean = false,
     )
 
     internal class RequestCoordinator<K, V>(private val maxEntries: Int) {
@@ -370,7 +371,7 @@ object ChatAdapterUtils {
                     if (inFlight[key] !== pending) {
                         emptyList()
                     } else {
-                        if (value != null) {
+                        if (value != null && value !is Animatable) {
                             cache[key] = value
                         }
                         inFlight.remove(key).orEmpty()
@@ -495,9 +496,13 @@ object ChatAdapterUtils {
         var backgroundRes = 0
         when {
             chatMessage.isReply -> {
-                val userName = resolveReplyDisplayName(chatMessage, nameDisplay).orEmpty()
-                val rawPrefix = replyMessage.format(userName, "")
-                val string = rawPrefix.replaceFirst(Regex("^Replying to\\s+"), "↳ ")
+                val replyUser = resolveReplyDisplayName(chatMessage, nameDisplay)
+                val string = if (!replyUser.isNullOrBlank()) {
+                    val rawPrefix = replyMessage.format(replyUser, "")
+                    rawPrefix.replaceFirst(REPLYING_TO_PREFIX_REGEX, "↳ ")
+                } else {
+                    "↳ "
+                }
                 builder.append(string)
                 builder.setSpan(ForegroundColorSpan(getSavedColor("#999999", savedColors, useReadableColors, isLightTheme)), 0, string.length, SPAN_EXCLUSIVE_EXCLUSIVE)
                 builderIndex += string.length
@@ -1524,7 +1529,7 @@ object ChatAdapterUtils {
     }
 
     private fun createChatImageKey(image: Image, source: Any, targetHeight: Int): ChatImageKey? {
-        if (image.localData != null || image.localDataLoader != null || targetHeight <= 0) {
+        if (image.isAnimated || image.format.equals("gif", true) || image.localData != null || image.localDataLoader != null || targetHeight <= 0) {
             return null
         }
         val sourceString = source as? String ?: return null
@@ -1532,7 +1537,7 @@ object ChatAdapterUtils {
             source = sourceString,
             targetHeight = targetHeight,
             isEmote = image.isEmote,
-            isAnimated = image.isAnimated,
+            isAnimated = false,
         )
     }
 

@@ -860,7 +860,18 @@ class Media3Fragment : PlayerFragment() {
         with(binding.playerControls) {
             if (videoType == STREAM) {
                 val offset = player?.currentLiveOffset?.takeIf { it != androidx.media3.common.C.TIME_UNSET }
-                updateLatency(offset, liveTargetOffsetMs ?: LiveLatencySettings.resolve(prefs).targetOffsetMs)
+                val isKickStream = requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true)
+                val catchupEnabled = if (isKickStream) {
+                    prefs.getBoolean(AppConstants.PLAYER_IVS_LATENCY_CATCHUP, true)
+                } else {
+                    true
+                }
+                val targetOffset = if (catchupEnabled) {
+                    liveTargetOffsetMs ?: LiveLatencySettings.resolve(prefs).targetOffsetMs
+                } else {
+                    null
+                }
+                updateLatency(offset, targetOffset)
             }
             if (root.isVisible && !progressBar.isPressed) {
                 val currentPosition = player?.currentPosition ?: 0

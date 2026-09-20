@@ -5,4 +5,5 @@ class Reply(
     val userLogin: String? = null,
     val userName: String? = null,
     val message: String? = null,
-)
+    val emotes: List<ChatEmote>? = null,
+)

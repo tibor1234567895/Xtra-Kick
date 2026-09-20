@@ -36,7 +36,10 @@ class GridRecyclerView : RecyclerView {
             removeItemDecorationAt(0)
         }
         val columns = getColumnsForConfiguration(newConfig)
-        gridLayoutManager.spanCount = columns
+        if (gridLayoutManager.spanCount != columns) {
+            gridLayoutManager.spanCount = columns
+            recycledViewPool.clear()
+        }
         addItemDecoration(columns)
     }
 
