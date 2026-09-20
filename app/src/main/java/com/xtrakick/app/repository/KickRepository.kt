@@ -3537,10 +3537,13 @@ class KickRepository @Inject constructor(
     fun toStream(channel: KickChannelResponse, livestreamOverride: KickChannelLivestream? = null): Stream {
         val livestream = livestreamOverride ?: channel.livestream
         cacheCategorySlug(livestream?.category?.id?.toString(), livestream?.category?.name, livestream?.category?.slug)
+        // Canonical key must be the broadcaster user id so the polling fallback road shares
+        // dedupe rows and notification ids with the public-API road and the FCM/chat event road.
+        val canonicalChannelId = (channel.userId ?: channel.user?.id ?: channel.id)?.toString()
         return Stream(
             id = livestream?.id?.toString(),
             source = AppConstants.KICK,
-            channelId = channel.id?.toString(),
+            channelId = canonicalChannelId,
             channelLogin = channel.slug,
             channelName = channel.user?.username,
             playbackUrl = livestream?.playbackUrl ?: channel.playbackUrl?.takeIf { livestream != null },

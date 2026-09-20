@@ -131,7 +131,7 @@ class ShownNotificationsRepository @Inject constructor(
                         source = AppConstants.KICK,
                         channelId = broadcasterId,
                         channelLogin = live.slug,
-                        channelName = live.slug,
+                        channelName = follow?.userName?.takeIf { it.isNotBlank() } ?: live.slug,
                         playbackUrl = null,
                         gameId = catId,
                         gameSlug = kickRepository.getOrInferCachedCategorySlug(catId, catName),
@@ -181,7 +181,18 @@ class ShownNotificationsRepository @Inject constructor(
         if (fetchedKeys.isEmpty()) {
             return@withContext emptyList()
         }
-        val list = resolvedStreams.distinctBy { it.channelId ?: it.channelLogin ?: it.id }
+        // Collapse duplicates from the two roads: group by login first so the same
+        // channel merges even if one side carries a different numeric id (channel id
+        // vs broadcaster id) or a differently-cased login. The survivor keeps a usable
+        // id and prefers an entry that actually has a title.
+        val list = resolvedStreams
+            .groupBy { it.channelLogin?.lowercase()?.takeIf { login -> login.isNotBlank() } ?: it.channelId ?: it.id }
+            .values
+            .map { group ->
+                group.minWithOrNull(
+                    compareBy({ it.channelId.isNullOrBlank() }, { it.title.isNullOrBlank() }),
+                ) ?: group.first()
+            }
 
         val liveList = list.mapNotNull { stream ->
             stream.channelId.takeUnless { it.isNullOrBlank() }?.let { channelId ->
@@ -191,7 +202,8 @@ class ShownNotificationsRepository @Inject constructor(
             }
         }
         val oldList = shownNotificationsDao.getAll()
-        val oldByChannelId = oldList.associateBy { it.channelId }
+        val oldByKey = oldList.associateBy { it.channelId }
+        val oldByLower = oldList.associateBy { it.channelId.lowercase() }
         val liveByChannelId = liveList.associateBy { it.channelId }
         // Only sync dedupe rows of channels this poll actually fetched: a transient failure
         // for one channel must not delete its row.
@@ -199,8 +211,28 @@ class ShownNotificationsRepository @Inject constructor(
             shownNotificationsDao.deleteList(it)
         }
         shownNotificationsDao.insertList(liveList)
+        // Alias-aware new check: the event road may have written the same session under
+        // the numeric user id while this poll holds a slug (or vice versa), or the stored
+        // row uses a different login casing. Check the stream's own keys plus any
+        // notification-subscription key that maps to the same broadcaster id.
+        val inputKeysByBroadcaster = mutableMapOf<String, MutableSet<String>>()
+        keyToBroadcasterUserId.forEach { (inputKey, broadcasterId) ->
+            inputKeysByBroadcaster.getOrPut(broadcasterId) { mutableSetOf() }.add(inputKey)
+        }
+        fun oldRowFor(channelId: String, login: String?): ShownNotification? {
+            oldByKey[channelId]?.let { return it }
+            oldByLower[channelId.lowercase()]?.let { return it }
+            login?.let { oldByKey[it] ?: oldByLower[it.lowercase()] }?.let { return it }
+            inputKeysByBroadcaster[channelId]?.forEach { alias ->
+                oldByKey[alias]?.let { return it }
+                oldByLower[alias.lowercase()]?.let { return it }
+            }
+            return null
+        }
         val newStreams = liveList.mapNotNull { item ->
-            item.takeIf { oldByChannelId[item.channelId]?.startedAt?.let { it < item.startedAt } != false }?.channelId
+            val login = list.firstOrNull { it.channelId == item.channelId }?.channelLogin
+            val old = oldRowFor(item.channelId, login)
+            item.takeIf { old?.startedAt?.let { it < item.startedAt } != false }?.channelId
         }.toSet()
         list.filter { it.channelId in newStreams }
     }
@@ -334,21 +366,32 @@ class ShownNotificationsRepository @Inject constructor(
         // no matter which road wrote it. Legacy rows keyed by the raw event ids count too.
         val legacyKeys = listOfNotNull(userIdStr, channelIdStr).distinct()
         val shown = shownNotificationsDao.getAll()
-        val existingStartedAt = (listOf(canonicalId) + legacyKeys).distinct()
-            .firstNotNullOfOrNull { key -> shown.firstOrNull { it.channelId == key }?.startedAt }
+        val shownByLower = shown.associateBy { it.channelId.lowercase() }
+        // Match exact keys plus slug variants in either casing: legacy rows may be keyed
+        // by slug while this event resolves to the numeric broadcaster id, or vice versa.
+        val existingStartedAt = (listOf(canonicalId) + legacyKeys + listOfNotNull(cleanSlug, resolution?.slug)).distinct()
+            .firstNotNullOfOrNull { key ->
+                shown.firstOrNull { it.channelId == key }?.startedAt
+                    ?: shownByLower[key.lowercase()]?.startedAt
+            }
         if (shouldSuppressEvent(existingStartedAt, liveStartedAt, nowMs)) {
             Log.i(TAG, "dropping duplicate live event for $userIdStr/$cleanSlug from $source: already shown")
             return@withContext
         }
+        val follow = runCatching { localFollowChannelRepository.getFollow(canonicalId, cleanSlug) }.getOrNull()
         val effectiveAvatar = secureAvatar
             ?: resolution?.user?.profileImage?.takeIf { it.startsWith("https://", ignoreCase = true) }
-            ?: runCatching { localFollowChannelRepository.getFollow(canonicalId, cleanSlug)?.channelLogo }
-                .getOrNull()?.takeIf { it.startsWith("https://", ignoreCase = true) }
+            ?: follow?.channelLogo?.takeIf { it.startsWith("https://", ignoreCase = true) }
+        // Prefer the real display name so push alerts show it the same way the
+        // polling road does, instead of a second lowercase-looking notification.
+        val displayName = resolution?.user?.username?.takeIf { it.isNotBlank() }
+            ?: follow?.userName?.takeIf { it.isNotBlank() }
+            ?: cleanSlug
         val stream = Stream(
             source = AppConstants.KICK,
             channelId = canonicalId,
             channelLogin = cleanSlug,
-            channelName = cleanSlug,
+            channelName = displayName,
             title = cleanTitle,
             profileImageUrl = effectiveAvatar,
         )
@@ -436,6 +479,6 @@ class ShownNotificationsRepository @Inject constructor(
          * first's KEY_VIDEO extra, and tapping notification A opened channel B.
          */
         internal fun notificationIdFor(stream: Stream): Int =
-            (stream.channelId ?: stream.channelLogin ?: stream.id).hashCode()
+            (stream.channelId ?: stream.channelLogin?.lowercase() ?: stream.id).hashCode()
     }
 }

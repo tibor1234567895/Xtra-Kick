@@ -732,8 +732,9 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="usage_stats_title">Anonymous usage statistics</string>
     <string name="usage_stats_summary">Sends one anonymous daily ping. No account or activity data is included.</string>
     <string name="live_notifications">Live notifications</string>
+    <string name="live_notifications_summary">Instant push alerts when followed channels go live. This is all most people need.</string>
     <string name="live_notifications_polling_backup">Background polling backup</string>
-    <string name="live_notifications_polling_backup_summary">Periodically check for live streams in the background as a fallback if push notifications are delayed. Uses slightly more battery.</string>
+    <string name="live_notifications_polling_backup_summary">Only needed if push alerts arrive late or never, e.g. on phones with aggressive battery saving. Keep off otherwise: it uses more battery and can occasionally repeat an alert.</string>
     <string name="live_notification_channels">Notification channels</string>
     <string name="live_notification_channels_enable_all">Enable all</string>
     <string name="live_notification_channels_disable_all">Disable all</string>
