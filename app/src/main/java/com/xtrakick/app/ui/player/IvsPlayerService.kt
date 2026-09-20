@@ -625,6 +625,7 @@ class IvsPlayerService : Service() {
         channelId: String? = null,
         livestreamId: String? = null,
         channelLogin: String? = null,
+        initialBitrate: Int = 0,
     ) {
         this.currentUrl = url
         this.title = title
@@ -646,11 +647,17 @@ class IvsPlayerService : Service() {
         disarmDeadStreamWatchdog()
         disarmIdleStop()
         requestAudioFocus()
+        val targetInitialBitrate = initialBitrate.takeIf { it > 0 }
+            ?: KickLivePlayback.resolveInitialBitrate(prefs().getString(AppConstants.PLAYER_QUALITY, null))
         // Don't acquire locks pre-emptively — wait for BUFFERING/PLAYING callback.
         runPlayerOp("playStream-load-play") {
             it.setLiveLowLatencyEnabled(true)
             it.setRebufferToLive(false)
             it.setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
+            it.setAutoQualityMode(true)
+            if (targetInitialBitrate > 0) {
+                it.setAutoInitialBitrate(targetInitialBitrate)
+            }
             if (!usePreloadedSource(it, url)) {
                 evictPreloadedSources()
                 it.load(Uri.parse(url))

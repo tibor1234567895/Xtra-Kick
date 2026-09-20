@@ -351,6 +351,10 @@ class IvsPlayerFragment : PlayerFragment() {
             }
             qualitiesByKey[key] = quality
             map[key] = KickLivePlayback.qualityLabel(quality) to null
+            if (quality.bitrate > 0) {
+                KickLivePlayback.recordBitrate(key, quality.bitrate)
+                if (key != baseKey) KickLivePlayback.recordBitrate(baseKey, quality.bitrate)
+            }
         }
         map[AUDIO_ONLY_QUALITY] = getString(R.string.audio_only) to null
         if (map != viewModel.qualities) {
@@ -393,6 +397,8 @@ class IvsPlayerFragment : PlayerFragment() {
         binding.playerControls.duration.text = null
         binding.playerControls.position.text = null
         attachSurfaceIfAvailable()
+        val preferredQuality = resolvePreferredQualityForCurrentNetwork()
+        val initialBitrate = KickLivePlayback.resolveInitialBitrate(preferredQuality)
         playbackService?.playStream(
             url = resolvedUrl,
             title = requireArguments().getString(KEY_TITLE),
@@ -405,6 +411,7 @@ class IvsPlayerFragment : PlayerFragment() {
                 .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
             channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)
                 .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
+            initialBitrate = initialBitrate,
         )
         updatePlayingState()
     }
@@ -648,6 +655,9 @@ class IvsPlayerFragment : PlayerFragment() {
                 runIvsOp("quality-ceiling") {
                     it.setAutoQualityMode(true)
                     it.setAutoMaxQuality(quality)
+                    if (quality.bitrate > 0) {
+                        it.setAutoInitialBitrate(quality.bitrate)
+                    }
                 }
             }
         }
