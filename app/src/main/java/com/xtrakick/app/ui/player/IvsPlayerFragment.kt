@@ -43,6 +43,7 @@ class IvsPlayerFragment : PlayerFragment() {
     private var surfaceCreated = false
     private val updateProgressAction = Runnable { if (view != null) updateProgress() }
     private val qualitiesByKey = linkedMapOf<String, Quality>()
+    private var maxLadderQuality: Quality? = null
     private var currentUrl: String? = null
     private var recoveryInProgress = false
     private var sameUrlRetryAttempted = false
@@ -122,7 +123,10 @@ class IvsPlayerFragment : PlayerFragment() {
                     channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)
                         .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
                 )
-                currentUrl = currentUrl ?: boundService.currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL)
+                // Prefer this fragment's own URL/args over the reused service's URL:
+                // after stopPlayback() clears it, a fresh fragment falls through to
+                // its own resolve instead of briefly resuming the previous stream.
+                currentUrl = currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL) ?: boundService.currentUrl
                 boundService.setBackgroundPlaybackEnabled(false)
                 if (surfaceCreated) {
                     boundService.attachSurface(binding.playerSurface.holder.surface)
@@ -216,6 +220,8 @@ class IvsPlayerFragment : PlayerFragment() {
                                     pendingAutomaticQualityTransport = null
                                 }
                             }
+                        } else {
+                            setQualityText()
                         }
                     }
                 }
@@ -337,6 +343,7 @@ class IvsPlayerFragment : PlayerFragment() {
         val availableQualities = ivsPlayer.qualities
             .sortedWith(compareByDescending<Quality> { it.height }.thenByDescending { it.framerate }.thenByDescending { it.bitrate })
         qualitiesByKey.clear()
+        maxLadderQuality = availableQualities.firstOrNull()
         val map = linkedMapOf<String, Pair<String, String?>>()
         map[AUTO_QUALITY] = getString(R.string.auto) to null
         availableQualities.forEach { quality ->
@@ -500,35 +507,46 @@ class IvsPlayerFragment : PlayerFragment() {
             updateLatency(latency, targetOffsetMs)
 
             val ivsPlayer = player
-            if (catchupEnabled && ivsPlayer != null && ivsPlayer.state == Player.State.PLAYING && latency != null && targetOffsetMs != null) {
+            if (ivsPlayer != null && ivsPlayer.state == Player.State.PLAYING) {
                 val currentPosition = ivsPlayer.position
                 val bufferedPosition = ivsPlayer.bufferedPosition
                 val forwardBufferMs = (bufferedPosition - currentPosition).coerceAtLeast(0L)
                 val now = SystemClock.uptimeMillis()
-                val isInGracePeriod = (now - lastBufferRecoveryTimeMs) < LiveLatencySettings.REBUFFER_GRACE_PERIOD_MS
-                // Only the lowest-latency profile may exceed 1.08x (max 1.12x).
-                val profile = prefs.getString(AppConstants.PLAYER_LATENCY_PROFILE, LiveLatencySettings.DEFAULT_PROFILE)
-                val maxSpeed = LiveLatencySettings.maxIvsCatchupSpeed(profile, latencyConfig.maxPlaybackSpeed)
 
-                val desiredSpeed = LiveLatencySettings.calculateIvsCatchupSpeed(
-                    latencyMs = latency,
-                    targetOffsetMs = targetOffsetMs,
-                    forwardBufferMs = forwardBufferMs,
-                    isInGracePeriod = isInGracePeriod,
-                    maxSpeedLimit = maxSpeed,
-                    isCurrentlyCatchingUp = isCatchingUp
-                )
+                val isDownscaled = isDownscaled(ivsPlayer.quality, getTargetQuality())
 
-                if (desiredSpeed != null) {
-                    if (ivsPlayer.playbackRate != desiredSpeed) {
-                        playerDebugLog("IVS catch-up: latency=${latency}ms buf=${forwardBufferMs}ms -> setting speed to ${desiredSpeed}x")
-                        runIvsOp("fragment-catchup-rate") { it.setPlaybackRate(desiredSpeed) }
-                        isCatchingUp = true
+                if (catchupEnabled && latency != null && targetOffsetMs != null) {
+                    val isInGracePeriod = (now - lastBufferRecoveryTimeMs) < LiveLatencySettings.REBUFFER_GRACE_PERIOD_MS
+                    // Only the lowest-latency profile may exceed 1.08x (max 1.12x).
+                    val profile = prefs.getString(AppConstants.PLAYER_LATENCY_PROFILE, LiveLatencySettings.DEFAULT_PROFILE)
+                    val maxSpeed = LiveLatencySettings.maxIvsCatchupSpeed(profile, latencyConfig.maxPlaybackSpeed)
+
+                    val desiredSpeed = LiveLatencySettings.calculateIvsCatchupSpeed(
+                        latencyMs = latency,
+                        targetOffsetMs = targetOffsetMs,
+                        forwardBufferMs = forwardBufferMs,
+                        isInGracePeriod = isInGracePeriod,
+                        maxSpeedLimit = maxSpeed,
+                        isCurrentlyCatchingUp = isCatchingUp
+                    )
+
+                    // Coordinate catch-up with resolution recovery: do NOT accelerate playback
+                    // while playing below the target resolution, so the buffer is not depleted.
+                    val speedToApply = if (isDownscaled) null else desiredSpeed
+
+                    if (speedToApply != null) {
+                        if (ivsPlayer.playbackRate != speedToApply) {
+                            playerDebugLog("IVS catch-up: latency=${latency}ms buf=${forwardBufferMs}ms -> setting speed to ${speedToApply}x")
+                            runIvsOp("fragment-catchup-rate") { it.setPlaybackRate(speedToApply) }
+                            isCatchingUp = true
+                        }
+                    } else {
+                        if (isCatchingUp) {
+                            playerDebugLog("IVS catch-up: latency=${latency}ms buf=${forwardBufferMs}ms target (~${targetOffsetMs}ms), restoring speed to 1.0x")
+                        }
+                        resetCatchupState()
                     }
                 } else {
-                    if (isCatchingUp) {
-                        playerDebugLog("IVS catch-up: latency=${latency}ms buf=${forwardBufferMs}ms target (~${targetOffsetMs}ms), restoring speed to 1.0x")
-                    }
                     resetCatchupState()
                 }
             } else {
@@ -655,14 +673,51 @@ class IvsPlayerFragment : PlayerFragment() {
                 runIvsOp("quality-ceiling") {
                     it.setAutoQualityMode(true)
                     it.setAutoMaxQuality(quality)
-                    if (quality.bitrate > 0) {
-                        it.setAutoInitialBitrate(quality.bitrate)
-                    }
                 }
             }
         }
         persistSelectedQuality(selectedQuality)
         setQualityText()
+    }
+
+    private fun getTargetQuality(): Quality? {
+        return if (viewModel.quality == AUTO_QUALITY) maxLadderQuality else qualitiesByKey[viewModel.quality]
+    }
+
+    private fun isDownscaled(activeQuality: Quality, targetQuality: Quality?): Boolean {
+        return targetQuality != null && activeQuality.bitrate in 1 until targetQuality.bitrate
+    }
+
+    override fun resolveQualityDisplayText(): String? {
+        val configuredText = viewModel.qualities[viewModel.quality]?.first ?: return null
+        val ivsPlayer = player ?: return configuredText
+        if (!ivsPlayer.isAutoQualityMode) return configuredText
+
+        val activeKey = KickLivePlayback.qualityKey(ivsPlayer.quality)
+        val isDownscaled = isDownscaled(ivsPlayer.quality, getTargetQuality())
+
+        return when {
+            viewModel.quality == AUTO_QUALITY && activeKey.isNotBlank() -> "$configuredText ($activeKey)"
+            isDownscaled -> "$configuredText (Playing: $activeKey)"
+            else -> configuredText
+        }
+    }
+
+    override fun resolveQualityDialogItems(): List<String> {
+        val baseItems = viewModel.qualities.values.map { it.first }
+        val ivsPlayer = player ?: return baseItems
+        if (!ivsPlayer.isAutoQualityMode || viewModel.quality == AUTO_QUALITY) return baseItems
+
+        val selectedIndex = viewModel.qualities.keys.indexOf(viewModel.quality)
+        if (selectedIndex < 0) return baseItems
+
+        val activeQuality = ivsPlayer.quality
+        if (!isDownscaled(activeQuality, getTargetQuality())) return baseItems
+
+        val activeKey = KickLivePlayback.qualityKey(activeQuality)
+        return baseItems.mapIndexed { index, itemText ->
+            if (index == selectedIndex) "$itemText (Currently: $activeKey)" else itemText
+        }
     }
 
     override fun onNetworkTypeChanged(type: NetworkMonitor.NetworkType) {

@@ -9,12 +9,14 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
 import android.os.ext.SdkExtensions
 import android.provider.Settings
+import android.text.format.Formatter
 import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
@@ -88,6 +90,8 @@ import com.xtrakick.app.ui.player.LiveLatencySettings
 import com.xtrakick.app.ui.player.PlaybackService
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.AppConstants
+import kotlin.math.max
+import kotlin.math.roundToInt
 import com.xtrakick.app.util.BatteryOptimizationHelper
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickApiHelper
@@ -99,10 +103,12 @@ import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.appbar.AppBarLayout
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.chromium.net.CronetProvider
 import java.util.Collections
 import javax.inject.Inject
@@ -1044,8 +1050,17 @@ class SettingsActivity : AppCompatActivity() {
                         true
                     }
                 } else {
-                    debugPreference.isVisible = false
-                    findPreference<Preference>("advanced_category")?.isVisible = false
+                    // Release keeps the full debug stack (playback/search swaps)
+                    // hidden, but crash + diagnostic log export stays reachable
+                    // with verbose toggles defaulting to off.
+                    debugPreference.title = getString(R.string.customize_debug_logs)
+                    debugPreference.summary = getString(R.string.customize_debug_logs_summary)
+                    debugPreference.isVisible = true
+                    debugPreference.setOnPreferenceClickListener {
+                        requireActivity().findViewById<AppBarLayout>(R.id.appBar)?.setExpanded(true)
+                        findNavController().navigate(SettingsNavGraphDirections.actionGlobalDebugLogSettingsFragment())
+                        true
+                    }
                 }
             }
         }
@@ -1091,15 +1106,20 @@ class SettingsActivity : AppCompatActivity() {
             }
             findPreference<SeekBarPreference>("chatWidth")?.apply {
                 isPersistent = false
-                val width = resources.displayMetrics.widthPixels
-                val height = resources.displayMetrics.heightPixels
-                val maxDimension = if (height > width) height else width
-                val storedWidth = requireContext().prefs().getInt(AppConstants.LANDSCAPE_CHAT_WIDTH, (maxDimension * (30 / 100f)).toInt())
-                value = ((storedWidth * 100f) / maxDimension).toInt().coerceIn(min, max)
+                val stored = requireContext().prefs().getInt(AppConstants.LANDSCAPE_CHAT_WIDTH, 30)
+                val percent = if (stored > 100) {
+                    val maxDimension = max(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+                    ((stored * 100f) / maxDimension).roundToInt().coerceIn(min, max).also { migrated ->
+                        requireContext().prefs().edit { putInt(AppConstants.LANDSCAPE_CHAT_WIDTH, migrated) }
+                    }
+                } else {
+                    stored.coerceIn(min, max)
+                }
+                value = percent
                 setOnPreferenceChangeListener { _, newValue ->
                     (requireActivity() as? SettingsActivity)?.setResult()
-                    val chatWidth = (maxDimension * ((newValue as Int) / 100f)).toInt()
-                    requireContext().prefs().edit { putInt(AppConstants.LANDSCAPE_CHAT_WIDTH, chatWidth) }
+                    val newPercent = (newValue as Int).coerceIn(min, max)
+                    requireContext().prefs().edit { putInt(AppConstants.LANDSCAPE_CHAT_WIDTH, newPercent) }
                     true
                 }
             }
@@ -2124,31 +2144,139 @@ class SettingsActivity : AppCompatActivity() {
             findPreference<Preference>("action_clear_diagnostic_log")?.setOnPreferenceClickListener {
                 DiagnosticLogger.clear(requireContext())
                 Toast.makeText(requireContext(), R.string.diagnostic_log_clear_done, Toast.LENGTH_SHORT).show()
+                refreshDiagnosticSummary()
                 true
             }
             findPreference<Preference>("action_share_diagnostic_log")?.setOnPreferenceClickListener {
-                val exportFile = DiagnosticLogger.exportFile(requireContext())
-                if (exportFile == null) {
-                    Toast.makeText(requireContext(), R.string.diagnostic_log_share_empty, Toast.LENGTH_SHORT).show()
-                } else {
-                    val uri = FileProvider.getUriForFile(
-                        requireContext(),
-                        "${requireContext().packageName}.diagnostic-file-provider",
-                        exportFile
-                    )
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_STREAM, uri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    startActivity(Intent.createChooser(intent, getString(R.string.diagnostic_log_share_title)))
-                }
+                openDiagnosticLogViewer()
                 true
             }
             findPreference<Preference>("action_test_diagnostic_log")?.setOnPreferenceClickListener {
                 DiagnosticLogger.testEntry()
                 Toast.makeText(requireContext(), R.string.diagnostic_log_test_done, Toast.LENGTH_SHORT).show()
+                refreshDiagnosticSummary()
                 true
+            }
+        }
+
+        override fun onResume() {
+            super.onResume()
+            refreshDiagnosticSummary()
+        }
+
+        /** Live state under the View entry: size + entries, or empty. */
+        private fun refreshDiagnosticSummary() {
+            val pref = findPreference<Preference>("action_share_diagnostic_log") ?: return
+            lifecycleScope.launch {
+                val logView = withContext(Dispatchers.IO) {
+                    runCatching { DiagnosticLogger.readForView(requireContext()) }.getOrNull()
+                }
+                if (!isAdded) return@launch
+                pref.summary = if (logView == null) {
+                    getString(R.string.diagnostic_log_share_empty)
+                } else {
+                    getString(
+                        R.string.diagnostic_log_status,
+                        Formatter.formatShortFileSize(requireContext(), logView.totalBytes),
+                        logView.entryCount,
+                    )
+                }
+            }
+        }
+
+        private fun openDiagnosticLogViewer() {
+            lifecycleScope.launch {
+                val logView = withContext(Dispatchers.IO) {
+                    runCatching { DiagnosticLogger.readForView(requireContext()) }.getOrNull()
+                }
+                if (!isAdded) return@launch
+                if (logView == null) {
+                    Toast.makeText(requireContext(), R.string.diagnostic_log_share_empty, Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                showDiagnosticLogDialog(logView)
+            }
+        }
+
+        private fun showDiagnosticLogDialog(logView: DiagnosticLogger.DiagnosticLogView) {
+            val context = requireContext()
+            val density = resources.displayMetrics.density
+            val status = TextView(context).apply {
+                text = buildDiagnosticStatusText(logView)
+            }
+            val preview = TextView(context).apply {
+                text = logView.preview
+                typeface = Typeface.MONOSPACE
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextIsSelectable(true)
+            }
+            val scroll = NestedScrollView(context).apply {
+                addView(preview)
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    (360f * density).toInt(),
+                )
+            }
+            val container = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(status)
+                addView(scroll, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = (8f * density).toInt() })
+                val padding = (20f * density).toInt()
+                setPadding(padding, (4f * density).toInt(), padding, 0)
+            }
+            context.getAlertDialogBuilder()
+                .setTitle(R.string.diagnostic_log_share)
+                .setView(container)
+                .setPositiveButton(R.string.share) { dialog, _ ->
+                    dialog.dismiss()
+                    shareDiagnosticLog()
+                }
+                .setNeutralButton(R.string.diagnostic_log_clear_action) { dialog, _ ->
+                    dialog.dismiss()
+                    DiagnosticLogger.clear(context)
+                    Toast.makeText(context, R.string.diagnostic_log_clear_done, Toast.LENGTH_SHORT).show()
+                    refreshDiagnosticSummary()
+                }
+                .setNegativeButton(R.string.close, null)
+                .show()
+        }
+
+        private fun buildDiagnosticStatusText(logView: DiagnosticLogger.DiagnosticLogView): String {
+            val context = requireContext()
+            val base = getString(
+                R.string.diagnostic_log_status,
+                Formatter.formatShortFileSize(context, logView.totalBytes),
+                logView.entryCount,
+            )
+            return if (logView.truncated) {
+                base + "\n" + getString(
+                    R.string.diagnostic_log_preview_truncated,
+                    (logView.preview.length / 1024).coerceAtLeast(1),
+                )
+            } else {
+                base
+            }
+        }
+
+        private fun shareDiagnosticLog() {
+            val exportFile = DiagnosticLogger.exportFile(requireContext())
+            if (exportFile == null) {
+                Toast.makeText(requireContext(), R.string.diagnostic_log_share_empty, Toast.LENGTH_SHORT).show()
+            } else {
+                val uri = FileProvider.getUriForFile(
+                    requireContext(),
+                    "${requireContext().packageName}.diagnostic-file-provider",
+                    exportFile
+                )
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(intent, getString(R.string.diagnostic_log_share_title)))
             }
         }
 
@@ -2264,14 +2392,12 @@ class SettingsActivity : AppCompatActivity() {
                 )
                 // Debug Settings can swap the entire playback stack and the search
                 // implementation. It must not be reachable in a shipped build.
+                // The log-only screen is safe and always searchable.
+                searchSources.add(Triple(R.xml.debug_log_preferences, SettingsNavGraphDirections.actionGlobalDebugLogSettingsFragment(), getString(R.string.customize_debug_logs)))
                 if (BuildConfig.DEBUG) {
                     searchSources.add(Triple(R.xml.debug_preferences, SettingsNavGraphDirections.actionGlobalDebugSettingsFragment(), getString(R.string.debug_settings)))
-                    searchSources.add(Triple(R.xml.debug_log_preferences, SettingsNavGraphDirections.actionGlobalDebugLogSettingsFragment(), getString(R.string.customize_debug_logs)))
                 }
                 fun collectPreferences(pref: Preference, navDirections: androidx.navigation.NavDirections, location: String) {
-                    if (!BuildConfig.DEBUG && pref.key == "nav_debug_settings") {
-                        return
-                    }
                     if (pref is PreferenceGroup) {
                         pref.forEach { child ->
                             collectPreferences(child, navDirections, location)

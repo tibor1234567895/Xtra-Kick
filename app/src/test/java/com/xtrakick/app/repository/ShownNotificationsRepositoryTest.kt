@@ -2,7 +2,11 @@ package com.xtrakick.app.repository
 
 import com.xtrakick.app.model.kick.api.livestream.Livestream
 import com.xtrakick.app.model.ui.Stream
+import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.ACTIVE_WATCH_SUPPRESS_MS
+import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.ActiveLiveChannel
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.EVENT_DUPLICATE_WINDOW_MS
+import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.buildSubscribedKeys
+import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.isActivelyWatching
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.SUMMARY_NOTIFICATION_ID
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.isRequestedLivestream
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.notificationIdFor
@@ -190,5 +194,39 @@ class ShownNotificationsRepositoryTest {
             "https://files.kick.com/images/user/101941/profile_image/conversion/avatar.webp",
             streamWithAvatar.channelLogo
         )
+    }
+
+    @Test
+    fun activelyWatchingMatchesIdOrLogin() {
+        val now = 10_000_000L
+        val active = ActiveLiveChannel("2642629", "4head", now - 1_000L)
+
+        assertTrue(isActivelyWatching("2642629", "other", active, now))
+        assertTrue(isActivelyWatching("999", "4HEAD", active, now))
+        assertFalse(isActivelyWatching("999", "other", active, now))
+    }
+
+    @Test
+    fun staleActiveWatchDoesNotSuppress() {
+        val now = 10_000_000L
+        val stale = ActiveLiveChannel("2642629", "4head", now - ACTIVE_WATCH_SUPPRESS_MS - 1L)
+        val empty = ActiveLiveChannel(null, null, 0L)
+
+        assertFalse(isActivelyWatching("2642629", "4head", stale, now))
+        assertFalse(isActivelyWatching("2642629", "4head", empty, now))
+    }
+
+    @Test
+    fun subscribedKeysCoverIdsAndSlugsCaseInsensitively() {
+        val keys = buildSubscribedKeys(
+            channelIds = listOf("2642629"),
+            keyToBroadcasterUserId = mapOf("4head" to "2642629"),
+            slugsForFallback = setOf("4head"),
+        )
+
+        assertTrue("2642629" in keys)
+        assertTrue("4head" in keys)
+        assertTrue("4HEAD".lowercase() in keys)
+        assertFalse("999" in keys)
     }
 }

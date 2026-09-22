@@ -115,7 +115,7 @@ class PlayerViewModel @Inject constructor(
     val follow = MutableStateFlow<Pair<Boolean, String?>?>(null)
 
 
-    fun loadStreamResult(networkLibrary: String?, kickWebHeaders: Map<String, String>, channelLogin: String, randomDeviceId: Boolean?, xDeviceId: String?, playerType: String?, supportedCodecs: String?, proxyPlaybackAccessToken: Boolean, proxyHost: String?, proxyPort: Int?, proxyUser: String?, proxyPassword: String?, enableIntegrity: Boolean, forceRefresh: Boolean = false, stalePlaybackUrl: String? = null) {
+    fun loadStreamResult(networkLibrary: String?, kickWebHeaders: Map<String, String>, channelLogin: String, randomDeviceId: Boolean?, xDeviceId: String?, playerType: String?, supportedCodecs: String?, proxyPlaybackAccessToken: Boolean, proxyHost: String?, proxyPort: Int?, proxyUser: String?, proxyPassword: String?, enableIntegrity: Boolean, forceRefresh: Boolean = false, stalePlaybackUrl: String? = null, forceRefreshRetryAttempted: Boolean = false) {
         if (forceRefresh || streamResult.value == null) {
             streamError.value = null
             viewModelScope.launch {
@@ -159,6 +159,33 @@ class PlayerViewModel @Inject constructor(
                             enableIntegrity = enableIntegrity,
                             forceRefresh = true,
                             stalePlaybackUrl = stalePlaybackUrl
+                        )
+                        return@launch
+                    }
+                    // Transient failure on force-refresh: retry once with a short delay before declaring the stream ended.
+                    if (forceRefresh && !forceRefreshRetryAttempted) {
+                        DiagnosticLogger.w(
+                            "PlayerViewModel",
+                            "Kick stream force refresh failed channel=$channelLogin message=${e.message} — retrying once after 500ms"
+                        )
+                        delay(500L)
+                        loadStreamResult(
+                            networkLibrary = networkLibrary,
+                            kickWebHeaders = kickWebHeaders,
+                            channelLogin = channelLogin,
+                            randomDeviceId = randomDeviceId,
+                            xDeviceId = xDeviceId,
+                            playerType = playerType,
+                            supportedCodecs = supportedCodecs,
+                            proxyPlaybackAccessToken = proxyPlaybackAccessToken,
+                            proxyHost = proxyHost,
+                            proxyPort = proxyPort,
+                            proxyUser = proxyUser,
+                            proxyPassword = proxyPassword,
+                            enableIntegrity = enableIntegrity,
+                            forceRefresh = true,
+                            stalePlaybackUrl = stalePlaybackUrl,
+                            forceRefreshRetryAttempted = true
                         )
                         return@launch
                     }

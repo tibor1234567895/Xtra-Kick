@@ -98,6 +98,10 @@ class IvsPlayerService : Service() {
     private var loadingArtworkUrl: String? = null
     private var artworkDisposable: Disposable? = null
     private var backgroundPlaybackEnabled = false
+    private var lastNotifiedTitle: String? = null
+    private var lastNotifiedChannel: String? = null
+    private var lastNotifiedPlaying: Boolean? = null
+    private var lastNotifiedArtworkUrl: String? = null
     private var hasStablePlayback = false
     private var playbackRequested = false
     private var retryCount = 0
@@ -638,6 +642,7 @@ class IvsPlayerService : Service() {
         setKickViewerMetadata(channelId, livestreamId, channelLogin)
         this.startedAtMs = streamStartedAtMs ?: 0L
         saveLastPlaybackRequest(url, title, channelName, channelLogo, startedAtMs, channelId, livestreamId, channelLogin)
+        saveActiveLiveChannel(channelId, channelLogin)
         hasStablePlayback = false
         retryCount = 0
         releaseDynamicsProcessing()
@@ -710,6 +715,32 @@ class IvsPlayerService : Service() {
             }
         } catch (_: Exception) {
         }
+    }
+
+    private fun saveActiveLiveChannel(channelId: String?, channelLogin: String?) {
+        try {
+            prefs().edit {
+                putString(AppConstants.ACTIVE_LIVE_CHANNEL_ID, channelId)
+                putString(AppConstants.ACTIVE_LIVE_CHANNEL_LOGIN, channelLogin)
+                putLong(AppConstants.ACTIVE_LIVE_UPDATED_MS, System.currentTimeMillis())
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun clearActiveLiveChannel() {
+        try {
+            prefs().edit {
+                remove(AppConstants.ACTIVE_LIVE_CHANNEL_ID)
+                remove(AppConstants.ACTIVE_LIVE_CHANNEL_LOGIN)
+                remove(AppConstants.ACTIVE_LIVE_UPDATED_MS)
+            }
+        } catch (_: Exception) {
+        }
+        lastNotifiedTitle = null
+        lastNotifiedChannel = null
+        lastNotifiedPlaying = null
+        lastNotifiedArtworkUrl = null
     }
 
     private fun clearLastPlaybackRequestIfCurrent() {
@@ -896,6 +927,11 @@ class IvsPlayerService : Service() {
 
     fun stopPlayback() {
         watchOwner.clearMetadata()
+        clearActiveLiveChannel()
+        // Drop the stale URL synchronously so a fragment binding mid-switch can't
+        // adopt the previous stream (black screen + spinner until the fresh URL
+        // resolves). Queued player ops on the executor run after this.
+        currentUrl = null
         backgroundPlaybackEnabled = false
         playbackRequested = false
         suspendedByFocusLoss = false
@@ -1042,6 +1078,18 @@ class IvsPlayerService : Service() {
 
     private fun sendNotification(bitmap: Bitmap?) {
         val ivsPlayer = player ?: return
+        val isPlaying = ivsPlayer.state == Player.State.PLAYING || ivsPlayer.state == Player.State.BUFFERING
+        val artworkUrl = loadedArtworkUrl
+        // Every startForeground() counts in notification history.
+        if (title == lastNotifiedTitle && channelName == lastNotifiedChannel &&
+            isPlaying == lastNotifiedPlaying && artworkUrl == lastNotifiedArtworkUrl
+        ) {
+            return
+        }
+        lastNotifiedTitle = title
+        lastNotifiedChannel = channelName
+        lastNotifiedPlaying = isPlaying
+        lastNotifiedArtworkUrl = artworkUrl
         val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, getString(R.string.notification_playback_channel_id))
         } else {
@@ -1056,7 +1104,7 @@ class IvsPlayerService : Service() {
             }
             setVisibility(Notification.VISIBILITY_PUBLIC)
             setOnlyAlertOnce(true)
-            setOngoing(ivsPlayer.state == Player.State.PLAYING || ivsPlayer.state == Player.State.BUFFERING)
+            setOngoing(isPlaying)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 setCategory(Notification.CATEGORY_TRANSPORT)
             }
@@ -1279,6 +1327,7 @@ class IvsPlayerService : Service() {
 
     override fun onDestroy() {
         watchOwner.release()
+        clearActiveLiveChannel()
         artworkDisposable?.dispose()
         artworkDisposable = null
         loadingArtworkUrl = null

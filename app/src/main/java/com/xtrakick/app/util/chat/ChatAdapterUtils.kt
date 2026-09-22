@@ -1529,7 +1529,12 @@ object ChatAdapterUtils {
     }
 
     private fun createChatImageKey(image: Image, source: Any, targetHeight: Int): ChatImageKey? {
-        if (image.isAnimated || image.format.equals("gif", true) || image.localData != null || image.localDataLoader != null || targetHeight <= 0) {
+        // Local payloads have no stable URL to key on; view size must be positive.
+        // Animated images ARE keyed so the coordinator deduplicates in-flight
+        // decodes. Its completion path still refuses to cache Animatable
+        // drawables and each bind clones via cloneDrawableForBind, so no mutable
+        // drawable is ever shared across rows.
+        if (image.localData != null || image.localDataLoader != null || targetHeight <= 0) {
             return null
         }
         val sourceString = source as? String ?: return null
@@ -1537,7 +1542,7 @@ object ChatAdapterUtils {
             source = sourceString,
             targetHeight = targetHeight,
             isEmote = image.isEmote,
-            isAnimated = false,
+            isAnimated = image.isAnimated || image.format.equals("gif", true),
         )
     }
 

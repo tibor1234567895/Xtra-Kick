@@ -11,4 +11,5 @@ data class KickLiveNotificationEvent(
     val description: String? = null,
     val path: String? = null,
     @SerialName("profile_picture") val profilePicture: String? = null,
+    @SerialName("start_time") val startTime: String? = null,
 )

@@ -42,6 +42,7 @@ class XtraFirebaseMessagingService : FirebaseMessagingService() {
             val title = data["title"]
             val description = data["description"]
             val profilePicture = data["profile_picture"]
+            val startTime = data["start_time"] ?: data["started_at"]
 
             val event = KickLiveNotificationEvent(
                 channelId = channelId,
@@ -50,6 +51,7 @@ class XtraFirebaseMessagingService : FirebaseMessagingService() {
                 description = description,
                 path = "/$channelSlug",
                 profilePicture = profilePicture,
+                startTime = startTime,
             )
 
             serviceScope.launch {

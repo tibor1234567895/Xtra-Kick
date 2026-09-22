@@ -3500,6 +3500,10 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         channelPointsDialog = null
         _binding?.emoteSections?.adapter = null
         emoteSectionAdapter = null
+        _binding?.recyclerView?.adapter = null
+        adapter = null
+        _binding?.autoCompleteRecyclerView?.adapter = null
+        autoCompleteAdapter = null
         resetPinnedGiftUiState()
         _binding = null
     }

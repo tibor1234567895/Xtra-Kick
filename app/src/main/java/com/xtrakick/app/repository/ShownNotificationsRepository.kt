@@ -204,11 +204,16 @@ class ShownNotificationsRepository @Inject constructor(
         val oldList = shownNotificationsDao.getAll()
         val oldByKey = oldList.associateBy { it.channelId }
         val oldByLower = oldList.associateBy { it.channelId.lowercase() }
-        val liveByChannelId = liveList.associateBy { it.channelId }
-        // Only sync dedupe rows of channels this poll actually fetched: a transient failure
-        // for one channel must not delete its row.
-        oldList.filter { item -> item.channelId in fetchedKeys && !liveByChannelId.containsKey(item.channelId) }.let {
-            shownNotificationsDao.deleteList(it)
+        // Session markers, not presence flags: one missed poll must never delete
+        // them, so only prune unsubscribed channels and ancient sessions.
+        val subscribedKeys = buildSubscribedKeys(channelIds, keyToBroadcasterUserId, slugsForFallback)
+        val nowMs = System.currentTimeMillis()
+        oldList.filter { item ->
+            val key = item.channelId
+            val stillSubscribed = key in subscribedKeys || key.lowercase() in subscribedKeys
+            !stillSubscribed || item.startedAt < nowMs - STALE_ROW_PRUNE_MS
+        }.let {
+            if (it.isNotEmpty()) shownNotificationsDao.deleteList(it)
         }
         shownNotificationsDao.insertList(liveList)
         // Alias-aware new check: the event road may have written the same session under
@@ -234,7 +239,22 @@ class ShownNotificationsRepository @Inject constructor(
             val old = oldRowFor(item.channelId, login)
             item.takeIf { old?.startedAt?.let { it < item.startedAt } != false }?.channelId
         }.toSet()
-        list.filter { it.channelId in newStreams }
+        // The active player means "still live", not "just went live".
+        val active = readActiveLiveChannel()
+        list.filter { it.channelId in newStreams && !isActivelyWatching(it.channelId, it.channelLogin, active) }
+    }
+
+    private fun readActiveLiveChannel(): ActiveLiveChannel {
+        return try {
+            val prefs = context.prefs()
+            ActiveLiveChannel(
+                channelId = prefs.getString(AppConstants.ACTIVE_LIVE_CHANNEL_ID, null),
+                channelLogin = prefs.getString(AppConstants.ACTIVE_LIVE_CHANNEL_LOGIN, null),
+                updatedMs = prefs.getLong(AppConstants.ACTIVE_LIVE_UPDATED_MS, 0L),
+            )
+        } catch (_: Exception) {
+            ActiveLiveChannel(null, null, 0L)
+        }
     }
 
     suspend fun saveList(list: List<ShownNotification>) = withContext(Dispatchers.IO) {
@@ -358,9 +378,24 @@ class ShownNotificationsRepository @Inject constructor(
             ?: resolution?.user?.id?.toString()
             ?: channelIdStr
             ?: userIdStr
-        val liveStartedAt = resolution?.livestream?.createdAt
+        if (isActivelyWatching(canonicalId, cleanSlug, readActiveLiveChannel())) {
+            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug from $source: already watching")
+            return@withContext
+        }
+        var liveStartedAt = event.startTime
             ?.takeUnless { it.isBlank() }
-            ?.let { KickApiHelper.parseIso8601DateUTC(it) }
+            ?.let { runCatching { KickApiHelper.parseIso8601DateUTC(it) }.getOrNull() }
+            ?: resolution?.livestream?.createdAt
+                ?.takeUnless { it.isBlank() }
+                ?.let { KickApiHelper.parseIso8601DateUTC(it) }
+        if (liveStartedAt == null) {
+            // The channel endpoint sometimes omits a live livestream object.
+            liveStartedAt = runCatching {
+                kickRepository.getChannelLivestream(cleanSlug)
+            }.getOrNull()?.createdAt
+                ?.takeUnless { it.isBlank() }
+                ?.let { KickApiHelper.parseIso8601DateUTC(it) }
+        }
         val nowMs = System.currentTimeMillis()
         // Cross-road dedupe: a row for this channel means this session already notified,
         // no matter which road wrote it. Legacy rows keyed by the raw event ids count too.
@@ -431,6 +466,53 @@ class ShownNotificationsRepository @Inject constructor(
          * stream days later must still notify, so the window stays at hours, not days.
          */
         const val EVENT_DUPLICATE_WINDOW_MS = 4 * 60 * 60 * 1000L
+
+        /** Session markers are pruned only for unsubscribed channels or old sessions. */
+        const val STALE_ROW_PRUNE_MS = 7 * 24 * 60 * 60 * 1000L
+
+        /** How long a playing channel suppresses its own live alert. */
+        const val ACTIVE_WATCH_SUPPRESS_MS = 6 * 60 * 60 * 1000L
+
+        data class ActiveLiveChannel(
+            val channelId: String?,
+            val channelLogin: String?,
+            val updatedMs: Long,
+        )
+
+        internal fun buildSubscribedKeys(
+            channelIds: List<String>,
+            keyToBroadcasterUserId: Map<String, String>,
+            slugsForFallback: Set<String>,
+        ): Set<String> {
+            val keys = HashSet<String>(channelIds.size * 2 + slugsForFallback.size * 2)
+            channelIds.forEach {
+                keys.add(it)
+                keys.add(it.lowercase())
+            }
+            keyToBroadcasterUserId.values.forEach {
+                keys.add(it)
+                keys.add(it.lowercase())
+            }
+            slugsForFallback.forEach {
+                keys.add(it)
+                keys.add(it.lowercase())
+            }
+            return keys
+        }
+
+        fun isActivelyWatching(
+            channelId: String?,
+            channelLogin: String?,
+            active: ActiveLiveChannel,
+            nowMs: Long = System.currentTimeMillis(),
+        ): Boolean {
+            if (active.updatedMs <= 0L || nowMs - active.updatedMs > ACTIVE_WATCH_SUPPRESS_MS) return false
+            if (!channelId.isNullOrBlank() && !active.channelId.isNullOrBlank() &&
+                active.channelId.equals(channelId, ignoreCase = true)
+            ) return true
+            return !channelLogin.isNullOrBlank() && !active.channelLogin.isNullOrBlank() &&
+                active.channelLogin.equals(channelLogin, ignoreCase = true)
+        }
 
         /**
          * Guards the checker road: keep only livestreams that were actually requested,

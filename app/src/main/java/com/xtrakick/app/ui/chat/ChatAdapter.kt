@@ -439,6 +439,27 @@ class ChatAdapter(
         }
     }
 
+    override fun onViewRecycled(holder: ViewHolder) {
+        // Recycle can precede detach; stop frame callbacks here so an animated
+        // row can't keep decoding after it leaves the pool.
+        if (animateGifs) {
+            (holder.textView.text as? Spannable)?.let { view ->
+                view.getSpans<ImageSpan>().forEach {
+                    (it.drawable as? Animatable)?.stop() ?:
+                    (it.drawable as? LayerDrawable)?.let { layer ->
+                        for (i in 0 until layer.numberOfLayers) {
+                            (layer.getDrawable(i) as? Animatable)?.stop()
+                        }
+                    }
+                }
+                view.getSpans<NamePaintImageSpan>().forEach {
+                    (it.drawable as? Animatable)?.stop()
+                }
+            }
+        }
+        super.onViewRecycled(holder)
+    }
+
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
         val childCount = recyclerView.childCount
         if (animateGifs) {

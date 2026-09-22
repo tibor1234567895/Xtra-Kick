@@ -201,6 +201,28 @@ class PlaybackService : MediaSessionService() {
         idleStopTimer = null
     }
 
+    private fun saveActiveLiveChannel(channelId: String?, channelLogin: String?) {
+        try {
+            prefs().edit {
+                putString(AppConstants.ACTIVE_LIVE_CHANNEL_ID, channelId)
+                putString(AppConstants.ACTIVE_LIVE_CHANNEL_LOGIN, channelLogin)
+                putLong(AppConstants.ACTIVE_LIVE_UPDATED_MS, System.currentTimeMillis())
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun clearActiveLiveChannel() {
+        try {
+            prefs().edit {
+                remove(AppConstants.ACTIVE_LIVE_CHANNEL_ID)
+                remove(AppConstants.ACTIVE_LIVE_CHANNEL_LOGIN)
+                remove(AppConstants.ACTIVE_LIVE_UPDATED_MS)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     private fun isBufferDebugEnabled(): Boolean {
         return BuildConfig.DEBUG && prefs().getBoolean(AppConstants.DEBUG_PLAYER_BUFFER_LOGS, false)
     }
@@ -417,6 +439,14 @@ class PlaybackService : MediaSessionService() {
                                 // mark the media3 engine as the last used one so the
                                 // headset-button resume receiver stays out of the way
                                 prefs().edit { putString(AppConstants.LAST_PLAYBACK_ENGINE, "media3") }
+                                if (isKick) {
+                                    saveActiveLiveChannel(
+                                        customCommand.customExtras.getString(CHANNEL_ID),
+                                        customCommand.customExtras.getString(CHANNEL_LOGIN),
+                                    )
+                                } else {
+                                    clearActiveLiveChannel()
+                                }
                                 stopIdleTimer()
                                 videoId = null
                                 offlineVideoId = null
@@ -543,6 +573,7 @@ class PlaybackService : MediaSessionService() {
                                 // mark the media3 engine as the last used one so the
                                 // headset-button resume receiver stays out of the way
                                 prefs().edit { putString(AppConstants.LAST_PLAYBACK_ENGINE, "media3") }
+                                clearActiveLiveChannel()
                                 stopIdleTimer()
                                 videoId = newId
                                 currentVideoIdString = newIdString
@@ -599,6 +630,7 @@ class PlaybackService : MediaSessionService() {
                                 currentVideoIdString = null
                                 offlineVideoId = null
                                 prefs().edit { putString(AppConstants.LAST_PLAYBACK_ENGINE, "media3") }
+                                clearActiveLiveChannel()
                                 stopIdleTimer()
                                 // A new item gets its own full retry budget.
                                 if (backgroundPrepareRetryCount > 0) backgroundPrepareRetryCount = 0
@@ -663,6 +695,7 @@ class PlaybackService : MediaSessionService() {
                                     customCommand.customExtras.getLong(PLAYBACK_POSITION)
                                 }
                                 prefs().edit { putString(AppConstants.LAST_PLAYBACK_ENGINE, "media3") }
+                                clearActiveLiveChannel()
                                 stopIdleTimer()
                                 videoId = null
                                 offlineVideoId = newId
@@ -889,12 +922,14 @@ class PlaybackService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         savePosition()
+        clearActiveLiveChannel()
         mediaSession?.player?.clearMediaItems()
         pauseAllPlayersAndStopSelf()
     }
 
     override fun onDestroy() {
         watchOwner.release()
+        clearActiveLiveChannel()
         ioScope.cancel()
         sleepTimer?.cancel()
         sleepTimer = null

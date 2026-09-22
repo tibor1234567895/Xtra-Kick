@@ -110,6 +110,52 @@ object DiagnosticLogger {
         }
     }
 
+    data class DiagnosticLogView(
+        val totalBytes: Long,
+        val entryCount: Int,
+        val preview: String,
+        val truncated: Boolean,
+    )
+
+    /**
+     * Tail of the combined diagnostic logs for in-app viewing. Capped so a full
+     * log can't blow up a dialog; entry count feeds the status line.
+     */
+    fun readForView(context: Context, tailChars: Int = 60_000): DiagnosticLogView? {
+        synchronized(this) {
+            val previous = previousFile(context).takeIf { it.exists() }
+            val current = currentFile(context).takeIf { it.exists() }
+            if (previous == null && current == null) return null
+            val full = buildString {
+                if (previous != null) {
+                    appendLine("===== Previous log =====")
+                    append(previous.readText())
+                    appendLine()
+                }
+                if (current != null) {
+                    appendLine("===== Current log =====")
+                    append(current.readText())
+                }
+            }
+            var entries = 0
+            var index = 0
+            while (true) {
+                val newline = full.indexOf('\n', index)
+                val lineEnd = if (newline == -1) full.length else newline
+                if (lineEnd > index && full[index] == '[') entries++
+                if (newline == -1) break
+                index = newline + 1
+            }
+            val totalBytes = (previous?.length() ?: 0L) + (current?.length() ?: 0L)
+            if (full.length <= tailChars) {
+                return DiagnosticLogView(totalBytes, entries, full, false)
+            }
+            var start = full.length - tailChars
+            full.indexOf('\n', start).takeIf { it != -1 }?.let { start = it + 1 }
+            return DiagnosticLogView(totalBytes, entries, "…\n" + full.substring(start), true)
+        }
+    }
+
     private fun writeIfEnabled(
         level: String,
         tag: String,
@@ -119,7 +165,9 @@ object DiagnosticLogger {
     ) {
         val appContext = context ?: return
         val prefs = appContext.prefs()
-        if (!prefs.getBoolean(AppConstants.DEBUG_DIAGNOSTIC_FILE_LOGGING, false)) {
+        // Fatal crashes always persist: writing once per crash costs no battery,
+        // and release builds hide the toggle that would otherwise gate them.
+        if (!forceCrash && !prefs.getBoolean(AppConstants.DEBUG_DIAGNOSTIC_FILE_LOGGING, false)) {
             return
         }
         if (!forceCrash && !shouldLogForMinimum(level, prefs.getString(AppConstants.DEBUG_DIAGNOSTIC_FILE_LOG_LEVEL, LEVEL_ERROR))) {

@@ -1264,10 +1264,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (version < 1) {
             prefs.edit {
-                val width = resources.displayMetrics.widthPixels
-                val height = resources.displayMetrics.heightPixels
-                val chatWidth = ((if (height > width) height else width) * (30 / 100f)).toInt()
-                putInt(AppConstants.LANDSCAPE_CHAT_WIDTH, chatWidth)
+                putInt(AppConstants.LANDSCAPE_CHAT_WIDTH, 30)
                 if (resources.getBoolean(R.bool.isTablet)) {
                     putString(AppConstants.PORTRAIT_COLUMN_COUNT, "2")
                     putString(AppConstants.LANDSCAPE_COLUMN_COUNT, "3")

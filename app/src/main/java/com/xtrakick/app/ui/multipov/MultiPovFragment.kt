@@ -1797,14 +1797,18 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     private fun ensureChatWidthLandscape() {
-        if (chatWidthLandscape > 0) return
         val prefs = requireContext().prefs()
-        chatWidthLandscape = prefs.getInt(AppConstants.LANDSCAPE_CHAT_WIDTH, 0)
-        if (chatWidthLandscape <= 0) {
-            val metrics = resources.displayMetrics
-            val longest = max(metrics.widthPixels, metrics.heightPixels)
-            chatWidthLandscape = (longest * 0.30f).toInt()
+        val metrics = resources.displayMetrics
+        val screenWidth = max(metrics.widthPixels, metrics.heightPixels)
+        var percent = prefs.getInt(AppConstants.LANDSCAPE_CHAT_WIDTH, 30)
+        if (percent > 100) {
+            // Legacy raw pixel migration: convert old pixel value to percentage
+            percent = ((percent * 100f) / screenWidth).roundToInt().coerceIn(10, 80)
+            prefs.edit { putInt(AppConstants.LANDSCAPE_CHAT_WIDTH, percent) }
+        } else if (percent <= 0) {
+            percent = 30
         }
+        chatWidthLandscape = (screenWidth * (percent / 100f)).roundToInt()
     }
 
     /**

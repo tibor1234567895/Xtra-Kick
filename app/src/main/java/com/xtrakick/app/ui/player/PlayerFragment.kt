@@ -526,7 +526,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 disableBackground()
             }
             isChatOpen = prefs.getBoolean(AppConstants.KEY_CHAT_OPENED, true) && !prefs.getBoolean(AppConstants.CHAT_DISABLE, false)
-            chatWidthLandscape = prefs.getInt(AppConstants.LANDSCAPE_CHAT_WIDTH, 0)
+            ensureChatWidthLandscape()
             chatOpenProgress = if (isChatOpen) 1f else 0f
             resizeMode = prefs.getInt(AppConstants.ASPECT_RATIO_LANDSCAPE, AspectRatioFrameLayout.RESIZE_MODE_FIT)
             aspectRatioFrameLayout.setAspectRatio(16f / 9f)
@@ -2090,11 +2090,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
+    open fun resolveQualityDialogItems(): List<String> {
+        return viewModel.qualities.values.map { it.first }
+    }
+
     fun showQualityDialog() {
         if (viewModel.qualities.isNotEmpty()) {
             RadioButtonDialogFragment.newInstance(
                 REQUEST_CODE_QUALITY,
-                viewModel.qualities.values.map { it.first },
+                resolveQualityDialogItems(),
                 null,
                 viewModel.qualities.keys.indexOf(viewModel.quality)
             ).show(childFragmentManager, "closeOnPip")
@@ -2185,15 +2189,17 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     private fun ensureChatWidthLandscape() {
-        if (chatWidthLandscape > 0) {
-            return
+        val metrics = resources.displayMetrics
+        val screenWidth = max(metrics.widthPixels, metrics.heightPixels)
+        var percent = prefs.getInt(AppConstants.LANDSCAPE_CHAT_WIDTH, 30)
+        if (percent > 100) {
+            // Legacy raw pixel migration: convert old pixel value to percentage
+            percent = ((percent * 100f) / screenWidth).roundToInt().coerceIn(10, 80)
+            prefs.edit { putInt(AppConstants.LANDSCAPE_CHAT_WIDTH, percent) }
+        } else if (percent <= 0) {
+            percent = 30
         }
-        chatWidthLandscape = prefs.getInt(AppConstants.LANDSCAPE_CHAT_WIDTH, 0)
-        if (chatWidthLandscape <= 0) {
-            val metrics = resources.displayMetrics
-            val longest = max(metrics.widthPixels, metrics.heightPixels)
-            chatWidthLandscape = (longest * 0.30f).toInt()
-        }
+        chatWidthLandscape = (screenWidth * (percent / 100f)).roundToInt()
     }
 
     /**
@@ -2379,9 +2385,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
+    open fun resolveQualityDisplayText(): String? {
+        return viewModel.qualities[viewModel.quality]?.first
+    }
+
     fun setQualityText() {
         (childFragmentManager.findFragmentByTag("closeOnPip") as? PlayerSettingsDialog?)?.setQuality(
-            viewModel.qualities[viewModel.quality]?.first
+            resolveQualityDisplayText()
         )
     }
 

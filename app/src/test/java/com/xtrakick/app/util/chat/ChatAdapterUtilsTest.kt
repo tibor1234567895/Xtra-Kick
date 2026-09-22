@@ -6,6 +6,7 @@ import com.xtrakick.app.model.chat.Image
 import com.xtrakick.app.model.chat.Reply
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertFalse
@@ -120,7 +121,7 @@ class ChatAdapterUtilsTest {
     }
 
     @Test
-    fun doesNotCreateChatImageKeyForAnimatedImage() {
+    fun createsChatImageKeyForAnimatedImage() {
         val image = Image(
             url1x = "https://files.kick.com/emotes/37217/fullsize",
             isEmote = true,
@@ -129,11 +130,11 @@ class ChatAdapterUtilsTest {
             end = 1,
         )
 
-        assertNull(ChatAdapterUtils.chatImageKeyForTest(image, "1", 30))
+        assertNotNull(ChatAdapterUtils.chatImageKeyForTest(image, "1", 30))
     }
 
     @Test
-    fun doesNotCreateChatImageKeyForGifFormat() {
+    fun createsChatImageKeyForGifFormat() {
         val image = Image(
             url1x = "https://files.kick.com/emotes/37217/fullsize",
             format = "gif",
@@ -143,7 +144,30 @@ class ChatAdapterUtilsTest {
             end = 1,
         )
 
-        assertNull(ChatAdapterUtils.chatImageKeyForTest(image, "1", 30))
+        assertNotNull(ChatAdapterUtils.chatImageKeyForTest(image, "1", 30))
+    }
+
+    @Test
+    fun separatesAnimatedFromStaticChatImageKeys() {
+        val static = Image(
+            url1x = "https://files.kick.com/emotes/37217/fullsize",
+            isEmote = true,
+            isAnimated = false,
+            start = 0,
+            end = 1,
+        )
+        val animated = Image(
+            url1x = "https://files.kick.com/emotes/37217/fullsize",
+            isEmote = true,
+            isAnimated = true,
+            start = 0,
+            end = 1,
+        )
+
+        assertNotEquals(
+            ChatAdapterUtils.chatImageKeyForTest(static, "1", 30),
+            ChatAdapterUtils.chatImageKeyForTest(animated, "1", 30),
+        )
     }
 
     @Test
