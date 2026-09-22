@@ -9,6 +9,8 @@ plugins {
     alias(libs.plugins.detekt)
 }
 
+import org.gradle.api.tasks.testing.Test
+
 kotlin {
     jvmToolchain(21)
 }
@@ -268,10 +270,19 @@ dependencies {
 testImplementation("org.json:json:20260814")
     // ChatBackgroundUtilsTest computes its expected values with androidx ColorUtils,
     // which calls android.graphics.Color — absent on a plain JVM. Robolectric supplies it.
-    testImplementation("org.robolectric:robolectric:4.16.1")
+    testImplementation("org.robolectric:robolectric:4.17")
     // conscrypt-android ships JNI only for Android. Robolectric loads it on the JVM, so the
     // desktop build supplies the matching native library. Test runtime only.
     testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.7.0")
+}
+
+// Robolectric 4.17 reaches FileDescriptor internals via jdk.internal.access.SharedSecrets,
+// which JPMS hides by default. Export and open it for the unit-test JVM.
+tasks.withType<Test> {
+    jvmArgs(
+        "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED",
+        "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED"
+    )
 }
 
 ksp {
