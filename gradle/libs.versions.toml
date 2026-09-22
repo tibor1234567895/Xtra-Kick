@@ -1,6 +1,6 @@
 [versions]
 activity = "1.12.4"
-android-gradle-plugin = "9.4.0"
+android-gradle-plugin = "9.4.1"
 appcompat = "1.8.0"
 coil = "3.6.2"
 conscrypt = "2.7.0"
