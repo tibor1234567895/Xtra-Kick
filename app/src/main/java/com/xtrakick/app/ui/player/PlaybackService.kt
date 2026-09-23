@@ -50,6 +50,7 @@ import com.xtrakick.app.player.lowlatency.OkHttpDataSource
 import com.xtrakick.app.repository.OfflineRepository
 import com.xtrakick.app.repository.PlayerRepository
 import com.xtrakick.app.repository.KickRepository
+import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
@@ -117,6 +118,9 @@ class PlaybackService : MediaSessionService() {
 
     @Inject
     lateinit var kickRepository: KickRepository
+
+    @Inject
+    lateinit var shownNotificationsRepository: ShownNotificationsRepository
 
     @Inject
     @JvmField
@@ -209,6 +213,14 @@ class PlaybackService : MediaSessionService() {
                 putLong(AppConstants.ACTIVE_LIVE_UPDATED_MS, System.currentTimeMillis())
             }
         } catch (_: Exception) {
+        }
+        ioScope.launch {
+            runCatching {
+                shownNotificationsRepository.markStreamSessionShown(
+                    channelId = channelId,
+                    channelLogin = channelLogin,
+                )
+            }
         }
     }
 

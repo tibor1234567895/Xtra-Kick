@@ -55,7 +55,9 @@ class ShownNotificationsRepository @Inject constructor(
         }
 
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-        val headers = KickApiHelper.getKickPublicApiHeaders(context)
+        val headers = runCatching {
+            kickRepository.getKickPublicApiHeadersWithRefresh(networkLibrary)
+        }.getOrElse { KickApiHelper.getKickPublicApiHeaders(context) }
         val follows = runCatching { localFollowChannelRepository.loadFollows() }.getOrDefault(emptyList())
         val followByUserId = follows.mapNotNull { f -> f.userId?.takeIf { it.isNotBlank() }?.let { it to f } }.toMap()
         val followBySlug = follows.mapNotNull { f -> f.userLogin?.takeIf { it.isNotBlank() }?.lowercase()?.let { it to f } }.toMap()
@@ -194,32 +196,17 @@ class ShownNotificationsRepository @Inject constructor(
                 ) ?: group.first()
             }
 
-        val liveList = list.mapNotNull { stream ->
-            stream.channelId.takeUnless { it.isNullOrBlank() }?.let { channelId ->
-                stream.startedAt.takeUnless { it.isNullOrBlank() }?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { startedAt ->
-                    ShownNotification(channelId, startedAt)
-                }
-            }
-        }
         val oldList = shownNotificationsDao.getAll()
         val oldByKey = oldList.associateBy { it.channelId }
         val oldByLower = oldList.associateBy { it.channelId.lowercase() }
-        // Session markers, not presence flags: one missed poll must never delete
-        // them, so only prune unsubscribed channels and ancient sessions.
-        val subscribedKeys = buildSubscribedKeys(channelIds, keyToBroadcasterUserId, slugsForFallback)
         val nowMs = System.currentTimeMillis()
-        oldList.filter { item ->
-            val key = item.channelId
-            val stillSubscribed = key in subscribedKeys || key.lowercase() in subscribedKeys
-            !stillSubscribed || item.startedAt < nowMs - STALE_ROW_PRUNE_MS
-        }.let {
+
+        // Prune only ancient sessions (older than 48 hours) so rows don't grow indefinitely.
+        // Never prune active or recent sessions by subscription key.
+        oldList.filter { item -> item.startedAt < nowMs - STALE_ROW_PRUNE_MS }.let {
             if (it.isNotEmpty()) shownNotificationsDao.deleteList(it)
         }
-        shownNotificationsDao.insertList(liveList)
-        // Alias-aware new check: the event road may have written the same session under
-        // the numeric user id while this poll holds a slug (or vice versa), or the stored
-        // row uses a different login casing. Check the stream's own keys plus any
-        // notification-subscription key that maps to the same broadcaster id.
+
         val inputKeysByBroadcaster = mutableMapOf<String, MutableSet<String>>()
         keyToBroadcasterUserId.forEach { (inputKey, broadcasterId) ->
             inputKeysByBroadcaster.getOrPut(broadcasterId) { mutableSetOf() }.add(inputKey)
@@ -234,14 +221,37 @@ class ShownNotificationsRepository @Inject constructor(
             }
             return null
         }
-        val newStreams = liveList.mapNotNull { item ->
-            val login = list.firstOrNull { it.channelId == item.channelId }?.channelLogin
-            val old = oldRowFor(item.channelId, login)
-            item.takeIf { old?.startedAt?.let { it < item.startedAt } != false }?.channelId
-        }.toSet()
-        // The active player means "still live", not "just went live".
+
+        val newStreams = mutableSetOf<String>()
+        val allLiveRowsToPersist = mutableListOf<ShownNotification>()
         val active = readActiveLiveChannel()
-        list.filter { it.channelId in newStreams && !isActivelyWatching(it.channelId, it.channelLogin, active) }
+
+        for (stream in list) {
+            val cid = stream.channelId ?: continue
+            val startedAt = stream.startedAt?.takeUnless { it.isBlank() }
+                ?.let { KickApiHelper.parseIso8601DateUTC(it) } ?: continue
+
+            // Record all alias rows so push/poll/watch share the same knowledge
+            val aliasKeys = listOfNotNull(cid, stream.channelLogin, stream.channelLogin?.lowercase()).distinct()
+            aliasKeys.forEach { key ->
+                allLiveRowsToPersist.add(ShownNotification(key, startedAt))
+            }
+
+            val old = oldRowFor(cid, stream.channelLogin)
+            val alreadyShown = old != null && old.startedAt >= startedAt
+            val isTooOldToAlert = !isStreamStartFresh(startedAt, nowMs)
+            val activelyWatching = isActivelyWatching(cid, stream.channelLogin, active, nowMs)
+
+            if (!alreadyShown && !isTooOldToAlert && !activelyWatching) {
+                newStreams.add(cid)
+            }
+        }
+
+        if (allLiveRowsToPersist.isNotEmpty()) {
+            shownNotificationsDao.insertList(allLiveRowsToPersist)
+        }
+
+        list.filter { it.channelId in newStreams }
     }
 
     private fun readActiveLiveChannel(): ActiveLiveChannel {
@@ -254,6 +264,23 @@ class ShownNotificationsRepository @Inject constructor(
             )
         } catch (_: Exception) {
             ActiveLiveChannel(null, null, 0L)
+        }
+    }
+
+    suspend fun markStreamSessionShown(
+        channelId: String?,
+        channelLogin: String?,
+        startedAtMs: Long? = null,
+    ) = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val sessionTime = startedAtMs?.takeIf { it > 0L } ?: now
+        val keys = listOfNotNull(
+            channelId?.trim()?.takeIf { it.isNotBlank() },
+            channelLogin?.trim()?.takeIf { it.isNotBlank() },
+            channelLogin?.trim()?.lowercase()?.takeIf { it.isNotBlank() },
+        ).distinct()
+        if (keys.isNotEmpty()) {
+            shownNotificationsDao.insertList(keys.map { ShownNotification(it, sessionTime) })
         }
     }
 
@@ -318,9 +345,12 @@ class ShownNotificationsRepository @Inject constructor(
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             val summaryNotification = NotificationCompat.Builder(context, channelId).apply {
+                setContentTitle(ContextCompat.getString(context, R.string.app_name))
+                setContentText(ContextCompat.getString(context, R.string.live_notification_channels))
                 setGroup(GROUP_KEY)
                 setSmallIcon(R.drawable.notification_icon)
                 setGroupSummary(true)
+                setAutoCancel(true)
             }.build()
             notificationManager.notify(SUMMARY_NOTIFICATION_ID, summaryNotification)
         }
@@ -378,10 +408,10 @@ class ShownNotificationsRepository @Inject constructor(
             ?: resolution?.user?.id?.toString()
             ?: channelIdStr
             ?: userIdStr
-        if (isActivelyWatching(canonicalId, cleanSlug, readActiveLiveChannel())) {
-            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug from $source: already watching")
-            return@withContext
-        }
+        val aliasKeys = (listOfNotNull(canonicalId, userIdStr, channelIdStr, cleanSlug, resolution?.slug).flatMap {
+            listOf(it, it.lowercase())
+        }).distinct()
+
         var liveStartedAt = event.startTime
             ?.takeUnless { it.isBlank() }
             ?.let { runCatching { KickApiHelper.parseIso8601DateUTC(it) }.getOrNull() }
@@ -396,7 +426,19 @@ class ShownNotificationsRepository @Inject constructor(
                 ?.takeUnless { it.isBlank() }
                 ?.let { KickApiHelper.parseIso8601DateUTC(it) }
         }
+
+        if (isActivelyWatching(canonicalId, cleanSlug, readActiveLiveChannel())) {
+            Log.i(TAG, "dropping live event for $userIdStr/$cleanSlug from $source: already watching")
+            val sessionTime = liveStartedAt ?: System.currentTimeMillis()
+            shownNotificationsDao.insertList(aliasKeys.map { ShownNotification(it, sessionTime) })
+            return@withContext
+        }
         val nowMs = System.currentTimeMillis()
+        if (liveStartedAt != null && !isStreamStartFresh(liveStartedAt, nowMs)) {
+            Log.i(TAG, "dropping stale live event for $userIdStr/$cleanSlug from $source: started ${(nowMs - liveStartedAt) / 60000}m ago")
+            shownNotificationsDao.insertList(aliasKeys.map { ShownNotification(it, liveStartedAt) })
+            return@withContext
+        }
         // Cross-road dedupe: a row for this channel means this session already notified,
         // no matter which road wrote it. Legacy rows keyed by the raw event ids count too.
         val legacyKeys = listOfNotNull(userIdStr, channelIdStr).distinct()
@@ -430,7 +472,8 @@ class ShownNotificationsRepository @Inject constructor(
             title = cleanTitle,
             profileImageUrl = effectiveAvatar,
         )
-        shownNotificationsDao.insertList(listOf(ShownNotification(canonicalId, liveStartedAt ?: nowMs)))
+        val sessionTime = liveStartedAt ?: nowMs
+        shownNotificationsDao.insertList(aliasKeys.map { ShownNotification(it, sessionTime) })
         Log.i(TAG, "posting live event for $userIdStr/$cleanSlug from $source (canonical=$canonicalId)")
         withContext(Dispatchers.Main) {
             showLiveNotifications(context, listOf(stream))
@@ -467,11 +510,24 @@ class ShownNotificationsRepository @Inject constructor(
          */
         const val EVENT_DUPLICATE_WINDOW_MS = 4 * 60 * 60 * 1000L
 
-        /** Session markers are pruned only for unsubscribed channels or old sessions. */
-        const val STALE_ROW_PRUNE_MS = 7 * 24 * 60 * 60 * 1000L
+        /** Maximum age of a stream start (20 min) eligible to trigger a notification alert. Older streams are silently recorded as known. */
+        const val MAX_STREAM_START_ALERT_AGE_MS = 20 * 60 * 1000L
+
+        /** Session markers are pruned after 48 hours to prevent unbounded growth. */
+        const val STALE_ROW_PRUNE_MS = 48 * 60 * 60 * 1000L
 
         /** How long a playing channel suppresses its own live alert. */
         const val ACTIVE_WATCH_SUPPRESS_MS = 6 * 60 * 60 * 1000L
+
+        fun isStreamStartFresh(
+            startedAtMs: Long?,
+            nowMs: Long = System.currentTimeMillis(),
+            maxAgeMs: Long = MAX_STREAM_START_ALERT_AGE_MS,
+        ): Boolean {
+            if (startedAtMs == null) return true
+            if (startedAtMs <= 0L) return false
+            return (nowMs - startedAtMs) <= maxAgeMs
+        }
 
         data class ActiveLiveChannel(
             val channelId: String?,

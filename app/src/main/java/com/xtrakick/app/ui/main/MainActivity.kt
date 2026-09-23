@@ -99,6 +99,7 @@ import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.color.MaterialColors
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowChannelRepository
+import com.xtrakick.app.repository.ShownNotificationsRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -164,6 +165,8 @@ class MainActivity : AppCompatActivity() {
     lateinit var localFollowChannelRepository: LocalFollowChannelRepository
     @Inject
     lateinit var kickRepository: KickRepository
+    @Inject
+    lateinit var shownNotificationsRepository: ShownNotificationsRepository
 
     private lateinit var prefs: SharedPreferences
     private var checkedUpdatesOnLaunch = false
@@ -787,6 +790,17 @@ class MainActivity : AppCompatActivity() {
                     } else null
                 }
                 if (stream != null) {
+                    lifecycleScope.launch {
+                        runCatching {
+                            val startedAtMs = stream.startedAt?.takeUnless { it.isBlank() }
+                                ?.let { KickApiHelper.parseIso8601DateUTC(it) }
+                            shownNotificationsRepository.markStreamSessionShown(
+                                channelId = stream.channelId,
+                                channelLogin = stream.channelLogin,
+                                startedAtMs = startedAtMs,
+                            )
+                        }
+                    }
                     val login = stream.channelLogin
                     if (!login.isNullOrBlank() && stream.source.equals(AppConstants.KICK, true)) {
                         lifecycleScope.launch {
@@ -875,6 +889,17 @@ class MainActivity : AppCompatActivity() {
 //Navigation listeners
 
     fun startStream(stream: Stream, resolvedUrl: String? = null, forceStandardLiveEngine: Boolean = false) {
+        lifecycleScope.launch {
+            runCatching {
+                val startedAtMs = stream.startedAt?.takeUnless { it.isBlank() }
+                    ?.let { KickApiHelper.parseIso8601DateUTC(it) }
+                shownNotificationsRepository.markStreamSessionShown(
+                    channelId = stream.channelId,
+                    channelLogin = stream.channelLogin,
+                    startedAtMs = startedAtMs,
+                )
+            }
+        }
         closeMultiPovInternal()
         val effectiveResolvedUrl = when {
             !resolvedUrl.isNullOrBlank() -> resolvedUrl

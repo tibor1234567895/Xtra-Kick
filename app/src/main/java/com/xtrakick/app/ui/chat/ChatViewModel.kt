@@ -112,7 +112,11 @@ internal fun resolveAnchoredReplayPosition(
     maxAnchorAgeMs: Long = 3_000L
 ): Long {
     if (seekAnchorMs == null || anchorAgeMs > maxAnchorAgeMs) return rawPositionMs
-    return if (abs(rawPositionMs - seekAnchorMs) <= convergenceMs) rawPositionMs else seekAnchorMs
+    val deltaFromSeek = rawPositionMs - seekAnchorMs
+    if (abs(deltaFromSeek) <= convergenceMs || deltaFromSeek in 0L..(anchorAgeMs + convergenceMs)) {
+        return rawPositionMs
+    }
+    return seekAnchorMs
 }
 
 /** Newest messages strictly before the seek point, including the pre-start lookback. */
@@ -559,8 +563,17 @@ class ChatViewModel @Inject constructor(
         kickReplayUrl: String? = null
     ) {
         if (kickReplayFallback) {
+            val sessionStartTimeMs = kickReplayFallbackStartTimeMs
+                ?: kickReplayStartTime?.let { KickApiHelper.parseIso8601DateUTC(it) }
+                ?: 0L
+            val sessionKey = "$channelId|$sessionStartTimeMs"
             if (kickChatJob?.isActive != true) {
-                startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, true, kickReplayStartTime, kickReplayUrl)
+                if (kickReplayFallbackEnabled && kickReplaySessionKey == sessionKey) {
+                    val currentPos = kickReplayLastPlaybackPositionMs ?: getCurrentPosition()?.coerceAtLeast(0L)
+                    startReplayChatLoad(seekPosition = currentPos, forceNewSession = false)
+                } else {
+                    startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, true, kickReplayStartTime, kickReplayUrl)
+                }
             }
             return
         }
@@ -1660,6 +1673,7 @@ class ChatViewModel @Inject constructor(
                     return dedupedMessages
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 logKickReplayChat(
                     stage = "request_error",
                     sessionKey = debugSessionKey
@@ -1976,9 +1990,10 @@ class ChatViewModel @Inject constructor(
         forceNewSession: Boolean = false,
         seekPosition: Long? = null
     ) {
-        val currentPlaybackPositionMs = seekPosition ?: getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
-        val sessionKey = "$channelId|$replayStartTimeMs"
         val previousPlaybackPositionMs = kickReplayLastPlaybackPositionMs
+        val currentPlaybackPositionMs = seekPosition
+            ?: (getCurrentPosition()?.coerceAtLeast(0L)?.takeIf { it > 0L } ?: previousPlaybackPositionMs ?: 0L)
+        val sessionKey = "$channelId|$replayStartTimeMs"
         val isSeek = isKickReplaySeek(currentPlaybackPositionMs, previousPlaybackPositionMs)
         val isNewSession = forceNewSession || isSeek || kickReplaySessionKey != sessionKey
         logKickReplayChat(stage = "session_start", sessionKey = sessionKey) {
@@ -2097,17 +2112,28 @@ class ChatViewModel @Inject constructor(
             // Both loops touch kickReplayPendingMessages and the pacing state, and both stay on
             // this scope's main dispatcher, so they interleave only at suspension points - none of
             // which sit inside the queue reads and writes.
+            var activeSeekAnchorMs: Long? = seekPosition
             coroutineScope {
                 launch {
                     while (currentCoroutineContext().isActive) {
                         try {
                             ensureCurrentGeneration()
                             val rawPosition = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
-                            val position = resolveAnchoredReplayPosition(
-                                rawPositionMs = rawPosition,
-                                seekAnchorMs = seekPosition,
-                                anchorAgeMs = SystemClock.elapsedRealtime() - jobStartElapsedMs
-                            )
+                            val anchor = activeSeekAnchorMs
+                            val position = if (anchor != null) {
+                                val anchorAgeMs = SystemClock.elapsedRealtime() - jobStartElapsedMs
+                                val resolved = resolveAnchoredReplayPosition(
+                                    rawPositionMs = rawPosition,
+                                    seekAnchorMs = anchor,
+                                    anchorAgeMs = anchorAgeMs
+                                )
+                                if (resolved == rawPosition) {
+                                    activeSeekAnchorMs = null
+                                }
+                                resolved
+                            } else {
+                                rawPosition
+                            }
                             val previousPosition = kickReplayLastPlaybackPositionMs
                             kickReplayLastPlaybackPositionMs = position
                             if (isKickReplaySeek(position, previousPosition)) {
@@ -2142,11 +2168,21 @@ class ChatViewModel @Inject constructor(
                         try {
                             ensureCurrentGeneration()
                             val rawPosition = getCurrentPosition()?.coerceAtLeast(0L) ?: 0L
-                            val position = resolveAnchoredReplayPosition(
-                                rawPositionMs = rawPosition,
-                                seekAnchorMs = seekPosition,
-                                anchorAgeMs = SystemClock.elapsedRealtime() - jobStartElapsedMs
-                            )
+                            val anchor = activeSeekAnchorMs
+                            val position = if (anchor != null) {
+                                val anchorAgeMs = SystemClock.elapsedRealtime() - jobStartElapsedMs
+                                val resolved = resolveAnchoredReplayPosition(
+                                    rawPositionMs = rawPosition,
+                                    seekAnchorMs = anchor,
+                                    anchorAgeMs = anchorAgeMs
+                                )
+                                if (resolved == rawPosition) {
+                                    activeSeekAnchorMs = null
+                                }
+                                resolved
+                            } else {
+                                rawPosition
+                            }
                             val playbackTimestampMs = effectiveReplayStartTimeMs + position
                             // Fetch from the deepest point already buffered rather than from the
                             // playhead, so each poll extends the buffer instead of re-requesting
@@ -4156,9 +4192,9 @@ class ChatViewModel @Inject constructor(
             }
             kickChatJob?.cancel()
             kickChatJob = null
-            kickReplayMessageSources = null
-            kickReplayResolvedStartTimeMs = null
             resetKickReplayPendingQueue()
+            lastSeekToPositionMs = null
+            lastSeekToTimeMs = 0L
         } else {
             chatReplayManager?.stop() ?: chatReplayManagerLocal?.stop()
         }
@@ -4174,7 +4210,16 @@ class ChatViewModel @Inject constructor(
         chatReplayManager?.updatePosition(position) ?: chatReplayManagerLocal?.updatePosition(position)
     }
 
+    private var lastSeekToPositionMs: Long? = null
+    private var lastSeekToTimeMs: Long = 0L
+
     fun seekTo(position: Long) {
+        val now = SystemClock.elapsedRealtime()
+        if (lastSeekToPositionMs == position && (now - lastSeekToTimeMs) < 300L && kickChatJob?.isActive == true) {
+            return
+        }
+        lastSeekToPositionMs = position
+        lastSeekToTimeMs = now
         if (kickReplayFallbackEnabled) {
             logKickReplayChat(stage = "seekTo", sessionKey = kickReplaySessionKey) {
                 "position=$position"

@@ -5,8 +5,10 @@ import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.ACTIVE_WATCH_SUPPRESS_MS
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.ActiveLiveChannel
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.EVENT_DUPLICATE_WINDOW_MS
+import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.MAX_STREAM_START_ALERT_AGE_MS
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.buildSubscribedKeys
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.isActivelyWatching
+import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.isStreamStartFresh
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.SUMMARY_NOTIFICATION_ID
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.isRequestedLivestream
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.notificationIdFor
@@ -228,5 +230,28 @@ class ShownNotificationsRepositoryTest {
         assertTrue("4head" in keys)
         assertTrue("4HEAD".lowercase() in keys)
         assertFalse("999" in keys)
+    }
+
+    @Test
+    fun streamStartWithinTwentyMinutesIsFresh() {
+        val now = 1_700_000_000_000L
+        val fiveMinutesAgo = now - (5 * 60 * 1000L)
+        val exactlyTwentyMinutesAgo = now - MAX_STREAM_START_ALERT_AGE_MS
+
+        assertTrue(isStreamStartFresh(fiveMinutesAgo, now))
+        assertTrue(isStreamStartFresh(exactlyTwentyMinutesAgo, now))
+        assertTrue(isStreamStartFresh(null, now))
+    }
+
+    @Test
+    fun streamStartOlderThanTwentyMinutesIsNotFresh() {
+        val now = 1_700_000_000_000L
+        val twentyOneMinutesAgo = now - (21 * 60 * 1000L)
+        val sevenHoursAgo = now - (7 * 60 * 60 * 1000L)
+
+        assertFalse(isStreamStartFresh(twentyOneMinutesAgo, now))
+        assertFalse(isStreamStartFresh(sevenHoursAgo, now))
+        assertFalse(isStreamStartFresh(0L, now))
+        assertFalse(isStreamStartFresh(-1L, now))
     }
 }

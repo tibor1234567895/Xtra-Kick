@@ -89,6 +89,8 @@ class Media3Fragment : PlayerFragment() {
         return 0L
     }
 
+    override fun getDuration(): Long? = resolveDuration().takeIf { it > 0L }
+
     private fun updateDurationDisplay() {
         val duration = resolveDuration()
         if (duration > 0 || videoType != STREAM) {
@@ -264,8 +266,6 @@ class Media3Fragment : PlayerFragment() {
                     if (videoType != STREAM) {
                         if (isPlaying) {
                             chatFragment?.startReplayChatLoad()
-                        } else if (player?.playWhenReady == false) {
-                            chatFragment?.stopReplayChat()
                         }
                     }
                 }
@@ -799,6 +799,9 @@ class Media3Fragment : PlayerFragment() {
     override fun getCurrentVolume() = player?.volume ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
 
     override fun playPause() {
+        if (isSkipPending()) {
+            commitPendingSkip()
+        }
         player?.let { player ->
             if (player.playbackState == Player.STATE_ENDED) {
                 clearFreezeFrame()
@@ -826,11 +829,11 @@ class Media3Fragment : PlayerFragment() {
         } ?: Util.handlePlayPauseButtonAction(player)
     }
 
-    override fun rewind() {
+    override fun executeRawRewind() {
         player?.seekBack()
     }
 
-    override fun fastForward() {
+    override fun executeRawFastForward() {
         player?.seekForward()
     }
 
@@ -873,7 +876,7 @@ class Media3Fragment : PlayerFragment() {
                 }
                 updateLatency(offset, targetOffset)
             }
-            if (root.isVisible && !progressBar.isPressed) {
+            if (root.isVisible && !progressBar.isPressed && !isSkipPending()) {
                 val currentPosition = player?.currentPosition ?: 0
                 position.text = DateUtils.formatElapsedTime(currentPosition / 1000)
                 progressBar.setPosition(currentPosition)

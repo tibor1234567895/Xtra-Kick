@@ -54,6 +54,22 @@
         app:tint="@android:color/white"
         tools:text="10" />
 
+    <TextView
+        android:id="@+id/rewindBadge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="6dp"
+        android:background="@drawable/bg_skip_pill"
+        android:elevation="4dp"
+        android:textColor="@android:color/white"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/rewind"
+        app:layout_constraintEnd_toEndOf="@id/rewind"
+        app:layout_constraintStart_toStartOf="@id/rewind"
+        tools:text="-30s" />
+
     <Button
         android:id="@+id/fastForward"
         android:layout_width="60dp"
@@ -75,6 +91,22 @@
         app:layout_constraintTop_toTopOf="parent"
         app:tint="@android:color/white"
         tools:text="10" />
+
+    <TextView
+        android:id="@+id/fastForwardBadge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="6dp"
+        android:background="@drawable/bg_skip_pill"
+        android:elevation="4dp"
+        android:textColor="@android:color/white"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/fastForward"
+        app:layout_constraintEnd_toEndOf="@id/fastForward"
+        app:layout_constraintStart_toStartOf="@id/fastForward"
+        tools:text="+190s" />
 
     <LinearLayout
         android:id="@+id/topLeftLayout"
@@ -467,12 +499,15 @@
 
     <TextView
         android:id="@+id/position"
-        android:layout_width="55sp"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:minWidth="55sp"
         android:layout_marginStart="7dp"
         android:layout_marginBottom="10dp"
         android:background="@android:color/transparent"
         android:gravity="center"
+        android:maxLines="1"
+        android:singleLine="true"
         android:textColor="@android:color/white"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -499,8 +534,12 @@
         android:id="@+id/duration"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:minWidth="55sp"
+        android:gravity="center"
         android:layout_marginEnd="10dp"
         android:layout_marginBottom="10dp"
+        android:maxLines="1"
+        android:singleLine="true"
         android:textColor="@android:color/white"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"

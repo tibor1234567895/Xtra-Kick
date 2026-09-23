@@ -256,8 +256,126 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     open fun getCurrentSpeed(): Float? = null
     open fun getCurrentVolume(): Float? = null
     open fun playPause() {}
-    open fun rewind() {}
-    open fun fastForward() {}
+
+    private var stackableSkipState: StackableSkipState? = null
+    private val executePendingSkipAction = Runnable { commitPendingSkip() }
+
+    open fun getDuration(): Long? = null
+    open fun executeRawRewind() {}
+    open fun executeRawFastForward() {}
+
+    fun isSkipPending(): Boolean = stackableSkipState != null
+
+    private fun handleStackableSkip(isForward: Boolean) {
+        val stepSec = (if (isForward) {
+            prefs.getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10L
+        } else {
+            prefs.getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10L
+        }).coerceAtLeast(1L)
+        val stepMs = stepSec * 1000L
+
+        val currentPos = getCurrentPosition() ?: 0L
+        val nextState = calculateStackableSkip(
+            currentState = stackableSkipState,
+            currentPlaybackPositionMs = currentPos,
+            isForward = isForward,
+            stepMs = stepMs
+        )
+
+        stackableSkipState = nextState
+        val b = _binding ?: return
+
+        b.playerControls.root.removeCallbacks(executePendingSkipAction)
+
+        val defaultRewind = prefs.getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10L
+        val defaultForward = prefs.getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10L
+
+        if (nextState == null) {
+            resetSkipButtonLabels()
+            updateProgress()
+            rescheduleHideController()
+            return
+        }
+
+        val targetPosition = nextState.targetPositionClamped(getDuration())
+        b.playerControls.position.text = DateUtils.formatElapsedTime(targetPosition / 1000)
+        b.playerControls.progressBar.setPosition(targetPosition)
+
+        b.playerControls.rewind.text = formatSkipButtonLabel(
+            accumulatedDeltaMs = nextState.accumulatedDeltaMs,
+            defaultSeconds = defaultRewind,
+            isForwardButton = false
+        )
+        b.playerControls.fastForward.text = formatSkipButtonLabel(
+            accumulatedDeltaMs = nextState.accumulatedDeltaMs,
+            defaultSeconds = defaultForward,
+            isForwardButton = true
+        )
+
+        val badgeText = formatSkipBadgeLabel(nextState.accumulatedDeltaMs)
+        if (nextState.accumulatedDeltaMs > 0L) {
+            b.playerControls.fastForwardBadge.text = badgeText
+            b.playerControls.fastForwardBadge.visibility = View.VISIBLE
+            b.playerControls.rewindBadge.visibility = View.GONE
+        } else {
+            b.playerControls.rewindBadge.text = badgeText
+            b.playerControls.rewindBadge.visibility = View.VISIBLE
+            b.playerControls.fastForwardBadge.visibility = View.GONE
+        }
+
+        b.playerControls.root.removeCallbacks(controllerHideAction)
+        b.playerControls.root.postDelayed(executePendingSkipAction, SKIP_STACK_DEBOUNCE_MS)
+    }
+
+    protected fun commitPendingSkip() {
+        val b = _binding ?: return
+        b.playerControls.root.removeCallbacks(executePendingSkipAction)
+        val state = stackableSkipState
+        stackableSkipState = null
+        resetSkipButtonLabels()
+        if (state != null) {
+            seek(state.targetPositionClamped(getDuration()))
+        }
+        rescheduleHideController()
+    }
+
+    protected fun cancelPendingSkip() {
+        val b = _binding ?: return
+        b.playerControls.root.removeCallbacks(executePendingSkipAction)
+        val wasPending = stackableSkipState != null
+        stackableSkipState = null
+        resetSkipButtonLabels()
+        if (wasPending) {
+            updateProgress()
+        }
+    }
+
+    private fun resetSkipButtonLabels() {
+        val b = _binding ?: return
+        val defaultRewind = prefs.getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10L
+        val defaultForward = prefs.getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10L
+        b.playerControls.rewind.text = defaultRewind.toString()
+        b.playerControls.fastForward.text = defaultForward.toString()
+        b.playerControls.rewindBadge.visibility = View.GONE
+        b.playerControls.fastForwardBadge.visibility = View.GONE
+    }
+
+    open fun rewind() {
+        if (videoType == STREAM) {
+            executeRawRewind()
+        } else {
+            handleStackableSkip(isForward = false)
+        }
+    }
+
+    open fun fastForward() {
+        if (videoType == STREAM) {
+            executeRawFastForward()
+        } else {
+            handleStackableSkip(isForward = true)
+        }
+    }
+
     open fun seek(position: Long) {}
     open fun seekToLivePosition() {}
     open fun setPlaybackSpeed(speed: Float) {}
@@ -279,6 +397,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         holdToSpeedPreviousSpeed = current
         holdToSpeedActive = true
         isTap = false
+        chatDragActive = false
+        chatDragCandidate = false
+        if (_binding != null) {
+            binding.slidingLayout.translationY = 0f
+            binding.slidingLayout.translationX = 0f
+            if (binding.playerControls.root.isVisible) {
+                hideController()
+            }
+        }
         setPlaybackSpeed(factor)
         binding.dragView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         showHoldToSpeedIndicator(formatHoldToSpeedLabel(factor))
@@ -826,8 +953,16 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             }
 
             fun upAction(event: MotionEvent) {
+                val wasHoldToSpeed = holdToSpeedActive
                 disengageHoldToSpeed()
                 if (isMaximized) {
+                    if (wasHoldToSpeed) {
+                        if (slidingLayout.translationY != 0f || slidingLayout.translationX != 0f) {
+                            slidingLayout.translationY = 0f
+                            slidingLayout.translationX = 0f
+                        }
+                        return
+                    }
                     if (chatDragActive) {
                         endChatDrag(event)
                         // Keep player docked; chat scrub owns this gesture.
@@ -1049,6 +1184,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     -1
                                 }
                                 if (pointerIndex != -1) {
+                                    if (holdToSpeedActive) {
+                                        return@setOnTouchListener true
+                                    }
                                     if (holdToSpeedDownX >= 0f && !holdToSpeedActive) {
                                         val dx = event.getX(pointerIndex) - holdToSpeedDownX
                                         val dy = event.getY(pointerIndex) - holdToSpeedDownY
@@ -1227,6 +1365,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 progressBar.addListener(
                     object : TimeBar.OnScrubListener {
                         override fun onScrubStart(timeBar: TimeBar, position: Long) {
+                            cancelPendingSkip()
                             binding.playerControls.position.text = DateUtils.formatElapsedTime(position / 1000)
                             binding.playerControls.root.removeCallbacks(controllerHideAction)
                         }
@@ -3422,6 +3561,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 if (isMaximized && !isPortrait) {
                     restoreLandscapeChatIfNeeded(animate = false)
                 }
+                if (isMaximized && isPortrait) {
+                    chatLayout.visibility = View.VISIBLE
+                }
                 if (isMaximized && videoStatsActiveInSession) {
                     videoStatsOverlay.visibility = View.VISIBLE
                     videoStatsOverlay.updateStats(getVideoStats())
@@ -3458,6 +3600,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     protected var lastPausedTimestampMs: Long = 0L
     private var freezeFrameBitmap: Bitmap? = null
     private var isFreezeFrameActive = false
+    private var isFreezeFrameCaptureInProgress = false
 
     protected fun captureFreezeFrame() {
         val binding = _binding ?: return
@@ -3467,40 +3610,40 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         if (surface == null || !surface.isValid || surfaceView.width <= 0 || surfaceView.height <= 0) {
             return
         }
+        if (isFreezeFrameCaptureInProgress) return
         isFreezeFrameActive = true
+        isFreezeFrameCaptureInProgress = true
         try {
             val bitmap = Bitmap.createBitmap(surfaceView.width, surfaceView.height, Bitmap.Config.ARGB_8888)
             PixelCopy.request(
                 surfaceView,
                 bitmap,
                 { copyResult ->
+                    isFreezeFrameCaptureInProgress = false
                     if (copyResult == PixelCopy.SUCCESS && isFreezeFrameActive) {
                         _binding?.let { b ->
-                            val oldBitmap = freezeFrameBitmap
                             freezeFrameBitmap = bitmap
                             b.playerFreezeFrame.setImageBitmap(bitmap)
                             b.playerFreezeFrame.isVisible = true
-                            oldBitmap?.recycle()
-                        } ?: bitmap.recycle()
-                    } else {
-                        bitmap.recycle()
+                        }
                     }
                 },
-                surfaceView.handler ?: Handler(Looper.getMainLooper())
+                Handler(Looper.getMainLooper())
             )
         } catch (_: Exception) {
+            isFreezeFrameCaptureInProgress = false
             // Ignore capture failures (e.g. OOM or invalid surface during transition)
         }
     }
 
     protected fun clearFreezeFrame() {
         isFreezeFrameActive = false
+        isFreezeFrameCaptureInProgress = false
         lastPausedTimestampMs = 0L
         _binding?.let { b ->
             b.playerFreezeFrame.isVisible = false
             b.playerFreezeFrame.setImageDrawable(null)
         }
-        freezeFrameBitmap?.recycle()
         freezeFrameBitmap = null
     }
 
@@ -4276,6 +4419,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     override fun onDestroyView() {
+        cancelPendingSkip()
         disengageHoldToSpeed()
         if (screenReceiverRegistered) {
             try {
@@ -4296,6 +4440,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         protected const val AUDIO_ONLY_QUALITY = "audio_only"
         protected const val CHAT_ONLY_QUALITY = "chat_only"
 
+        private const val SKIP_STACK_DEBOUNCE_MS = 600L
         private const val REQUEST_CODE_QUALITY = 0
         private const val REQUEST_CODE_SPEED = 1
         private const val REQUEST_CODE_AUDIO_ONLY = 2

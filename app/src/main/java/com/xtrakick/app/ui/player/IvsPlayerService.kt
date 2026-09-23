@@ -47,10 +47,16 @@ import com.amazonaws.ivs.player.PlayerException
 import com.amazonaws.ivs.player.Source
 import com.xtrakick.app.R
 import com.xtrakick.app.repository.KickRepository
+import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.net.ssl.X509TrustManager
@@ -61,6 +67,11 @@ class IvsPlayerService : Service() {
 
     @Inject
     lateinit var kickRepository: KickRepository
+
+    @Inject
+    lateinit var shownNotificationsRepository: ShownNotificationsRepository
+
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Inject
     @JvmField
@@ -726,6 +737,14 @@ class IvsPlayerService : Service() {
             }
         } catch (_: Exception) {
         }
+        ioScope.launch {
+            runCatching {
+                shownNotificationsRepository.markStreamSessionShown(
+                    channelId = channelId,
+                    channelLogin = channelLogin,
+                )
+            }
+        }
     }
 
     private fun clearActiveLiveChannel() {
@@ -1326,6 +1345,7 @@ class IvsPlayerService : Service() {
     }
 
     override fun onDestroy() {
+        ioScope.cancel()
         watchOwner.release()
         clearActiveLiveChannel()
         artworkDisposable?.dispose()

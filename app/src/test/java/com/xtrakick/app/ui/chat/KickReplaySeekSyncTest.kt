@@ -20,6 +20,13 @@ class KickReplaySeekSyncTest {
     }
 
     @Test
+    fun anchorFollowsPlayerWhenPlayingForwardPastConvergenceWindow() {
+        // Player converged to 32s and has now played forward to 34.7s (2.7s into playback).
+        // It must NOT snap back to 32s (which would falsely trigger a backward seek).
+        assertEquals(34_700L, resolveAnchoredReplayPosition(34_700L, 32_000L, 2_700L))
+    }
+
+    @Test
     fun anchorExpiresWhenPlayerNeverConverges() {
         assertEquals(40_000L, resolveAnchoredReplayPosition(40_000L, 32_000L, 10_000L))
     }
