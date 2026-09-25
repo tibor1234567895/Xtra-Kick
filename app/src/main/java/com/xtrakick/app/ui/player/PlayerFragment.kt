@@ -2236,10 +2236,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     fun showQualityDialog() {
         if (viewModel.qualities.isNotEmpty()) {
             RadioButtonDialogFragment.newInstance(
-                REQUEST_CODE_QUALITY,
-                resolveQualityDialogItems(),
-                null,
-                viewModel.qualities.keys.indexOf(viewModel.quality)
+                requestCode = REQUEST_CODE_QUALITY,
+                labels = resolveQualityDialogItems(),
+                tags = null,
+                checkedIndex = viewModel.qualities.keys.indexOf(viewModel.quality),
+                allowReselect = true
             ).show(childFragmentManager, "closeOnPip")
         }
     }
@@ -3180,6 +3181,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 PictureInPictureParams.Builder().apply {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         setSeamlessResizeEnabled(true)
+                        // Each update replaces params, so re-assert auto-enter.
+                        val inPip = act.isInPictureInPictureMode
+                        setAutoEnterEnabled(!inPip && canEnterPictureInPicture())
                     }
                     val actions = mutableListOf<RemoteAction>()
 
@@ -3523,6 +3527,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
         wasInPictureInPictureMode = wasInPictureInPictureMode || isInPictureInPictureMode
+        // Enter is disarmed by setPipActions below; re-arm on exit so the
+        // next Home press still PiPs.
+        if (!isInPictureInPictureMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            canEnterPictureInPicture() && prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
+        ) {
+            requireActivity().setPictureInPictureParams(
+                PictureInPictureParams.Builder().setAutoEnterEnabled(true).setSeamlessResizeEnabled(true).build()
+            )
+        }
         with(binding) {
             if (isInPictureInPictureMode) {
                 resetVideoZoom(false)

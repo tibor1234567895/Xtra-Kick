@@ -180,7 +180,7 @@ class MultiPovViewModel @Inject constructor(
     fun addStream(stream: Stream, resolvedUrl: String? = null): Boolean {
         val key = stream.multiPovKey()
         val state = _uiState.value
-        if (state.slots.any { it.key == key }) return true
+        if (state.slots.any { it.key == key || it.stream.sameChannelAs(stream) }) return true
         if (!state.canAdd) return false
         val candidate = pickPlaybackCandidate(resolvedUrl, stream.playbackUrl)
         val slot = MultiPovSlot(
@@ -217,6 +217,8 @@ class MultiPovViewModel @Inject constructor(
      * Real channel API URLs look the same host/path but include `?token=...` — those are OK.
      * Also accept signed CloudFront/playlist paths under `/v1/playlist/`.
      */
+    fun isPlayableUrl(url: String?): Boolean = !url.isNullOrBlank() && isTrustedKickPlaybackUrl(url)
+
     private fun isTrustedKickPlaybackUrl(url: String): Boolean {
         if (url.isBlank()) return false
         val lower = url.lowercase()
@@ -342,7 +344,20 @@ class MultiPovViewModel @Inject constructor(
                     channelLogin = channelLogin,
                     forceRefresh = forceRefresh && (userInitiated || existingUrl.isNullOrBlank()),
                 )?.takeIf { it != stalePlaybackUrl }
-                    ?: throw Exception("Kick playback URL unavailable")
+                if (url == null) {
+                    // Kick answered with no playable stream — distinguish an
+                    // offline channel from a failed refresh.
+                    val channelOffline = runCatching {
+                        kickRepository.getChannelLivestream(channelLogin, forceRefresh = true)
+                    }.getOrNull() == null
+                    if (channelOffline) {
+                        httpErrorAttempts.remove(key)
+                        updateLoadState(key, MultiPovLoadState.Offline)
+                    } else if (existingUrl.isNullOrBlank()) {
+                        updateLoadState(key, MultiPovLoadState.Error("Kick playback URL unavailable"))
+                    }
+                    return@launch
+                }
                 val previous = _uiState.value.slots.firstOrNull { it.key == key }?.resolvedUrl
                 if (url == previous) {
                     return@launch
@@ -364,7 +379,8 @@ class MultiPovViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (_uiState.value.slots.firstOrNull { it.key == key }?.resolvedUrl.isNullOrBlank()) {
+                val current = _uiState.value.slots.firstOrNull { it.key == key }?.resolvedUrl
+                if (current.isNullOrBlank() || !isTrustedKickPlaybackUrl(current)) {
                     updateLoadState(key, MultiPovLoadState.Error(e.message ?: "Failed to resolve stream"))
                 }
             }
@@ -393,7 +409,7 @@ class MultiPovViewModel @Inject constructor(
                 val cached = followedLiveStreamsRepository.peekCache()
                 val cachedAvailable = cached
                     .distinctBy { it.multiPovKey() }
-                    .filterNot { it.multiPovKey() in occupied }
+                    .filterNot { it.matchesOccupied(occupied) }
                 if (cachedAvailable.isNotEmpty()) {
                     _pickerMode.value = MultiPovPickerMode.FollowedLive
                     _pickerResults.value = cachedAvailable
@@ -410,7 +426,7 @@ class MultiPovViewModel @Inject constructor(
                     onPartial = { partial ->
                         val partialAvailable = partial
                             .distinctBy { it.multiPovKey() }
-                            .filterNot { it.multiPovKey() in occupied }
+                            .filterNot { it.matchesOccupied(occupied) }
                         if (partialAvailable.isNotEmpty()) {
                             _pickerMode.value = MultiPovPickerMode.FollowedLive
                             _pickerResults.value = partialAvailable
@@ -431,7 +447,7 @@ class MultiPovViewModel @Inject constructor(
     private suspend fun displayFollowedOrTopLive(liveItems: List<Stream>, occupied: Set<String>) {
         val available = liveItems
             .distinctBy { it.multiPovKey() }
-            .filterNot { it.multiPovKey() in occupied }
+            .filterNot { it.matchesOccupied(occupied) }
         if (available.isNotEmpty()) {
             _pickerMode.value = MultiPovPickerMode.FollowedLive
             _pickerResults.value = available
@@ -448,7 +464,7 @@ class MultiPovViewModel @Inject constructor(
                 .data
                 .map { kickRepository.toStream(it) }
                 .distinctBy { it.multiPovKey() }
-                .filterNot { it.multiPovKey() in occupied }
+                .filterNot { it.matchesOccupied(occupied) }
         }.getOrDefault(emptyList())
     }
 
@@ -478,7 +494,7 @@ class MultiPovViewModel @Inject constructor(
                     .map { KickWebsiteSearchMapper.toStream(it) }
                     .forEach { stream ->
                         val key = stream.multiPovKey()
-                        if (key.isNotBlank() && key !in occupied) {
+                        if (key.isNotBlank() && !stream.matchesOccupied(occupied)) {
                             streamsByKey.putIfAbsent(key, stream)
                         }
                     }
@@ -497,7 +513,7 @@ class MultiPovViewModel @Inject constructor(
                             profileImageUrl = channel.user?.profileImage,
                         )
                         val key = stream.multiPovKey()
-                        if (key.isNotBlank() && key !in occupied) {
+                        if (key.isNotBlank() && !stream.matchesOccupied(occupied)) {
                             streamsByKey.putIfAbsent(key, stream)
                         }
                     }
@@ -512,8 +528,21 @@ class MultiPovViewModel @Inject constructor(
     }
 
     private fun occupiedPickerKeys(): Set<String> {
-        return _uiState.value.slots.map { it.key }.toSet()
+        // Streams from different sources fill different id fields (player path
+        // carries channelId, picker results may only carry login) — index both.
+        return _uiState.value.slots.flatMap { slot ->
+            listOfNotNull(
+                slot.key,
+                slot.stream.channelId?.lowercase(),
+                slot.stream.channelLogin?.lowercase(),
+            )
+        }.toSet()
     }
+
+    private fun Stream.matchesOccupied(occupied: Set<String>): Boolean =
+        occupied.contains(channelId?.lowercase()) ||
+            occupied.contains(channelLogin?.lowercase()) ||
+            occupied.contains(multiPovKey())
 
     private fun startOfflinePolling() {
         if (offlinePollJob?.isActive == true) return
@@ -523,10 +552,14 @@ class MultiPovViewModel @Inject constructor(
                 val slots = _uiState.value.slots.toList()
                 if (slots.isEmpty()) continue
                 for (slot in slots) {
-                    // Only recover tiles with NO url. Do NOT force-refresh healthy Loading/Ready
-                    // tiles — that was hammering Kick's channel API every few seconds.
-                    if (slot.resolvedUrl.isNullOrBlank()) {
-                        resolveIfNeeded(slot.key, forceRefresh = false, userInitiated = false)
+                    // Recover tiles with no (or no signed) URL, and offline slots —
+                    // a force resolve flips them back once the streamer goes live.
+                    val offline = slot.loadState is MultiPovLoadState.Offline
+                    if (slot.resolvedUrl.isNullOrBlank() ||
+                        (slot.loadState is MultiPovLoadState.Error && !isTrustedKickPlaybackUrl(slot.resolvedUrl)) ||
+                        offline
+                    ) {
+                        resolveIfNeeded(slot.key, forceRefresh = offline, userInitiated = false)
                     }
                 }
             }

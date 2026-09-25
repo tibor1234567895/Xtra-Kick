@@ -493,6 +493,7 @@ class ChatViewModel @Inject constructor(
             val isLoggedIn = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(applicationContext)
             if (isLoggedIn) {
                 loadUserEmotes(channelId)
+                loadActiveChatters(channelId)
             }
         }
     }
@@ -2472,7 +2473,8 @@ class ChatViewModel @Inject constructor(
      * The channel owner's own 7TV paint/badge otherwise only arrives through EventApi deltas,
      * so a fresh chat session rendered no streamer flair until some cosmetic event happened to
      * fire. Fetch the equipped style up front and hydrate missing definitions via the public
-     * GQL endpoint. Chatters still come from deltas — no bulk endpoint exists for them.
+     * GQL endpoint. Chatters also arrive from deltas; the bulk active-chatters
+     * roster is fetched separately in loadActiveChatters.
      */
     private fun hydrateStvChannelCosmetics(channelId: String?) {
         val id = channelId?.takeIf { it.isNotBlank() } ?: return
@@ -3454,6 +3456,26 @@ class ChatViewModel @Inject constructor(
             chatters[displayName] = chatter
             synchronized(autoCompleteList) {
                 autoCompleteList.add(chatter)
+            }
+        }
+    }
+
+    /**
+     * The delta-built chatter list only contains people who chatted since the
+     * stream was opened, so seed @-mention autocomplete with the active roster
+     * up front. Best-effort: a failure just leaves the delta-built list in place.
+     */
+    private fun loadActiveChatters(channelId: String?) {
+        if (channelId.isNullOrBlank()) return
+        viewModelScope.launch {
+            runCatching {
+                kickRepository.getActiveChatters(channelId)
+            }.onSuccess { names ->
+                names.forEach { addChatter(it) }
+            }.onFailure {
+                if (isKickRecentChatDebugEnabled()) {
+                    Log.d("KickRecentChat", "active chatters fetch failed channelId=$channelId", it)
+                }
             }
         }
     }

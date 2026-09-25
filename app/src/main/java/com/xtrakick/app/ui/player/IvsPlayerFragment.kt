@@ -57,6 +57,8 @@ class IvsPlayerFragment : PlayerFragment() {
     private var networkLossGraceRunnable: Runnable? = null
     private var networkPauseApplied = false
     private var lastBandwidthKbps: Long? = null
+    private var pendingQualityNudge: Quality? = null
+    private var qualityNudgeSafetyRunnable: Runnable? = null
 
     private fun playerDebugLog(message: String) {
         if (BuildConfig.DEBUG && prefs.getBoolean(AppConstants.DEBUG_PLAYER_BUFFER_LOGS, false)) {
@@ -205,7 +207,16 @@ class IvsPlayerFragment : PlayerFragment() {
                     override fun onVideoSizeChanged(width: Int, height: Int) = Unit
 
                     override fun onQualityChanged(quality: Quality) {
-                        if (player?.isAutoQualityMode == false) {
+                        val nudgeTarget = pendingQualityNudge
+                        if (nudgeTarget != null && (quality == nudgeTarget || quality.bitrate >= nudgeTarget.bitrate)) {
+                            cancelQualityNudge()
+                            playerDebugLog("IVS quality nudge fulfilled: reached ${quality.name}, re-arming auto ceiling")
+                            runIvsOp("quality-nudge-rearm") {
+                                it.setAutoQualityMode(true)
+                                it.setAutoMaxQuality(nudgeTarget)
+                            }
+                        }
+                        if (player?.isAutoQualityMode == false && nudgeTarget == null) {
                             val key = qualitiesByKey.entries.find { it.value == quality }?.key
                             if (key != null) {
                                 viewModel.quality = key
@@ -308,6 +319,7 @@ class IvsPlayerFragment : PlayerFragment() {
     private fun updatePlayingState() {
         val state = player?.state ?: Player.State.IDLE
         val isPlaying = state == Player.State.PLAYING
+        binding.bufferingIndicator.isVisible = state == Player.State.BUFFERING
         with(binding.playerControls) {
             if (isPlaying) {
                 playPause.setImageResource(R.drawable.baseline_pause_black_48)
@@ -389,6 +401,7 @@ class IvsPlayerFragment : PlayerFragment() {
         val resolvedUrl = url?.takeIf { it.isNotBlank() } ?: return
         hideOfflineOverlay()
         recoveryInProgress = false
+        cancelQualityNudge()
         if (currentUrl != resolvedUrl) {
             sameUrlRetryAttempted = false
         }
@@ -508,6 +521,9 @@ class IvsPlayerFragment : PlayerFragment() {
 
             val ivsPlayer = player
             if (ivsPlayer != null && ivsPlayer.state == Player.State.PLAYING) {
+                if (binding.bufferingIndicator.isVisible) {
+                    binding.bufferingIndicator.isVisible = false
+                }
                 val currentPosition = ivsPlayer.position
                 val bufferedPosition = ivsPlayer.bufferedPosition
                 val forwardBufferMs = (bufferedPosition - currentPosition).coerceAtLeast(0L)
@@ -665,14 +681,26 @@ class IvsPlayerFragment : PlayerFragment() {
         // app): the player may dip below on trouble and climbs back on its own
         // instead of stalling on a locked rendition.
         when (selectedQuality) {
-            AUTO_QUALITY -> runIvsOp("quality-auto") {
-                it.setAutoQualityMode(true)
-                it.setAutoMaxQuality(null)
-            }
-            else -> qualitiesByKey[selectedQuality]?.let { quality ->
-                runIvsOp("quality-ceiling") {
+            AUTO_QUALITY -> {
+                cancelQualityNudge()
+                runIvsOp("quality-auto") {
                     it.setAutoQualityMode(true)
-                    it.setAutoMaxQuality(quality)
+                    it.setAutoMaxQuality(null)
+                }
+            }
+            else -> qualitiesByKey[selectedQuality]?.let { targetQuality ->
+                val activeQuality = player?.quality
+                val isDownscaled = activeQuality != null && isDownscaled(activeQuality, targetQuality)
+                if (isDownscaled) {
+                    // Active resolution nudge: player is currently below targetQuality.
+                    // Step up to targetQuality, then re-arm adaptive ceiling upon reaching it.
+                    nudgeQualityToTarget(targetQuality)
+                } else {
+                    cancelQualityNudge()
+                    runIvsOp("quality-ceiling") {
+                        it.setAutoQualityMode(true)
+                        it.setAutoMaxQuality(targetQuality)
+                    }
                 }
             }
         }
@@ -726,8 +754,12 @@ class IvsPlayerFragment : PlayerFragment() {
         if (previous == null || previous == type || videoType != STREAM) return
         if (type == NetworkMonitor.NetworkType.OTHER || type == NetworkMonitor.NetworkType.NONE || type == NetworkMonitor.NetworkType.UNKNOWN) return
         if (previous == NetworkMonitor.NetworkType.OTHER || previous == NetworkMonitor.NetworkType.NONE || previous == NetworkMonitor.NetworkType.UNKNOWN) return
-        val preferredQuality = resolvePreferredQuality(type == NetworkMonitor.NetworkType.CELLULAR) ?: return
-        if (preferredQuality != viewModel.quality) {
+        val isCellular = type == NetworkMonitor.NetworkType.CELLULAR
+        val preferredQuality = resolvePreferredQuality(isCellular) ?: return
+        val activeQuality = player?.quality
+        val targetQuality = getTargetQuality()
+        val isDownscaled = activeQuality != null && targetQuality != null && isDownscaled(activeQuality, targetQuality)
+        if (preferredQuality != viewModel.quality || (!isCellular && isDownscaled)) {
             pendingAutomaticQualityLog = preferredQuality
             pendingAutomaticQualityTransport = type
             runAutomaticQualityChange {
@@ -773,6 +805,11 @@ class IvsPlayerFragment : PlayerFragment() {
         Toast.makeText(requireContext(), R.string.ivs_feature_not_supported, Toast.LENGTH_SHORT).show()
     }
 
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode)
+        updatePlayingState()
+    }
+
     override fun setSubtitlesButton() {
         binding.playerControls.subtitles.visibility = View.GONE
     }
@@ -783,6 +820,7 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun close() {
         clearFreezeFrame()
+        cancelQualityNudge()
         cancelNetworkLossGrace()
         networkPauseApplied = false
         binding.playerControls.root.removeCallbacks(updateProgressAction)
@@ -812,6 +850,7 @@ class IvsPlayerFragment : PlayerFragment() {
             return
         }
         binding.playerControls.root.removeCallbacks(updateProgressAction)
+        cancelQualityNudge()
         cancelNetworkLossGrace()
         networkPauseApplied = false
         val ivsPlayer = player
@@ -834,7 +873,8 @@ class IvsPlayerFragment : PlayerFragment() {
                 playbackService?.attachSurface(null)
                 resumeOnStart = playbackService?.isPlaybackRequested() == true
                 if (ivsPlayer.state == Player.State.PLAYING) {
-                    playbackService?.pause(clearPlaybackRequest = false)
+                    // resumeOnStart drives resume; a lingering request pins session to PLAYING.
+                    playbackService?.pause(clearPlaybackRequest = true)
                     updatePlayingState()
                 }
                 if (resumeOnStart) {
@@ -1044,6 +1084,34 @@ class IvsPlayerFragment : PlayerFragment() {
         runIvsOp("fragment-catchup-reset") { it.setPlaybackRate(1.0f) }
     }
 
+    private fun nudgeQualityToTarget(targetQuality: Quality) {
+        cancelQualityNudge()
+        pendingQualityNudge = targetQuality
+        playerDebugLog("IVS quality nudge: stepping up to ${targetQuality.name} (${targetQuality.bitrate} bps)")
+        runIvsOp("quality-nudge") {
+            it.setQuality(targetQuality)
+        }
+        val runnable = Runnable {
+            qualityNudgeSafetyRunnable = null
+            if (pendingQualityNudge == targetQuality) {
+                playerDebugLog("IVS quality nudge safety timeout: re-arming auto ceiling for ${targetQuality.name}")
+                pendingQualityNudge = null
+                runIvsOp("quality-nudge-safety-timeout") {
+                    it.setAutoQualityMode(true)
+                    it.setAutoMaxQuality(targetQuality)
+                }
+            }
+        }
+        qualityNudgeSafetyRunnable = runnable
+        view?.postDelayed(runnable, QUALITY_NUDGE_SAFETY_TIMEOUT_MS)
+    }
+
+    private fun cancelQualityNudge() {
+        qualityNudgeSafetyRunnable?.let { view?.removeCallbacks(it) }
+        qualityNudgeSafetyRunnable = null
+        pendingQualityNudge = null
+    }
+
     companion object {
         private const val TAG = "IvsPlayerFragment"
         // Reloads start a couple segments back; skip when already near-live.
@@ -1054,6 +1122,7 @@ class IvsPlayerFragment : PlayerFragment() {
         // Weight of the previous value when smoothing the jumpy SDK bandwidth
         // estimate into a readable trend.
         private const val SMOOTHED_BANDWIDTH_OLD_WEIGHT = 0.7f
+        private const val QUALITY_NUDGE_SAFETY_TIMEOUT_MS = 5_000L
 
         fun newInstance(item: Stream, resolvedUrl: String?, forceStandardLiveEngine: Boolean): IvsPlayerFragment {
             return IvsPlayerFragment().apply {

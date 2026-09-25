@@ -54,6 +54,7 @@ import com.xtrakick.app.databinding.ItemMultipovTileBinding
 import com.xtrakick.app.databinding.PlayerLayoutBinding
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.ui.chat.ChatFragment
+import com.xtrakick.app.ui.common.CompactDialogs.compact
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.ui.player.PlayerVolumeDialog
 import com.xtrakick.app.ui.player.VideoZoomController
@@ -67,7 +68,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
 import javax.inject.Inject
 import kotlin.math.abs
 import kotlin.math.max
@@ -78,16 +78,13 @@ import kotlin.math.roundToInt
 class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
 
     @Inject
-    lateinit var okHttpClient: OkHttpClient
-
-    @Inject
     lateinit var networkMonitor: NetworkMonitor
 
     private var _binding: FragmentMultipovBinding? = null
     private val binding get() = _binding!!
     private val viewModel: MultiPovViewModel by viewModels()
 
-    private var playbackController: MultiPovPlaybackController? = null
+    private var playbackController: MultiPovIvsPlaybackController? = null
     private val tileBindings = linkedMapOf<String, ItemMultipovTileBinding>()
     private var currentChatKey: String? = null
     /** Slot keys + layout/orientation signature used to decide when to rebuild the grid. */
@@ -124,9 +121,12 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
      */
     private var immersiveKey: String? = null
 
-    /** Brief green focus ring after focus change — not a permanent overlay. */
-    private var focusFlashKey: String? = null
+    /** Transient tile chrome: names + focus ring flash on interaction, then clear.
+     * The audio badge stays as the only persistent focus hint. */
+    private var chromeFlashActive = false
     private var lastFocusFlashForKey: String? = null
+    private var lastControlsVisible = false
+    private var lastAutoCatchupMs = 0L
 
     private val hideControlsRunnable = Runnable {
         if (isAdded && isMaximized && !isInPipMode()) {
@@ -134,11 +134,12 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         }
     }
 
-    private val hideFocusBorderRunnable = Runnable {
+    private val hideTransientChromeRunnable = Runnable {
         if (!isAdded) return@Runnable
-        focusFlashKey = null
+        chromeFlashActive = false
         tileBindings.forEach { (_, tile) ->
             tile.focusBorder.isVisible = false
+            tile.channelName.isVisible = tileNamesVisible()
         }
     }
 
@@ -208,9 +209,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         applySystemBarInsets(view)
         activity.onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
 
-        playbackController = MultiPovPlaybackController(
+        playbackController = MultiPovIvsPlaybackController(
             context = requireContext().applicationContext,
-            okHttpClient = okHttpClient,
             prefs = requireContext().prefs(),
             onLoadState = { key, state -> viewModel.updateLoadState(key, state) },
             onHttpError = { key, code, failedUrl ->
@@ -280,10 +280,14 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             val insets = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
-            // Session bar under status bar; focused player chrome under that.
+            // Portrait keeps the status bar visible like the solo player — the
+            // player starts below it. Landscape is edge-to-edge, bar hidden.
+            val topInset = if (isPortrait) insets.top else 0
+            _binding?.multiPovRoot?.updatePadding(top = topInset)
+            // Session bar under status bar; focused player chrome underneath.
             _binding?.multiPovToolsBar?.updatePadding(
                 left = baseHorizontal + insets.left,
-                top = baseVertical + insets.top,
+                top = baseVertical + (insets.top - topInset),
                 right = baseHorizontal + insets.right,
                 bottom = baseVertical,
             )
@@ -384,7 +388,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 restartFocused()
             }
 
-            seekLive.isVisible = prefs.getBoolean(AppConstants.PLAYER_SEEKLIVE, false)
+            seekLive.isVisible = true
             seekLive.setOnClickListener {
                 showControlsTemporarily()
                 playbackController?.seekToLive(viewModel.uiState.value.focusedKey)
@@ -642,7 +646,17 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         latencyPollJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
                 val key = viewModel.uiState.value.focusedKey
-                updateLatencyDisplay(playbackController?.getLiveOffsetMs(key))
+                val offset = playbackController?.getLiveOffsetMs(key)
+                updateLatencyDisplay(offset)
+                // Pull back to live when drift gets big. Quality untouched.
+                // Cooldown so we don't seek-loop on a struggling connection.
+                if (offset != null && offset > 5_000L) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastAutoCatchupMs > 10_000L) {
+                        lastAutoCatchupMs = now
+                        playbackController?.seekToLive(key)
+                    }
+                }
                 delay(1_500L)
             }
         }
@@ -730,7 +744,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                     getString(R.string.multipov_open_solo) -> openFocusedSolo()
                 }
             }
-            .show()
+            .show().also { it.compact() }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -978,7 +992,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         backgroundPauseRunnable?.let { view?.removeCallbacks(it) }
         backgroundPauseRunnable = null
         cancelHideControls()
-        view?.removeCallbacks(hideFocusBorderRunnable)
+        view?.removeCallbacks(hideTransientChromeRunnable)
         chatProgressAnimator?.cancel()
         chatProgressAnimator = null
         velocityTracker?.recycle()
@@ -986,7 +1000,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         stopLatencyPolling()
         chatDragActive = false
         chatDragCandidate = false
-        focusFlashKey = null
+        chromeFlashActive = false
         lastFocusFlashForKey = null
         unregisterAdaptiveMonitors()
         playbackController?.releaseAll()
@@ -1201,12 +1215,17 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         controller.setBandwidthSaving(state.bandwidthSaving)
         controller.setFocus(state.focusedKey, crossfade = isMaximized)
 
-        // Green ring flashes only when focus changes — not a permanent frame.
+        // Ring + names flash on focus change; audio badge stays as the persistent hint.
         val focused = state.focusedKey
         if (focused != null && focused != lastFocusFlashForKey) {
             lastFocusFlashForKey = focused
             flashFocusBorder(focused)
         }
+        // Grace flash when controls hide, so chrome doesn't pop off abruptly.
+        if (lastControlsVisible && !state.isControlsVisible) {
+            startChromeFlash()
+        }
+        lastControlsVisible = state.isControlsVisible
 
         if (!isMaximized) {
             // While minimized, keep focused playback only on the scaled surface.
@@ -1236,10 +1255,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         if (gridChanged) {
             rebuildGrid(state)
             lastGridSignature = gridSignature
-            // Tiles recreated — re-show flash ring if still within the flash window.
-            focusFlashKey?.let { key ->
-                tileBindings[key]?.focusBorder?.isVisible = true
-            }
+            // Tiles recreated — bindTileChrome below restores persistent ring/badges.
         }
 
         state.slots.forEach { slot ->
@@ -1251,8 +1267,11 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 slot.loadState is MultiPovLoadState.Offline -> controller.releasePlayer(slot.key)
                 // Fullscreen tile mode: release non-visible players so the focused stream is clean.
                 inImmersiveBackground -> controller.releasePlayer(slot.key)
-                !url.isNullOrBlank() -> {
-                    controller.ensurePlaying(slot.key, url, focused = slot.isFocused)
+                // IVS fails fast on bare unsigned candidates, so hold new tiles on
+                // the spinner until the signed URL lands instead of flashing an error.
+                viewModel.isPlayableUrl(url) -> {
+                    // isPlayableUrl true implies non-blank; orEmpty is unreachable.
+                    controller.ensurePlaying(slot.key, url.orEmpty(), focused = slot.isFocused)
                     tile?.let { controller.attachSurface(slot.key, it.tileSurface, it.tileAspect) }
                 }
                 // Missing URL: ask ViewModel once; it no-ops if a resolve is already running.
@@ -1272,6 +1291,11 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         } else {
             clearZoomTransformsExcept(focusedTileKey())
         }
+        // Portrait chat layout tracks grid/immersive/preset/count changes;
+        // applyHeights no-ops when nothing moved.
+        if (isPortrait && isMaximized) {
+            applyPortraitChatLayout()
+        }
         updateChat(state.focusedSlot)
 
         if (state.slots.isEmpty()) {
@@ -1284,7 +1308,12 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     private fun cycleLayoutPreset() {
-        val next = currentLayoutPreset().next()
+        // Portrait renders "large on left" stacked like "large on top" — skip it
+        // so cycling never offers the same layout twice.
+        var next = currentLayoutPreset().next()
+        if (isPortrait) {
+            while (next == MultiPovLayoutPreset.PRIMARY_LEFT) next = next.next()
+        }
         requireContext().prefs().edit {
             putString(AppConstants.MULTIPOV_LAYOUT, next.prefValue)
         }
@@ -1297,7 +1326,13 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     private fun showLayoutPickerDialog() {
-        val presets = MultiPovLayoutPreset.entries
+        // Portrait renders "large on left" stacked like "large on top" — don't
+        // offer the duplicate (see rebuildGrid).
+        val presets = if (isPortrait) {
+            MultiPovLayoutPreset.entries.filterNot { it == MultiPovLayoutPreset.PRIMARY_LEFT }
+        } else {
+            MultiPovLayoutPreset.entries.toList()
+        }
         val labels = presets.map { getString(it.labelRes()) }.toTypedArray()
         val selected = presets.indexOf(currentLayoutPreset()).coerceAtLeast(0)
         MaterialAlertDialogBuilder(requireContext())
@@ -1316,7 +1351,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 ).show()
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .show().also { it.compact() }
     }
 
     private fun rotateStreamOrder() {
@@ -1332,8 +1367,13 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         val grid = binding.tileGrid
         val controller = playbackController ?: return
 
-        tileBindings.keys.forEach { controller.detachSurface(it) }
-        tileBindings.clear()
+        // Reuse surviving tile views so their surfaces never drop: only gone
+        // slots are detached. Reparenting keeps TextureViews (and frames) alive.
+        val liveKeys = state.slots.map { it.key }.toSet()
+        tileBindings.keys.filter { it !in liveKeys }.forEach {
+            controller.detachSurface(it)
+            tileBindings.remove(it)
+        }
         grid.removeAllViews()
         grid.orientation = LinearLayout.VERTICAL
         grid.clipChildren = true
@@ -1353,6 +1393,10 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         val landscape = !isPortrait
 
         when {
+            // Portrait: one solver defines the rows, one builder places them —
+            // heights and tiles can never disagree.
+            isPortrait && slots.size >= 2 ->
+                buildPortraitGrid(grid, slots, solvePortraitRows(slots.size, preset))
             // Primary layouts need at least 2 real streams to be meaningful.
             preset == MultiPovLayoutPreset.PRIMARY_TOP && slots.size >= 2 ->
                 buildPrimaryTopGrid(grid, slots)
@@ -1495,6 +1539,16 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         parent: ViewGroup,
         slot: MultiPovSlot,
     ): View {
+        // Same stream already has a live view: rebind chrome + gestures onto it
+        // instead of inflating. The TextureView (and its surface) survives the
+        // reparent, so playback never blinks on add/remove/layout changes.
+        tileBindings[slot.key]?.let { existing ->
+            bindTileChrome(existing, slot)
+            wireTileInteractions(existing, slot)
+            // Drop from the previous row first: a view can only have one parent.
+            (existing.root.parent as? ViewGroup)?.removeView(existing.root)
+            return existing.root
+        }
         return ItemMultipovTileBinding.inflate(layoutInflater, parent, false).also { tileBinding ->
             // FIT shows the full stream; ZOOM is only applied while the user pinches.
             tileBinding.tileAspect.setAspectRatio(16f / 9f)
@@ -1522,14 +1576,26 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
 
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (suppressTileMenu) return true
-                // Tap never retargets focus — open/close chrome for the current focus only.
-                // Switch focus via the stream chips in the control bar (or double-tap immersive).
-                toggleControls()
+                // Two jobs, split by target so they can't collide:
+                // - tap another tile = silent sound swap, overlay stays off
+                // - tap the loud tile = toggle the main overlay
+                // Menu mode needs no extra guard: the open overlay covers the
+                // tiles and eats stray taps, so focus can't jump mid-menu.
+                if (viewModel.uiState.value.focusedKey != slot.key) {
+                    viewModel.setFocus(slot.key)
+                    tileBindings[slot.key]?.let { pulseTile(it) }
+                } else {
+                    toggleControls()
+                }
                 return true
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 if (suppressTileMenu) return true
+                // Immersive toggle rebuilds the grid mid-gesture; the old detector
+                // never sees ACTION_UP, so its pending long-press would open the
+                // tile menu right after every double-tap.
+                suppressTileMenu = true
                 resetVideoZoom()
                 if (viewModel.uiState.value.focusedKey != slot.key) {
                     viewModel.setFocus(slot.key)
@@ -1668,20 +1734,45 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         tileBinding.errorText.setOnClickListener { retrySlot(slot) }
     }
 
-    private fun flashFocusBorder(key: String) {
-        focusFlashKey = key
-        tileBindings.forEach { (slotKey, tile) ->
-            tile.focusBorder.isVisible = slotKey == key
-        }
+    /** Names ride the controls chrome; otherwise they only show during a flash. */
+    private fun tileNamesVisible(): Boolean =
+        (viewModel.uiState.value.isControlsVisible || chromeFlashActive) && immersiveKey == null
+
+    private fun startChromeFlash() {
+        chromeFlashActive = true
         val root = view ?: return
-        root.removeCallbacks(hideFocusBorderRunnable)
-        root.postDelayed(hideFocusBorderRunnable, FOCUS_BORDER_FLASH_MS)
+        root.removeCallbacks(hideTransientChromeRunnable)
+        root.postDelayed(hideTransientChromeRunnable, TRANSIENT_CHROME_MS)
+    }
+
+    private fun flashFocusBorder(key: String) {
+        startChromeFlash()
+        tileBindings[key]?.let { pulseTile(it) }
+    }
+
+    private fun pulseTile(tile: ItemMultipovTileBinding) {
+        tile.root.animate().cancel()
+        tile.root.scaleX = 0.97f
+        tile.root.scaleY = 0.97f
+        tile.root.animate().scaleX(1f).scaleY(1f).setDuration(150L).start()
     }
 
     private fun bindTileChrome(tile: ItemMultipovTileBinding, slot: MultiPovSlot) {
-        // Immersive tiles: no permanent labels/X. Focus ring is a brief flash only.
-        tile.focusBorder.isVisible = slot.isFocused && focusFlashKey == slot.key
-        tile.tileChrome.isVisible = false
+        // Readable + immersive: name pill always, speaker on focused only.
+        // Green ring only matters with 2+ tiles; single stream hides it.
+        // Remove X only while chrome is open so grid stays clean.
+        val multi = viewModel.uiState.value.slots.size > 1
+        tile.focusBorder.isVisible =
+            slot.isFocused && multi && immersiveKey == null && chromeFlashActive
+        tile.tileChrome.isVisible = true
+        tile.channelName.text = slot.stream.channelName ?: slot.stream.channelLogin ?: slot.key
+        tile.channelName.isVisible = tileNamesVisible()
+        tile.audioBadge.isVisible = slot.isFocused && multi
+        tile.removeButton.isVisible =
+            viewModel.uiState.value.isControlsVisible && viewModel.uiState.value.slots.size > 1
+        // Single stream fills like the solo player (no letterbox gap).
+        tile.tileAspect.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        tile.root.alpha = if (!multi || slot.isFocused || immersiveKey != null) 1f else 0.88f
         val isActuallyPlaying = playbackController?.isPlaying(slot.key) == true
         when (val load = slot.loadState) {
             MultiPovLoadState.Loading -> {
@@ -1759,16 +1850,41 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         }
     }
 
-    /** Portrait: stacked video + chat (same ~55/45 split as the old LinearLayout weights). */
+    /** Portrait: stacked video + chat. The video section hugs the grid's actual
+     * 16:9 content (single, immersive and grids alike) so chat starts right
+     * below it instead of floating over letterbox black. */
     private fun applyPortraitChatLayout() {
         val binding = _binding ?: return
         binding.chatFragmentContainer.translationX = 0f
         fun applyHeights() {
             val root = _binding?.multiPovRoot ?: return
-            val total = root.height
+            // Root is padded below the status bar in portrait — play area only.
+            val total = root.height - root.paddingTop
             if (total <= 0) return
-            val videoH = if (isChatOpen) (total * (1.15f / 2f)).roundToInt() else total
+            val state = viewModel.uiState.value
+            val videoH = when {
+                !isChatOpen -> total
+                // Single, immersive, or pre-layout: 16:9 video only — chat gets the rest.
+                state.slots.size <= 1 || immersiveKey != null || root.width <= 0 ->
+                    ((root.width * 9f / 16f).roundToInt()).coerceIn(
+                        (total * 0.30f).roundToInt(),
+                        (total * 0.48f).roundToInt(),
+                    )
+                else -> {
+                    // Same solver the builder uses — chat hugs the grid by construction.
+                    val unit = root.width * 9f / 16f
+                    val factorSum = solvePortraitRows(state.slots.size, currentLayoutPreset())
+                        .sumOf { it.heightFactor.toDouble() }
+                    (unit * factorSum).roundToInt()
+                }
+            }
             val chatH = (total - videoH).coerceAtLeast(0)
+            val videoLp = binding.videoSection.layoutParams as? FrameLayout.LayoutParams
+            val chatLp = binding.chatFragmentContainer.layoutParams as? FrameLayout.LayoutParams
+            if (videoLp?.height == videoH && videoLp.marginEnd == 0 &&
+                chatLp?.height == chatH && chatLp.gravity == Gravity.BOTTOM &&
+                binding.chatFragmentContainer.isVisible == isChatOpen
+            ) return
             binding.videoSection.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 videoH,
@@ -1784,6 +1900,60 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         // Immediate pass + post so we have a real height after rotation.
         applyHeights()
         binding.multiPovRoot.post { applyHeights() }
+    }
+
+    /** One row of the portrait grid: tiles in the row and its 16:9 height
+     * factor (fraction of grid width × 9/16). Single source of truth — the
+     * builder and the video-section height both derive from these rows. */
+    private data class PortraitRow(val tilesInRow: Int, val heightFactor: Float)
+
+    private fun solvePortraitRows(count: Int, preset: MultiPovLayoutPreset): List<PortraitRow> {
+        if (count <= 1) return listOf(PortraitRow(1, 1f))
+        return when (preset) {
+            // Large on top: full-width primary row, remaining streams in uniform rows.
+            MultiPovLayoutPreset.PRIMARY_TOP, MultiPovLayoutPreset.PRIMARY_LEFT -> {
+                val rest = count - 1
+                val cols = if (rest <= 1) 1 else if (rest <= 3) rest else 2
+                buildList {
+                    add(PortraitRow(1, 1f))
+                    var remaining = rest
+                    while (remaining > 0) {
+                        val inRow = minOf(cols, remaining)
+                        add(PortraitRow(inRow, 1f / inRow))
+                        remaining -= inRow
+                    }
+                }
+            }
+            // Equal tiles: uniform matrix; odd counts pad with an empty cell
+            // (3 streams = 2×2 with one black corner, per design).
+            else -> {
+                val cols = if (count >= 3) 2 else 1
+                val rows = (count + cols - 1) / cols
+                List(rows) { PortraitRow(cols, 1f / cols) }
+            }
+        }
+    }
+
+    /** Portrait grid: one row per solver row, weight = height factor so rows
+     * fill the video section exactly; empty matrix cells render as black. */
+    private fun buildPortraitGrid(
+        grid: LinearLayout,
+        slots: List<MultiPovSlot>,
+        rows: List<PortraitRow>,
+    ) {
+        var index = 0
+        rows.forEach { row ->
+            val container = horizontalRow(weight = row.heightFactor)
+            repeat(row.tilesInRow) {
+                if (index < slots.size) {
+                    container.addView(createTileView(container, slots[index]), weightedCellParams(width = 0))
+                    index++
+                } else {
+                    container.addView(View(requireContext()), weightedCellParams(width = 0))
+                }
+            }
+            grid.addView(container)
+        }
     }
 
     private fun canInteractiveChatDrag(): Boolean {
@@ -2064,7 +2234,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     private fun showStreamQualityDialog() {
-        val qualities = MultiPovQuality.entries
+        // Best-first like the solo player: Source, 1080p … 360p.
+        val qualities = MultiPovQuality.entries.reversed()
         val labels = qualities.map { getString(it.labelRes()) }.toTypedArray()
         val selected = qualities.indexOf(viewModel.uiState.value.streamQuality).coerceAtLeast(0)
         MaterialAlertDialogBuilder(requireContext())
@@ -2080,7 +2251,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 dialog.dismiss()
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .show().also { it.compact() }
     }
 
     private fun showTileMenu(slot: MultiPovSlot) {
@@ -2142,7 +2313,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                     getString(R.string.multipov_remove) -> removeSlot(slot.key)
                 }
             }
-            .show()
+            .show().also { it.compact() }
     }
 
     private fun retrySlot(slot: MultiPovSlot) {
@@ -2171,7 +2342,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 (activity as? MainActivity)?.closeMultiPov()
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .show().also { it.compact() }
     }
 
     private fun updateAdaptiveQuality() {
@@ -2227,7 +2398,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         private const val ARG_RESOLVED_VALUES = "resolved_values"
         private const val ARG_FOCUSED_KEY = "focused_key"
         private const val CONTROLS_HIDE_DELAY_MS = 3_000L
-        private const val FOCUS_BORDER_FLASH_MS = 1_000L
+        private const val TRANSIENT_CHROME_MS = 2_000L
         private const val TILE_MARGIN_PX = 1
         private const val CHAT_FLING_VELOCITY = 600f
 

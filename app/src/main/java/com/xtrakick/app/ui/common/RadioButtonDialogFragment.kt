@@ -32,10 +32,23 @@ class RadioButtonDialogFragment : BottomSheetDialogFragment() {
         private const val LABELS = "labels"
         private const val TAGS = "tags"
         private const val CHECKED = "checked"
+        private const val ALLOW_RESELECT = "allowReselect"
 
-        fun newInstance(requestCode: Int, labels: Collection<CharSequence>, tags: IntArray? = null, checkedIndex: Int): RadioButtonDialogFragment {
+        fun newInstance(
+            requestCode: Int,
+            labels: Collection<CharSequence>,
+            tags: IntArray? = null,
+            checkedIndex: Int,
+            allowReselect: Boolean = false
+        ): RadioButtonDialogFragment {
             return RadioButtonDialogFragment().apply {
-                arguments = bundleOf(REQUEST_CODE to requestCode, LABELS to ArrayList(labels), TAGS to tags, CHECKED to checkedIndex)
+                arguments = bundleOf(
+                    REQUEST_CODE to requestCode,
+                    LABELS to ArrayList(labels),
+                    TAGS to tags,
+                    CHECKED to checkedIndex,
+                    ALLOW_RESELECT to allowReselect
+                )
             }
         }
     }
@@ -58,9 +71,10 @@ class RadioButtonDialogFragment : BottomSheetDialogFragment() {
             }
         }
         val checkedId = arguments.getInt(CHECKED)
+        val allowReselect = arguments.getBoolean(ALLOW_RESELECT, false)
         val clickListener = View.OnClickListener { v ->
             val clickedId = v.id
-            if (clickedId != checkedId) {
+            if (clickedId != checkedId || allowReselect) {
                 listenerSort.onChange(arguments.getInt(REQUEST_CODE), clickedId, (v as RadioButton).text, v.tag as Int?)
             }
             dismiss()

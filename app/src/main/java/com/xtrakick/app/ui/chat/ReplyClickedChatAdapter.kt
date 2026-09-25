@@ -353,6 +353,7 @@ class ReplyClickedChatAdapter(
                 textSize = messageTextSize
                 alpha = if (chatMessage.isDeleted) 0.62f else 1f
                 setBackgroundColor(resolvedBackgroundColor)
+                setLineSpacing(0f, 1.12f)
                 movementMethod = LinkMovementMethod.getInstance()
                 TooltipCompat.setTooltipText(this, chatMessage.message ?: chatMessage.systemMsg)
                 setOnClickListener {

@@ -23,6 +23,8 @@ import com.xtrakick.app.model.chat.Chatter
 import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
+import java.util.Locale
+import kotlin.math.abs
 
 class AutoCompleteAdapter(
     private val context: Context,
@@ -109,10 +111,13 @@ class AutoCompleteAdapter(
         val item: T,
         val rank: Int,
         val name: String,
+        val recent: Boolean,
     ) : Comparable<ScoredItem<*>> {
         override fun compareTo(other: ScoredItem<*>): Int {
             val rankDiff = rank.compareTo(other.rank)
             if (rankDiff != 0) return rankDiff
+            val recentDiff = other.recent.compareTo(recent)
+            if (recentDiff != 0) return recentDiff
             val lenDiff = name.length.compareTo(other.name.length)
             if (lenDiff != 0) return lenDiff
             return name.compareTo(other.name, ignoreCase = true)
@@ -122,7 +127,12 @@ class AutoCompleteAdapter(
     companion object {
         const val MAX_AUTOCOMPLETE_RESULTS = 60
 
-        fun <T> rankAndSort(items: List<T?>, prefix: Char, queryBody: String): List<T> {
+        fun <T> rankAndSort(
+            items: List<T?>,
+            prefix: Char,
+            queryBody: String,
+            recentNames: Set<String> = emptySet(),
+        ): List<T> {
             val scored = ArrayList<ScoredItem<T>>(items.size.coerceAtMost(MAX_AUTOCOMPLETE_RESULTS * 2))
             for (item in items) {
                 if (item == null) continue
@@ -133,18 +143,14 @@ class AutoCompleteAdapter(
                 }
                 val rank = getMatchRank(queryBody, name)
                 if (rank >= 0) {
-                    scored.add(ScoredItem(item, rank, name))
+                    val recent = recentNames.isNotEmpty() && recentNames.contains(name.lowercase(Locale.ROOT))
+                    scored.add(ScoredItem(item, rank, name, recent))
                 }
             }
 
             scored.sort()
 
-            val limit = scored.size.coerceAtMost(MAX_AUTOCOMPLETE_RESULTS)
-            val result = ArrayList<T>(limit)
-            for (i in 0 until limit) {
-                result.add(scored[i].item)
-            }
-            return result
+            return scored.take(MAX_AUTOCOMPLETE_RESULTS).map { it.item }
         }
 
         fun getMatchRank(query: String, target: String): Int {
@@ -152,7 +158,10 @@ class AutoCompleteAdapter(
             if (target.equals(query, ignoreCase = true)) return 0
             if (target.startsWith(query, ignoreCase = true)) return 1
             if (target.contains(query, ignoreCase = true)) return 2
-            if (query.length >= 3 && matchesSubsequence(query, target)) return 3
+            if (query.length >= 3) {
+                if (matchesSubsequence(query, target)) return 3
+                if (isWithinEditDistance(query, target, if (query.length < 4) 1 else 2)) return 4
+            }
             return -1
         }
 
@@ -166,6 +175,33 @@ class AutoCompleteAdapter(
                 }
             }
             return false
+        }
+
+        fun isWithinEditDistance(query: String, target: String, max: Int): Boolean {
+            if (abs(query.length - target.length) > max) return false
+            val a = query.lowercase(Locale.ROOT)
+            val b = target.lowercase(Locale.ROOT)
+            val prev2 = IntArray(b.length + 1)
+            val prev = IntArray(b.length + 1)
+            val curr = IntArray(b.length + 1)
+            for (j in 0..b.length) prev[j] = j
+            for (i in 1..a.length) {
+                curr[0] = i
+                var rowMin = i
+                for (j in 1..b.length) {
+                    val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                    var d = minOf(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+                    if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]) {
+                        d = minOf(d, prev2[j - 2] + 1)
+                    }
+                    curr[j] = d
+                    if (d < rowMin) rowMin = d
+                }
+                if (rowMin > max) return false
+                System.arraycopy(prev, 0, prev2, 0, prev.size)
+                System.arraycopy(curr, 0, prev, 0, curr.size)
+            }
+            return prev[b.length] <= max
         }
     }
 }

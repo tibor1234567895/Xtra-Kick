@@ -112,6 +112,7 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.text.NumberFormat
 import java.util.Date
+import java.util.Locale
 import java.util.Random
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -3267,11 +3268,17 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val list = synchronized(viewModel.autoCompleteList) {
             viewModel.autoCompleteList.toList()
         }
-        val matches = AutoCompleteAdapter.rankAndSort(list, prefix, queryBody)
+        val recentNames = if (prefix == ':') {
+            recentEmotes.mapTo(HashSet()) { it.name.lowercase(Locale.ROOT) }
+        } else {
+            emptySet()
+        }
+        val matches = AutoCompleteAdapter.rankAndSort(list, prefix, queryBody, recentNames)
         if (matches.isEmpty()) {
             hideAutoComplete()
         } else {
-            autoCompleteAdapter?.setItems(matches)
+            // Best match sits on the bottom, closest to the input, like the IME suggestion strip
+            autoCompleteAdapter?.setItems(matches.asReversed())
             val density = resources.displayMetrics.density
             val rowHeight = (44 * density).toInt()
             val parentHeight = (binding.autoCompleteContainer.parent as? View)?.height ?: 0
@@ -3289,7 +3296,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             binding.autoCompleteContainer.updateLayoutParams {
                 height = targetHeight
             }
-            binding.autoCompleteRecyclerView.scrollToPosition(0)
+            binding.autoCompleteRecyclerView.scrollToPosition(matches.lastIndex)
             binding.autoCompleteContainer.visibility = View.VISIBLE
             toggleBackPressedCallback(true)
         }

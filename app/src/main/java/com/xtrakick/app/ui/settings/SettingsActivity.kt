@@ -85,6 +85,7 @@ import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.repository.NotificationUsersRepository
 import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.main.RewardClaimScheduler
+import com.xtrakick.app.ui.common.CompactDialogs.constrainSheets
 import com.xtrakick.app.ui.player.IvsPlayerService
 import com.xtrakick.app.ui.player.LiveLatencySettings
 import com.xtrakick.app.ui.player.PlaybackService
@@ -122,6 +123,7 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        supportFragmentManager.constrainSheets()
         if (savedInstanceState?.getBoolean(KEY_CHANGED) == true) {
             setResult()
         }
@@ -576,7 +578,7 @@ class SettingsActivity : AppCompatActivity() {
     /**
      * res/xml/multipov_preferences.xml was authored but never registered in
      * settings_nav_graph.xml, so its eight preferences — all of which ARE read at runtime by
-     * MultiPovFragment / MultiPovPlaybackController — were stranded at their code defaults with
+     * MultiPovFragment — were stranded at their code defaults with
      * no way for the user to reach them.
      */
     class MultiPovSettingsFragment : MaterialPreferenceFragment() {

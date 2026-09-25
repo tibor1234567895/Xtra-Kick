@@ -407,6 +407,7 @@ class MessageClickedChatAdapter(
                 textSize = messageTextSize
                 alpha = if (chatMessage.isDeleted) 0.62f else 1f
                 setBackgroundColor(resolvedBackgroundColor)
+                setLineSpacing(0f, 1.12f)
                 if (chatMessage.isReply) {
                     movementMethod = null
                     maxLines = 2

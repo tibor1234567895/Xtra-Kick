@@ -509,26 +509,52 @@ class ChatAdapter(
             val expanded = previewKey != null && previewKey in expandedReplyPreviewKeys
             val rewardColor = parseRewardColor(chatMessage.reward?.backgroundColor)
             val isRewardRedemption = chatMessage.reward?.title != null
+            val density = textView.resources.displayMetrics.density
+            val hPadding = (6f * density).toInt()
+            val vPaddingNormal = (2.5f * density).toInt()
+            val isPrecededByReplyPreview = synchronized(messages) {
+                currentPosition > 0 && ChatListParityUtils.sharesVisualBlockWithPrevious(messages, currentPosition)
+            }
             textView.apply {
                 text = formattedMessage
-                textSize = if (chatMessage.isReply) messageTextSize * 0.85f else messageTextSize
-                alpha = if (chatMessage.isDeleted) 0.62f else if (chatMessage.isReply) 0.8f else 1f
-                if (isRewardRedemption && rewardColor != null) {
-                    containerView.background = createRewardBackgroundDrawable(resolvedBackgroundColor, rewardColor)
-                    setPaddingRelative(26, 8, 12, 8)
-                } else if (chatMessage.isReply) {
-                    containerView.setBackgroundColor(resolvedBackgroundColor)
-                    setPaddingRelative(5, 6, 5, 6)
-                } else {
-                    containerView.setBackgroundColor(resolvedBackgroundColor)
-                    setPaddingRelative(5, 1, 5, 1)
+                textSize = if (chatMessage.isReply) messageTextSize * 0.88f else messageTextSize
+                alpha = if (chatMessage.isDeleted) 0.62f else if (chatMessage.isReply) 0.78f else 1f
+                when {
+                    isRewardRedemption && rewardColor != null -> {
+                        containerView.background = createRewardBackgroundDrawable(resolvedBackgroundColor, rewardColor)
+                        val hPadRewardLeft = (26f * density).toInt()
+                        val vPadReward = (6f * density).toInt()
+                        val hPadRewardRight = (12f * density).toInt()
+                        setPaddingRelative(hPadRewardLeft, vPadReward, hPadRewardRight, vPadReward)
+                    }
+                    chatMessage.isReply -> {
+                        containerView.setBackgroundColor(resolvedBackgroundColor)
+                        val topPad = (3f * density).toInt()
+                        val bottomPad = (1f * density).toInt()
+                        setPaddingRelative(hPadding, topPad, hPadding, bottomPad)
+                    }
+                    isPrecededByReplyPreview -> {
+                        containerView.setBackgroundColor(resolvedBackgroundColor)
+                        val topPad = (1.5f * density).toInt()
+                        setPaddingRelative(hPadding, topPad, hPadding, vPaddingNormal)
+                    }
+                    else -> {
+                        containerView.setBackgroundColor(resolvedBackgroundColor)
+                        setPaddingRelative(hPadding, vPaddingNormal, hPadding, vPaddingNormal)
+                    }
                 }
                 if (chatMessage.isReply) {
-                    setLineSpacing(3f, 1.12f)
+                    setLineSpacing(0f, 1.08f)
                 } else {
-                    setLineSpacing(0f, 1f)
+                    setLineSpacing(0f, 1.12f)
                 }
-                minHeight = (if (chatMessage.isReply) (emoteSize * 0.7f).toInt().coerceAtLeast(12) else emoteSize) + paddingTop + paddingBottom
+                val minContentHeight = if (chatMessage.isReply) {
+                    (emoteSize * 0.7f).toInt().coerceAtLeast(12)
+                } else {
+                    (22f * density).toInt().coerceAtLeast(badgeSize)
+                }
+                minHeight = minContentHeight + paddingTop + paddingBottom
+                minimumHeight = minHeight
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 if (chatMessage.isReply) {
                     movementMethod = null

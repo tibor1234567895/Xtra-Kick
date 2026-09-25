@@ -2849,6 +2849,17 @@ class KickRepository @Inject constructor(
         }
     }
 
+    /**
+     * Requires a logged-in web session. Bots are skipped — the consumer is
+     * @-mention autocomplete, which only wants human participants.
+     */
+    suspend fun getActiveChatters(channelId: String): List<String> = withContext(Dispatchers.IO) {
+        val raw = executeKickWebSessionRequest(
+            "https://web.kick.com/api/v1/channels/${urlEncode(channelId)}/chat/active-chatters"
+        )
+        parseActiveChattersResponse(raw)
+    }
+
     private fun parseKickMessagesData(root: JsonElement, raw: String): KickMessagesData {
         fun decodeMessagesArray(element: JsonElement?): List<KickMessage>? {
             val array = element as? JsonArray ?: return null
@@ -4310,9 +4321,10 @@ class KickRepository @Inject constructor(
     suspend fun getPlaybackUrl(channelSlug: String, forceRefresh: Boolean = false): String? {
         val normalizedSlug = channelSlug.trim().lowercase(Locale.ROOT)
         if (normalizedSlug.isBlank()) return null
-        val livestream = runCatching {
+        val livestreamResult = runCatching {
             getChannelLivestream(normalizedSlug, forceRefresh = forceRefresh)
-        }.getOrNull()
+        }
+        val livestream = livestreamResult.getOrNull()
         if (livestream != null) {
             if (isDailyRewardsEnabled() && hasUsableKickWebsiteSession()) {
                 val authenticatedUrl = runCatching {
@@ -4324,6 +4336,12 @@ class KickRepository @Inject constructor(
             }
             return livestream.playbackUrl?.takeIf { it.isNotBlank() }
         }
+        if (livestreamResult.isSuccess) {
+            // Kick answered with no active stream — the channel is offline.
+            // The channel-level playback_url is a stale token that 403/404s forever.
+            return null
+        }
+        // Livestream request itself failed — fall back to the channel endpoint.
         val channel = runCatching { getChannel(normalizedSlug, forceRefresh = forceRefresh) }.getOrNull()
         return channel?.let { getPlayableUrl(it) }
     }
@@ -4342,6 +4360,23 @@ class KickRepository @Inject constructor(
     }
 
     companion object {
+        fun parseActiveChattersResponse(rawJson: String): List<String> {
+            if (rawJson.isBlank()) return emptyList()
+            val root = runCatching { Json.Default.parseToJsonElement(rawJson).jsonObject }.getOrNull()
+                ?: return emptyList()
+            val data = root["data"] as? JsonObject ?: return emptyList()
+            val names = ArrayList<String>()
+            for (group in listOf("chatters", "moderators", "vips", "ogs")) {
+                val entries = data[group] as? JsonArray ?: continue
+                for (entry in entries) {
+                    val username = (entry as? JsonObject)?.get("username") as? JsonPrimitive ?: continue
+                    val name = username.contentOrNull
+                    if (!name.isNullOrBlank()) names.add(name)
+                }
+            }
+            return names
+        }
+
         fun parsePlaybackUrlResponse(rawJson: String): String? {
             if (rawJson.isBlank()) return null
             return runCatching {

@@ -71,6 +71,7 @@ import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.model.ui.Video
 import com.xtrakick.app.ui.channel.ChannelPagerFragmentDirections
 import com.xtrakick.app.ui.common.IntegrityDialog
+import com.xtrakick.app.ui.common.CompactDialogs.constrainSheets
 import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.game.GameMediaFragmentDirections
 import com.xtrakick.app.ui.game.GamePagerFragmentDirections
@@ -186,6 +187,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        supportFragmentManager.constrainSheets()
         prefs = prefs()
         logLaunchShape("onCreate", intent)
         if (isDuplicateLauncherTask(intent)) {

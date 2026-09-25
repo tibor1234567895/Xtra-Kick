@@ -150,7 +150,7 @@ object ChatListParityUtils {
         }
     }
 
-    private fun sharesVisualBlockWithPrevious(messages: List<ChatMessage>, position: Int): Boolean {
+    internal fun sharesVisualBlockWithPrevious(messages: List<ChatMessage>, position: Int): Boolean {
         if (position <= 0 || position > messages.lastIndex) {
             return false
         }

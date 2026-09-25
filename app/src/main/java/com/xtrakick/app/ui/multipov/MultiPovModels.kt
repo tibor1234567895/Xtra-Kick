@@ -36,3 +36,13 @@ data class MultiPovUiState(
 fun Stream.multiPovKey(): String {
     return (channelId ?: channelLogin ?: id ?: channelName.orEmpty()).lowercase()
 }
+
+/** Different sources fill different id fields — match on any shared identifier. */
+fun Stream.sameChannelAs(other: Stream): Boolean {
+    val aLogin = channelLogin?.lowercase()
+    val bLogin = other.channelLogin?.lowercase()
+    if (aLogin != null && aLogin == bLogin) return true
+    val aId = channelId
+    val bId = other.channelId
+    return aId != null && aId == bId
+}
