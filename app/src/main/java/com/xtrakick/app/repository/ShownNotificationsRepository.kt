@@ -238,7 +238,7 @@ class ShownNotificationsRepository @Inject constructor(
             }
 
             val old = oldRowFor(cid, stream.channelLogin)
-            val alreadyShown = old != null && old.startedAt >= startedAt
+            val alreadyShown = shouldSuppressEvent(old?.startedAt, startedAt, nowMs)
             val isTooOldToAlert = !isStreamStartFresh(startedAt, nowMs)
             val activelyWatching = isActivelyWatching(cid, stream.channelLogin, active, nowMs)
 
@@ -519,6 +519,16 @@ class ShownNotificationsRepository @Inject constructor(
         /** How long a playing channel suppresses its own live alert. */
         const val ACTIVE_WATCH_SUPPRESS_MS = 6 * 60 * 60 * 1000L
 
+        /**
+         * Tolerance for comparing stream-start timestamps read from different Kick
+         * endpoints. Kick itself disagrees about the start second — v1 start_time said
+         * 12:25:41Z while the web created_at for the same session said 12:25:43 — so an
+         * exact >= comparison lets a road carrying the later value re-post a session the
+         * first road already showed. A genuine restart is a new session minutes later;
+         * same-session redeliveries differ by at most seconds.
+         */
+        const val START_TIME_SKEW_TOLERANCE_MS = 5 * 60 * 1000L
+
         fun isStreamStartFresh(
             startedAtMs: Long?,
             nowMs: Long = System.currentTimeMillis(),
@@ -589,7 +599,8 @@ class ShownNotificationsRepository @Inject constructor(
         /**
          * Cross-road duplicate check shared by the event and checker roads, which use the
          * same canonical channel key. With a known live start, any stored row at or past
-         * it means this session already notified. Without one, only a recent row counts.
+         * it (within [START_TIME_SKEW_TOLERANCE_MS]) means this session already notified.
+         * Without one, only a recent row counts.
          */
         fun shouldSuppressEvent(
             existingStartedAt: Long?,
@@ -597,7 +608,7 @@ class ShownNotificationsRepository @Inject constructor(
             nowMs: Long = System.currentTimeMillis(),
         ): Boolean {
             if (existingStartedAt == null) return false
-            if (liveStartedAt != null) return existingStartedAt >= liveStartedAt
+            if (liveStartedAt != null) return existingStartedAt >= liveStartedAt - START_TIME_SKEW_TOLERANCE_MS
             return existingStartedAt > nowMs - EVENT_DUPLICATE_WINDOW_MS
         }
 

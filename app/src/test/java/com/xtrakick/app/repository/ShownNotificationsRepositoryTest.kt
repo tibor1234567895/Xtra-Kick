@@ -10,6 +10,7 @@ import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.buildS
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.isActivelyWatching
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.isStreamStartFresh
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.SUMMARY_NOTIFICATION_ID
+import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.START_TIME_SKEW_TOLERANCE_MS
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.isRequestedLivestream
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.notificationIdFor
 import com.xtrakick.app.repository.ShownNotificationsRepository.Companion.notificationFallbackSlugs
@@ -158,6 +159,41 @@ class ShownNotificationsRepositoryTest {
 
         assertTrue(shouldSuppressEvent(existingStartedAt = streamStart, liveStartedAt = streamStart, nowMs = 2_000_000L))
         assertTrue(shouldSuppressEvent(existingStartedAt = streamStart + 1, liveStartedAt = streamStart, nowMs = 2_000_000L))
+    }
+
+    @Test
+    fun crossEndpointStartSkewWithinToleranceIsSuppressed() {
+        // v1 start_time vs web created_at for the same session disagreed by ~2s
+        // (12:25:41Z vs 12:25:43) — the later value must not re-post the session.
+        val streamStart = 1_000_000L
+
+        assertTrue(
+            shouldSuppressEvent(
+                existingStartedAt = streamStart,
+                liveStartedAt = streamStart + 2_000L,
+                nowMs = 2_000_000L,
+            )
+        )
+        assertTrue(
+            shouldSuppressEvent(
+                existingStartedAt = streamStart,
+                liveStartedAt = streamStart + START_TIME_SKEW_TOLERANCE_MS,
+                nowMs = 2_000_000L,
+            )
+        )
+    }
+
+    @Test
+    fun startLaterThanTolerancePostsAgain() {
+        val streamStart = 1_000_000L
+
+        assertFalse(
+            shouldSuppressEvent(
+                existingStartedAt = streamStart,
+                liveStartedAt = streamStart + START_TIME_SKEW_TOLERANCE_MS + 1L,
+                nowMs = 3_000_000L,
+            )
+        )
     }
 
     @Test
