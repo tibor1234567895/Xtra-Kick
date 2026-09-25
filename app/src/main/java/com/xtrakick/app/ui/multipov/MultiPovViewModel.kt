@@ -1,25 +1,34 @@
 package com.xtrakick.app.ui.multipov
 
+import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.repository.FollowedLiveStreamsRepository
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.KickWebsiteSearchMapper
+import com.xtrakick.app.ui.player.KickViewerWatchOwner
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.prefs
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import javax.net.ssl.X509TrustManager
 
 enum class MultiPovPickerMode {
     /** Live channels from the user's followed list (default when search is empty). */
@@ -32,14 +41,53 @@ enum class MultiPovPickerMode {
 
 @HiltViewModel
 class MultiPovViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val kickRepository: KickRepository,
     private val followedLiveStreamsRepository: FollowedLiveStreamsRepository,
+    private val trustManager: X509TrustManager?,
 ) : ViewModel() {
 
     private var sessionPrefs: SharedPreferences? = null
 
     private val _uiState = MutableStateFlow(MultiPovUiState())
     val uiState: StateFlow<MultiPovUiState> = _uiState.asStateFlow()
+
+    /**
+     * Watch presence for the focused stream only — Kick attributes watch time
+     * per viewer session, so reporting every tile would not multiply credit.
+     */
+    private val watchOwner = KickViewerWatchOwner(
+        kickRepository = kickRepository,
+        trustManager = trustManager,
+        debugLogging = BuildConfig.DEBUG,
+        isRewardsEnabled = { context.prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true) },
+        isPlaying = { _uiState.value.focusedSlot?.loadState is MultiPovLoadState.Ready },
+    )
+
+    private val rewardsPrefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == AppConstants.KICK_DAILY_REWARDS_ENABLED) {
+            watchOwner.onRewardsToggle(context.prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true))
+        }
+    }
+
+    init {
+        // Restart presence when the focused stream changes; setMetadata is
+        // stop+recreate, so it must not fire on unrelated ui state updates.
+        viewModelScope.launch {
+            _uiState.map { state ->
+                state.focusedSlot?.stream?.let { Triple(it.channelId, it.id, it.channelLogin) }
+            }.distinctUntilChanged().collect { ids ->
+                watchOwner.setMetadata(ids?.first, ids?.second, ids?.third)
+            }
+        }
+        // Presence only starts once the focused tile is actually playing.
+        viewModelScope.launch {
+            _uiState.map { it.focusedSlot?.loadState is MultiPovLoadState.Ready }
+                .distinctUntilChanged()
+                .filter { it }
+                .collect { watchOwner.startIfNeeded() }
+        }
+    }
 
     private val resolveJobs = mutableMapOf<String, Job>()
     /** Rate-limit force network resolves per slot (except explicit user Retry). */
@@ -62,6 +110,7 @@ class MultiPovViewModel @Inject constructor(
         maxStreams: Int = AppConstants.MULTIPOV_MAX_STREAMS_DEFAULT,
         prefs: SharedPreferences? = null,
     ) {
+        context.prefs().registerOnSharedPreferenceChangeListener(rewardsPrefListener)
         sessionPrefs = prefs ?: sessionPrefs
         if (_uiState.value.slots.isNotEmpty()) {
             persistSession()
@@ -580,6 +629,8 @@ class MultiPovViewModel @Inject constructor(
         resolveJobs.values.forEach { it.cancel() }
         pickerJob?.cancel()
         offlinePollJob?.cancel()
+        context.prefs().unregisterOnSharedPreferenceChangeListener(rewardsPrefListener)
+        watchOwner.release()
     }
 
     companion object {
