@@ -166,3 +166,37 @@ fun getByteArrayCronetCallback(continuation: Continuation<Pair<UrlResponseInfo, 
         })
     }
 }
+
+fun isPersistedUriGranted(
+    permUri: String,
+    hasRead: Boolean,
+    hasWrite: Boolean,
+    targetUri: String?,
+    needRead: Boolean = true,
+    needWrite: Boolean = false
+): Boolean {
+    if (targetUri.isNullOrBlank()) return false
+    return permUri.trimEnd('/') == targetUri.trimEnd('/') &&
+        (!needRead || hasRead) &&
+        (!needWrite || hasWrite)
+}
+
+fun Context.hasPersistedUriPermission(
+    uriString: String?,
+    read: Boolean = true,
+    write: Boolean = false
+): Boolean {
+    if (uriString.isNullOrBlank()) return false
+    return runCatching {
+        contentResolver.persistedUriPermissions.any { perm ->
+            isPersistedUriGranted(
+                permUri = perm.uri.toString(),
+                hasRead = perm.isReadPermission,
+                hasWrite = perm.isWritePermission,
+                targetUri = uriString,
+                needRead = read,
+                needWrite = write
+            )
+        }
+    }.getOrDefault(false)
+}

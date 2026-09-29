@@ -493,7 +493,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
         updateVolumeButtonVisual(volume)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity?.isInPictureInPictureMode == true) {
-            setPipActions(lastPipPlaying)
+            // IVS applies volume asynchronously on the service executor; reading it
+            // back here can return the old value, so pass the intended volume through.
+            setPipActions(lastPipPlaying, volume)
         }
     }
 
@@ -3169,7 +3171,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         wasInPictureInPictureMode = false
     }
 
-    protected fun setPipActions(playing: Boolean) {
+    protected fun setPipActions(playing: Boolean, volumeOverride: Float? = null) {
         lastPipPlaying = playing
         val act = activity ?: return
         val ctx = context ?: return
@@ -3233,7 +3235,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
                     if (prefs.getBoolean(AppConstants.PIP_SHOW_MUTE, true)) {
                         val targetVol = getPipReducedVolume()
-                        val currentVol = getCurrentVolume() ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
+                        val currentVol = volumeOverride ?: getCurrentVolume() ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
                         val isLowered = isVolumeDuckedOrMuted(currentVol, targetVol)
 
                         val iconRes = PlayerVolumeDialog.getVolumeIconRes(currentVol)

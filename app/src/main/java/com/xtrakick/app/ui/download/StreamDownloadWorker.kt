@@ -42,6 +42,8 @@ import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.chat.ChatReadWebSocket
 import com.xtrakick.app.util.chat.ChatUtils
 import com.xtrakick.app.util.getByteArrayCronetCallback
+import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.hasPersistedUriPermission
 import com.xtrakick.app.util.m3u8.PlaylistUtils
 import com.xtrakick.app.util.prefs
 import dagger.Lazy
@@ -132,6 +134,12 @@ class StreamDownloadWorker @AssistedInject constructor(
         offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_WAITING_FOR_STREAM })
         setForeground(createForegroundInfo(false, firstVideo))
         val path = offlineVideo.downloadPath!!
+        if (path.toUri().scheme == ContentResolver.SCHEME_CONTENT &&
+            !context.hasPersistedUriPermission(path, read = true, write = true)) {
+            DiagnosticLogger.e("StreamDownloadWorker", "Shared directory permission missing or revoked for $path")
+            offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_BLOCKED })
+            return Result.failure()
+        }
         val channelLogin = offlineVideo.channelLogin!!
         val quality = offlineVideo.quality
         val offlineCheck = max(context.prefs().getString(AppConstants.DOWNLOAD_STREAM_OFFLINE_CHECK, "10")?.toLongOrNull() ?: 10L, 2L) * 1000L

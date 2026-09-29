@@ -1,5 +1,6 @@
 package com.xtrakick.app.ui.player
 
+import com.xtrakick.app.ui.multipov.MultiPovQuality
 import com.xtrakick.app.util.AppConstants
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -60,6 +61,15 @@ class KickLivePlaybackTest {
         assertEquals(KickLivePlayback.BITRATE_480P, KickLivePlayback.resolveInitialBitrate("480p30"))
         assertEquals(KickLivePlayback.BITRATE_360P, KickLivePlayback.resolveInitialBitrate("360p"))
         assertEquals(KickLivePlayback.BITRATE_160P, KickLivePlayback.resolveInitialBitrate("160p"))
+    }
+
+    @Test
+    fun resolveInitialBitrateMatchesAllMultiPovQualities() {
+        assertEquals(KickLivePlayback.BITRATE_1080P_60, KickLivePlayback.resolveInitialBitrate(MultiPovQuality.SOURCE.prefValue))
+        assertEquals(KickLivePlayback.BITRATE_1080P, KickLivePlayback.resolveInitialBitrate(MultiPovQuality.P1080.prefValue))
+        assertEquals(KickLivePlayback.BITRATE_720P, KickLivePlayback.resolveInitialBitrate(MultiPovQuality.P720.prefValue))
+        assertEquals(KickLivePlayback.BITRATE_480P, KickLivePlayback.resolveInitialBitrate(MultiPovQuality.P480.prefValue))
+        assertEquals(KickLivePlayback.BITRATE_360P, KickLivePlayback.resolveInitialBitrate(MultiPovQuality.P360.prefValue))
     }
 
     @Test

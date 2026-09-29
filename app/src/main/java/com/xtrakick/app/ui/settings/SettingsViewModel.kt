@@ -33,6 +33,7 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.KickApiHelper
+import com.xtrakick.app.util.hasPersistedUriPermission
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.m3u8.PlaylistUtils
@@ -191,6 +192,10 @@ class SettingsViewModel @Inject constructor(
             }
         val treeUri = runCatching { treeUriString.toUri() }.getOrNull() ?: run {
             DiagnosticLogger.w("LeftoverScan", "shared scan skipped: bad tree uri")
+            return orphans
+        }
+        if (!applicationContext.hasPersistedUriPermission(treeUriString, read = true)) {
+            DiagnosticLogger.w("LeftoverScan", "shared scan skipped: persistable permission missing or revoked for $treeUriString")
             return orphans
         }
         val referenced = referencedSharedDocIds()

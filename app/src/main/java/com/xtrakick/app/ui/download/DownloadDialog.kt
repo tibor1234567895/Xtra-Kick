@@ -21,7 +21,9 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import androidx.core.content.edit
+import androidx.core.net.toUri
 import com.xtrakick.app.util.bundleOf
+import com.xtrakick.app.util.hasPersistedUriPermission
 import androidx.core.view.children
 import androidx.core.view.isVisible
 import androidx.core.widget.doOnTextChanged
@@ -197,6 +199,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                         else -> {
                             requireContext().contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                             sharedPath = it.toString()
+                            requireContext().prefs().edit { putString(AppConstants.DOWNLOAD_SHARED_PATH, sharedPath) }
                             binding.download.isEnabled = true
                             binding.storageSelectionContainer.directory.visibility = View.VISIBLE
                             binding.storageSelectionContainer.directory.text = it.path?.substringAfter("/tree/")?.removeSuffix(":")
@@ -372,8 +375,14 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                         }
                         setText(adapter.getItem(location).toString(), false)
                     }
+                    val savedSharedPath = requireContext().prefs().getString(AppConstants.DOWNLOAD_SHARED_PATH, null)
+                    val hasSharedPermission = requireContext().hasPersistedUriPermission(
+                        uriString = savedSharedPath,
+                        read = true,
+                        write = true
+                    )
                     if (sharedPath == null) {
-                        sharedPath = requireContext().prefs().getString(AppConstants.DOWNLOAD_SHARED_PATH, null)
+                        sharedPath = if (hasSharedPermission) savedSharedPath else null
                     }
                     when (location) {
                         0 -> {
@@ -386,19 +395,30 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                             sharedStorageLayout.visibility = View.GONE
                         }
                     }
-                    sharedPath?.let {
-                        directory.visibility = View.VISIBLE
-                        directory.text = Uri.decode(it.substringAfter("/tree/"))
+                    when {
+                        sharedPath != null -> {
+                            directory.visibility = View.VISIBLE
+                            directory.text = Uri.decode(sharedPath?.substringAfter("/tree/"))
+                        }
+                        !savedSharedPath.isNullOrBlank() -> {
+                            directory.visibility = View.VISIBLE
+                            val decoded = Uri.decode(savedSharedPath.substringAfter("/tree/"))
+                            directory.text = "$decoded (${getString(R.string.storage_permission_required)})"
+                        }
+                        else -> {
+                            directory.visibility = View.GONE
+                        }
                     }
                     selectDirectory.setOnClickListener {
                         viewModel.selectedQuality = viewModel.qualities.value?.entries?.find { it.value.first == binding.spinner.editText?.text.toString() }?.value?.first
                         val location = resources.getStringArray(R.array.spinnerStorage).indexOf(storageSpinner.editText?.text.toString())
                         val downloadChat = binding.downloadChat.isChecked
                         val downloadChatEmotes = binding.downloadChatEmotes.isChecked
+                        val initialUri = sharedPath ?: savedSharedPath
                         requireContext().prefs().edit {
                             putInt(AppConstants.DOWNLOAD_LOCATION, location)
                             when (location) {
-                                0 -> putString(AppConstants.DOWNLOAD_SHARED_PATH, sharedPath)
+                                0 -> putString(AppConstants.DOWNLOAD_SHARED_PATH, sharedPath ?: savedSharedPath)
                                 1 -> putInt(AppConstants.DOWNLOAD_STORAGE,
                                     if (storage.size > 1) {
                                         storageSelectionContainer.radioGroup.checkedRadioButtonId
@@ -411,8 +431,8 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                             putBoolean(AppConstants.DOWNLOAD_CHAT_EMOTES, downloadChatEmotes)
                         }
                         directoryResultLauncher?.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                putExtra(DocumentsContract.EXTRA_INITIAL_URI, sharedPath)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !initialUri.isNullOrBlank()) {
+                                putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri.toUri())
                             }
                         })
                     }

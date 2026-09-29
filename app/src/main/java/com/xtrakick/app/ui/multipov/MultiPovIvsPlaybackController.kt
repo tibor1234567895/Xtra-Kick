@@ -4,7 +4,9 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.SurfaceTexture
+import android.media.audiofx.DynamicsProcessing
 import android.net.Uri
+import android.os.Build
 import android.view.Surface
 import android.view.TextureView
 import android.view.animation.DecelerateInterpolator
@@ -13,9 +15,12 @@ import androidx.core.content.edit
 import androidx.annotation.OptIn
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.common.util.UnstableApi
+import android.os.Handler
+import android.os.Looper
 import com.amazonaws.ivs.player.Player
 import com.amazonaws.ivs.player.PlayerException
 import com.amazonaws.ivs.player.Quality
+import com.xtrakick.app.ui.player.KickLivePlayback
 import com.xtrakick.app.util.AppConstants as AppC
 
 /**
@@ -27,8 +32,8 @@ import com.xtrakick.app.util.AppConstants as AppC
  * - Thumbs quality caps become IVS auto-max-quality ceilings; focused stays auto.
  * - Any IVS playback error is treated as a possibly-stale URL and routed into
  *   the existing 403 re-resolve flow (2 tries, cooldown-aware in the ViewModel).
- * - No DynamicsProcessing compressor in this spike: IVS owns the audio path.
- *   The enabled flag + global pref sync are preserved so solo stays in sync.
+ * - DynamicsProcessing compressor applies to the focused slot's audio session,
+ *   matching the solo player curve (+10dB postGain, multiband compression).
  */
 @OptIn(UnstableApi::class)
 class MultiPovIvsPlaybackController(
@@ -61,6 +66,8 @@ class MultiPovIvsPlaybackController(
     private val playRequested = mutableSetOf<String>()
     /** Audio compressor preference per stream (flag only in IVS mode). */
     private val compressorEnabled = mutableMapOf<String, Boolean>()
+    private var dynamicsProcessing: DynamicsProcessing? = null
+    private var dynamicsProcessingAudioSessionId: Int? = null
     /** Quality for all streams (thumbs get capped, focused stays auto). */
     private var streamQuality: MultiPovQuality = MultiPovQuality.SOURCE
     /** Non-focused tiles capped to 480p when true. */
@@ -68,27 +75,48 @@ class MultiPovIvsPlaybackController(
     private var adaptiveMaxHeight: Int? = null
     private var focusedKey: String? = null
     private var focusAnimator: ValueAnimator? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val pendingNudges = mutableMapOf<String, Quality>()
+    private val nudgeSafetyRunnables = mutableMapOf<String, Runnable>()
     /** Last applied cap signature per slot — re-applying ceilings on every UI
      * render resets renditions and rebuffers healthy tiles. */
     private val appliedCapKeys = linkedMapOf<String, String>()
     private val defaultVolume: Float
         get() = (prefs.getInt(AppC.PLAYER_VOLUME, 100) / 100f).coerceIn(0f, 1f)
 
+    fun getCurrentQuality(key: String?): Quality? = key?.let { players[it]?.quality }
+
+    /**
+     * Explicit user request to re-assert the ceiling on the focused tile: nudges
+     * quality back up when ABR has dropped below it. Selecting the already-active
+     * ceiling never reaches [setStreamQuality] (ViewModel state dedupe), so the
+     * quality dialog invokes this directly.
+     */
+    fun bumpFocusedToCeiling() {
+        val key = focusedKey ?: return
+        val player = players[key] ?: return
+        appliedCapKeys.remove(key)
+        applyQualityCap(player, focused = true, key = key)
+    }
+
     fun setStreamQuality(quality: MultiPovQuality) {
         if (streamQuality == quality) return
         streamQuality = quality
+        appliedCapKeys.clear()
         reapplyAllQualityCaps()
     }
 
     fun setBandwidthSaving(enabled: Boolean) {
         if (bandwidthSaving == enabled) return
         bandwidthSaving = enabled
+        appliedCapKeys.clear()
         reapplyAllQualityCaps()
     }
 
     fun setAdaptiveMaxHeight(maxHeight: Int?) {
         if (adaptiveMaxHeight == maxHeight) return
         adaptiveMaxHeight = maxHeight
+        appliedCapKeys.clear()
         reapplyAllQualityCaps()
     }
 
@@ -96,11 +124,13 @@ class MultiPovIvsPlaybackController(
         val targetVol = key?.let { volumeFor(it) } ?: defaultVolume
         if (key == focusedKey) {
             key?.let { runIvsOp(it) { p -> p.setVolume(targetVol) } }
+            syncDynamicsProcessing()
             return
         }
         val previous = focusedKey
         focusedKey = key
         // Focus change only: re-cap quality on both sides.
+        appliedCapKeys.clear()
         reapplyAllQualityCaps()
         // Don't seek on focus change — that re-buffers under multi-stream load.
         val shouldCrossfade = crossfade &&
@@ -114,16 +144,11 @@ class MultiPovIvsPlaybackController(
             players.forEach { (slotKey, player) ->
                 runCatching { player.setVolume(if (slotKey == focusedKey) volumeFor(slotKey) else 0f) }
             }
+            syncDynamicsProcessing()
             return
         }
-        val fromPlayer = players[previous]
-        val toPlayer = players[key]
-        if (fromPlayer == null || toPlayer == null) {
-            players.forEach { (slotKey, player) ->
-                runCatching { player.setVolume(if (slotKey == focusedKey) volumeFor(slotKey) else 0f) }
-            }
-            return
-        }
+        val fromPlayer = players[previous] ?: return
+        val toPlayer = players[key] ?: return
         focusAnimator?.cancel()
         // Live volumes follow an invariant (focused = volumeFor, others = 0),
         // so animate from tracked values instead of reading the player.
@@ -141,6 +166,7 @@ class MultiPovIvsPlaybackController(
                 players.forEach { (slotKey, player) ->
                     runCatching { player.setVolume(if (slotKey == focusedKey) volumeFor(slotKey) else 0f) }
                 }
+                syncDynamicsProcessing()
             }
             start()
         }
@@ -205,16 +231,25 @@ class MultiPovIvsPlaybackController(
                     runCatching { existing.play() }
                     playRequested.add(key)
                 }
+                if (focused) {
+                    syncDynamicsProcessing()
+                }
                 return
             }
             releasePlayer(key)
         }
         if (focused) focusedKey = key
+        val initialBitrate = KickLivePlayback.resolveInitialBitrate(
+            if (focused) streamQuality.prefValue else "480p"
+        )
         try {
             val player = Player.Factory.create(context.applicationContext).apply {
                 setLogLevel(Player.LogLevel.ERROR)
                 setLiveLowLatencyEnabled(true)
                 setRebufferToLive(false)
+                if (initialBitrate > 0) {
+                    setAutoInitialBitrate(initialBitrate)
+                }
                 runCatching { setVolume(if (focused) volumeFor(key) else 0f) }
             }
             players[key] = player
@@ -233,6 +268,9 @@ class MultiPovIvsPlaybackController(
                             // SDK resets output volume on (re)start — keep muted tiles muted.
                             onLoadState(key, MultiPovLoadState.Ready)
                             assertFocusVolume(key, player)
+                            if (key == focusedKey) {
+                                syncDynamicsProcessing()
+                            }
                         }
                         Player.State.ENDED -> onLoadState(key, MultiPovLoadState.Offline)
                         else -> Unit
@@ -269,9 +307,17 @@ class MultiPovIvsPlaybackController(
 
                 override fun onQualityChanged(quality: Quality) {
                     if (players[key] !== player) return
+                    val nudgeTarget = pendingNudges[key]
+                    if (nudgeTarget != null && (quality == nudgeTarget || quality.bitrate >= nudgeTarget.bitrate)) {
+                        cancelQualityNudge(key)
+                        resumeAutoQuality(player, focused = key == focusedKey, nudgeTarget)
+                    }
                     // Ladder arrived after load — thumbs caps can now apply.
                     applyQualityCap(player, focused = key == focusedKey, key = key)
                     assertFocusVolume(key, player)
+                    if (key == focusedKey) {
+                        syncDynamicsProcessing()
+                    }
                 }
             }
             player.addListener(listener)
@@ -393,8 +439,59 @@ class MultiPovIvsPlaybackController(
         // Keep global pref in sync with the focused stream's choice (matches solo player).
         if (key == focusedKey) {
             prefs.edit { putBoolean(AppC.PLAYER_AUDIO_COMPRESSOR, next) }
+            syncDynamicsProcessing()
         }
         return next
+    }
+
+    private fun syncDynamicsProcessing() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        val key = focusedKey
+        val enabled = if (key != null) isCompressorEnabled(key) else prefs.getBoolean(AppC.PLAYER_AUDIO_COMPRESSOR, false)
+        if (!enabled) {
+            dynamicsProcessing?.enabled = false
+            return
+        }
+        val audioSessionId = key?.let { players[it]?.audioSessionId }?.takeIf { it > 0 } ?: return
+        if (dynamicsProcessingAudioSessionId != audioSessionId || dynamicsProcessing == null) {
+            reinitializeDynamicsProcessing(audioSessionId)
+        } else if (dynamicsProcessing?.enabled != true) {
+            dynamicsProcessing?.enabled = true
+        }
+    }
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.P)
+    private fun reinitializeDynamicsProcessing(audioSessionId: Int) {
+        releaseDynamicsProcessing()
+        runCatching {
+            dynamicsProcessing = DynamicsProcessing(0, audioSessionId, null).apply {
+                for (channelIdx in 0 until channelCount) {
+                    for (bandIdx in 0 until getMbcByChannelIndex(channelIdx).bandCount) {
+                        setMbcBandByChannelIndex(
+                            channelIdx,
+                            bandIdx,
+                            getMbcBandByChannelIndex(channelIdx, bandIdx).apply {
+                                attackTime = 0f
+                                releaseTime = 0.25f
+                                ratio = 1.6f
+                                threshold = -50f
+                                kneeWidth = 40f
+                                preGain = 0f
+                                postGain = 10f
+                            }
+                        )
+                    }
+                }
+                enabled = true
+            }
+            dynamicsProcessingAudioSessionId = audioSessionId
+        }
+    }
+
+    private fun releaseDynamicsProcessing() {
+        runCatching { dynamicsProcessing?.release() }
+        dynamicsProcessing = null
+        dynamicsProcessingAudioSessionId = null
     }
 
     fun pauseSecondaries() {
@@ -450,16 +547,22 @@ class MultiPovIvsPlaybackController(
         currentUrls.remove(key)
         playRequested.remove(key)
         appliedCapKeys.remove(key)
+        cancelQualityNudge(key)
         // Keep volumes / pause / compressor prefs for the slot if re-added later this session.
         if (focusedKey == key) {
+            releaseDynamicsProcessing()
             focusedKey = null
         }
         reapplyAllQualityCaps()
     }
 
     fun releaseAll() {
+        releaseDynamicsProcessing()
         focusAnimator?.cancel()
         focusAnimator = null
+        nudgeSafetyRunnables.values.forEach { mainHandler.removeCallbacks(it) }
+        nudgeSafetyRunnables.clear()
+        pendingNudges.clear()
         players.keys.toList().forEach { releasePlayer(it) }
         playerListeners.clear()
         surfaces.clear()
@@ -558,35 +661,61 @@ class MultiPovIvsPlaybackController(
         }
     }
 
-    private fun applyQualityCap(player: Player, focused: Boolean, key: String? = null) {
-        val capHeight = capHeightForSlot(focused = focused) ?: run {
-            // Focused (or source selected): full auto ladder, no ceiling.
-            if (key != null) {
-                val signature = "auto|$focused"
-                if (appliedCapKeys[key] == signature) return
-                appliedCapKeys[key] = signature
-            }
-            runCatching {
-                player.setAutoQualityMode(true)
-                player.setAutoMaxQuality(null)
-            }
-            return
+    private fun cancelQualityNudge(key: String) {
+        nudgeSafetyRunnables.remove(key)?.let { mainHandler.removeCallbacks(it) }
+        pendingNudges.remove(key)
+    }
+
+    /** Resume auto quality, capped at [target] only when the slot has a ceiling. */
+    private fun resumeAutoQuality(player: Player, focused: Boolean, target: Quality) {
+        runCatching {
+            player.setAutoQualityMode(true)
+            player.setAutoMaxQuality(if (capHeightForSlot(focused = focused) == null) null else target)
         }
+    }
+
+    private fun nudgeQualityToTarget(key: String, player: Player, targetQuality: Quality) {
+        cancelQualityNudge(key)
+        pendingNudges[key] = targetQuality
+        runCatching { player.setQuality(targetQuality) }
+        val runnable = Runnable {
+            nudgeSafetyRunnables.remove(key)
+            if (pendingNudges.remove(key) == targetQuality && players[key] === player) {
+                resumeAutoQuality(player, focused = key == focusedKey, targetQuality)
+            }
+        }
+        nudgeSafetyRunnables[key] = runnable
+        mainHandler.postDelayed(runnable, 5000L)
+    }
+
+    private fun applyQualityCap(player: Player, focused: Boolean, key: String? = null) {
+        val capHeight = capHeightForSlot(focused = focused)
         val ladder = runCatching { player.qualities }.getOrNull().orEmpty()
         if (ladder.isEmpty()) return // applied later from onQualityChanged
-        val ceiling = ladder
-            .filter { it.height in 1..capHeight }
-            .maxWithOrNull(compareBy({ it.height }, { it.bitrate }))
-            ?: ladder.minWithOrNull(compareBy({ it.height }, { it.bitrate }))
-            ?: return
+
+        val targetQuality = if (capHeight == null) {
+            ladder.maxWithOrNull(compareBy({ it.height }, { it.bitrate }))
+        } else {
+            ladder.filter { it.height in 1..capHeight }
+                .maxWithOrNull(compareBy({ it.height }, { it.bitrate }))
+                ?: ladder.minWithOrNull(compareBy({ it.height }, { it.bitrate }))
+        } ?: return
+
         if (key != null) {
-            val signature = "cap|$focused|$capHeight|${ceiling.height}|${ceiling.bitrate}"
+            val signature = "cap|$focused|$capHeight|${targetQuality.height}|${targetQuality.bitrate}"
             if (appliedCapKeys[key] == signature) return
             appliedCapKeys[key] = signature
         }
-        runCatching {
-            player.setAutoQualityMode(true)
-            player.setAutoMaxQuality(ceiling)
+
+        val currentQuality = player.quality
+        val isDownscaled = currentQuality.height < targetQuality.height ||
+            (currentQuality.height == targetQuality.height && currentQuality.bitrate < targetQuality.bitrate)
+
+        if (focused && key != null && isDownscaled) {
+            nudgeQualityToTarget(key, player, targetQuality)
+        } else {
+            if (key != null) cancelQualityNudge(key)
+            resumeAutoQuality(player, focused = focused, targetQuality)
         }
     }
 

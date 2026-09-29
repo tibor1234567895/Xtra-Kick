@@ -154,10 +154,18 @@ class MainActivity : AppCompatActivity() {
                     moveTaskToBack(false)
                 }
                 INTENT_PLAY_PAUSE_PLAYER -> {
-                    playerFragment?.playPause()
+                    if (multiPovFragment != null) {
+                        multiPovFragment?.togglePlayPause()
+                    } else {
+                        playerFragment?.playPause()
+                    }
                 }
                 INTENT_MUTE_UNMUTE_PLAYER -> {
-                    playerFragment?.toggleMute()
+                    if (multiPovFragment != null) {
+                        multiPovFragment?.toggleMute()
+                    } else {
+                        playerFragment?.toggleMute()
+                    }
                 }
             }
         }
@@ -658,8 +666,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S &&
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
         ) {
@@ -939,7 +946,14 @@ class MainActivity : AppCompatActivity() {
         viewModel.isPlayerOpened = true
         viewModel.isMultiPovOpened = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).setSeamlessResizeEnabled(true).build())
+            val pipEnabled = prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true) &&
+                prefs.getBoolean(AppConstants.MULTIPOV_PIP_FOCUSED, true)
+            setPictureInPictureParams(
+                PictureInPictureParams.Builder()
+                    .setAutoEnterEnabled(pipEnabled)
+                    .setSeamlessResizeEnabled(true)
+                    .build()
+            )
         }
     }
 

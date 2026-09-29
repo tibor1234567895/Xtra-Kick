@@ -72,6 +72,7 @@ import com.xtrakick.app.model.ui.User
 import com.xtrakick.app.model.ui.Video
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.getByteArrayCronetCallback
@@ -297,6 +298,12 @@ class KickRepository @Inject constructor(
         return context.prefs().getBoolean(AppConstants.DEBUG_NETWORK_LOGS, false)
     }
 
+    // Auth responses carry tokens, and kotlinx serialization errors embed the raw JSON
+    // ("JSON input: {...}") — strip that before the message reaches the diagnostic export.
+    private fun sanitizeAuthError(error: Exception): String {
+        return error.message?.substringBefore("JSON input:")?.take(200) ?: error.javaClass.simpleName
+    }
+
     // Completed once the persisted badge cache (URLs + refresh gates) is restored; the
     // per-channel prefetch waits for it so an early channel open cannot bypass the
     // persisted TTL gates while the restore is still in flight.
@@ -431,7 +438,7 @@ class KickRepository @Inject constructor(
             val refreshToken = tokenPrefs.getString(AppConstants.KICK_REFRESH_TOKEN, null)?.takeIf { it.isNotBlank() }
             if (refreshToken.isNullOrBlank()) {
                 if (isKickAuthDebugEnabled()) {
-                    Log.i(tag, "Kick public API headers missing token and no refresh token available")
+                    DiagnosticLogger.w(tag, "Kick public API headers missing token and no refresh token available")
                 }
                 return headers
             }
@@ -439,7 +446,7 @@ class KickRepository @Inject constructor(
             val backendBaseUrl = KickOAuthConfig.getBackendBaseUrl(context)
             if (backendBaseUrl.isNullOrBlank()) {
                 if (isKickAuthDebugEnabled()) {
-                    Log.i(tag, "Kick public API headers missing token and backend base URL is unavailable")
+                    DiagnosticLogger.w(tag, "Kick public API headers missing token and backend base URL is unavailable")
                 }
                 return headers
             }
@@ -464,9 +471,7 @@ class KickRepository @Inject constructor(
                     return@withLock KickApiHelper.getKickPublicApiHeaders(context)
                 }
                 if (newAccessToken.isNullOrBlank()) {
-                    if (isKickAuthDebugEnabled()) {
-                        Log.w(tag, "Kick token refresh returned blank access token")
-                    }
+                    DiagnosticLogger.w(tag, "Kick token refresh returned blank access token")
                     headers
                 } else {
                     tokenPrefs.edit {
@@ -476,9 +481,10 @@ class KickRepository @Inject constructor(
                         putString(AppConstants.KICK_TOKEN_TYPE, refresh.tokenType)
                     }
                     val refreshedHeaders = KickApiHelper.getKickPublicApiHeaders(context)
-                    if (isKickAuthDebugEnabled()) {
-                        val outcome = if (refreshedHeaders[AppConstants.HEADER_TOKEN].isNullOrBlank()) "missing_token_after_refresh" else "ok"
-                        Log.i(tag, "Kick token refresh completed for public API headers outcome=$outcome")
+                    if (refreshedHeaders[AppConstants.HEADER_TOKEN].isNullOrBlank()) {
+                        DiagnosticLogger.w(tag, "Kick token refresh completed but headers missing token")
+                    } else if (isKickAuthDebugEnabled()) {
+                        Log.i(tag, "Kick token refresh completed for public API headers outcome=ok")
                     }
                     refreshedHeaders
                 }
@@ -492,9 +498,7 @@ class KickRepository @Inject constructor(
                     AuthStateHelper.clearKickAuth(context)
                     AuthStateHelper.clearLegacyWebAuth(context)
                 }
-                if (isKickAuthDebugEnabled()) {
-                    Log.w(tag, "Kick token refresh failed for public API headers: ${e.message}")
-                }
+                DiagnosticLogger.w(tag, "Kick token refresh failed for public API headers: ${sanitizeAuthError(e)}")
                 if (propagateFailure) throw e
                 headers
             }

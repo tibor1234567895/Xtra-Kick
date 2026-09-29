@@ -171,7 +171,7 @@ class MultiPovViewModel @Inject constructor(
     fun rotateSlotOrder() {
         _uiState.update { state ->
             if (state.slots.size < 2) return@update state
-            val rotated = state.slots.drop(1) + state.slots.first()
+            val rotated = listOf(state.slots.last()) + state.slots.dropLast(1)
             state.copy(
                 slots = rotated.map { it.copy(isFocused = it.key == state.focusedKey) },
             )

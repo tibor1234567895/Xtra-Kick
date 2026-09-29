@@ -4,11 +4,21 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.content.res.Configuration
+import android.graphics.Rect
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Rational
@@ -40,6 +50,8 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.doOnPreDraw
 import androidx.core.view.isVisible
+import android.view.HapticFeedbackConstants
+import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
@@ -54,10 +66,13 @@ import com.xtrakick.app.databinding.ItemMultipovTileBinding
 import com.xtrakick.app.databinding.PlayerLayoutBinding
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.ui.chat.ChatFragment
+import com.xtrakick.app.ui.player.KickLivePlayback
 import com.xtrakick.app.ui.common.CompactDialogs.compact
 import com.xtrakick.app.ui.main.MainActivity
+import com.xtrakick.app.ui.player.IvsPlayerService
 import com.xtrakick.app.ui.player.PlayerVolumeDialog
 import com.xtrakick.app.ui.player.VideoZoomController
+import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.NetworkMonitor
@@ -85,6 +100,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     private val viewModel: MultiPovViewModel by viewModels()
 
     private var playbackController: MultiPovIvsPlaybackController? = null
+    private var playbackService: IvsPlayerService? = null
+    private var serviceConnection: ServiceConnection? = null
     private val tileBindings = linkedMapOf<String, ItemMultipovTileBinding>()
     private var currentChatKey: String? = null
     /** Slot keys + layout/orientation signature used to decide when to rebuild the grid. */
@@ -104,6 +121,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     // Landscape chat scrub — same interaction model as PlayerFragment.
     private var chatWidthLandscape = 0
     private var chatOpenProgress = 1f
+    private var dividerStartY: Float = 0f
     private var chatDragActive = false
     private var chatDragCandidate = false
     private var chatDragStartX = 0f
@@ -209,10 +227,18 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         applySystemBarInsets(view)
         activity.onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
 
+        binding.focusedControls.controllerScrim.isVisible = false
+        bindPlaybackService()
+
         playbackController = MultiPovIvsPlaybackController(
             context = requireContext().applicationContext,
             prefs = requireContext().prefs(),
-            onLoadState = { key, state -> viewModel.updateLoadState(key, state) },
+            onLoadState = { key, state ->
+                viewModel.updateLoadState(key, state)
+                if (key == viewModel.uiState.value.focusedKey) {
+                    syncFocusedToPlaybackService()
+                }
+            },
             onHttpError = { key, code, failedUrl ->
                 viewModel.onPlaybackHttpError(key, code, failedUrl)
             },
@@ -226,10 +252,14 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         wireMultiPovTools()
         wireFocusedPlayerControls()
         binding.minimizeBadge.setOnClickListener { maximize() }
-        binding.multiPovShell.setOnClickListener {
+        binding.multiPovRoot.setOnClickListener {
+            if (!isMaximized) maximize()
+        }
+        binding.videoSection.setOnClickListener {
             if (!isMaximized) maximize()
         }
         setupGestures()
+        setupDividerGesture()
         updateFocusedControlsVisibility(show = false)
 
         viewLifecycleOwner.lifecycleScope.launch {
@@ -249,6 +279,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 }
             }
         }
+        view.post { updatePictureInPictureParams() }
     }
 
     private fun showStatusBar() {
@@ -277,9 +308,14 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             TypedValue.COMPLEX_UNIT_DIP, 6f, resources.displayMetrics
         ).toInt()
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, windowInsets ->
-            val insets = windowInsets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-            )
+            val ignoreCutouts = root.context.prefs().getBoolean(AppConstants.UI_DRAW_BEHIND_CUTOUTS, false)
+            val insets = if (!isPortrait && ignoreCutouts) {
+                windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            } else {
+                windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+                )
+            }
             // Portrait keeps the status bar visible like the solo player — the
             // player starts below it. Landscape is edge-to-edge, bar hidden.
             val topInset = if (isPortrait) insets.top else 0
@@ -302,6 +338,71 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             windowInsets
         }
         ViewCompat.requestApplyInsets(root)
+    }
+
+    private fun bindPlaybackService() {
+        if (serviceConnection != null) return
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+                val boundService = (service as? IvsPlayerService.ServiceBinder)?.getService() ?: return
+                playbackService = boundService
+                boundService.attachMultiPovSession(object : IvsPlayerService.MultiPovDelegate {
+                    override fun isPlaying(): Boolean {
+                        val focusedKey = viewModel.uiState.value.focusedKey
+                        return playbackController?.isPlaying(focusedKey) == true
+                    }
+
+                    override fun onPlay() {
+                        val focusedKey = viewModel.uiState.value.focusedKey
+                        playbackController?.setPaused(focusedKey, false)
+                        syncFocusedToPlaybackService()
+                        updatePlayPauseIcon(true)
+                    }
+
+                    override fun onPause() {
+                        val focusedKey = viewModel.uiState.value.focusedKey
+                        playbackController?.setPaused(focusedKey, true)
+                        syncFocusedToPlaybackService()
+                        updatePlayPauseIcon(false)
+                    }
+                })
+                syncFocusedToPlaybackService()
+            }
+
+            override fun onServiceDisconnected(name: ComponentName?) {
+                playbackService = null
+            }
+        }
+        serviceConnection = connection
+        val intent = Intent(requireContext(), IvsPlayerService::class.java)
+        try {
+            requireContext().startService(intent)
+        } catch (e: Exception) {
+            DiagnosticLogger.w("MultiPovFragment", "Failed to start IvsPlayerService for MultiPOV", e)
+        }
+        requireContext().bindService(intent, connection, Context.BIND_AUTO_CREATE)
+    }
+
+    private fun unbindPlaybackService() {
+        playbackService?.detachMultiPovSession()
+        serviceConnection?.let {
+            runCatching { requireContext().unbindService(it) }
+        }
+        serviceConnection = null
+        playbackService = null
+    }
+
+    private fun syncFocusedToPlaybackService() {
+        val service = playbackService ?: return
+        val focused = viewModel.uiState.value.focusedSlot
+        val stream = focused?.stream
+        val url = focused?.resolvedUrl
+        val isPlaying = playbackController?.isPlaying(focused?.key) == true
+        service.updateMultiPovFocus(
+            stream = stream,
+            url = url,
+            isPlaying = isPlaying,
+        )
     }
 
     private fun focusedControls(): PlayerLayoutBinding? = _binding?.focusedControls
@@ -357,9 +458,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
 
             playPause.isVisible = prefs.getBoolean(AppConstants.PLAYER_PAUSE, false)
             playPause.setOnClickListener {
-                val key = viewModel.uiState.value.focusedKey
-                val playing = playbackController?.togglePlayPause(key) == true
-                updatePlayPauseIcon(playing)
+                togglePlayPause()
                 showControlsTemporarily()
             }
 
@@ -451,19 +550,83 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         }
     }
 
+    private fun isCompactHeight(): Boolean {
+        val rootW = _binding?.multiPovRoot?.width ?: 0
+        return isPortrait && rootW > 0 && ((_binding?.videoSection?.height ?: 0) < rootW * 9 / 16)
+    }
+
     private fun bindFocusedStreamChrome() {
         val controls = focusedControls() ?: return
         val prefs = requireContext().prefs()
         val focused = viewModel.uiState.value.focusedSlot
         val stream = focused?.stream
         val key = focused?.key
+        val isCompact = isCompactHeight()
+        val density = resources.displayMetrics.density
 
         with(controls) {
-            // Focus identity lives on chips; keep title/category/viewers for context.
+            if (isCompact) {
+                topLeftLayout.isVisible = false
+                topRightLayout.isVisible = false
+                playPause.isVisible = false
+                restart.isVisible = false
+                seekLive.isVisible = false
+                audioCompressor.isVisible = false
+                uptimeLayout.isVisible = false
+                latencyLayout.isVisible = false
+                toggleChat.isVisible = false
+
+                // Bottom left has ONLY volume — no crowding
+                volume.isVisible = prefs.getBoolean(AppConstants.PLAYER_VOLUMEBUTTON, true)
+
+                // Bottom right has quality, fullscreen, menu
+                if (quality.parent == topRightLayout) {
+                    topRightLayout.removeView(quality)
+                    topRightLayout.removeView(menu)
+                    bottomRightLayout.addView(quality, 0)
+                    bottomRightLayout.addView(menu)
+                }
+                quality.isVisible = prefs.getBoolean(AppConstants.PLAYER_SETTINGS, true)
+                fullscreen.isVisible = prefs.getBoolean(AppConstants.PLAYER_FULLSCREEN, true)
+                menu.isVisible = prefs.getBoolean(AppConstants.PLAYER_MENU, true)
+
+                bottomLeftLayout.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                    bottomMargin = (2 * density).toInt()
+                }
+                bottomRightLayout.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                    bottomMargin = (2 * density).toInt()
+                }
+            } else {
+                if (quality.parent == bottomRightLayout) {
+                    bottomRightLayout.removeView(quality)
+                    bottomRightLayout.removeView(menu)
+                    topRightLayout.addView(quality)
+                    topRightLayout.addView(menu)
+                }
+                topRightLayout.isVisible = true
+                topLeftLayout.isVisible = true
+                playPause.isVisible = prefs.getBoolean(AppConstants.PLAYER_PAUSE, false)
+                restart.isVisible = prefs.getBoolean(AppConstants.PLAYER_RESTART, true)
+                seekLive.isVisible = true
+                audioCompressor.isVisible = prefs.getBoolean(AppConstants.PLAYER_AUDIO_COMPRESSOR_BUTTON, true)
+                volume.isVisible = prefs.getBoolean(AppConstants.PLAYER_VOLUMEBUTTON, true)
+                toggleChat.isVisible = prefs.getBoolean(AppConstants.PLAYER_CHATTOGGLE, true) &&
+                    !prefs.getBoolean(AppConstants.CHAT_DISABLE, false)
+                quality.isVisible = prefs.getBoolean(AppConstants.PLAYER_SETTINGS, true)
+                fullscreen.isVisible = prefs.getBoolean(AppConstants.PLAYER_FULLSCREEN, true)
+                menu.isVisible = prefs.getBoolean(AppConstants.PLAYER_MENU, true)
+
+                bottomLeftLayout.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                    bottomMargin = (8 * density).toInt()
+                }
+                bottomRightLayout.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                    bottomMargin = (8 * density).toInt()
+                }
+            }
             channel.isVisible = false
             title.apply {
                 val t = stream?.title?.trim()
-                if (!t.isNullOrBlank() && prefs.getBoolean(AppConstants.PLAYER_TITLE, true)) {
+                if (!isCompact && !t.isNullOrBlank() && prefs.getBoolean(AppConstants.PLAYER_TITLE, true)) {
                     text = t
                     isVisible = true
                 } else {
@@ -472,7 +635,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             }
             category.apply {
                 val game = stream?.gameName
-                if (!game.isNullOrBlank() && prefs.getBoolean(AppConstants.PLAYER_CATEGORY, true)) {
+                if (!isCompact && !game.isNullOrBlank() && prefs.getBoolean(AppConstants.PLAYER_CATEGORY, true)) {
                     text = game
                     isVisible = true
                 } else {
@@ -480,7 +643,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 }
             }
             val viewers = stream?.viewerCount
-            if (viewers != null) {
+            if (viewers != null && !isCompact) {
                 viewersText.text = KickApiHelper.formatCount(
                     viewers,
                     prefs.getBoolean(AppConstants.UI_TRUNCATEVIEWCOUNT, true),
@@ -513,6 +676,19 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         _binding?.layoutButton?.isVisible = immersiveKey == null && state.slots.size >= 2
         _binding?.rotateButton?.isVisible = immersiveKey == null && state.slots.size >= 2
         _binding?.removeFocusedButton?.isVisible = state.slots.size > 1 && immersiveKey == null
+        if (isCompact) {
+            _binding?.multiPovToolsBar?.updatePadding(
+                top = (2 * density).toInt(),
+                bottom = (2 * density).toInt(),
+            )
+            _binding?.multiPovToolsBar?.setBackgroundColor(Color.parseColor("#99000000"))
+        } else {
+            _binding?.multiPovToolsBar?.updatePadding(
+                top = (4 * density).toInt(),
+                bottom = (4 * density).toInt(),
+            )
+            _binding?.multiPovToolsBar?.setBackgroundColor(Color.parseColor("#E6000000"))
+        }
         rebuildFocusChips(state)
     }
 
@@ -615,7 +791,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         val prefs = requireContext().prefs()
         controls.uptimeTimer.stop()
         val startedMs = startedAtIso?.let { KickApiHelper.parseIso8601DateUTC(it) }
-        if (startedMs != null && prefs.getBoolean(AppConstants.PLAYER_SHOW_UPTIME, true)) {
+        if (!isCompactHeight() && startedMs != null && prefs.getBoolean(AppConstants.PLAYER_SHOW_UPTIME, true)) {
             controls.uptimeLayout.isVisible = true
             controls.uptimeTimer.base =
                 SystemClock.elapsedRealtime() + startedMs - System.currentTimeMillis()
@@ -629,7 +805,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     private fun updateLatencyDisplay(liveOffsetMs: Long?) {
         val controls = focusedControls() ?: return
         val prefs = requireContext().prefs()
-        if (liveOffsetMs != null && prefs.getBoolean(AppConstants.PLAYER_SHOW_LATENCY, true)) {
+        if (!isCompactHeight() && liveOffsetMs != null && prefs.getBoolean(AppConstants.PLAYER_SHOW_LATENCY, true)) {
             controls.latencyLayout.isVisible = true
             controls.latencyText.text = getString(
                 R.string.multipov_latency_approx,
@@ -683,9 +859,56 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         )
     }
 
+    private var preMuteVolume: Float? = null
+    private var isVolumeReduced: Boolean = false
+
+    private fun getPipReducedVolume(): Float {
+        val ctx = context ?: return 0f
+        return ctx.prefs().getInt(AppConstants.PIP_REDUCED_VOLUME_LEVEL, 0).coerceIn(0, 50) / 100f
+    }
+
+    private fun isVolumeDuckedOrMuted(currentVol: Float, targetVol: Float): Boolean =
+        isVolumeReduced || currentVol <= 0f || (targetVol > 0f && currentVol <= targetVol)
+
+    fun toggleMute() {
+        val targetVol = getPipReducedVolume()
+        val currentVol = getCurrentVolume()
+        val prefs = context?.prefs()
+
+        if (isVolumeDuckedOrMuted(currentVol, targetVol)) {
+            isVolumeReduced = false
+            val minRestore = if (targetVol > 0f) targetVol else 0f
+            val restore = preMuteVolume?.takeIf { it > minRestore }
+                ?: prefs?.getFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, -1f)?.takeIf { it > minRestore }
+                ?: (prefs?.getInt(AppConstants.PLAYER_VOLUME, 100)?.takeIf { it > (minRestore * 100).toInt() }?.toFloat()?.div(100f) ?: 1f)
+            changeVolume(restore)
+        } else {
+            isVolumeReduced = true
+            preMuteVolume = currentVol
+            prefs?.edit { putFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, currentVol) }
+            changeVolume(targetVol)
+        }
+    }
+
+    fun togglePlayPause(): Boolean {
+        val key = viewModel.uiState.value.focusedKey ?: return false
+        val playing = playbackController?.togglePlayPause(key) == true
+        updatePlayPauseIcon(playing)
+        syncFocusedToPlaybackService()
+        updatePictureInPictureParams()
+        return playing
+    }
+
     fun changeVolume(volume: Float) {
+        val targetVol = getPipReducedVolume()
+        if (volume > targetVol) {
+            preMuteVolume = volume
+            isVolumeReduced = false
+        }
         playbackController?.setVolume(viewModel.uiState.value.focusedKey, volume)
         updateVolumeButtonVisual(volume)
+        context?.prefs()?.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
+        updatePictureInPictureParams()
     }
 
     fun getCurrentVolume(): Float {
@@ -705,6 +928,9 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             if (viewModel.uiState.value.slots.size >= 2) {
                 add(getString(R.string.multipov_cycle_layout))
                 add(getString(R.string.multipov_rotate_order))
+            }
+            if (canEnterPictureInPicture()) {
+                add(getString(R.string.picture_in_picture))
             }
             val bw = viewModel.uiState.value.bandwidthSaving
             add(
@@ -728,6 +954,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                     getString(R.string.multipov_add_stream) -> openPicker()
                     getString(R.string.multipov_cycle_layout) -> cycleLayoutPreset()
                     getString(R.string.multipov_rotate_order) -> rotateStreamOrder()
+                    getString(R.string.picture_in_picture) -> enterFocusedPip()
                     getString(R.string.multipov_bandwidth_saving_on),
                     getString(R.string.multipov_bandwidth_saving_off) -> {
                         val enabled = viewModel.toggleBandwidthSaving()
@@ -835,7 +1062,13 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         gestureDetector = detector
 
         // Shell targets (gaps between tiles / letterbox): pinch zoom + chat drag + fling/tap.
-        val shellTouchListener = View.OnTouchListener { _, event ->
+        val shellTouchListener = View.OnTouchListener { v, event ->
+            if (!isMaximized) {
+                if (event.actionMasked == MotionEvent.ACTION_UP) {
+                    v.performClick()
+                }
+                return@OnTouchListener true
+            }
             val zoom = videoZoom
             if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                 suppressTileMenu = false
@@ -859,6 +1092,171 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         }
         binding.tileGrid.setOnTouchListener(shellTouchListener)
         binding.videoSection.setOnTouchListener(shellTouchListener)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupDividerGesture() {
+        val binding = _binding ?: return
+        val detector = GestureDetector(requireContext(), object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val current = currentLayoutPreset()
+                val target = if (current == MultiPovLayoutPreset.PRIMARY_TOP) MultiPovLayoutPreset.EQUAL else MultiPovLayoutPreset.PRIMARY_TOP
+                android.transition.TransitionManager.beginDelayedTransition(
+                    binding.multiPovRoot,
+                    android.transition.AutoTransition().apply {
+                        duration = 200L
+                        interpolator = DecelerateInterpolator()
+                    },
+                )
+                requireContext().prefs().edit {
+                    putString(AppConstants.MULTIPOV_LAYOUT, target.prefValue)
+                }
+                applyPortraitChatLayout()
+                render(viewModel.uiState.value, forceGridRebuild = true)
+                Toast.makeText(
+                    requireContext(),
+                    getString(R.string.multipov_layout_toast, getString(target.labelRes(isPortrait))),
+                    Toast.LENGTH_SHORT
+                ).show()
+                return true
+            }
+        })
+        var initialPreset: MultiPovLayoutPreset = currentLayoutPreset()
+        var initialVideoHeight: Int = 0
+        var hoveredPreset: MultiPovLayoutPreset = currentLayoutPreset()
+        var isDraggingDivider = false
+
+        binding.chatDivider.setOnTouchListener { _, event ->
+            detector.onTouchEvent(event)
+            val root = _binding?.multiPovRoot ?: return@setOnTouchListener false
+            val total = root.height - root.paddingTop
+            if (total <= 0 || !isPortrait) return@setOnTouchListener false
+
+            val count = viewModel.uiState.value.slots.size
+            val unit = root.width * 9f / 16f
+            val hEqual = (unit * solvePortraitRows(count, MultiPovLayoutPreset.EQUAL).sumOf { it.heightFactor.toDouble() }).roundToInt()
+            val hLargeTop = (unit * solvePortraitRows(count, MultiPovLayoutPreset.PRIMARY_TOP).sumOf { it.heightFactor.toDouble() }).roundToInt()
+            val hStacked = (unit * solvePortraitRows(count, MultiPovLayoutPreset.PRIMARY_LEFT).sumOf { it.heightFactor.toDouble() }).roundToInt()
+            val thresh1 = (hEqual + hLargeTop) / 2
+            val thresh2 = (hLargeTop + hStacked) / 2
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    dividerStartY = event.rawY
+                    initialPreset = currentLayoutPreset()
+                    hoveredPreset = initialPreset
+                    initialVideoHeight = binding.videoSection.height.coerceAtLeast(1)
+                    isDraggingDivider = true
+                    binding.tileGrid.pivotY = 0f
+                    binding.tileGrid.pivotX = root.width / 2f
+
+                    binding.chatDividerHandle.animate().scaleX(1.2f).scaleY(1.2f).setDuration(120).start()
+                    binding.chatDividerHandle.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#53FC18"))
+
+                    // Reveal mode badge
+                    binding.chatDividerLabel.text = getString(hoveredPreset.labelRes(isPortrait))
+                    binding.chatDividerLabel.alpha = 0f
+                    binding.chatDividerLabel.isVisible = true
+                    binding.chatDividerLabel.animate().alpha(1f).setDuration(120).start()
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (!isDraggingDivider) return@setOnTouchListener false
+                    val delta = event.rawY - dividerStartY
+                    val candidateH = (initialVideoHeight + delta).coerceIn((total * 0.15f), (total * 0.85f))
+                    val transY = candidateH - initialVideoHeight
+
+                    // Real-time video scaling with divider drag
+                    val scale = (candidateH / initialVideoHeight.toFloat()).coerceIn(0.6f, 2.5f)
+                    binding.tileGrid.scaleY = scale
+                    binding.tileGrid.scaleX = scale
+
+                    // Smooth 1:1 real-time translation of divider and chat
+                    binding.chatDivider.translationY = transY
+                    binding.chatFragmentContainer.translationY = transY
+
+                    val newHoverPreset = when {
+                        candidateH < thresh1 -> MultiPovLayoutPreset.EQUAL
+                        candidateH <= thresh2 -> MultiPovLayoutPreset.PRIMARY_TOP
+                        else -> MultiPovLayoutPreset.PRIMARY_LEFT
+                    }
+                    if (newHoverPreset != hoveredPreset) {
+                        hoveredPreset = newHoverPreset
+                        binding.chatDividerLabel.text = getString(newHoverPreset.labelRes(isPortrait))
+                        binding.chatDividerLabel.animate().scaleX(1.15f).scaleY(1.15f).setDuration(80).withEndAction {
+                            binding.chatDividerLabel.animate().scaleX(1f).scaleY(1f).setDuration(80).start()
+                        }.start()
+                        view?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (!isDraggingDivider) return@setOnTouchListener false
+                    isDraggingDivider = false
+                    val targetPreset = hoveredPreset
+                    val targetHeight = when (targetPreset) {
+                        MultiPovLayoutPreset.EQUAL -> hEqual
+                        MultiPovLayoutPreset.PRIMARY_TOP -> hLargeTop
+                        else -> hStacked
+                    }
+                    val startTrans = binding.chatDivider.translationY
+                    val endTrans = (targetHeight - initialVideoHeight).toFloat()
+                    val startScale = binding.tileGrid.scaleY
+                    val endScale = targetHeight.toFloat() / initialVideoHeight.toFloat()
+
+                    // Smooth deceleration animation to snap directly into the target position
+                    ValueAnimator.ofFloat(0f, 1f).apply {
+                        duration = 180L
+                        interpolator = DecelerateInterpolator()
+                        addUpdateListener { va ->
+                            val frac = va.animatedFraction
+                            val currentTrans = startTrans + (endTrans - startTrans) * frac
+                            val currentScale = startScale + (endScale - startScale) * frac
+                            binding.chatDivider.translationY = currentTrans
+                            binding.chatFragmentContainer.translationY = currentTrans
+                            binding.tileGrid.scaleY = currentScale
+                            binding.tileGrid.scaleX = currentScale
+                        }
+                        addListener(object : AnimatorListenerAdapter() {
+                            override fun onAnimationEnd(animation: Animator) {
+                                binding.tileGrid.scaleX = 1f
+                                binding.tileGrid.scaleY = 1f
+                                binding.chatDivider.translationY = 0f
+                                binding.chatFragmentContainer.translationY = 0f
+                                binding.chatDividerHandle.backgroundTintList = null
+                                binding.chatDividerHandle.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120).start()
+                                binding.chatDividerLabel.animate().alpha(0f).setDuration(120).withEndAction {
+                                    binding.chatDividerLabel.isVisible = false
+                                }.start()
+
+                                android.transition.TransitionManager.beginDelayedTransition(
+                                    binding.multiPovRoot,
+                                    android.transition.AutoTransition().apply {
+                                        duration = 200L
+                                        interpolator = DecelerateInterpolator()
+                                    },
+                                )
+                                requireContext().prefs().edit {
+                                    putString(AppConstants.MULTIPOV_LAYOUT, targetPreset.prefValue)
+                                }
+                                applyPortraitChatLayout()
+                                render(viewModel.uiState.value, forceGridRebuild = true)
+                                if (targetPreset != initialPreset) {
+                                    Toast.makeText(
+                                        requireContext(),
+                                        getString(R.string.multipov_layout_toast, getString(targetPreset.labelRes(isPortrait))),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        })
+                        start()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
     }
 
     private fun focusedTileKey(): String? = immersiveKey ?: viewModel.uiState.value.focusedKey
@@ -952,13 +1350,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         backgroundPauseRunnable = null
         val inPip = isInPipMode()
         if (!inPip) {
-            if (!requireContext().prefs().getBoolean(AppConstants.MULTIPOV_PAUSE_INACTIVE_ON_BACKGROUND, true) || isMaximized) {
-                playbackController?.resumeAll()
-            } else {
-                // Toggle ON but was background-paused with grace: resume secondaries.
-                // If we kept only focused audible in background, resume the rest now.
-                playbackController?.resumeAll()
-            }
+            playbackController?.resumeAll()
+            syncFocusedToPlaybackService()
         }
     }
 
@@ -979,6 +1372,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                     playbackController?.pauseSecondaries()
                 } else {
                     playbackController?.pauseAll()
+                    playbackService?.setMultiPovPlayingState(false)
                 }
             }
             backgroundPauseRunnable = runnable
@@ -1003,6 +1397,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         chromeFlashActive = false
         lastFocusFlashForKey = null
         unregisterAdaptiveMonitors()
+        unbindPlaybackService()
         playbackController?.releaseAll()
         playbackController = null
         tileBindings.clear()
@@ -1012,11 +1407,19 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         resetVideoZoom()
         videoZoom = null
         _binding = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                activity?.setPictureInPictureParams(
+                    PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()
+                )
+            }
+        }
         super.onDestroyView()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (isInPipMode()) return
         isPortrait = newConfig.orientation == Configuration.ORIENTATION_PORTRAIT
         // Landscape chat width is orientation-dependent; refresh after rotate.
         chatWidthLandscape = 0
@@ -1031,6 +1434,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         } else {
             applyMinimizedTransform()
         }
+        view?.post { updatePictureInPictureParams() }
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
@@ -1070,26 +1474,126 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     fun canEnterPictureInPicture(): Boolean {
+        val ctx = context ?: return false
+        val prefs = ctx.prefs()
         return isMaximized &&
             viewModel.uiState.value.focusedSlot != null &&
-            requireContext().prefs().getBoolean(AppConstants.MULTIPOV_PIP_FOCUSED, true) &&
-            requireContext().prefs().getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
+            prefs.getBoolean(AppConstants.MULTIPOV_PIP_FOCUSED, true) &&
+            prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
     }
 
     fun enterFocusedPip(): Boolean {
         if (!canEnterPictureInPicture()) return false
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
-        if (!requireActivity().packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+        val act = activity ?: return false
+        if (!act.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             return false
         }
         return try {
-            requireActivity().enterPictureInPictureMode(
-                PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(16, 9))
-                    .build()
-            )
+            val builder = PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(16, 9))
+            val focusedKey = viewModel.uiState.value.focusedKey
+            val focusedView = focusedKey?.let { tileBindings[it]?.root }
+            if (focusedView != null && focusedView.isAttachedToWindow && focusedView.isShown) {
+                val rect = Rect()
+                focusedView.getGlobalVisibleRect(rect)
+                if (!rect.isEmpty) {
+                    builder.setSourceRectHint(rect)
+                }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setSeamlessResizeEnabled(true)
+            }
+            act.enterPictureInPictureMode(builder.build())
         } catch (_: IllegalStateException) {
             false
+        }
+    }
+
+    fun updatePictureInPictureParams() {
+        val act = activity ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            act.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
+            isAdded
+        ) {
+            val canPip = canEnterPictureInPicture()
+            val inPip = isInPipMode()
+            val prefs = act.prefs()
+            val builder = PictureInPictureParams.Builder().apply {
+                setAspectRatio(Rational(16, 9))
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setSeamlessResizeEnabled(true)
+                    setAutoEnterEnabled(!inPip && canPip)
+                }
+                val focusedKey = viewModel.uiState.value.focusedKey
+                val focusedView = focusedKey?.let { tileBindings[it]?.root }
+                if (focusedView != null && focusedView.isAttachedToWindow && focusedView.isShown) {
+                    val rect = Rect()
+                    focusedView.getGlobalVisibleRect(rect)
+                    if (!rect.isEmpty) {
+                        setSourceRectHint(rect)
+                    }
+                }
+
+                val actions = mutableListOf<RemoteAction>()
+                val isPlaying = playbackController?.isPlaying(focusedKey) == true
+                actions.add(
+                    if (isPlaying) {
+                        RemoteAction(
+                            Icon.createWithResource(act, R.drawable.baseline_pause_black_48),
+                            getString(R.string.pause),
+                            getString(R.string.pause),
+                            PendingIntent.getBroadcast(
+                                act,
+                                REQUEST_CODE_PLAY_PAUSE,
+                                Intent(MainActivity.INTENT_PLAY_PAUSE_PLAYER).setPackage(act.packageName),
+                                PendingIntent.FLAG_IMMUTABLE,
+                            ),
+                        )
+                    } else {
+                        RemoteAction(
+                            Icon.createWithResource(act, R.drawable.baseline_play_arrow_black_48),
+                            getString(R.string.resume),
+                            getString(R.string.resume),
+                            PendingIntent.getBroadcast(
+                                act,
+                                REQUEST_CODE_PLAY_PAUSE,
+                                Intent(MainActivity.INTENT_PLAY_PAUSE_PLAYER).setPackage(act.packageName),
+                                PendingIntent.FLAG_IMMUTABLE,
+                            ),
+                        )
+                    },
+                )
+
+                if (prefs.getBoolean(AppConstants.PIP_SHOW_MUTE, true)) {
+                    val targetVol = getPipReducedVolume()
+                    val currentVol = getCurrentVolume()
+                    val isLowered = isVolumeDuckedOrMuted(currentVol, targetVol)
+                    val iconRes = PlayerVolumeDialog.getVolumeIconRes(currentVol)
+                    val actionTitle = when {
+                        isLowered -> if (targetVol == 0f) getString(R.string.unmute) else getString(R.string.restore_volume)
+                        else -> if (targetVol == 0f) getString(R.string.mute) else getString(R.string.lower_volume)
+                    }
+                    actions.add(
+                        RemoteAction(
+                            Icon.createWithResource(act, iconRes),
+                            actionTitle,
+                            actionTitle,
+                            PendingIntent.getBroadcast(
+                                act,
+                                REQUEST_CODE_MUTE_UNMUTE,
+                                Intent(MainActivity.INTENT_MUTE_UNMUTE_PLAYER).setPackage(act.packageName),
+                                PendingIntent.FLAG_IMMUTABLE,
+                            ),
+                        ),
+                    )
+                }
+
+                setActions(actions)
+            }
+            try {
+                act.setPictureInPictureParams(builder.build())
+            } catch (_: Exception) {}
         }
     }
 
@@ -1112,7 +1616,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             }
         }
         applyMinimizedTransform()
-        backCallback.isEnabled = true
+        backCallback.isEnabled = false
+        updatePictureInPictureParams()
     }
 
     fun maximize() {
@@ -1135,6 +1640,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         playbackController?.resumeSecondaries()
         render(viewModel.uiState.value, forceGridRebuild = true)
         showControlsTemporarily()
+        backCallback.isEnabled = true
+        view?.post { updatePictureInPictureParams() }
     }
 
     private fun applyMinimizedTransform() {
@@ -1164,15 +1671,30 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         updateFocusedControlsVisibility(show = false)
         binding.minimizeBadge.isVisible = false
         playbackController?.pauseSecondaries()
-        // Show only focused tile surface area as much as possible
-        tileBindings.forEach { (key, tile) ->
-            tile.root.isVisible = key == viewModel.uiState.value.focusedKey
+        binding.multiPovRoot.apply {
+            scaleX = 1f
+            scaleY = 1f
+            translationX = 0f
+            translationY = 0f
         }
+        binding.videoSection.apply {
+            translationX = 0f
+            translationY = 0f
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER,
+            ).apply { marginEnd = 0 }
+        }
+        rebuildGrid(viewModel.uiState.value)
     }
 
     private fun exitPipUi() {
         if (!isAdded) return
-        tileBindings.values.forEach { it.root.isVisible = true }
+        tileBindings.values.forEach {
+            it.root.isVisible = true
+            it.tileChrome.isVisible = true
+        }
         if (isMaximized) {
             playbackController?.resumeSecondaries()
             applyOrientationLayout(rebuildTiles = false)
@@ -1180,12 +1702,12 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         } else {
             minimize()
         }
+        view?.post { updatePictureInPictureParams() }
     }
 
     private fun isInPipMode(): Boolean {
         return when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> requireActivity().isInPictureInPictureMode
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> requireActivity().isInPictureInPictureMode
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> activity?.isInPictureInPictureMode == true
             else -> false
         }
     }
@@ -1199,10 +1721,9 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 val url = slot.resolvedUrl
                 if (slot.isFocused && !url.isNullOrBlank()) {
                     controller.ensurePlaying(slot.key, url, focused = true)
-                } else {
-                    controller.releasePlayer(slot.key)
                 }
             }
+            controller.pauseSecondaries()
             return
         }
 
@@ -1297,10 +1818,12 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             applyPortraitChatLayout()
         }
         updateChat(state.focusedSlot)
+        syncFocusedToPlaybackService()
 
         if (state.slots.isEmpty()) {
             (activity as? MainActivity)?.closeMultiPov()
         }
+        view?.post { updatePictureInPictureParams() }
     }
 
     private fun currentLayoutPreset(): MultiPovLayoutPreset {
@@ -1308,32 +1831,21 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     private fun cycleLayoutPreset() {
-        // Portrait renders "large on left" stacked like "large on top" — skip it
-        // so cycling never offers the same layout twice.
-        var next = currentLayoutPreset().next()
-        if (isPortrait) {
-            while (next == MultiPovLayoutPreset.PRIMARY_LEFT) next = next.next()
-        }
+        val next = currentLayoutPreset().next()
         requireContext().prefs().edit {
             putString(AppConstants.MULTIPOV_LAYOUT, next.prefValue)
         }
         Toast.makeText(
             requireContext(),
-            getString(R.string.multipov_layout_toast, getString(next.labelRes())),
+            getString(R.string.multipov_layout_toast, getString(next.labelRes(isPortrait))),
             Toast.LENGTH_SHORT
         ).show()
         render(viewModel.uiState.value, forceGridRebuild = true)
     }
 
     private fun showLayoutPickerDialog() {
-        // Portrait renders "large on left" stacked like "large on top" — don't
-        // offer the duplicate (see rebuildGrid).
-        val presets = if (isPortrait) {
-            MultiPovLayoutPreset.entries.filterNot { it == MultiPovLayoutPreset.PRIMARY_LEFT }
-        } else {
-            MultiPovLayoutPreset.entries.toList()
-        }
-        val labels = presets.map { getString(it.labelRes()) }.toTypedArray()
+        val presets = MultiPovLayoutPreset.entries.toList()
+        val labels = presets.map { getString(it.labelRes(isPortrait)) }.toTypedArray()
         val selected = presets.indexOf(currentLayoutPreset()).coerceAtLeast(0)
         MaterialAlertDialogBuilder(requireContext())
             .setTitle(R.string.multipov_layout)
@@ -1346,7 +1858,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 render(viewModel.uiState.value, forceGridRebuild = true)
                 Toast.makeText(
                     requireContext(),
-                    getString(R.string.multipov_layout_toast, getString(chosen.labelRes())),
+                    getString(R.string.multipov_layout_toast, getString(chosen.labelRes(isPortrait))),
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -1383,6 +1895,17 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         val immersiveSlot = immersiveKey?.let { key -> state.slots.firstOrNull { it.key == key } }
         if (immersiveSlot != null) {
             addFullBleedTile(grid, immersiveSlot)
+            return
+        }
+
+        // PiP mode: focused stream fills the floating window.
+        if (isInPipMode()) {
+            val pipSlot = state.slots.firstOrNull { it.key == state.focusedKey }
+                ?: state.slots.firstOrNull { it.isFocused }
+                ?: state.slots.firstOrNull()
+            if (pipSlot != null) {
+                addFullBleedTile(grid, pipSlot)
+            }
             return
         }
 
@@ -1562,7 +2085,6 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     private fun equalColumnsFor(count: Int, landscape: Boolean): Int {
         return when {
             count <= 1 -> 1
-            count == 2 -> if (landscape) 2 else 1
             count <= 4 -> 2
             count <= 6 -> if (landscape) 3 else 2
             else -> if (landscape) 4 else 2
@@ -1616,7 +2138,16 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 showTileMenu(slot)
             }
         })
+        tileBinding.root.setOnClickListener {
+            if (!isMaximized) maximize()
+        }
         tileBinding.root.setOnTouchListener { v, event ->
+            if (!isMaximized) {
+                if (event.actionMasked == MotionEvent.ACTION_UP) {
+                    v.performClick()
+                }
+                return@setOnTouchListener true
+            }
             val zoom = videoZoom
             val isFocusedTile = viewModel.uiState.value.focusedKey == slot.key || immersiveKey == slot.key
 
@@ -1758,6 +2289,18 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     private fun bindTileChrome(tile: ItemMultipovTileBinding, slot: MultiPovSlot) {
+        if (isInPipMode()) {
+            tile.focusBorder.isVisible = false
+            tile.tileChrome.isVisible = false
+            tile.channelName.isVisible = false
+            tile.audioBadge.isVisible = false
+            tile.removeButton.isVisible = false
+            tile.loadingIndicator.isVisible = false
+            tile.errorText.isVisible = false
+            tile.tileAspect.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+            tile.root.alpha = 1f
+            return
+        }
         // Readable + immersive: name pill always, speaker on focused only.
         // Green ring only matters with 2+ tiles; single stream hides it.
         // Remove X only while chrome is open so grid stays clean.
@@ -1768,8 +2311,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         tile.channelName.text = slot.stream.channelName ?: slot.stream.channelLogin ?: slot.key
         tile.channelName.isVisible = tileNamesVisible()
         tile.audioBadge.isVisible = slot.isFocused && multi
-        tile.removeButton.isVisible =
-            viewModel.uiState.value.isControlsVisible && viewModel.uiState.value.slots.size > 1
+        tile.removeButton.isVisible = false
         // Single stream fills like the solo player (no letterbox gap).
         tile.tileAspect.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         tile.root.alpha = if (!multi || slot.isFocused || immersiveKey != null) 1f else 0.88f
@@ -1827,7 +2369,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
 
     private fun applyOrientationLayout(rebuildTiles: Boolean = false) {
         val binding = _binding ?: return
-        if (!isMaximized) return
+        if (!isMaximized || isInPipMode()) return
         val prefs = requireContext().prefs()
         val chatDisabled = prefs.getBoolean(AppConstants.CHAT_DISABLE, false)
         if (chatDisabled) {
@@ -1855,13 +2397,16 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
      * below it instead of floating over letterbox black. */
     private fun applyPortraitChatLayout() {
         val binding = _binding ?: return
+        if (isInPipMode()) return
         binding.chatFragmentContainer.translationX = 0f
         fun applyHeights() {
+            if (isInPipMode()) return
             val root = _binding?.multiPovRoot ?: return
             // Root is padded below the status bar in portrait — play area only.
             val total = root.height - root.paddingTop
             if (total <= 0) return
             val state = viewModel.uiState.value
+            val resizableEnabled = requireContext().prefs().getBoolean(AppConstants.MULTIPOV_RESIZABLE_SPLIT, false)
             val videoH = when {
                 !isChatOpen -> total
                 // Single, immersive, or pre-layout: 16:9 video only — chat gets the rest.
@@ -1879,10 +2424,19 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 }
             }
             val chatH = (total - videoH).coerceAtLeast(0)
+            val overlayH = videoH
             val videoLp = binding.videoSection.layoutParams as? FrameLayout.LayoutParams
             val chatLp = binding.chatFragmentContainer.layoutParams as? FrameLayout.LayoutParams
+            val overlayLp = binding.controlsOverlay.layoutParams as? FrameLayout.LayoutParams
+            val showDivider = isChatOpen && resizableEnabled && !isInPipMode() && state.slots.size >= 2
+            binding.chatDivider.isVisible = showDivider
+            val dividerHeightPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 44f, resources.displayMetrics).roundToInt()
+            val dividerTop = videoH - (dividerHeightPx / 2)
+            val dividerLp = binding.chatDivider.layoutParams as? FrameLayout.LayoutParams
             if (videoLp?.height == videoH && videoLp.marginEnd == 0 &&
                 chatLp?.height == chatH && chatLp.gravity == Gravity.BOTTOM &&
+                overlayLp?.height == overlayH && overlayLp.marginEnd == 0 &&
+                (!showDivider || dividerLp?.topMargin == dividerTop) &&
                 binding.chatFragmentContainer.isVisible == isChatOpen
             ) return
             binding.videoSection.layoutParams = FrameLayout.LayoutParams(
@@ -1890,6 +2444,18 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 videoH,
                 Gravity.TOP,
             ).apply { marginEnd = 0 }
+            binding.controlsOverlay.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                overlayH,
+                Gravity.TOP,
+            ).apply { marginEnd = 0 }
+            if (showDivider) {
+                binding.chatDivider.layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dividerHeightPx,
+                    Gravity.TOP,
+                ).apply { topMargin = dividerTop }
+            }
             binding.chatFragmentContainer.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 if (isChatOpen) chatH else 0,
@@ -1902,36 +2468,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         binding.multiPovRoot.post { applyHeights() }
     }
 
-    /** One row of the portrait grid: tiles in the row and its 16:9 height
-     * factor (fraction of grid width × 9/16). Single source of truth — the
-     * builder and the video-section height both derive from these rows. */
-    private data class PortraitRow(val tilesInRow: Int, val heightFactor: Float)
-
     private fun solvePortraitRows(count: Int, preset: MultiPovLayoutPreset): List<PortraitRow> {
-        if (count <= 1) return listOf(PortraitRow(1, 1f))
-        return when (preset) {
-            // Large on top: full-width primary row, remaining streams in uniform rows.
-            MultiPovLayoutPreset.PRIMARY_TOP, MultiPovLayoutPreset.PRIMARY_LEFT -> {
-                val rest = count - 1
-                val cols = if (rest <= 1) 1 else if (rest <= 3) rest else 2
-                buildList {
-                    add(PortraitRow(1, 1f))
-                    var remaining = rest
-                    while (remaining > 0) {
-                        val inRow = minOf(cols, remaining)
-                        add(PortraitRow(inRow, 1f / inRow))
-                        remaining -= inRow
-                    }
-                }
-            }
-            // Equal tiles: uniform matrix; odd counts pad with an empty cell
-            // (3 streams = 2×2 with one black corner, per design).
-            else -> {
-                val cols = if (count >= 3) 2 else 1
-                val rows = (count + cols - 1) / cols
-                List(rows) { PortraitRow(cols, 1f / cols) }
-            }
-        }
+        return MultiPovLayoutPreset.solvePortraitRows(count, preset)
     }
 
     /** Portrait grid: one row per solver row, weight = height factor so rows
@@ -1944,12 +2482,20 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         var index = 0
         rows.forEach { row ->
             val container = horizontalRow(weight = row.heightFactor)
-            repeat(row.tilesInRow) {
-                if (index < slots.size) {
-                    container.addView(createTileView(container, slots[index]), weightedCellParams(width = 0))
-                    index++
-                } else {
-                    container.addView(View(requireContext()), weightedCellParams(width = 0))
+            val slotsInThisRow = minOf(row.tilesInRow, slots.size - index)
+            if (row.tilesInRow == 2 && slotsInThisRow == 1) {
+                container.addView(View(requireContext()), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.5f))
+                container.addView(createTileView(container, slots[index]), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                index++
+                container.addView(View(requireContext()), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.5f))
+            } else {
+                repeat(row.tilesInRow) {
+                    if (index < slots.size) {
+                        container.addView(createTileView(container, slots[index]), weightedCellParams(width = 0))
+                        index++
+                    } else {
+                        container.addView(View(requireContext()), weightedCellParams(width = 0))
+                    }
                 }
             }
             grid.addView(container)
@@ -2003,10 +2549,16 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         val chatTranslation = (width - margin).toFloat()
 
         binding.videoSection.translationX = 0f
+        binding.controlsOverlay.translationX = 0f
         if (p <= 0f && finalize) {
             binding.chatFragmentContainer.translationX = 0f
             binding.chatFragmentContainer.isVisible = false
             binding.videoSection.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.START,
+            ).apply { marginEnd = 0 }
+            binding.controlsOverlay.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 Gravity.START,
@@ -2025,6 +2577,11 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             videoLp.marginEnd != margin
         ) {
             binding.videoSection.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.START,
+            ).apply { marginEnd = margin }
+            binding.controlsOverlay.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 Gravity.START,
@@ -2234,14 +2791,30 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     private fun showStreamQualityDialog() {
+        val currentQuality = playbackController?.getCurrentQuality(viewModel.uiState.value.focusedKey)
+        val activeKey = currentQuality?.let { KickLivePlayback.qualityKey(it) }
+
         // Best-first like the solo player: Source, 1080p … 360p.
         val qualities = MultiPovQuality.entries.reversed()
-        val labels = qualities.map { getString(it.labelRes()) }.toTypedArray()
+        val labels = qualities.map { q ->
+            val base = getString(q.labelRes())
+            if (activeKey != null && (q == viewModel.uiState.value.streamQuality || (q == MultiPovQuality.SOURCE && activeKey.startsWith("1080")))) {
+                "$base ($activeKey)"
+            } else {
+                base
+            }
+        }.toTypedArray()
         val selected = qualities.indexOf(viewModel.uiState.value.streamQuality).coerceAtLeast(0)
+        val titleText = activeKey?.let { "${getString(R.string.multipov_stream_quality)} ($it)" }
+            ?: getString(R.string.multipov_stream_quality)
         MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.multipov_stream_quality)
+            .setTitle(titleText)
             .setSingleChoiceItems(labels, selected) { dialog, which ->
                 val quality = qualities[which]
+                if (quality == viewModel.uiState.value.streamQuality) {
+                    // Same ceiling re-selected: force ABR back up to it.
+                    playbackController?.bumpFocusedToCeiling()
+                }
                 requireContext().prefs().edit {
                     putString(AppConstants.MULTIPOV_QUALITY, quality.prefValue)
                     // Keep legacy key in sync for older installs / resume paths.
@@ -2393,6 +2966,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     companion object {
+        private const val REQUEST_CODE_PLAY_PAUSE = 3
+        private const val REQUEST_CODE_MUTE_UNMUTE = 4
         private const val ARG_STREAMS = "streams"
         private const val ARG_RESOLVED_KEYS = "resolved_keys"
         private const val ARG_RESOLVED_VALUES = "resolved_values"

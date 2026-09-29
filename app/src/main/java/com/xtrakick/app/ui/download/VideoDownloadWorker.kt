@@ -35,7 +35,9 @@ import com.xtrakick.app.repository.PlayerRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.HttpEngineUtils
+import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickApiHelper
+import com.xtrakick.app.util.hasPersistedUriPermission
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.m3u8.PlaylistUtils
 import com.xtrakick.app.util.m3u8.Segment
@@ -167,9 +169,16 @@ class VideoDownloadWorker @AssistedInject constructor(
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         val sourceUrl = offlineVideo.sourceUrl!!
         if (isStopped) {
-                return Result.failure()
-            }
-            if (sourceUrl.endsWith(".m3u8")) {
+            return Result.failure()
+        }
+        val downloadPath = offlineVideo.downloadPath
+        if (downloadPath != null && downloadPath.toUri().scheme == ContentResolver.SCHEME_CONTENT &&
+            !context.hasPersistedUriPermission(downloadPath, read = true, write = true)) {
+            DiagnosticLogger.e("VideoDownloadWorker", "Shared directory permission missing or revoked for $downloadPath")
+            offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_BLOCKED })
+            return Result.failure()
+        }
+        if (sourceUrl.endsWith(".m3u8")) {
             val path = offlineVideo.downloadPath!!
             val from = offlineVideo.fromTime ?: 0L
             val to = offlineVideo.toTime

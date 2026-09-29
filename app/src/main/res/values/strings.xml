@@ -638,6 +638,7 @@
     <string name="notification_permission_title">Notification permission required</string>
     <string name="notification_permission_message">Notification permission is required to show download progress.</string>
     <string name="select_directory">Select directory</string>
+    <string name="storage_permission_required">Permission required</string>
     <string name="shared_storage">Shared storage</string>
     <string name="app_storage">App storage</string>
     <string name="import_folders">Import folders</string>
@@ -1033,6 +1034,9 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="multipov_layout_equal">Equal tiles</string>
     <string name="multipov_layout_primary_top">Large on top</string>
     <string name="multipov_layout_primary_left">Large on left</string>
+    <string name="multipov_layout_stacked">Stacked</string>
+    <string name="multipov_resizable_split">Resizable split divider</string>
+    <string name="multipov_resizable_split_summary">Drag a divider handle between video and chat to adjust split height</string>
     <string name="multipov_cycle_layout">Cycle layout</string>
     <string name="multipov_rotate_order">Rotate stream positions</string>
     <string name="multipov_layout_toast">Layout: %1$s</string>

@@ -5,6 +5,7 @@ import android.util.Log
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
@@ -163,7 +164,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            debugWarn("Official followed-live path failed: ${error.message}")
+            diagnosticWarn("Official followed-live path failed: ${failureDetail(error)}")
         }
 
         val localOnlyFollows = follows.filter { it.isLocalOnlyFollow }
@@ -173,7 +174,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
             throw error
         } catch (error: Exception) {
             if (isRateLimitMessage(error.message)) sawRateLimit = true
-            debugWarn("Fast followed-live path failed: ${error.message}")
+            diagnosticWarn("Fast followed-live path failed: ${failureDetail(error)}")
             null
         }
         fast?.items?.forEach { resolved[it.cacheKey()] = it }
@@ -188,7 +189,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
             throw error
         } catch (error: Exception) {
             if (isRateLimitMessage(error.message)) sawRateLimit = true
-            debugWarn("Bulk followed-live fallback failed: ${error.message}")
+            diagnosticWarn("Bulk followed-live fallback failed: ${failureDetail(error)}")
             null
         }
         bulk?.items?.forEach { resolved[it.cacheKey()] = it }
@@ -199,7 +200,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
         val unresolvedAfterBulk = bulk?.unresolved ?: unresolvedAfterFast
         if (allowPerChannelFallback && unresolvedAfterBulk.isNotEmpty()) {
             if (sawRateLimit || (resolved.isNotEmpty() && unresolvedAfterBulk.size > 6)) {
-                debugWarn("Skipping per-channel fallback: kick API is rate limiting")
+                diagnosticWarn("Skipping per-channel fallback: kick API is rate limiting")
             } else {
                 unresolvedAfterBulk.chunked(PER_CHANNEL_BATCH_SIZE).forEach { batch ->
                     currentCoroutineContext().ensureActive()
@@ -243,7 +244,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
         val networkLibrary = applicationContext.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         val headers = kickRepository.getKickPublicApiHeadersWithRefresh(networkLibrary)
         if (headers[AppConstants.HEADER_TOKEN].isNullOrBlank()) {
-            debugInfo("Fast path skipped: missing auth token")
+            diagnosticWarn("Fast path skipped: missing auth token")
             return null
         }
         val broadcasterIdsByLogin = loadBroadcasterIdCache()
@@ -298,7 +299,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
         val networkLibrary = applicationContext.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         val headers = kickRepository.getKickPublicApiHeadersWithRefresh(networkLibrary)
         if (headers[AppConstants.HEADER_TOKEN].isNullOrBlank()) {
-            debugInfo("Bulk fallback skipped: missing auth token")
+            diagnosticWarn("Bulk fallback skipped: missing auth token")
             return null
         }
         val followByLogin = follows
@@ -549,7 +550,14 @@ class FollowedLiveStreamsRepository @Inject constructor(
         if (isNetworkDebugEnabled()) Log.i(TAG, message)
     }
 
-    private fun debugWarn(message: String) {
-        if (isNetworkDebugEnabled()) Log.w(TAG, message)
+    // Failure-path warnings always reach the diagnostic export (rare events, worth the
+    // rotation budget); failureDetail keeps messages compact and secret-free.
+    private fun diagnosticWarn(message: String) {
+        DiagnosticLogger.w(TAG, message.take(200))
+    }
+
+    private fun failureDetail(error: Exception): String {
+        return error.message?.substringBefore("JSON input:")?.take(200)
+            ?: error.javaClass.simpleName
     }
 }
