@@ -1314,10 +1314,12 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun resolveKickRealtimeChatroomId(channelId: String, channelLogin: String): String {
-        getCachedKickRealtimeChatroomId(channelId, channelLogin)?.let { return it }
+        val cached = getCachedKickRealtimeChatroomId(channelId, channelLogin)
+        // Prefer a fresh resolve: the cache may hold a channel/user id stored after a transient failure.
         val resolvedChatroomId = runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelLogin) }.getOrNull().orEmpty().firstOrNull()
             ?: runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelId) }.getOrNull().orEmpty().firstOrNull()
             ?: runCatching { kickRepository.getChannel(channelLogin) }.getOrNull()?.let(kickRepository::getChatroomId)
+            ?: cached?.takeIf { it.isNotBlank() }
             ?: channelId
         cacheKickRealtimeChatroomId(resolvedChatroomId, channelId, channelLogin)
         return resolvedChatroomId
@@ -2783,7 +2785,13 @@ class ChatViewModel @Inject constructor(
                 fetchConnectionUrl = { kickRepository.getCentrifugoChatConnection(effectiveChannelId) },
                 fetchAuthToken = { kickRepository.getCentrifugoToken() },
                 trustManager = trustManager,
-                listener = kickPusherListener,
+                // Best-effort fallback: share chat events (deduped via kickMessageIds) but stay
+                // silent on disconnects so Centrifugo failures never disturb the Pusher connection.
+                listener = object : KickPusherChatWebSocket.Listener {
+                    override suspend fun onChatEvent(eventName: String, channelName: String?, messageJson: String) {
+                        kickPusherListener.onChatEvent(eventName, channelName, messageJson)
+                    }
+                },
                 debugLogging = debugKickRealtimeChat
             )
             val centrifugoJob = kickCentrifugoChatWebSocket?.connect(this)
@@ -3738,11 +3746,8 @@ class ChatViewModel @Inject constructor(
     private fun sendMessage(message: CharSequence, networkLibrary: String?, channelId: String?, channelLogin: String?, replyId: String? = null) {
         try {
             viewModelScope.launch {
-                val currentRestriction = chatRestriction.value
-                if (currentRestriction != null) {
-                    onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, currentRestriction.message)))
-                    return@launch
-                }
+                // Advisory only: never block sends on local follow/sub state (fetch failures
+                // look like "not following"); the server is authoritative.
                 val accessToken = try {
                     getKickAccessTokenForChatSend()
                 } catch (e: Exception) {
