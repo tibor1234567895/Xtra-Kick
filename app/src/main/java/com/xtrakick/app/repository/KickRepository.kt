@@ -183,6 +183,15 @@ class KickRepository @Inject constructor(
         val followingSince: String? = null,
     )
 
+    data class KickChannelUserRelationship(
+        val followingSince: String? = null,
+        val subscribedFor: Int = 0,
+        val isModerator: Boolean = false,
+        val isChannelOwner: Boolean = false,
+        val isBanned: Boolean = false,
+        val banReason: String? = null,
+    )
+
     private enum class KickModerationType {
         NONE,
         DELETE_MESSAGE,
@@ -892,6 +901,50 @@ class KickRepository @Inject constructor(
             createdAt = createdAt,
             followingSince = followingSince
         )
+    }
+
+    suspend fun getChannelUserRelationship(
+        channelSlug: String,
+        userSlug: String,
+    ): KickChannelUserRelationship = withContext(Dispatchers.IO) {
+        val normalizedChannelSlug = channelSlug.trim()
+        val normalizedUserSlug = userSlug.trim()
+        if (normalizedChannelSlug.isBlank() || normalizedUserSlug.isBlank()) {
+            return@withContext KickChannelUserRelationship()
+        }
+        if (normalizedChannelSlug.equals(normalizedUserSlug, ignoreCase = true)) {
+            return@withContext KickChannelUserRelationship(
+                isChannelOwner = true,
+                isModerator = true,
+            )
+        }
+        runCatching {
+            val root = json.parseToJsonElement(
+                getRaw(
+                    "https://kick.com/api/v2/channels/${urlEncode(normalizedChannelSlug)}/users/${urlEncode(normalizedUserSlug)}",
+                    isKickWeb = true
+                )
+            ).jsonObject
+            val followingSince = (root.firstPrimitiveOrNull("following_since", "followed_at", "followedAt")
+                ?: root.objOrNull("user")?.firstPrimitiveOrNull("following_since", "followed_at", "followedAt"))
+                ?.let(::normalizeDate)
+            val subscribedFor = root.intOrNull("subscribed_for")
+                ?: root.objOrNull("user")?.intOrNull("subscribed_for") ?: 0
+            val isModerator = root.firstBooleanOrNull("is_moderator", "isModerator") ?: false
+            val isChannelOwner = root.firstBooleanOrNull("is_channel_owner", "isChannelOwner") ?: false
+            val bannedObj = root.objOrNull("banned")
+            val isBanned = bannedObj != null || root.firstBooleanOrNull("banned") == true
+            val banReason = bannedObj?.firstPrimitiveOrNull("reason", "text")
+
+            KickChannelUserRelationship(
+                followingSince = followingSince,
+                subscribedFor = subscribedFor,
+                isModerator = isModerator,
+                isChannelOwner = isChannelOwner,
+                isBanned = isBanned,
+                banReason = banReason,
+            )
+        }.getOrDefault(KickChannelUserRelationship())
     }
 
     suspend fun canAccessKickSubscriberEmotes(channelSlug: String): Boolean = withContext(Dispatchers.IO) {
@@ -2862,6 +2915,57 @@ class KickRepository @Inject constructor(
             "https://web.kick.com/api/v1/channels/${urlEncode(channelId)}/chat/active-chatters"
         )
         parseActiveChattersResponse(raw)
+    }
+
+    suspend fun getCentrifugoChatConnection(channelId: String?): String? {
+        val cid = channelId?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching {
+            val clientId = java.util.UUID.randomUUID().toString()
+            val url = "https://web.kick.com/api/v1/realtime/channels/${urlEncode(cid)}/chat/connection"
+            val payload = JSONObject().apply {
+                put("client", JSONObject().apply {
+                    put("id", clientId)
+                    put("type", "web")
+                })
+                put("capabilities", JSONObject().apply {
+                    put("accepted_providers", org.json.JSONArray().apply {
+                        put(JSONObject().apply { put("provider", "pusher") })
+                        put(JSONObject().apply { put("provider", "centrifugo") })
+                    })
+                })
+            }.toString()
+            val raw = executeKickWebSessionRequestWithOkHttp(url, payload, post = true)
+            val root = JSONObject(raw)
+            val connections = root.optJSONObject("data")?.optJSONArray("connections")
+            var wsUrl: String? = null
+            if (connections != null) {
+                for (i in 0 until connections.length()) {
+                    val conn = connections.optJSONObject(i)
+                    if (conn?.optString("provider") == "centrifugo") {
+                        wsUrl = conn.optJSONObject("credentials")?.optString("url")
+                        if (!wsUrl.isNullOrBlank()) break
+                    }
+                }
+            }
+            wsUrl?.takeIf { it.isNotBlank() }
+        }.onFailure {
+            DiagnosticLogger.w("KickCentrifugo", "failed to resolve Centrifugo chat connection: ${it.message}")
+        }.getOrNull()
+    }
+
+    suspend fun getCentrifugoToken(): String? {
+        return runCatching {
+            val clientId = java.util.UUID.randomUUID().toString()
+            val url = "https://web.kick.com/api/v1/realtime/auth/connection"
+            val payload = JSONObject().apply {
+                put("client_id", clientId)
+            }.toString()
+            val raw = executeKickWebSessionRequestWithOkHttp(url, payload, post = true)
+            val root = JSONObject(raw)
+            root.optJSONObject("data")?.optString("token")?.takeIf { it.isNotBlank() }
+        }.onFailure {
+            DiagnosticLogger.w("KickCentrifugo", "failed to fetch Centrifugo token: ${it.message}")
+        }.getOrNull()
     }
 
     private fun parseKickMessagesData(root: JsonElement, raw: String): KickMessagesData {
@@ -5518,6 +5622,8 @@ class KickRepository @Inject constructor(
             "followers_only_min_duration" to "follower_mode_duration_minutes",
             "following_min_duration" to "follower_mode_duration_minutes",
             "followingminduration" to "follower_mode_duration_minutes",
+            "min_duration" to "follower_mode_duration_minutes",
+            "minduration" to "follower_mode_duration_minutes",
             "slow_mode" to "slow_mode",
             "slowmode" to "slow_mode",
             "slow_mode_wait_time_seconds" to "slow_mode_wait_time_seconds",
@@ -5551,12 +5657,15 @@ class KickRepository @Inject constructor(
                         values.putIfPrimitiveAbsent(canonical, value["enabled"])
                     }
                     when (canonical) {
-                        "follower_mode_duration_minutes" -> {
-                            values.putIfPrimitiveAbsent(canonical, value["min_duration"])
-                        }
-                        "slow_mode_wait_time_seconds" -> {
+                        "follower_mode", "follower_mode_duration_minutes" -> {
                             values.putIfPrimitiveAbsent(
-                                canonical,
+                                "follower_mode_duration_minutes",
+                                value["min_duration"] ?: value["duration"]
+                            )
+                        }
+                        "slow_mode", "slow_mode_wait_time_seconds" -> {
+                            values.putIfPrimitiveAbsent(
+                                "slow_mode_wait_time_seconds",
                                 value["message_interval"] ?: value["wait_time"] ?: value["duration_seconds"]
                             )
                         }

@@ -21,6 +21,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.json.JSONObject
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -152,12 +153,43 @@ class FollowedLiveStreamsRepository @Inject constructor(
 
         val resolved = LinkedHashMap<String, Stream>()
 
+        fun putStream(stream: Stream) {
+            val key = stream.cacheKey()
+            val existing = resolved[key]
+            resolved[key] = if (existing != null) {
+                Stream(
+                    id = existing.id ?: stream.id,
+                    source = existing.source ?: stream.source,
+                    channelId = existing.channelId ?: stream.channelId,
+                    channelLogin = existing.channelLogin ?: stream.channelLogin,
+                    channelName = existing.channelName ?: stream.channelName,
+                    playbackUrl = existing.playbackUrl ?: stream.playbackUrl,
+                    gameId = existing.gameId ?: stream.gameId,
+                    gameSlug = existing.gameSlug ?: stream.gameSlug,
+                    gameName = existing.gameName ?: stream.gameName,
+                    title = existing.title ?: stream.title,
+                    viewerCount = stream.viewerCount ?: existing.viewerCount,
+                    startedAt = existing.startedAt ?: stream.startedAt,
+                    thumbnailUrl = existing.thumbnailUrl?.takeIf { hasUsableThumbnail(it) } ?: stream.thumbnailUrl,
+                    profileImageUrl = existing.profileImageUrl ?: stream.profileImageUrl,
+                    tags = existing.tags ?: stream.tags,
+                    user = existing.user ?: stream.user,
+                )
+            } else {
+                stream
+            }
+        }
+
         var sawRateLimit = false
         val isRateLimitMessage = { message: String? -> message?.contains("429", ignoreCase = true) == true }
 
         try {
             val officialLive = kickRepository.getUserLiveFollowedStreams()
-            officialLive.forEach { resolved[it.cacheKey()] = it }
+            officialLive.forEach(::putStream)
+            val liveLogins = officialLive.mapNotNull { it.channelLogin?.trim()?.lowercase(Locale.ROOT) }
+            if (liveLogins.isNotEmpty()) {
+                localFollowsChannel.markKickFollows(liveLogins)
+            }
             if (officialLive.isNotEmpty()) {
                 onPartial(resolved.values.toList().sortedByViewersDesc())
             }
@@ -167,7 +199,14 @@ class FollowedLiveStreamsRepository @Inject constructor(
             diagnosticWarn("Official followed-live path failed: ${failureDetail(error)}")
         }
 
-        val localOnlyFollows = follows.filter { it.isLocalOnlyFollow }
+        val alreadyResolvedLogins = resolved.values.mapNotNull { it.channelLogin?.trim()?.lowercase(Locale.ROOT) }.toSet()
+        val alreadyResolvedIds = resolved.values.mapNotNull { it.channelId?.trim() }.toSet()
+        val localOnlyFollows = follows.filter { follow ->
+            if (!follow.isLocalOnlyFollow) return@filter false
+            val login = follow.userLogin?.trim()?.lowercase(Locale.ROOT)
+            val id = follow.userId?.trim()
+            (login == null || login !in alreadyResolvedLogins) && (id == null || id !in alreadyResolvedIds)
+        }
         val fast = try {
             if (localOnlyFollows.isEmpty()) null else loadFromPublicApi(localOnlyFollows)
         } catch (error: CancellationException) {
@@ -177,7 +216,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
             diagnosticWarn("Fast followed-live path failed: ${failureDetail(error)}")
             null
         }
-        fast?.items?.forEach { resolved[it.cacheKey()] = it }
+        fast?.items?.forEach(::putStream)
         if (fast != null && resolved.isNotEmpty()) {
             onPartial(resolved.values.toList().sortedByViewersDesc())
         }
@@ -192,7 +231,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
             diagnosticWarn("Bulk followed-live fallback failed: ${failureDetail(error)}")
             null
         }
-        bulk?.items?.forEach { resolved[it.cacheKey()] = it }
+        bulk?.items?.forEach(::putStream)
         if (bulk != null && bulk.items.isNotEmpty()) {
             onPartial(resolved.values.toList().sortedByViewersDesc())
         }
@@ -209,7 +248,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
                             async { loadStreamForFollow(follow) }
                         }.awaitAll()
                     }.filterNotNull()
-                    batchResults.forEach { resolved[it.cacheKey()] = it }
+                    batchResults.forEach(::putStream)
                     if (batchResults.isNotEmpty()) {
                         onPartial(resolved.values.toList().sortedByViewersDesc())
                     }
@@ -524,7 +563,13 @@ class FollowedLiveStreamsRepository @Inject constructor(
     }
 
     private fun Stream.cacheKey(): String {
-        return channelId ?: channelLogin ?: id ?: "${channelName.orEmpty()}:${startedAt.orEmpty()}"
+        val slug = channelLogin?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() }
+        if (slug != null) return "slug:$slug"
+        val chId = channelId?.trim()?.takeIf { it.isNotEmpty() }
+        if (chId != null) return "id:$chId"
+        val stId = id?.trim()?.takeIf { it.isNotEmpty() }
+        if (stId != null) return "stream:$stId"
+        return "${channelName.orEmpty().trim().lowercase(Locale.ROOT)}:${startedAt.orEmpty()}"
     }
 
     private fun List<Stream>.sortedByViewersDesc(): List<Stream> {

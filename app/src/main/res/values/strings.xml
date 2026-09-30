@@ -234,6 +234,9 @@
     <string name="kick_chat_send_followers_for">This room is in followers-only mode. Follow for %s before chatting.</string>
     <string name="kick_chat_send_bot_protection">Kick rejected the message because bot protection is active.</string>
     <string name="kick_chat_send_forbidden">Message rejected by Kick.</string>
+    <string name="kick_chat_send_followers_wait">Can chat in %s</string>
+    <string name="chat_banned">You are banned from chatting in this channel.</string>
+    <string name="chat_banned_with_reason">You are banned from chatting in this channel: %s</string>
     <string name="irc_notice_already_banned">%s is already banned in this channel.</string>
     <string name="irc_notice_already_emote_only_off">This room is not in emote-only mode.</string>
     <string name="irc_notice_already_emote_only_on">This room is already in emote-only mode.</string>

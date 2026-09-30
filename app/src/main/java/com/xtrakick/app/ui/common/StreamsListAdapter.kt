@@ -14,6 +14,7 @@ import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import java.util.Locale
 import coil3.asImage
 import coil3.imageLoader
 import coil3.request.CachePolicy
@@ -215,9 +216,15 @@ class StreamsListAdapter(
 
     private companion object {
         val DiffCallback = object : DiffUtil.ItemCallback<Stream>() {
-            override fun areItemsTheSame(oldItem: Stream, newItem: Stream): Boolean =
-                (oldItem.channelId ?: oldItem.channelLogin ?: oldItem.id) ==
-                    (newItem.channelId ?: newItem.channelLogin ?: newItem.id)
+            override fun areItemsTheSame(oldItem: Stream, newItem: Stream): Boolean {
+                val oldKey = oldItem.channelLogin?.trim()?.lowercase(Locale.ROOT)
+                    ?: oldItem.channelId?.trim()
+                    ?: oldItem.id
+                val newKey = newItem.channelLogin?.trim()?.lowercase(Locale.ROOT)
+                    ?: newItem.channelId?.trim()
+                    ?: newItem.id
+                return oldKey != null && oldKey == newKey
+            }
 
             override fun areContentsTheSame(oldItem: Stream, newItem: Stream): Boolean =
                 oldItem.channelName == newItem.channelName &&

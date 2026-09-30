@@ -50,6 +50,7 @@ import com.xtrakick.app.util.WebSocketRuntime
 import com.xtrakick.app.util.chat.ChatListParityUtils
 import com.xtrakick.app.util.chat.ChatReplayPacing
 import com.xtrakick.app.util.chat.ChatUtils
+import com.xtrakick.app.util.chat.KickCentrifugoChatWebSocket
 import com.xtrakick.app.util.chat.KickChatSendErrorMapper
 import com.xtrakick.app.util.chat.KickPusherChatWebSocket
 import com.xtrakick.app.util.chat.StvEventApiUtils
@@ -72,6 +73,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import org.json.JSONArray
@@ -142,9 +144,24 @@ class ChatViewModel @Inject constructor(
     private val json: Json,
 ) : ViewModel() {
 
+    data class ChatRestriction(
+        val reason: KickChatSendErrorMapper.Reason,
+        val message: String,
+        val inputHint: String,
+    )
+
     val integrity = MutableStateFlow<String?>(null)
+    val chatRestriction = MutableStateFlow<ChatRestriction?>(null)
+    val channelUserRelationship = MutableStateFlow<KickRepository.KickChannelUserRelationship?>(null)
+    private var kickUserRelationshipJob: Job? = null
+    @Volatile
+    private var isFetchingUserRelationship = false
+    private var lastEmittedRestrictionMessage: String? = null
+    private var currentChatChannelName: String? = null
+    private var currentChatChannelLogin: String? = null
 
     private var kickPusherChatWebSocket: KickPusherChatWebSocket? = null
+    private var kickCentrifugoChatWebSocket: KickCentrifugoChatWebSocket? = null
     private var chatReadJob: Job? = null
     @Volatile
     private var chatSessionGeneration = 0L
@@ -424,6 +441,140 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun loadKickUserRelationship(channelLogin: String?, channelName: String? = null) {
+        if (!channelLogin.isNullOrBlank()) {
+            currentChatChannelLogin = channelLogin
+        }
+        if (!channelName.isNullOrBlank()) {
+            currentChatChannelName = channelName
+        }
+        val targetLogin = currentChatChannelLogin?.trim()?.takeIf { it.isNotBlank() } ?: return
+        val userSlug = getKickAccountLogin()?.trim()?.takeIf { it.isNotBlank() }
+        val isLoggedIn = !userSlug.isNullOrBlank() && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(applicationContext)
+        if (!isLoggedIn) {
+            channelUserRelationship.value = null
+            evaluateChatRestriction(targetLogin, currentChatChannelName)
+            return
+        }
+        kickUserRelationshipJob?.cancel()
+        val sessionGeneration = chatSessionGeneration
+        isFetchingUserRelationship = true
+        kickUserRelationshipJob = viewModelScope.launch {
+            val rel = try {
+                kickRepository.getChannelUserRelationship(targetLogin, userSlug)
+            } finally {
+                isFetchingUserRelationship = false
+            }
+            if (sessionGeneration == chatSessionGeneration) {
+                channelUserRelationship.value = rel
+                evaluateChatRestriction(targetLogin, currentChatChannelName)
+            }
+        }
+    }
+
+    private fun evaluateChatRestriction(channelLogin: String?, channelName: String?) {
+        val currentRoomState = roomState.value
+        val relationship = channelUserRelationship.value
+        val userLogin = getKickAccountLogin()
+        val isLoggedIn = !userLogin.isNullOrBlank() && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(applicationContext)
+
+        if (isLoggedIn && isFetchingUserRelationship) {
+            // Still loading Kick user relationship; defer evaluation until relationship completes to avoid false warnings
+            return
+        }
+
+        val restriction: ChatRestriction? = when {
+            relationship?.isBanned == true -> {
+                val reason = relationship.banReason?.takeIf { it.isNotBlank() }
+                val msg = if (reason != null) {
+                    applicationContext.getString(R.string.chat_banned_with_reason, reason)
+                } else {
+                    applicationContext.getString(R.string.chat_banned)
+                }
+                ChatRestriction(
+                    reason = KickChatSendErrorMapper.Reason.FORBIDDEN,
+                    message = msg,
+                    inputHint = applicationContext.getString(R.string.chat_banned)
+                )
+            }
+            relationship?.isModerator == true || relationship?.isChannelOwner == true -> {
+                null
+            }
+            currentRoomState?.subs == "1" && (relationship?.subscribedFor ?: 0) <= 0 -> {
+                ChatRestriction(
+                    reason = KickChatSendErrorMapper.Reason.SUBSCRIBERS_ONLY,
+                    message = applicationContext.getString(R.string.irc_notice_msg_subsonly),
+                    inputHint = applicationContext.getString(R.string.chat_mode_subs_only)
+                )
+            }
+            currentRoomState?.followers != null && currentRoomState.followers != "-1" -> {
+                val reqMinutes = currentRoomState.followers.toIntOrNull() ?: 0
+                val reqDurationSeconds = (reqMinutes * 60).toString()
+                val reqDurationStr = KickApiHelper.getDurationFromSeconds(applicationContext, reqDurationSeconds) ?: "${reqMinutes}m"
+                val targetName = channelName ?: channelLogin ?: "this channel"
+
+                if (!isLoggedIn || relationship?.followingSince.isNullOrBlank()) {
+                    val msg = if (reqMinutes > 0) {
+                        applicationContext.getString(R.string.irc_notice_msg_followersonly, reqDurationStr, targetName)
+                    } else {
+                        applicationContext.getString(R.string.irc_notice_msg_followersonly_zero, targetName)
+                    }
+                    val hint = if (reqMinutes > 0) {
+                        applicationContext.getString(R.string.chat_mode_followers_for, reqDurationStr)
+                    } else {
+                        applicationContext.getString(R.string.chat_mode_followers_only)
+                    }
+                    ChatRestriction(
+                        reason = KickChatSendErrorMapper.Reason.FOLLOWERS_ONLY,
+                        message = msg,
+                        inputHint = hint
+                    )
+                } else {
+                    val followedAtMs = KickApiHelper.parseIso8601DateUTC(relationship.followingSince)
+                    if (followedAtMs != null && reqMinutes > 0) {
+                        val elapsedMinutes = ((System.currentTimeMillis() - followedAtMs) / 60000L).toInt()
+                        if (elapsedMinutes < reqMinutes) {
+                            val remainingMinutes = reqMinutes - elapsedMinutes
+                            val remainingSeconds = (remainingMinutes * 60).toString()
+                            val remainingDurationStr = KickApiHelper.getDurationFromSeconds(applicationContext, remainingSeconds) ?: "${remainingMinutes}m"
+                            val elapsedSeconds = (elapsedMinutes * 60).toString()
+                            val elapsedDurationStr = KickApiHelper.getDurationFromSeconds(applicationContext, elapsedSeconds) ?: "${elapsedMinutes}m"
+                            val msg = applicationContext.getString(R.string.irc_notice_msg_followersonly_followed, reqDurationStr, elapsedDurationStr)
+                            val hint = applicationContext.getString(R.string.kick_chat_send_followers_wait, remainingDurationStr)
+                            ChatRestriction(
+                                reason = KickChatSendErrorMapper.Reason.FOLLOWERS_ONLY,
+                                message = msg,
+                                inputHint = hint
+                            )
+                        } else {
+                            null
+                        }
+                    } else {
+                        null
+                    }
+                }
+            }
+            currentRoomState?.emote == "1" -> {
+                ChatRestriction(
+                    reason = KickChatSendErrorMapper.Reason.EMOTES_ONLY,
+                    message = applicationContext.getString(R.string.irc_notice_msg_emoteonly),
+                    inputHint = applicationContext.getString(R.string.room_emote)
+                )
+            }
+            else -> null
+        }
+
+        chatRestriction.value = restriction
+        if (restriction != null && restriction.message != lastEmittedRestrictionMessage) {
+            lastEmittedRestrictionMessage = restriction.message
+            viewModelScope.launch {
+                onMessage(ChatMessage(systemMsg = restriction.message))
+            }
+        } else if (restriction == null) {
+            lastEmittedRestrictionMessage = null
+        }
+    }
+
     private fun loadKickInitialRoomStateIfNeeded(channelId: String?, channelLogin: String?, forceRefresh: Boolean = false) {
         if (channelLogin.isNullOrBlank()) {
             return
@@ -435,7 +586,10 @@ class ChatViewModel @Inject constructor(
         val sessionGeneration = chatSessionGeneration
         viewModelScope.launch {
             runCatching { kickRepository.getInitialRoomState(channelLogin, channelId) }.getOrNull()?.let {
-                if (sessionGeneration == chatSessionGeneration) roomState.value = it
+                if (sessionGeneration == chatSessionGeneration) {
+                    roomState.value = it
+                    evaluateChatRestriction(channelLogin, currentChatChannelName)
+                }
             }
         }
     }
@@ -484,6 +638,9 @@ class ChatViewModel @Inject constructor(
             synchronized(globalBadges) {
                 globalBadges.clear()
             }
+            currentChatChannelName = channelName
+            currentChatChannelLogin = channelLogin
+            loadKickUserRelationship(channelLogin, channelName)
             startLiveChat(channelId, channelLogin)
             addChatter(channelName)
             loadEmotes(channelId, channelLogin)
@@ -2575,6 +2732,7 @@ class ChatViewModel @Inject constructor(
             }
         }
         loadKickInitialRoomStateIfNeeded(channelId, channelLogin)
+        loadKickUserRelationship(channelLogin, currentChatChannelName)
         hydrateStvChannelCosmetics(channelId)
         chatReadJob = viewModelScope.launch {
             val resolvedChannel = runCatching {
@@ -2603,6 +2761,33 @@ class ChatViewModel @Inject constructor(
             if (!isActive || sessionGeneration != chatSessionGeneration) {
                 return@launch
             }
+            val kickPusherListener = KickPusherChatListener(
+                channelLogin,
+                effectiveChannelId,
+                nameDisplay,
+                showUserNotice,
+                showClearMsg,
+                showClearChat,
+                notifyKickPoints,
+                showPolls,
+                showPredictions,
+                debugKickRealtimeChat,
+                sessionGeneration
+            )
+            kickCentrifugoChatWebSocket = KickCentrifugoChatWebSocket(
+                chatroomId = kickChatroomId,
+                channelId = effectiveChannelId,
+                publicChannelNames = buildList {
+                    categoryId?.let { add("drops_category_$it") }
+                },
+                fetchConnectionUrl = { kickRepository.getCentrifugoChatConnection(effectiveChannelId) },
+                fetchAuthToken = { kickRepository.getCentrifugoToken() },
+                trustManager = trustManager,
+                listener = kickPusherListener,
+                debugLogging = debugKickRealtimeChat
+            )
+            val centrifugoJob = kickCentrifugoChatWebSocket?.connect(this)
+
             val hasKickWebsiteSession = kickRepository.hasUsableKickWebsiteSession()
             kickPusherChatWebSocket = KickPusherChatWebSocket(
                 chatroomId = kickChatroomId,
@@ -2619,10 +2804,11 @@ class ChatViewModel @Inject constructor(
                     kickRepository.authorizeKickPusherPrivateChannel(socketId, privateChannelName)
                 },
                 trustManager = trustManager,
-                listener = KickPusherChatListener(channelLogin, effectiveChannelId, nameDisplay, showUserNotice, showClearMsg, showClearChat, notifyKickPoints, showPolls, showPredictions, debugKickRealtimeChat, sessionGeneration),
+                listener = kickPusherListener,
                 debugLogging = debugKickRealtimeChat
             )
-            kickPusherChatWebSocket?.connect(this)?.join()
+            val pusherJob = kickPusherChatWebSocket?.connect(this)
+            listOfNotNull(centrifugoJob, pusherJob).joinAll()
         }
         updateChannelPointsBalance(null)
         updateChannelPointRewards(emptyList(), false)
@@ -2765,6 +2951,13 @@ class ChatViewModel @Inject constructor(
             }
         }
         kickPusherChatWebSocket = null
+        val centrifugoSocket = kickCentrifugoChatWebSocket
+        if (centrifugoSocket != null) {
+            MainScope().launch(Dispatchers.IO) {
+                centrifugoSocket.disconnect(readJob)
+            }
+        }
+        kickCentrifugoChatWebSocket = null
         val eventSocket = stvEventApi
         stvEventApi = null
         if (eventSocket != null) {
@@ -2819,6 +3012,11 @@ class ChatViewModel @Inject constructor(
         updateChannelPointRewards(emptyList(), false)
         roomState.value = RoomState("0", "-1", "0", "0", "0")
         kickInitialRoomStateLoaded = false
+        kickUserRelationshipJob?.cancel()
+        isFetchingUserRelationship = false
+        channelUserRelationship.value = null
+        chatRestriction.value = null
+        lastEmittedRestrictionMessage = null
         autoReconnect = false
     }
 
@@ -2932,6 +3130,7 @@ class ChatViewModel @Inject constructor(
             val shouldRefreshRoomState = kickRepository.shouldRefreshRoomStateFromRealtimeEvent(eventName, messageJson)
             kickRepository.parseRealtimeRoomStateUpdate(eventName, messageJson)?.let { updatedRoomState ->
                 roomState.value = updatedRoomState
+                evaluateChatRestriction(channelLogin, currentChatChannelName)
             }
             if (shouldRefreshRoomState) {
                 loadKickInitialRoomStateIfNeeded(channelId, channelLogin, forceRefresh = true)
@@ -3539,6 +3738,11 @@ class ChatViewModel @Inject constructor(
     private fun sendMessage(message: CharSequence, networkLibrary: String?, channelId: String?, channelLogin: String?, replyId: String? = null) {
         try {
             viewModelScope.launch {
+                val currentRestriction = chatRestriction.value
+                if (currentRestriction != null) {
+                    onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, currentRestriction.message)))
+                    return@launch
+                }
                 val accessToken = try {
                     getKickAccessTokenForChatSend()
                 } catch (e: Exception) {
@@ -3613,11 +3817,12 @@ class ChatViewModel @Inject constructor(
         return when (KickChatSendErrorMapper.classify(error.message, roomState.value)) {
             KickChatSendErrorMapper.Reason.TOKEN_EXPIRED -> applicationContext.getString(R.string.token_expired)
             KickChatSendErrorMapper.Reason.FOLLOWERS_ONLY -> {
-                val followersDuration = roomState.value?.followers?.takeIf { it != "-1" && it != "0" }
-                if (followersDuration != null) {
+                val followersDurationMinutes = roomState.value?.followers?.toIntOrNull()?.takeIf { it > 0 }
+                if (followersDurationMinutes != null) {
+                    val durationStr = KickApiHelper.getDurationFromSeconds(applicationContext, (followersDurationMinutes * 60).toString()) ?: "${followersDurationMinutes}m"
                     applicationContext.getString(
                         R.string.kick_chat_send_followers_for,
-                        KickApiHelper.getDurationFromSeconds(applicationContext, followersDuration)
+                        durationStr
                     )
                 } else {
                     applicationContext.getString(R.string.kick_chat_send_followers_only)
@@ -3631,12 +3836,31 @@ class ChatViewModel @Inject constructor(
             )
             KickChatSendErrorMapper.Reason.BOT_PROTECTION -> applicationContext.getString(R.string.kick_chat_send_bot_protection)
             KickChatSendErrorMapper.Reason.RATE_LIMITED -> applicationContext.getString(R.string.irc_notice_msg_ratelimit)
-            KickChatSendErrorMapper.Reason.FORBIDDEN -> applicationContext.getString(R.string.kick_chat_send_forbidden)
-            KickChatSendErrorMapper.Reason.GENERIC -> error.message
-                ?.takeUnless { it.contains('{') || it.contains("Kick request failed", ignoreCase = true) }
-                ?.take(180)
-                ?: applicationContext.getString(R.string.kick_chat_send_forbidden)
+            KickChatSendErrorMapper.Reason.FORBIDDEN -> {
+                extractKickErrorMessage(error) ?: applicationContext.getString(R.string.kick_chat_send_forbidden)
+            }
+            KickChatSendErrorMapper.Reason.GENERIC -> {
+                extractKickErrorMessage(error)
+                    ?: error.message
+                        ?.takeUnless { it.contains('{') || it.contains("Kick request failed", ignoreCase = true) }
+                        ?.take(180)
+                    ?: applicationContext.getString(R.string.kick_chat_send_forbidden)
+            }
         }
+    }
+
+    private fun extractKickErrorMessage(error: Throwable): String? {
+        val msg = error.message ?: return null
+        return runCatching {
+            val jsonStart = msg.indexOf('{')
+            val jsonEnd = msg.lastIndexOf('}')
+            if (jsonStart in 0 until jsonEnd) {
+                val jsonStr = msg.substring(jsonStart, jsonEnd + 1)
+                val obj = JSONObject(jsonStr)
+                obj.optString("message").takeIf { it.isNotBlank() }
+                    ?: obj.optString("error").takeIf { it.isNotBlank() }
+            } else null
+        }.getOrNull()
     }
 
     private fun sendCommand(message: CharSequence, networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiChatMessages: Boolean, enableIntegrity: Boolean) {

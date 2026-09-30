@@ -12,6 +12,7 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -84,7 +85,7 @@ class FollowedStreamsViewModel @Inject constructor(
         val normalizedSort = normalizeSort(value)
         sort.value = normalizedSort
         sortText.value = buildSortText(normalizedSort)
-        _uiState.value = _uiState.value.copy(items = _uiState.value.items.sortedForFollowedLive())
+        _uiState.value = _uiState.value.copy(items = _uiState.value.items.distinctByStreamer().sortedForFollowedLive())
         if (persist) {
             viewModelScope.launch {
                 val item = sortChannelRepository.getById("followed_streams")?.apply {
@@ -102,7 +103,7 @@ class FollowedStreamsViewModel @Inject constructor(
         val generation = ++refreshGeneration
         refreshJob?.cancel()
 
-        val cachedItems = if (silent) emptyList() else followedLiveStreamsRepository.peekCache().sortedForFollowedLive()
+        val cachedItems = if (silent) emptyList() else followedLiveStreamsRepository.peekCache().distinctByStreamer().sortedForFollowedLive()
         val currentState = _uiState.value
         val currentItems = when {
             cachedItems.isNotEmpty() -> cachedItems
@@ -171,14 +172,24 @@ class FollowedStreamsViewModel @Inject constructor(
         hasLoadedOnce: Boolean,
     ) {
         if (refreshGeneration != generation) return
+        val deduped = items.distinctByStreamer()
         _uiState.value = _uiState.value.copy(
-            items = items,
+            items = deduped,
             isInitialLoading = isInitialLoading,
             isRefreshing = isRefreshing,
             showEmpty = showEmpty,
             integrityAction = integrityAction,
             hasLoadedOnce = hasLoadedOnce,
         )
+    }
+
+    private fun List<Stream>.distinctByStreamer(): List<Stream> {
+        return distinctBy { stream ->
+            stream.channelLogin?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() }
+                ?: stream.channelId?.trim()?.takeIf { it.isNotEmpty() }
+                ?: stream.id?.trim()?.takeIf { it.isNotEmpty() }
+                ?: stream.channelName?.trim()?.lowercase(Locale.ROOT)
+        }
     }
 
     private fun List<Stream>.sortedForFollowedLive(): List<Stream> {

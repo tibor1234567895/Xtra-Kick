@@ -2533,7 +2533,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 if (roomState != null) {
                                     val roomStateSignature = buildRoomStateSignature(roomState)
                                     if (roomStateSignature == lastRoomStateSignature) {
-                                        viewModel.roomState.value = null
                                         return@collectLatest
                                     }
                                     lastRoomStateSignature = roomStateSignature
@@ -2594,8 +2593,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                     }
                                     showChatStatus = false
                                     chatStatus.visibility = View.GONE
-                                    viewModel.roomState.value = null
                                 }
+                            }
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.chatRestriction.collectLatest { restriction ->
+                                editText.hint = restriction?.inputHint
                             }
                         }
                     }
