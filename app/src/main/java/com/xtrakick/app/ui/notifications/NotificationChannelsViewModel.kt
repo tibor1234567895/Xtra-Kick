@@ -28,8 +28,10 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineStart
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
+import org.json.JSONObject
 
 @HiltViewModel
 class NotificationChannelsViewModel @Inject constructor(
@@ -88,6 +90,7 @@ class NotificationChannelsViewModel @Inject constructor(
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             _channels.value = loadChannels()
+            enrichMissingChannelDetails()
         }
     }
 
@@ -113,7 +116,10 @@ class NotificationChannelsViewModel @Inject constructor(
             try {
                 if (enabled) {
                     val canonical = notificationUsersRepository.enableNotificationsForChannel(
-                        entry.login ?: entry.id, entry.id, entry.name
+                        listOfNotNull(entry.login, entry.id, entry.name),
+                        preferredLogin = entry.login,
+                        preferredName = entry.name,
+                        preferredLogoUrl = entry.logoUrl,
                     )
                     if (canonical != null) {
                         onChannelsEnabled()
@@ -205,56 +211,88 @@ class NotificationChannelsViewModel @Inject constructor(
         val follows = localFollowChannelRepository.loadFollows()
 
         val drafts = mutableListOf<Draft>()
+        val claimedRowIds = mutableSetOf<String>()
+
         follows.forEach { follow ->
             val login = follow.userLogin?.trim()?.takeIf { it.isNotBlank() }
             val userId = follow.userId?.trim()?.takeIf { it.isNotBlank() }
             val followId = userId ?: login ?: return@forEach
 
+            // Check metadata cache for this follow's known canonicalId or slug
+            val followMeta = (userId?.let { notificationUsersRepository.getChannelMetadata(it) }
+                ?: login?.let { notificationUsersRepository.getChannelMetadata(it) })
+            val canonicalUserId = followMeta?.id ?: userId
+
             // Notification rows are keyed by the canonical broadcaster user id, but legacy
             // rows may temporarily be keyed by channel id or login.
             var row = rows.firstOrNull {
                 (userId != null && it.channelId.equals(userId, ignoreCase = true)) ||
+                    (canonicalUserId != null && it.channelId.equals(canonicalUserId, ignoreCase = true)) ||
                     (login != null && it.channelId.equals(login, ignoreCase = true))
             }
 
-            // Check if any row matches the follow's channel ID if cached
+            // Check if any row matches the follow's channel ID or the broadcaster user
+            // ID if cached — notification rows are keyed by the broadcaster user id,
+            // which differs from the channel id on the follow row.
             if (row == null && login != null) {
-                val channelId = kickRepository.getCachedChannel(login)?.id?.toString()
-                if (channelId != null) {
-                    row = rows.firstOrNull { it.channelId.equals(channelId, ignoreCase = true) }
+                val cached = kickRepository.getCachedChannel(login)
+                val candidateIds = listOfNotNull(
+                    cached?.id?.toString(),
+                    cached?.userId?.toString(),
+                )
+                if (candidateIds.isNotEmpty()) {
+                    row = rows.firstOrNull { candidateIds.any { id -> it.channelId.equals(id, ignoreCase = true) } }
+                }
+            }
+
+            if (row != null) {
+                claimedRowIds.add(row.channelId)
+                if (canonicalUserId != null) claimedRowIds.add(canonicalUserId)
+                if (userId.isNullOrBlank() && row.channelId.all(Char::isDigit)) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        localFollowChannelRepository.upsertLocalFollow(row.channelId, login, follow.userName, follow.channelLogo)
+                    }
                 }
             }
 
             drafts.add(Draft(
-                id = row?.channelId ?: followId,
-                name = follow.userName?.takeIf { it.isNotBlank() } ?: login,
+                id = row?.channelId ?: canonicalUserId ?: followId,
+                name = follow.userName?.takeIf { it.isNotBlank() } ?: followMeta?.name ?: login,
                 login = login,
-                logoUrl = follow.channelLogo,
+                logoUrl = follow.channelLogo ?: followMeta?.logoUrl,
                 rowId = row?.channelId,
                 followed = true,
             ))
         }
 
-        val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-        var cachedHeaders: Map<String, String>? = null
-
-        val claimedRowIds = mutableSetOf<String>()
+        // Also claim any rows that match known aliases of drafts
+        val draftAliases = hashSetOf<String>()
         drafts.forEach { draft ->
-            val login = draft.login?.lowercase()
-            val id = draft.id
-            val cachedChannelId = draft.login?.let { kickRepository.getCachedChannel(it)?.id?.toString() }
-            rows.forEach { row ->
-                val rId = row.channelId.trim()
-                if (rId.equals(id, ignoreCase = true) ||
-                    (login != null && rId.equals(login, ignoreCase = true)) ||
-                    (cachedChannelId != null && rId == cachedChannelId)) {
-                    claimedRowIds.add(row.channelId)
-                }
+            draft.rowId?.let {
+                claimedRowIds.add(it)
+                draftAliases.add(it.trim().lowercase(Locale.ROOT))
+            }
+            if (draft.id.isNotBlank()) {
+                draftAliases.add(draft.id.trim().lowercase(Locale.ROOT))
+            }
+            draft.login?.trim()?.lowercase(Locale.ROOT)?.let { login ->
+                draftAliases.add(login)
+                notificationUsersRepository.getChannelMetadata(login)?.id?.trim()?.lowercase(Locale.ROOT)?.let(draftAliases::add)
+                kickRepository.getCachedChannel(login)?.id?.toString()?.trim()?.lowercase(Locale.ROOT)?.let(draftAliases::add)
             }
         }
+        rows.forEach { row ->
+            if (row.channelId.trim().lowercase(Locale.ROOT) in draftAliases) {
+                claimedRowIds.add(row.channelId)
+            }
+        }
+
         val unclaimedRows = rows.filterNot { it.channelId in claimedRowIds }
         if (unclaimedRows.isNotEmpty()) {
-            val missingIds = unclaimedRows.map { it.channelId }.filterNot { userSummaryCache.containsKey(it) }
+            val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
+            var cachedHeaders: Map<String, String>? = null
+
+            val missingIds = unclaimedRows.map { it.channelId }.filterNot { userSummaryCache.containsKey(it) || notificationUsersRepository.getChannelMetadata(it) != null }
             if (missingIds.isNotEmpty()) {
                 runCatching {
                     val headers = cachedHeaders ?: runCatching {
@@ -265,19 +303,65 @@ class NotificationChannelsViewModel @Inject constructor(
                 }
             }
 
+            // Pre-parse the broadcaster id cache once before iterating unclaimed rows
+            val broadcasterIdToSlug: Map<String, String> = runCatching {
+                val raw = context.prefs().getString("kick_broadcaster_id_cache_v1", null)
+                if (!raw.isNullOrBlank()) {
+                    val root = JSONObject(raw)
+                    val map = mutableMapOf<String, String>()
+                    val keys = root.keys()
+                    while (keys.hasNext()) {
+                        val s = keys.next()
+                        val id = root.optString(s).trim().lowercase(Locale.ROOT)
+                        if (id.isNotEmpty()) {
+                            map[id] = s.lowercase(Locale.ROOT)
+                        }
+                    }
+                    map
+                } else emptyMap()
+            }.getOrDefault(emptyMap())
+
             unclaimedRows.forEach { row ->
-                // Check if the unclaimed row matches a follow's cached channel ID
-                val matchedByFollowChannel = drafts.firstOrNull { draft ->
-                    draft.followed && draft.rowId == null && draft.login != null &&
-                        kickRepository.getCachedChannel(draft.login)?.id?.toString() == row.channelId
-                }
-                if (matchedByFollowChannel != null) {
-                    val index = drafts.indexOf(matchedByFollowChannel)
-                    drafts[index] = matchedByFollowChannel.copy(id = row.channelId, rowId = row.channelId)
+                val rowKey = row.channelId.trim()
+                // Check if persistent metadata knows this channel
+                val meta = notificationUsersRepository.getChannelMetadata(rowKey)
+                if (meta != null) {
+                    val matchedDraft = drafts.firstOrNull { draft ->
+                        draft.followed && draft.rowId == null &&
+                            (draft.login?.equals(meta.login, ignoreCase = true) == true ||
+                             draft.id.equals(meta.id, ignoreCase = true))
+                    }
+                    if (matchedDraft != null) {
+                        val index = drafts.indexOf(matchedDraft)
+                        drafts[index] = matchedDraft.copy(id = rowKey, rowId = rowKey)
+                        viewModelScope.launch(Dispatchers.IO) {
+                            localFollowChannelRepository.upsertLocalFollow(rowKey, matchedDraft.login, matchedDraft.name, matchedDraft.logoUrl)
+                        }
+                    } else {
+                        drafts.add(Draft(
+                            id = rowKey,
+                            name = meta.name,
+                            login = meta.login,
+                            logoUrl = meta.logoUrl,
+                            rowId = rowKey,
+                            followed = false,
+                        ))
+                    }
                     return@forEach
                 }
 
-                val resolved = userSummaryCache[row.channelId]
+                // Check if the unclaimed row matches a follow's cached channel ID
+                val matchedByFollowChannel = drafts.firstOrNull { draft ->
+                    draft.followed && draft.rowId == null && draft.login != null &&
+                        kickRepository.getCachedChannel(draft.login)?.id?.toString() == rowKey
+                }
+                if (matchedByFollowChannel != null) {
+                    val index = drafts.indexOf(matchedByFollowChannel)
+                    drafts[index] = matchedByFollowChannel.copy(id = rowKey, rowId = rowKey)
+                    return@forEach
+                }
+
+                val resolved = userSummaryCache[rowKey]
                 val matchedIndex = resolved?.login?.let { login ->
                     drafts.indexOfFirst { draft ->
                         draft.followed && draft.rowId == null &&
@@ -286,17 +370,36 @@ class NotificationChannelsViewModel @Inject constructor(
                 }
                 if (matchedIndex != null) {
                     val draft = drafts[matchedIndex]
-                    drafts[matchedIndex] = draft.copy(id = row.channelId, rowId = row.channelId)
+                    drafts[matchedIndex] = draft.copy(id = rowKey, rowId = rowKey)
                     viewModelScope.launch(Dispatchers.IO) {
-                        localFollowChannelRepository.upsertLocalFollow(row.channelId, draft.login, draft.name, draft.logoUrl)
+                        localFollowChannelRepository.upsertLocalFollow(rowKey, draft.login, draft.name, draft.logoUrl)
                     }
                 } else if (resolved?.login != null) {
                     drafts.add(Draft(
-                        id = row.channelId,
+                        id = rowKey,
                         name = resolved.login,
                         login = resolved.login,
                         logoUrl = resolved.profilePictureUrl,
-                        rowId = row.channelId,
+                        rowId = rowKey,
+                        followed = false,
+                    ))
+                } else {
+                    // Fast O(1) map lookup for broadcaster slug
+                    val broadcasterSlug = broadcasterIdToSlug[rowKey.lowercase(Locale.ROOT)]
+                    val targetLookup = broadcasterSlug ?: rowKey
+                    val cached = kickRepository.getCachedChannel(targetLookup)
+                    val fallbackName = cached?.user?.username ?: cached?.slug ?: broadcasterSlug ?: rowKey
+                    val fallbackLogin = cached?.slug ?: broadcasterSlug ?: rowKey
+                    val fallbackLogo = cached?.user?.profileImage
+                    if (cached != null || broadcasterSlug != null) {
+                        notificationUsersRepository.saveChannelMetadata(rowKey, fallbackLogin, fallbackName, fallbackLogo)
+                    }
+                    drafts.add(Draft(
+                        id = rowKey,
+                        name = fallbackName,
+                        login = fallbackLogin,
+                        logoUrl = fallbackLogo,
+                        rowId = rowKey,
                         followed = false,
                     ))
                 }
@@ -316,6 +419,49 @@ class NotificationChannelsViewModel @Inject constructor(
                 )
             }
             .sortedWith(compareBy({ !it.followed }, { it.name?.lowercase() ?: "" }, { it.id }))
+    }
+
+    private suspend fun enrichMissingChannelDetails() = withContext(Dispatchers.IO) {
+        val current = _channels.value ?: return@withContext
+        val missing = current.filter { 
+            (it.logoUrl.isNullOrBlank() || it.name == it.id) && 
+            !it.login.isNullOrBlank() && 
+            !it.login.all(Char::isDigit) 
+        }.take(15)
+        if (missing.isEmpty()) return@withContext
+
+        var changed = false
+        val updated = current.toMutableList()
+
+        for (item in missing) {
+            val slug = item.login ?: continue
+            val ch = runCatching { kickRepository.getChannel(slug, prefetchBadgeCatalog = false) }.getOrNull() ?: continue
+            val logo = ch.user?.profileImage
+            val realName = ch.user?.username ?: ch.slug ?: item.name
+            val trueUserId = ch.userId?.toString() ?: item.id
+            if (!logo.isNullOrBlank() || realName != item.name) {
+                notificationUsersRepository.saveChannelMetadata(trueUserId, slug, realName, logo)
+                notificationUsersRepository.saveChannelMetadata(item.id, slug, realName, logo)
+                if (item.followed) {
+                    localFollowChannelRepository.upsertLocalFollow(trueUserId, slug, realName, logo)
+                }
+                val idx = updated.indexOfFirst { it.id == item.id && it.followed == item.followed }
+                if (idx >= 0) {
+                    updated[idx] = updated[idx].copy(
+                        id = trueUserId,
+                        name = realName,
+                        login = slug,
+                        logoUrl = logo ?: updated[idx].logoUrl
+                    )
+                    changed = true
+                }
+            }
+        }
+        if (changed) {
+            withContext(Dispatchers.Main) {
+                _channels.value = updated.sortedWith(compareBy({ !it.followed }, { it.name?.lowercase() ?: "" }, { it.id }))
+            }
+        }
     }
 
     companion object {

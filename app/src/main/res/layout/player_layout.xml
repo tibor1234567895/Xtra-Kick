@@ -169,7 +169,11 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="10dp"
-                    android:gravity="center_vertical">
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:padding="2dp">
 
                     <ImageView
                         android:id="@+id/viewersIcon"
@@ -470,6 +474,7 @@
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:background="@android:color/transparent"
+            android:contentDescription="@string/chat_input_toggle"
             android:src="@drawable/baseline_keyboard_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"

@@ -866,6 +866,41 @@ class MainViewModel @Inject constructor(
                 if (accessToken.isNullOrBlank()) {
                     return@launch
                 }
+                if (activity.tokenPrefs().getString(AppConstants.KICK_LOGIN_METHOD, null) ==
+                    AppConstants.KICK_LOGIN_METHOD_GOOGLE
+                ) {
+                    // Google-login sessions hold Kick's mobile-gateway token, which is not
+                    // an OAuth token: the backend introspect/refresh path cannot validate
+                    // it. The official app validates it against GET /api/v1/user instead.
+                    val user = try {
+                        kickRepository.getKickMobileUser(accessToken)
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        if (KickAuthRequestException.isUnauthorized(e)) {
+                            throw IllegalStateException("401")
+                        }
+                        if (isNetworkDebugEnabled()) {
+                            DiagnosticLogger.w(kickAuthValidateTag, "Kick mobile user validation non-fatal error: ${e.message}")
+                        }
+                        return@launch
+                    }
+                    if (user == null) {
+                        return@launch
+                    }
+                    val userId = user.optString("id").takeIf { it.isNotBlank() && it != "null" }
+                    val loginName = user.optString("username").takeIf { it.isNotBlank() && it != "null" } ?: userId
+                    activity.tokenPrefs().edit {
+                        userId?.let {
+                            putString(AppConstants.KICK_USER_ID, it)
+                            putString(AppConstants.USER_ID, it)
+                        }
+                        loginName?.let {
+                            putString(AppConstants.KICK_USER_LOGIN, it)
+                            putString(AppConstants.USERNAME, it)
+                        }
+                    }
+                    return@launch
+                }
                 val now = System.currentTimeMillis() / 1000L
                 val expiresAt = activity.tokenPrefs().getLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L)
                 val backendBaseUrl = KickOAuthConfig.getBackendBaseUrl(activity)

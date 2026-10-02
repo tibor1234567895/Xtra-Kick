@@ -400,75 +400,78 @@ class VideoDownloadWorker @AssistedInject constructor(
                     fileUri
                 }
                 coroutineScope {
+                    runCatching {
+                        context.cacheDir?.listFiles { _, name -> name.startsWith("vodseg_") && name.endsWith(".part") }
+                            ?.forEach { it.delete() }
+                    }
                     val segmentIds = generateSequence(0) { it + 1 }.iterator()
                     remainingSegments.map {
                         val id = segmentIds.next()
                         launch(start = CoroutineStart.UNDISPATCHED) {
                             requestSemaphore.withPermit {
-                                when {
-                                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                        val response = suspendCoroutine { continuation ->
-                                            httpEngine!!.get().newUrlRequestBuilder(urlPath + it.uri, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                        }
-                                        count.first { turn -> turn == id }
-                                        if (isShared) {
-                                            context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!.use {
-                                                it.write(response.second)
-                                            }
-                                        } else {
-                                            FileOutputStream(videoFileUri, true).use {
-                                                it.write(response.second)
-                                            }
-                                        }
-                                        offlineRepository.updateVideo(offlineVideo.apply {
-                                            bytes += response.second.size
-                                            progress += 1
-                                        })
-                                    }
-                                    networkLibrary == "Cronet" && cronetEngine != null -> {
-                                        val response = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                            val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                            cronetEngine!!.get().newUrlRequestBuilder(urlPath + it.uri, request.callback, cronetExecutor).build().start()
-                                            request.future.get().responseBody as ByteArray
-                                        } else {
+                                // Download to a staging file first, then append in write
+                                // order. Waiting for the write turn while holding the open
+                                // network response buffers every in-flight stream in memory
+                                // and OOMs the process on long VODs; staging keeps the
+                                // configured thread count fully parallel with disk, not
+                                // RAM, absorbing out-of-order completions.
+                                val stagingFile = File(context.cacheDir, "vodseg_${id}_${System.nanoTime()}.part")
+                                var stagedBytes = 0L
+                                try {
+                                    when {
+                                        networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                                             val response = suspendCoroutine { continuation ->
-                                                cronetEngine!!.get().newUrlRequestBuilder(urlPath + it.uri, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
+                                                httpEngine!!.get().newUrlRequestBuilder(urlPath + it.uri, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
                                             }
-                                            response.second
+                                            stagingFile.outputStream().use {
+                                                it.write(response.second)
+                                            }
+                                            stagedBytes = response.second.size.toLong()
                                         }
-                                        count.first { turn -> turn == id }
-                                        if (isShared) {
-                                            context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!.use {
-                                                it.write(response)
-                                            }
-                                        } else {
-                                            FileOutputStream(videoFileUri, true).use {
-                                                it.write(response)
-                                            }
-                                        }
-                                        offlineRepository.updateVideo(offlineVideo.apply {
-                                            bytes += response.size
-                                            progress += 1
-                                        })
-                                    }
-                                    else -> {
-                                        okHttpClient.newCall(Request.Builder().url(urlPath + it.uri).build()).useCancellable { response ->
-                                            count.first { turn -> turn == id }
-                                            if (isShared) {
-                                                context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!
+                                        networkLibrary == "Cronet" && cronetEngine != null -> {
+                                            val response = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                                                val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
+                                                cronetEngine!!.get().newUrlRequestBuilder(urlPath + it.uri, request.callback, cronetExecutor).build().start()
+                                                request.future.get().responseBody as ByteArray
                                             } else {
-                                                FileOutputStream(videoFileUri, true)
-                                            }.use { outputStream ->
-                                                response.body.byteStream().use { inputStream ->
-                                                    inputStream.copyTo(outputStream)
+                                                val response = suspendCoroutine { continuation ->
+                                                    cronetEngine!!.get().newUrlRequestBuilder(urlPath + it.uri, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
                                                 }
-                                                offlineRepository.updateVideo(offlineVideo.apply {
-                                                    bytes += response.body.contentLength()
-                                                    progress += 1
-                                                })
+                                                response.second
+                                            }
+                                            stagingFile.outputStream().use {
+                                                it.write(response)
+                                            }
+                                            stagedBytes = response.size.toLong()
+                                        }
+                                        else -> {
+                                            okHttpClient.newCall(Request.Builder().url(urlPath + it.uri).build()).useCancellable { response ->
+                                                stagingFile.outputStream().use { outputStream ->
+                                                    response.body.byteStream().use { inputStream ->
+                                                        inputStream.copyTo(outputStream)
+                                                    }
+                                                }
+                                                stagedBytes = response.body.contentLength().coerceAtLeast(0L)
                                             }
                                         }
                                     }
+                                    count.first { turn -> turn == id }
+                                    if (stagingFile.exists() && stagingFile.length() > 0L) {
+                                        val outputStream = if (isShared) {
+                                            context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!
+                                        } else {
+                                            FileOutputStream(videoFileUri, true)
+                                        }
+                                        outputStream.use { stream ->
+                                            stagingFile.inputStream().use { it.copyTo(stream) }
+                                        }
+                                    }
+                                    offlineRepository.updateVideo(offlineVideo.apply {
+                                        bytes += stagedBytes
+                                        progress += 1
+                                    })
+                                } finally {
+                                    stagingFile.delete()
                                 }
                                 count.update { it + 1 }
                                 setForeground(createForegroundInfo())
@@ -789,6 +792,12 @@ class VideoDownloadWorker @AssistedInject constructor(
                         }
                     }
                 }
+            }
+            // Video phase complete: finalize the item's status right away. The chat
+            // walk may keep running for minutes on long VODs and must not hold the
+            // list at "DOWNLOADING: 100%" (chat can be repaired independently).
+            if (offlineVideo.progress >= offlineVideo.maxProgress) {
+                offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADED })
             }
             try {
                 jobs.joinAll()

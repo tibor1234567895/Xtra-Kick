@@ -79,8 +79,9 @@ class LocalFollowChannelRepository @Inject constructor(
         userLogin: String?,
         userName: String?,
         channelLogo: String? = null,
+        sourceMask: Int? = null,
     ) = withContext(Dispatchers.IO) {
-        database.withTransaction { upsertLocalFollowInternal(userId, userLogin, userName, channelLogo) }
+        database.withTransaction { upsertLocalFollowInternal(userId, userLogin, userName, channelLogo, sourceMask) }
         notifyFollowsChanged()
     }
 
@@ -135,7 +136,7 @@ class LocalFollowChannelRepository @Inject constructor(
         userLogin: String?,
         userName: String?,
         channelLogo: String? = null,
-        sourceMask: Int = AppConstants.FOLLOW_SOURCE_MASK_LOCAL,
+        sourceMask: Int? = null,
     ) {
         val normalizedUserId = userId?.takeIf { it.isNotBlank() }
         val normalizedUserLogin = userLogin?.takeIf { it.isNotBlank() }
@@ -148,7 +149,7 @@ class LocalFollowChannelRepository @Inject constructor(
                     userLogin = normalizedUserLogin,
                     userName = userName,
                     channelLogo = channelLogo,
-                    sourceMask = sourceMask,
+                    sourceMask = sourceMask ?: AppConstants.FOLLOW_SOURCE_MASK_LOCAL,
                 )
             )
         } else {
@@ -156,7 +157,9 @@ class LocalFollowChannelRepository @Inject constructor(
             existing.userLogin = normalizedUserLogin ?: existing.userLogin
             existing.userName = userName ?: existing.userName
             existing.channelLogo = channelLogo ?: existing.channelLogo
-            existing.sourceMask = existing.sourceMask or sourceMask
+            if (sourceMask != null) {
+                existing.sourceMask = existing.sourceMask or sourceMask
+            }
             localFollowsChannelDao.update(existing)
         }
     }

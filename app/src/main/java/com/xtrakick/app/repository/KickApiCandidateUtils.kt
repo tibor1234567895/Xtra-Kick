@@ -181,6 +181,9 @@ object KickApiCandidateUtils {
         val candidates = linkedSetOf<String>()
         historyId?.let { id ->
             candidates += "https://web.kick.com/api/v1/chat/${urlEncode(id)}/history"
+            // Official app 40.31.0 serves history from kick.com; probe it after the
+            // web host so it only matters if web.kick.com stops answering.
+            candidates += "https://kick.com/api/v1/chat/${urlEncode(id)}/history"
         }
         normalizedSlug?.let { slug ->
             val encoded = urlEncode(slug)

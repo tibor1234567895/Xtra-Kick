@@ -34,6 +34,12 @@
                 android:layout_height="wrap_content"
                 android:text="@string/alphabetically" />
 
+            <RadioButton
+                android:id="@+id/by_source"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/sort_by_source" />
+
         </RadioGroup>
 
         <RadioGroup

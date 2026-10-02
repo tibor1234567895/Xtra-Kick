@@ -196,7 +196,7 @@ class PlayerViewModel @Inject constructor(
                             e
                         )
                     }
-                    streamError.value = R.string.stream_ended
+                    streamError.value = if (e is java.io.IOException) R.string.no_connection else R.string.stream_ended
                 }
             }
         }
@@ -568,6 +568,21 @@ class PlayerViewModel @Inject constructor(
                     if (!(channelId ?: channelLogin).isNullOrBlank()) {
                         _isFollowing.value = localFollowsChannel.getFollow(channelId, channelLogin) != null
                     }
+                    val login = channelLogin ?: (channelId?.takeIf { it.any { c -> c.isLetter() } })
+                    if (_isFollowing.value != true && !login.isNullOrBlank() && kickRepository.hasKickAccountFollowCapability()) {
+                        kickRepository.getKickAccountFollowState(login)?.let { kickFollows ->
+                            if (kickFollows) {
+                                _isFollowing.value = true
+                                localFollowsChannel.upsertLocalFollow(
+                                    userId = channelId,
+                                    userLogin = login,
+                                    userName = stream.value?.channelName,
+                                    channelLogo = stream.value?.channelLogo ?: stream.value?.user?.profileImageUrl,
+                                    sourceMask = AppConstants.FOLLOW_SOURCE_MASK_KICK
+                                )
+                            }
+                        }
+                    }
                 } catch (e: Exception) {
 
                 }
@@ -575,21 +590,24 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun saveFollowChannel(userId: String?, channelId: String?, channelLogin: String?, channelName: String?, setting: Int, notificationsEnabled: Boolean, startedAt: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun saveFollowChannel(userId: String?, channelId: String?, channelLogin: String?, channelName: String?, setting: Int, notificationsEnabled: Boolean, startedAt: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean, kickFollow: Boolean = true) {
         viewModelScope.launch {
             try {
                 val candidateKeys = listOfNotNull(channelId, channelLogin, userId).map { it.trim() }.filter { it.isNotBlank() }
                 val followId = (channelId ?: channelLogin)?.trim()?.takeIf { it.isNotBlank() } ?: candidateKeys.firstOrNull()
                 if (followId != null) {
-                    localFollowsChannel.saveFollow(LocalFollowChannel(followId, channelLogin, channelName))
+                    val mask = if (kickFollow) {
+                        AppConstants.FOLLOW_SOURCE_MASK_KICK or AppConstants.FOLLOW_SOURCE_MASK_LOCAL
+                    } else {
+                        AppConstants.FOLLOW_SOURCE_MASK_LOCAL
+                    }
+                    val logo = stream.value?.channelLogo ?: stream.value?.user?.profileImageUrl
+                    localFollowsChannel.saveFollow(LocalFollowChannel(followId, channelLogin, channelName, logo, mask))
                     _isFollowing.value = true
                     follow.value = Pair(true, null)
-                    val savedKey = notificationUsersRepository.enableNotificationsForChannel(candidateKeys)
-                    if (notificationsEnabled && savedKey != null) {
-                        startedAt.takeUnless { it.isNullOrBlank() }?.let { KickApiHelper.parseIso8601DateUTC(it) }?.let { started ->
-                            shownNotificationsRepository.saveList(listOf(ShownNotification(savedKey, started)))
-                        }
-                    }
+                    mirrorFollowOnKick(channelLogin, true, kickFollow)
+                    // Following never touches notifications — the bell button is the only
+                    // thing that arms them.
                 }
             } catch (e: Exception) {
 
@@ -597,15 +615,29 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun deleteFollowChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    /** Best-effort mirror of the follow onto the logged-in Kick account. */
+    private fun mirrorFollowOnKick(channelLogin: String?, follow: Boolean, enabled: Boolean) {
+        val slug = channelLogin?.trim()?.takeIf { it.isNotBlank() } ?: return
+        if (!enabled || !kickRepository.hasKickAccountFollowCapability()) return
+        viewModelScope.launch {
+            runCatching { kickRepository.setKickAccountFollow(slug, follow) }.onFailure {
+                android.util.Log.w("PlayerViewModel", "Kick account ${if (follow) "follow" else "unfollow"} failed for $slug: ${it.message}")
+            }
+        }
+    }
+
+    fun deleteFollowChannel(userId: String?, channelId: String?, channelLogin: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean, kickFollow: Boolean = true) {
         viewModelScope.launch {
             try {
                 val candidateKeys = listOfNotNull(channelId, channelLogin, userId).map { it.trim() }.filter { it.isNotBlank() }
                 val followId = (channelId ?: channelLogin)?.trim()?.takeIf { it.isNotBlank() }
                 if (followId != null) {
-                    localFollowsChannel.getFollow(channelId, channelLogin)?.let { localFollowsChannel.deleteFollow(it) }
+                    val existing = localFollowsChannel.getFollow(channelId, channelLogin)
+                    val wasKickFollow = existing?.isKickFollow ?: kickFollow
+                    existing?.let { localFollowsChannel.deleteFollow(it) }
                     _isFollowing.value = false
                     follow.value = Pair(false, null)
+                    mirrorFollowOnKick(channelLogin, false, wasKickFollow)
                     notificationUsersRepository.disableNotificationsForChannel(candidateKeys)
                 }
             } catch (e: Exception) {

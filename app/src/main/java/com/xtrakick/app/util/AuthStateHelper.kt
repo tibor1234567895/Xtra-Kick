@@ -10,6 +10,17 @@ object AuthStateHelper {
 
     private const val ACCESS_TOKEN_EXPIRY_BUFFER_SECONDS = 30L
 
+    /**
+     * True when the session was established through Google's mobile login. That token
+     * is Kick's mobile-gateway credential — it works on kick.com endpoints but is
+     * rejected by api.kick.com's OAuth-armed public API, so callers should skip those
+     * arms and use scrape/bearer paths instead.
+     */
+    fun isKickGoogleSession(context: Context): Boolean {
+        return context.tokenPrefs().getString(AppConstants.KICK_LOGIN_METHOD, null) ==
+            AppConstants.KICK_LOGIN_METHOD_GOOGLE
+    }
+
     fun isKickLoggedIn(context: Context, nowEpochSeconds: Long = System.currentTimeMillis() / 1000L): Boolean {
         val prefs = context.tokenPrefs()
         return isKickSessionAvailable(

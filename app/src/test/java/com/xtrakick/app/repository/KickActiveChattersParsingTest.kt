@@ -63,4 +63,41 @@ class KickActiveChattersParsingTest {
         assertTrue(KickRepository.parseActiveChattersResponse("""{"data": {"chatters": "oops"}}""").isEmpty())
         assertTrue(KickRepository.parseActiveChattersResponse("""{"message": "error"}""").isEmpty())
     }
+
+    @Test
+    fun parsesChannelViewerListCorrectly() {
+        val raw = """
+            {
+              "data": {
+                "bots": [{"username": "streamelements"}],
+                "chatters": [
+                  {"slug": "kromestylez", "username": "kromestylez"},
+                  {"slug": "tktooowavy", "username": "TKTOOOWAVY"}
+                ],
+                "moderators": [{"slug": "rclemon", "username": "Rclemon"}],
+                "ogs": [{"slug": "oguser", "username": "OGUser"}],
+                "vips": [{"slug": "neon-alt", "username": "Neon_Alt"}],
+                "total_count": 5
+              },
+              "message": "success"
+            }
+        """.trimIndent()
+
+        val list = KickRepository.parseChannelViewerListResponse(raw, fallbackBroadcaster = "streamer")
+
+        assertEquals(listOf("streamer"), list.broadcasters)
+        assertEquals(listOf("Rclemon"), list.moderators)
+        assertEquals(listOf("Neon_Alt"), list.vips)
+        assertEquals(listOf("OGUser"), list.ogs)
+        assertEquals(listOf("kromestylez", "TKTOOOWAVY"), list.viewers)
+        assertEquals(5, list.count)
+    }
+
+    @Test
+    fun channelViewerListEmptyPayloadFallback() {
+        val list = KickRepository.parseChannelViewerListResponse("", fallbackBroadcaster = "streamer")
+        assertEquals(listOf("streamer"), list.broadcasters)
+        assertEquals(emptyList<String>(), list.moderators)
+        assertEquals(1, list.count)
+    }
 }

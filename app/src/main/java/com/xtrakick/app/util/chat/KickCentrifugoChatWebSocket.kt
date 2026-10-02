@@ -18,6 +18,7 @@ class KickCentrifugoChatWebSocket(
     private val publicChannelNames: List<String> = emptyList(),
     private val fetchConnectionUrl: suspend () -> String?,
     private val fetchAuthToken: suspend () -> String?,
+    private val fetchChannelToken: suspend (String) -> String? = { null },
     private val trustManager: X509TrustManager?,
     private val listener: KickPusherChatWebSocket.Listener,
     private val debugLogging: Boolean = false,
@@ -70,11 +71,17 @@ class KickCentrifugoChatWebSocket(
                     "subscribe",
                     JSONObject().apply {
                         put("channel", channelName)
+                        // Official app mints a per-subscription token; best-effort —
+                        // subscribe without one if minting fails (as before).
+                        val channelToken = runCatching { fetchChannelToken(channelName) }.getOrNull()
+                        if (!channelToken.isNullOrBlank()) {
+                            put("token", channelToken)
+                        }
                     }
                 )
             }
             if (debugLogging) {
-                Log.i(tag, "subscribe channel=$channelName")
+                Log.i(tag, "subscribe channel=$channelName token=${payload.optJSONObject("subscribe")?.has("token") == true}")
             }
             webSocket?.write(payload.toString())
         }

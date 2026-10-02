@@ -23,6 +23,7 @@ class FollowedChannelsSortDialog : BottomSheetDialogFragment() {
         const val ORDER_DESC = "desc"
         const val SORT_FOLLOWED_AT = "created_at"
         const val SORT_ALPHABETICALLY = "login"
+        const val SORT_SOURCE = "source"
 
         private const val SORT = "sort"
         private const val ORDER = "order"
@@ -58,6 +59,7 @@ class FollowedChannelsSortDialog : BottomSheetDialogFragment() {
             val originalSortId = when (args.getString(SORT)) {
                 SORT_FOLLOWED_AT -> R.id.time_followed
                 SORT_ALPHABETICALLY -> R.id.alphabetically
+                SORT_SOURCE -> R.id.by_source
                 else -> R.id.alphabetically
             }
             val originalOrderId = when (args.getString(ORDER)) {
@@ -65,8 +67,24 @@ class FollowedChannelsSortDialog : BottomSheetDialogFragment() {
                 ORDER_ASC -> R.id.oldest_first
                 else -> R.id.oldest_first
             }
+            fun updateOrderLabels(sortId: Int) {
+                if (sortId == R.id.by_source) {
+                    oldestFirst.setText(R.string.source_kick_first)
+                    newestFirst.setText(R.string.source_local_first)
+                } else {
+                    oldestFirst.setText(R.string.ascending)
+                    newestFirst.setText(R.string.descending)
+                }
+            }
+
             sort.check(originalSortId)
             order.check(originalOrderId)
+            updateOrderLabels(originalSortId)
+
+            sort.setOnCheckedChangeListener { _, checkedId ->
+                updateOrderLabels(checkedId)
+            }
+
             saveDefault.setOnClickListener {
                 applyFilters(originalSortId, originalOrderId, true)
                 dismiss()
@@ -84,19 +102,22 @@ class FollowedChannelsSortDialog : BottomSheetDialogFragment() {
             val checkedOrderId = order.checkedRadioButtonId
             val sortBtn = requireView().findViewById<RadioButton>(checkedSortId)
             val orderBtn = requireView().findViewById<RadioButton>(checkedOrderId)
+            val sortText = sortBtn?.text ?: getString(R.string.alphabetically)
+            val orderText = orderBtn?.text ?: getString(R.string.ascending)
             listener.onChange(
                 when (checkedSortId) {
                     R.id.time_followed -> SORT_FOLLOWED_AT
                     R.id.alphabetically -> SORT_ALPHABETICALLY
+                    R.id.by_source -> SORT_SOURCE
                     else -> SORT_ALPHABETICALLY
                 },
-                sortBtn.text,
+                sortText,
                 when (checkedOrderId) {
                     R.id.newest_first -> ORDER_DESC
                     R.id.oldest_first -> ORDER_ASC
                     else -> ORDER_ASC
                 },
-                orderBtn.text,
+                orderText,
                 checkedSortId != originalSortId || checkedOrderId != originalOrderId,
                 saveDefault
             )

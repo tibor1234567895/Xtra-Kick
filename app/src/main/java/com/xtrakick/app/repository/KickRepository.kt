@@ -65,6 +65,7 @@ import com.xtrakick.app.model.kick.KickTypesenseQuery
 import com.xtrakick.app.model.kick.KickTypesenseResult
 import com.xtrakick.app.model.kick.auth.KickChatSendResponse
 import com.xtrakick.app.model.kick.auth.KickBackendRefreshRequest
+import com.xtrakick.app.model.ui.ChannelViewerList
 import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.model.ui.Game
 import com.xtrakick.app.model.ui.Stream
@@ -1906,7 +1907,7 @@ class KickRepository @Inject constructor(
         }.getOrNull()
     }
 
-    /** True when the app has a usable website session token or active Kick OAuth session. */
+    /** True when the app has a usable website session token or active Kick login. */
     fun hasUsableKickWebsiteSession(): Boolean {
         val cookies = getKickCookieHeader()
         val hasCookieSession = cookies?.let {
@@ -1916,9 +1917,127 @@ class KickRepository @Inject constructor(
         return hasCookieSession || AuthStateHelper.isKickLoggedIn(context)
     }
 
+    /**
+     * True when the app has a session capable of calling Kick website/mobile account endpoints
+     * (e.g. follow/unfollow on kick.com). Requires either active website cookies or a Google mobile session.
+     * OAuth-only sessions cannot authenticate against private kick.com web endpoints.
+     */
+    fun hasKickAccountFollowCapability(): Boolean {
+        val cookies = getKickCookieHeader()
+        val hasCookieSession = cookies?.let {
+            AuthStateHelper.extractKickSessionToken(it)?.isNotBlank() == true ||
+                extractKickWebAuthToken(it)?.isNotBlank() == true
+        } == true
+        return hasCookieSession || AuthStateHelper.isKickGoogleSession(context)
+    }
+
+    /**
+     * Exchanges a Google idToken (Credential Manager) for Kick's own mobile bearer via
+     * the official app's `POST /api/v1/google-mobile-login`. The returned token is the
+     * official-app token type — not an OAuth token: it authenticates against
+     * kick.com / mobile.kick.com internal endpoints, not api.kick.com.
+     */
+    suspend fun exchangeGoogleMobileLogin(idToken: String): String = withContext(Dispatchers.IO) {
+        val payload = JSONObject().apply { put("token", idToken) }.toString()
+        val request = Request.Builder()
+            .url("https://kick.com/api/v1/google-mobile-login")
+            .header("User-Agent", "KickMobile/40.31.0 (com.kick.mobile; platform: android; build:40310)")
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .post(payload.toRequestBody("application/json".toMediaTypeOrNull()))
+            .build()
+        okHttpClient.newCall(request).execute().use { response ->
+            val body = response.body.string()
+            if (!response.isSuccessful) {
+                throw IOException("Google mobile login failed (${response.code})")
+            }
+            val root = runCatching { JSONObject(body) }.getOrNull()
+            root?.optString("token")?.takeIf { it.isNotBlank() && it != "null" }
+                ?: throw IOException("Google mobile login response was missing a token")
+        }
+    }
+
+    /**
+     * Validates a Kick mobile bearer and returns the raw user object from
+     * `GET /api/v1/user` (the official app's startup validation endpoint).
+     * Null when the token is rejected.
+     */
+    suspend fun getKickMobileUser(bearerToken: String): JSONObject? = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("https://kick.com/api/v1/user")
+            .header("User-Agent", "KickMobile/40.31.0 (com.kick.mobile; platform: android; build:40310)")
+            .header("Accept", "application/json")
+            .header("Authorization", "Bearer $bearerToken")
+            .build()
+        okHttpClient.newCall(request).execute().use { response ->
+            if (response.code == 401) {
+                throw KickAuthRequestException.HttpFailure(401)
+            }
+            if (response.code == 403 || response.code == 404) {
+                return@use null
+            }
+            if (!response.isSuccessful) {
+                throw IOException("Kick user fetch failed (${response.code})")
+            }
+            val body = response.body.string()
+            runCatching { JSONObject(body) }.getOrElse {
+                throw IOException("Malformed JSON response from Kick user endpoint")
+            }
+        }
+    }
+
+    /**
+     * Follows/unfollows a channel on the logged-in Kick account via
+     * `POST|DELETE /api/v2/channels/{slug}/follow` — the website's own endpoint,
+     * verified working with the Google mobile-login bearer (2026-10-02).
+     * Throws on failure so callers can distinguish account-side success.
+     */
+    suspend fun setKickAccountFollow(channelSlug: String, follow: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val slug = channelSlug.trim().takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("channel slug is required")
+        val raw = executeKickWebSessionRequest(
+            "https://kick.com/api/v2/channels/${urlEncode(slug)}/follow",
+            method = if (follow) "POST" else "DELETE",
+        )
+        if (raw.isBlank()) {
+            return@withContext true
+        }
+        runCatching {
+            val root = JSONObject(raw)
+            root.optBoolean("status", root.optBoolean("success", true))
+        }.getOrDefault(true)
+    }
+
+    /**
+     * Kick-side follow state for the logged-in account via
+     * `GET /api/v2/channels/{slug}/me` (`is_following`). Null when unavailable.
+     */
+    suspend fun getKickAccountFollowState(channelSlug: String): Boolean? = withContext(Dispatchers.IO) {
+        val slug = channelSlug.trim().takeIf { it.isNotBlank() } ?: return@withContext null
+        val raw = try {
+            executeKickWebSessionRequest("https://kick.com/api/v2/channels/${urlEncode(slug)}/me")
+        } catch (e: Exception) {
+            Log.w(tag, "getKickAccountFollowState failed for $slug: ${e.message}")
+            null
+        } ?: return@withContext null
+        runCatching {
+            val root = JSONObject(raw)
+            val target = root.optJSONObject("data") ?: root
+            when {
+                target.has("is_following") -> target.optBoolean("is_following")
+                target.has("following") -> target.optBoolean("following")
+                target.has("subscription") && !target.isNull("subscription") -> true
+                else -> null
+            }
+        }.getOrNull()
+    }
+
     /** Fetches the short-lived bearer used by Kick's viewer watch WebSocket. */
     internal suspend fun getKickViewerSocketToken(): String {
-        val raw = executeKickWebSessionRequest("https://websockets.kick.com/viewer/v1/token")
+        val raw = executeKickWebSessionRequest(
+            "https://websockets.kick.com/viewer/v1/token",
+            extraHeaders = mapOf("X-CLIENT-TOKEN" to KICK_VIEWER_CLIENT_TOKEN),
+        )
         return JSONObject(raw)
             .optJSONObject("data")
             ?.optString("token")
@@ -2174,7 +2293,6 @@ class KickRepository @Inject constructor(
         cursor: String? = null,
     ): KickVideoPage? {
         val cached = channelCache[channelSlug.trim().lowercase(Locale.ROOT)]?.second
-        val resolvedChannelId = channelId ?: cached?.id?.toString()
         val login = cached?.slug ?: channelSlug
         val channelName = cached?.user?.username
         val channelLogo = cached?.user?.profileImage
@@ -2211,39 +2329,6 @@ class KickRepository @Inject constructor(
             }
         }
 
-        // Fallback to numeric channelId if available and different from slug
-        if (!resolvedChannelId.isNullOrBlank() && resolvedChannelId != channelSlug) {
-            val idUrl = buildKickUrl(
-                baseUrl = "https://kick.com/api/v2/channels/${urlEncode(resolvedChannelId)}/videos",
-                extraQuery = buildMap {
-                    if (cursor.isNullOrBlank()) {
-                        put("page", "1")
-                        put("limit", pageSize.toString())
-                    } else {
-                        put("cursor", cursor)
-                    }
-                }
-            )
-            val idRaw = runCatching { getRaw(idUrl, isKickWeb = true) }.getOrNull()
-            if (idRaw != null) {
-                val root = runCatching { json.parseToJsonElement(idRaw) }.getOrNull()
-                if (root != null) {
-                    val parsed = parseVideos(
-                        roots = listOf(root),
-                        channelId = channelId,
-                        channelLogin = login,
-                        channelName = channelName,
-                        channelLogo = channelLogo,
-                        limit = pageSize
-                    )
-                    return KickVideoPage(
-                        videos = parsed,
-                        nextCursor = (root as? JsonObject)?.let(::extractNextCursor)
-                    )
-                }
-            }
-        }
-
         return null
     }
 
@@ -2271,7 +2356,6 @@ class KickRepository @Inject constructor(
         cursor: String? = null,
     ): KickClipPage? {
         val cached = channelCache[channelSlug.trim().lowercase(Locale.ROOT)]?.second
-        val resolvedChannelId = channelId ?: cached?.id?.toString()
         val login = cached?.slug ?: channelSlug
         val channelName = cached?.user?.username
         val channelLogo = cached?.user?.profileImage
@@ -2309,32 +2393,6 @@ class KickRepository @Inject constructor(
         )
         if (clipsPage != null) {
             return clipsPage
-        }
-
-        // Fallback to numeric channelId if available and different from slug
-        if (!resolvedChannelId.isNullOrBlank() && resolvedChannelId != channelSlug) {
-            val idUrl = buildKickUrl(
-                baseUrl = "https://kick.com/api/v2/channels/${urlEncode(resolvedChannelId)}/clips",
-                extraQuery = buildMap {
-                    put("sort", "view")
-                    resolvedTime?.let { put("time", it) }
-                    if (cursor.isNullOrBlank()) {
-                        put("page", "1")
-                        put("limit", pageSize.toString())
-                    } else {
-                        put("cursor", cursor)
-                    }
-                }
-            )
-            return collectClipPages(
-                initialUrls = listOf(idUrl),
-                limit = pageSize,
-                maxPages = 1,
-                channelId = channelId,
-                channelLogin = login,
-                channelName = channelName,
-                channelLogo = channelLogo,
-            )
         }
 
         return null
@@ -2862,48 +2920,77 @@ class KickRepository @Inject constructor(
     }
 
     suspend fun getChatHistory(channelOrChatroomId: String, startTime: String, cursor: String? = null): KickMessagesData {
-        val url = buildString {
-            append("https://web.kick.com/api/v1/chat/")
-            append(urlEncode(channelOrChatroomId))
-            append("/history?")
-            if (!cursor.isNullOrBlank()) {
-                append("cursor=")
-                append(urlEncode(cursor))
-            } else {
-                append("start_time=")
-                append(urlEncode(startTime))
+        val query = if (!cursor.isNullOrBlank()) {
+            "cursor=${urlEncode(cursor)}"
+        } else {
+            "start_time=${urlEncode(startTime)}"
+        }
+        // The official app moved chat history to kick.com (40.31.0); web.kick.com is
+        // still live and stays primary for the website-session contract, with kick.com
+        // as a fallback in case the legacy host is retired.
+        val historyUrls = listOf(
+            "https://web.kick.com/api/v1/chat/${urlEncode(channelOrChatroomId)}/history?$query",
+            "https://kick.com/api/v1/chat/${urlEncode(channelOrChatroomId)}/history?$query",
+        )
+        var lastError: Throwable? = null
+        for (url in historyUrls) {
+            val raw = try {
+                getRaw(url, isKickWeb = true)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                lastError = error
+                continue
+            }
+            val root = try {
+                json.parseToJsonElement(raw)
+            } catch (error: Exception) {
+                lastError = error
+                continue
+            }
+            return parseKickMessagesData(root, raw).also { parsed ->
+                if (parsed.messages.isEmpty() && isKickRecentChatDebugEnabled()) {
+                    Log.w(
+                        "KickRecentChat",
+                        "empty history source=$channelOrChatroomId start=$startTime cursor=${cursor ?: "-"} body=${raw.take(600).replace('\n', ' ')}"
+                    )
+                }
             }
         }
-        val raw = getRaw(url, isKickWeb = true)
-        val root = runCatching { json.parseToJsonElement(raw) }.getOrElse { error ->
-            throw error
-        }
-        return parseKickMessagesData(root, raw).also { parsed ->
-            if (parsed.messages.isEmpty() && isKickRecentChatDebugEnabled()) {
-                Log.w(
-                    "KickRecentChat",
-                    "empty history source=$channelOrChatroomId start=$startTime cursor=${cursor ?: "-"} body=${raw.take(600).replace('\n', ' ')}"
-                )
-            }
-        }
+        throw lastError ?: IOException("Kick chat history fetch failed")
     }
 
     suspend fun getLiveChatHistory(channelOrChatroomId: String): KickMessagesData {
-        val raw = getRaw(
+        val historyUrls = listOf(
             "https://web.kick.com/api/v1/chat/${urlEncode(channelOrChatroomId)}/history",
-            isKickWeb = true
+            "https://kick.com/api/v1/chat/${urlEncode(channelOrChatroomId)}/history",
         )
-        val root = runCatching { json.parseToJsonElement(raw) }.getOrElse { error ->
-            throw error
-        }
-        return parseKickMessagesData(root, raw).also { parsed ->
-            if (parsed.messages.isEmpty() && isKickRecentChatDebugEnabled()) {
-                Log.d(
-                    "KickRecentChat",
-                    "empty live history source=$channelOrChatroomId body=${raw.take(600).replace('\n', ' ')}"
-                )
+        var lastError: Throwable? = null
+        for (url in historyUrls) {
+            val raw = try {
+                getRaw(url, isKickWeb = true)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                lastError = error
+                continue
+            }
+            val root = try {
+                json.parseToJsonElement(raw)
+            } catch (error: Exception) {
+                lastError = error
+                continue
+            }
+            return parseKickMessagesData(root, raw).also { parsed ->
+                if (parsed.messages.isEmpty() && isKickRecentChatDebugEnabled()) {
+                    Log.d(
+                        "KickRecentChat",
+                        "empty live history source=$channelOrChatroomId body=${raw.take(600).replace('\n', ' ')}"
+                    )
+                }
             }
         }
+        throw lastError ?: IOException("Kick live chat history fetch failed")
     }
 
     /**
@@ -2917,10 +3004,64 @@ class KickRepository @Inject constructor(
         parseActiveChattersResponse(raw)
     }
 
-    suspend fun getCentrifugoChatConnection(channelId: String?): String? {
+    suspend fun getChannelViewerList(channelId: String?, channelLogin: String? = null): ChannelViewerList = withContext(Dispatchers.IO) {
+        var cid = channelId?.trim()?.takeIf { it.isNotBlank() }
+        var login = channelLogin?.trim()?.takeIf { it.isNotBlank() }
+        if (cid == null && !login.isNullOrBlank()) {
+            val channel = runCatching { getChannel(login) }.getOrNull()
+            cid = channel?.id?.toString()
+            if (login.isBlank()) {
+                login = channel?.slug ?: channel?.user?.username
+            }
+        }
+        if (cid.isNullOrBlank()) {
+            val fallbackList = if (!login.isNullOrBlank()) listOf(login) else emptyList()
+            return@withContext ChannelViewerList(
+                broadcasters = fallbackList,
+                moderators = emptyList(),
+                vips = emptyList(),
+                viewers = emptyList(),
+                count = fallbackList.size,
+                ogs = emptyList(),
+            )
+        }
+
+        val url = "https://web.kick.com/api/v1/channels/${urlEncode(cid)}/chat/active-chatters"
+        val raw = runCatching {
+            executeKickWebSessionRequest(url)
+        }.getOrElse {
+            runCatching {
+                getRaw(url, isKickWeb = true)
+            }.getOrNull()
+        }
+
+        if (raw.isNullOrBlank()) {
+            val fallbackList = if (!login.isNullOrBlank()) listOf(login) else emptyList()
+            return@withContext ChannelViewerList(
+                broadcasters = fallbackList,
+                moderators = emptyList(),
+                vips = emptyList(),
+                viewers = emptyList(),
+                count = fallbackList.size,
+                ogs = emptyList(),
+            )
+        }
+
+        parseChannelViewerListResponse(raw, fallbackBroadcaster = login)
+    }
+
+    data class KickCentrifugoChatConnection(
+        val wsUrl: String?,
+        /** Client id sent in the connection request — must be reused when minting the connection token. */
+        val clientId: String,
+        /** Provider names the server reports for this channel (e.g. pusher, centrifugo). */
+        val providers: List<String>,
+    )
+
+    suspend fun getCentrifugoChatConnection(channelId: String?): KickCentrifugoChatConnection? {
         val cid = channelId?.trim()?.takeIf { it.isNotBlank() } ?: return null
         return runCatching {
-            val clientId = java.util.UUID.randomUUID().toString()
+            val clientId = UUID.randomUUID().toString()
             val url = "https://web.kick.com/api/v1/realtime/channels/${urlEncode(cid)}/chat/connection"
             val payload = JSONObject().apply {
                 put("client", JSONObject().apply {
@@ -2934,37 +3075,61 @@ class KickRepository @Inject constructor(
                     })
                 })
             }.toString()
-            val raw = executeKickWebSessionRequestWithOkHttp(url, payload, post = true)
+            val raw = executeKickWebSessionRequest(url, payload, post = true)
             val root = JSONObject(raw)
             val connections = root.optJSONObject("data")?.optJSONArray("connections")
             var wsUrl: String? = null
+            val providers = mutableListOf<String>()
             if (connections != null) {
                 for (i in 0 until connections.length()) {
-                    val conn = connections.optJSONObject(i)
-                    if (conn?.optString("provider") == "centrifugo") {
+                    val conn = connections.optJSONObject(i) ?: continue
+                    val provider = conn.optString("provider")
+                    if (provider.isNotBlank()) providers += provider
+                    if (provider == "centrifugo" && wsUrl.isNullOrBlank()) {
                         wsUrl = conn.optJSONObject("credentials")?.optString("url")
-                        if (!wsUrl.isNullOrBlank()) break
                     }
                 }
             }
-            wsUrl?.takeIf { it.isNotBlank() }
+            KickCentrifugoChatConnection(
+                wsUrl = wsUrl?.takeIf { it.isNotBlank() },
+                clientId = clientId,
+                providers = providers,
+            )
         }.onFailure {
             DiagnosticLogger.w("KickCentrifugo", "failed to resolve Centrifugo chat connection: ${it.message}")
         }.getOrNull()
     }
 
-    suspend fun getCentrifugoToken(): String? {
+    suspend fun getCentrifugoToken(clientId: String? = null): String? {
         return runCatching {
-            val clientId = java.util.UUID.randomUUID().toString()
+            // The token must be minted for the same client id that was sent in the
+            // connection request, otherwise the Centrifugo server cannot bind it.
+            val boundClientId = clientId?.trim()?.takeIf { it.isNotBlank() }
+                ?: UUID.randomUUID().toString()
             val url = "https://web.kick.com/api/v1/realtime/auth/connection"
             val payload = JSONObject().apply {
-                put("client_id", clientId)
+                put("client_id", boundClientId)
             }.toString()
-            val raw = executeKickWebSessionRequestWithOkHttp(url, payload, post = true)
+            val raw = executeKickWebSessionRequest(url, payload, post = true)
             val root = JSONObject(raw)
             root.optJSONObject("data")?.optString("token")?.takeIf { it.isNotBlank() }
         }.onFailure {
             DiagnosticLogger.w("KickCentrifugo", "failed to fetch Centrifugo token: ${it.message}")
+        }.getOrNull()
+    }
+
+    /** Best-effort per-subscription token (official app mints one per channel via realtime/auth/channel). */
+    suspend fun getCentrifugoChannelToken(channel: String): String? {
+        return runCatching {
+            val url = "https://web.kick.com/api/v1/realtime/auth/channel"
+            val payload = JSONObject().apply {
+                put("channel", channel)
+            }.toString()
+            val raw = executeKickWebSessionRequest(url, payload, post = true)
+            val root = JSONObject(raw)
+            root.optJSONObject("data")?.optString("token")?.takeIf { it.isNotBlank() }
+        }.onFailure {
+            DiagnosticLogger.w("KickCentrifugo", "failed to fetch Centrifugo channel token: ${it.message}")
         }.getOrNull()
     }
 
@@ -3154,8 +3319,10 @@ class KickRepository @Inject constructor(
         }
         // The official Kick app resolves clip playback via the mobile subdomain
         // (authenticated); web.kick.com is kept as a fallback since the web
-        // player uses it too. Both 404 without a valid session, which degrades
-        // gracefully to the single-quality source playlist.
+        // player uses it too. Both endpoints work anonymously and only 404 when
+        // the video has no IVS playback entity (e.g. clips cut from a VOD after
+        // the stream ended), which degrades gracefully to the single-quality
+        // source playlist.
         val endpoints = listOf(
             "https://mobile.kick.com/api/v1/stream/${urlEncode(videoUuid)}/playback",
             "https://web.kick.com/api/v1/stream/${urlEncode(videoUuid)}/playback",
@@ -4468,6 +4635,10 @@ class KickRepository @Inject constructor(
     }
 
     companion object {
+        /** Fixed client token the official app sends as X-CLIENT-TOKEN on the viewer socket token fetch. */
+        private const val KICK_VIEWER_CLIENT_TOKEN =
+            "f3a7c8b1e5d9246aa8f6b37d5c8e9a2fd4e1c0abf79d3826b4c5e7a9d8f2b6c3"
+
         fun parseActiveChattersResponse(rawJson: String): List<String> {
             if (rawJson.isBlank()) return emptyList()
             val root = runCatching { Json.Default.parseToJsonElement(rawJson).jsonObject }.getOrNull()
@@ -4483,6 +4654,96 @@ class KickRepository @Inject constructor(
                 }
             }
             return names
+        }
+
+        fun parseChannelViewerListResponse(
+            rawJson: String,
+            fallbackBroadcaster: String? = null,
+        ): ChannelViewerList {
+            val fallbackList = if (!fallbackBroadcaster.isNullOrBlank()) listOf(fallbackBroadcaster) else emptyList()
+            if (rawJson.isBlank()) {
+                return ChannelViewerList(
+                    broadcasters = fallbackList,
+                    moderators = emptyList(),
+                    vips = emptyList(),
+                    viewers = emptyList(),
+                    count = fallbackList.size,
+                    ogs = emptyList(),
+                )
+            }
+            val root = runCatching { Json.Default.parseToJsonElement(rawJson).jsonObject }.getOrNull()
+                ?: return ChannelViewerList(
+                    broadcasters = fallbackList,
+                    moderators = emptyList(),
+                    vips = emptyList(),
+                    viewers = emptyList(),
+                    count = fallbackList.size,
+                    ogs = emptyList(),
+                )
+            val data = root["data"] as? JsonObject ?: root
+
+            fun extractNames(element: JsonElement?): List<String> {
+                val names = LinkedHashSet<String>()
+                when (element) {
+                    is JsonArray -> {
+                        for (item in element) {
+                            when (item) {
+                                is JsonObject -> {
+                                    val u = (item["username"] as? JsonPrimitive)?.contentOrNull
+                                        ?: (item["slug"] as? JsonPrimitive)?.contentOrNull
+                                        ?: (item["name"] as? JsonPrimitive)?.contentOrNull
+                                    if (!u.isNullOrBlank()) names.add(u)
+                                }
+                                is JsonPrimitive -> {
+                                    item.contentOrNull?.takeIf { it.isNotBlank() }?.let { names.add(it) }
+                                }
+                                else -> Unit
+                            }
+                        }
+                    }
+                    is JsonObject -> {
+                        val u = (element["username"] as? JsonPrimitive)?.contentOrNull
+                            ?: (element["slug"] as? JsonPrimitive)?.contentOrNull
+                        if (!u.isNullOrBlank()) names.add(u)
+                    }
+                    is JsonPrimitive -> {
+                        element.contentOrNull?.takeIf { it.isNotBlank() }?.let { names.add(it) }
+                    }
+                    else -> Unit
+                }
+                return names.toList()
+            }
+
+            val broadcasters = LinkedHashSet<String>()
+            broadcasters.addAll(extractNames(data["broadcaster"] ?: data["broadcasters"]))
+            if (broadcasters.isEmpty() && !fallbackBroadcaster.isNullOrBlank()) {
+                broadcasters.add(fallbackBroadcaster)
+            }
+
+            val seen = java.util.TreeSet<String>(String.CASE_INSENSITIVE_ORDER)
+            seen.addAll(broadcasters)
+
+            val moderators = extractNames(data["moderators"]).filter { seen.add(it) }
+            val vips = extractNames(data["vips"]).filter { seen.add(it) }
+            val ogs = extractNames(data["ogs"]).filter { seen.add(it) }
+            val viewers = extractNames(data["chatters"] ?: data["viewers"]).filter { seen.add(it) }
+
+            val parsedCount = (data["total_count"] as? JsonPrimitive)?.intOrNull
+                ?: (data["count"] as? JsonPrimitive)?.intOrNull
+                ?: (data["total"] as? JsonPrimitive)?.intOrNull
+                ?: (data["chatter_count"] as? JsonPrimitive)?.intOrNull
+                ?: (root["total_count"] as? JsonPrimitive)?.intOrNull
+                ?: (root["count"] as? JsonPrimitive)?.intOrNull
+            val totalCount = parsedCount ?: seen.size
+
+            return ChannelViewerList(
+                broadcasters = broadcasters.toList(),
+                moderators = moderators,
+                vips = vips,
+                viewers = viewers,
+                count = totalCount,
+                ogs = ogs,
+            )
         }
 
         fun parsePlaybackUrlResponse(rawJson: String): String? {
@@ -5297,6 +5558,8 @@ class KickRepository @Inject constructor(
         url: String,
         body: String? = null,
         post: Boolean = body != null,
+        extraHeaders: Map<String, String> = emptyMap(),
+        method: String = if (post) "POST" else "GET",
     ): String {
         val cookies = getKickCookieHeader()
         val sessionBearer = cookies?.let { AuthStateHelper.extractKickSessionToken(it) }?.let { "Bearer $it" }
@@ -5305,48 +5568,67 @@ class KickRepository @Inject constructor(
         val bearer = sessionBearer ?: oauthBearer
             ?: throw IOException("Kick login is required.")
         val engine = cronetEngine?.get()
-            ?: return executeKickWebSessionRequestWithOkHttp(url, body, post)
-        val response = withTimeout(15_000L) {
-            suspendCancellableCoroutine { continuation ->
-                val builder = engine.newUrlRequestBuilder(
-                    url,
-                    getByteArrayCronetCallback(continuation),
-                    cronetExecutor,
-                )
-                    .addHeader("User-Agent", kickWebUserAgent)
-                    .addHeader("Accept", "application/json, text/plain, */*")
-                    .addHeader("Origin", "https://kick.com")
-                    .addHeader("Referer", buildKickWebReferer(url))
-                    .addHeader("x-app-platform", "web")
-                    .addHeader("Authorization", bearer)
-                if (cookies != null) {
-                    builder.addHeader("Cookie", cookies)
-                    extractKickXsrfToken(cookies)?.let { builder.addHeader("X-XSRF-TOKEN", it) }
+            ?: return executeKickWebSessionRequestWithOkHttp(url, body, post, extraHeaders, method)
+        return try {
+            val response = withTimeout(15_000L) {
+                suspendCancellableCoroutine { continuation ->
+                    val builder = engine.newUrlRequestBuilder(
+                        url,
+                        getByteArrayCronetCallback(continuation),
+                        cronetExecutor,
+                    )
+                        .addHeader("User-Agent", kickWebUserAgent)
+                        .addHeader("Accept", "application/json, text/plain, */*")
+                        .addHeader("Origin", "https://kick.com")
+                        .addHeader("Referer", buildKickWebReferer(url))
+                        .addHeader("x-app-platform", "web")
+                        .addHeader("Authorization", bearer)
+                    extraHeaders.forEach { (name, value) -> builder.addHeader(name, value) }
+                    if (cookies != null) {
+                        builder.addHeader("Cookie", cookies)
+                        extractKickXsrfToken(cookies)?.let { builder.addHeader("X-XSRF-TOKEN", it) }
+                    }
+                    if (method != "GET") {
+                        builder.setHttpMethod(method)
+                        if (post || body != null || method == "POST") {
+                            builder
+                                .addHeader("Content-Type", "application/json")
+                                .setUploadDataProvider(UploadDataProviders.create(body.orEmpty().toByteArray()), cronetExecutor)
+                        }
+                    }
+                    val request = builder.build()
+                    continuation.invokeOnCancellation { request.cancel() }
+                    request.start()
                 }
-                if (post) {
-                    builder
-                        .setHttpMethod("POST")
-                        .addHeader("Content-Type", "application/json")
-                        .setUploadDataProvider(UploadDataProviders.create(body.orEmpty().toByteArray()), cronetExecutor)
-                }
-                val request = builder.build()
-                continuation.invokeOnCancellation { request.cancel() }
-                request.start()
             }
+            val raw = String(response.second, Charsets.UTF_8)
+            if (response.first.httpStatusCode !in 200..299) {
+                throw IOException("Kick request failed (${response.first.httpStatusCode}) for $url")
+            }
+            raw
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(tag, "Cronet web session request failed for $url, falling back to OkHttp: ${e.message}")
+            executeKickWebSessionRequestWithOkHttp(url, body, post, extraHeaders, method)
         }
-        val raw = String(response.second, Charsets.UTF_8)
-        if (response.first.httpStatusCode !in 200..299) {
-            throw IOException("Kick request failed (${response.first.httpStatusCode}) for $url")
-        }
-        return raw
     }
 
-    private suspend fun executeKickWebSessionRequestWithOkHttp(url: String, body: String?, post: Boolean): String {
+    private suspend fun executeKickWebSessionRequestWithOkHttp(
+        url: String,
+        body: String?,
+        post: Boolean,
+        extraHeaders: Map<String, String> = emptyMap(),
+        method: String = if (post) "POST" else "GET",
+    ): String {
         return withContext(Dispatchers.IO) {
             val builder = createRequestBuilder(url, isKickWeb = true)
-            if (post) {
-                builder.header("Content-Type", "application/json")
-                    .post(body.orEmpty().toRequestBody("application/json".toMediaTypeOrNull()))
+            extraHeaders.forEach { (name, value) -> builder.header(name, value) }
+            when {
+                method != "GET" && (post || body != null || method == "POST") -> {
+                    builder.header("Content-Type", "application/json")
+                        .method(method, body.orEmpty().toRequestBody("application/json".toMediaTypeOrNull()))
+                }
+                method != "GET" -> builder.method(method, null)
             }
             okHttpClient.newCall(builder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
@@ -5407,7 +5689,7 @@ class KickRepository @Inject constructor(
             .apply {
                 if (isKickWeb) {
                     header("User-Agent", kickWebUserAgent)
-                    header("sec-ch-ua", "\"Android WebView\";v=\"$kickWebChromiumMajor\", \"Not_A Brand\";v=\"8\", \"Chromium\";v=\"$kickWebChromiumMajor\"")
+                    header("sec-ch-ua", "\"Chromium\";v=\"$kickWebChromiumMajor\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"$kickWebChromiumMajor\"")
                     header("sec-ch-ua-mobile", "?1")
                     header("sec-ch-ua-platform", "\"Android\"")
                     header("Origin", "https://kick.com")

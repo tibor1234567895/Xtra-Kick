@@ -1,11 +1,16 @@
 package com.xtrakick.app.repository
 
+import android.content.Context
+import android.util.Log
+import androidx.core.content.edit
 import com.xtrakick.app.db.NotificationUsersDao
 import com.xtrakick.app.model.NotificationUser
 import com.xtrakick.app.model.kick.KickChannelResponse
+import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.FcmSyncManager
-import android.util.Log
+import com.xtrakick.app.util.prefs
 import dagger.Lazy
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -13,13 +18,18 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
-import android.content.Context
-import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.prefs
-import dagger.hilt.android.qualifiers.ApplicationContext
+data class NotificationChannelMetadata(
+    val id: String,
+    val login: String,
+    val name: String,
+    val logoUrl: String? = null,
+)
 
 @Singleton
 class NotificationUsersRepository @Inject constructor(
@@ -29,6 +39,60 @@ class NotificationUsersRepository @Inject constructor(
     private val fcmSyncManager: Lazy<FcmSyncManager>,
     private val localFollowChannelRepository: Lazy<LocalFollowChannelRepository>? = null,
 ) {
+
+    private val metadataPrefs by lazy {
+        context?.getSharedPreferences("notification_channel_metadata", Context.MODE_PRIVATE)
+    }
+
+    private val metadataCache = ConcurrentHashMap<String, NotificationChannelMetadata>()
+
+    fun getChannelMetadata(key: String): NotificationChannelMetadata? {
+        val trimmed = key.trim()
+        if (trimmed.isEmpty()) return null
+        val lowerKey = trimmed.lowercase(Locale.ROOT)
+        metadataCache[trimmed]?.let { return it }
+        metadataCache[lowerKey]?.let { return it }
+        val prefs = metadataPrefs ?: return null
+        val jsonStr = prefs.getString("id_$trimmed", null)
+            ?: prefs.getString("slug_$lowerKey", null)
+            ?: return null
+        return runCatching {
+            val json = JSONObject(jsonStr)
+            val meta = NotificationChannelMetadata(
+                id = json.getString("id"),
+                login = json.getString("login"),
+                name = json.optString("name", json.getString("login")),
+                logoUrl = json.optString("logoUrl").takeIf { it.isNotBlank() && it != "null" }
+            )
+            metadataCache[meta.id] = meta
+            metadataCache[meta.login.lowercase(Locale.ROOT)] = meta
+            meta
+        }.getOrNull()
+    }
+
+    fun saveChannelMetadata(id: String, login: String, name: String?, logoUrl: String?) {
+        val trimmedId = id.trim()
+        val trimmedLogin = login.trim()
+        if (trimmedId.isEmpty() || trimmedLogin.isEmpty()) return
+        val finalName = name?.trim()?.takeIf { it.isNotBlank() } ?: trimmedLogin
+        val meta = NotificationChannelMetadata(trimmedId, trimmedLogin, finalName, logoUrl)
+        val lowerLogin = trimmedLogin.lowercase(Locale.ROOT)
+        metadataCache[trimmedId] = meta
+        metadataCache[lowerLogin] = meta
+        val prefs = metadataPrefs ?: return
+        runCatching {
+            val json = JSONObject().apply {
+                put("id", trimmedId)
+                put("login", trimmedLogin)
+                put("name", finalName)
+                put("logoUrl", logoUrl)
+            }
+            prefs.edit {
+                putString("id_$trimmedId", json.toString())
+                putString("slug_$lowerLogin", json.toString())
+            }
+        }
+    }
 
     suspend fun loadUsers() = withContext(Dispatchers.IO) {
         notificationUsersDao.getAll()
@@ -59,7 +123,12 @@ class NotificationUsersRepository @Inject constructor(
     suspend fun isNotificationEnabled(vararg candidateKeys: String?): Boolean =
         isNotificationEnabled(candidateKeys.toList())
 
-    suspend fun enableNotificationsForChannel(candidateKeys: Collection<String?>): String? = withContext(Dispatchers.IO) {
+    suspend fun enableNotificationsForChannel(
+        candidateKeys: Collection<String?>,
+        preferredLogin: String? = null,
+        preferredName: String? = null,
+        preferredLogoUrl: String? = null,
+    ): String? = withContext(Dispatchers.IO) {
         val initialKeys = candidateKeys.mapNotNull { it?.trim()?.takeIf { k -> k.isNotBlank() } }.toSet()
         if (initialKeys.isEmpty()) return@withContext null
 
@@ -67,6 +136,16 @@ class NotificationUsersRepository @Inject constructor(
         if (canonicalId == null) return@withContext null
 
         rememberChannelAliases(canonicalId, allKeys + initialKeys)
+
+        val slug = preferredLogin ?: initialKeys.firstOrNull { it.toIntOrNull() == null }
+        if (slug != null) {
+            saveChannelMetadata(
+                id = canonicalId,
+                login = slug,
+                name = preferredName ?: slug,
+                logoUrl = preferredLogoUrl,
+            )
+        }
 
         // Remove any stale / duplicate alias rows for this channel so the DB stays clean
         val staleKeys = allKeys.filter { it != canonicalId }
@@ -213,6 +292,18 @@ class NotificationUsersRepository @Inject constructor(
             ?: normalized.firstOrNull { it.all(Char::isDigit) }
             ?: normalized.firstOrNull()
 
+        if (canonicalId != null && resolvedChannel != null) {
+            val slug = resolvedChannel.slug ?: normalized.firstOrNull { it.toIntOrNull() == null }
+            if (slug != null) {
+                saveChannelMetadata(
+                    id = canonicalId,
+                    login = slug,
+                    name = resolvedChannel.user?.username ?: slug,
+                    logoUrl = resolvedChannel.user?.profileImage,
+                )
+            }
+        }
+
         return ChannelResolutionResult(canonicalId, normalized)
     }
 
@@ -220,11 +311,42 @@ class NotificationUsersRepository @Inject constructor(
         return resolveCanonicalChannelInfo(candidateKeys).allKeys
     }
 
+    suspend fun ensureMetadataSeeded() = withContext(Dispatchers.IO) {
+        if (metadataPrefs?.getBoolean("seeds_initialized_v3", false) == true) return@withContext
+        val knownSeeds = mapOf(
+            "2642629" to ("4head" to "4HEAD"),
+            "3124131" to ("sock22" to "Sock22"),
+            "44431964" to ("travpiper" to "travpiper"),
+            "1243232" to ("caramel" to "Caramel"),
+            "1028087" to ("saab" to "Saab"),
+            "676" to ("xqc" to "xQc"),
+            "33057" to ("buddha" to "Buddha"),
+            "90452" to ("omie" to "omie"),
+            "6069133" to ("firas" to "Firas"),
+            "58065" to ("impulsespoon646" to "impulsespoon646"),
+            "120409948" to ("ananped" to "Ananped"),
+            "120340753" to ("lazenxd" to "LAZENXD"),
+        )
+        for ((uid, pair) in knownSeeds) {
+            saveChannelMetadata(uid, pair.first, pair.second, null)
+            localFollowChannelRepository?.get()?.let { repo ->
+                repo.getFollow(uid, pair.first)?.let { f ->
+                    if (f.userId.isNullOrBlank()) {
+                        f.userId = uid
+                        repo.updateFollow(f)
+                    }
+                }
+            }
+        }
+        metadataPrefs?.edit { putBoolean("seeds_initialized_v3", true) }
+    }
+
     /**
      * Cleanup and migration: ensures all stored notification keys are canonical broadcaster user IDs.
      * Re-keys any rows stored with channel IDs (e.g. from Pusher) or slugs to the true user ID.
      */
     suspend fun migrateLegacyKeys() = withContext(Dispatchers.IO) {
+        ensureMetadataSeeded()
         if (context?.prefs()?.getBoolean(AppConstants.NOTIFICATION_KEYS_MIGRATED, false) == true) {
             return@withContext
         }

@@ -49,6 +49,7 @@ class FollowedChannelsViewModel @Inject constructor(
                 sort = when (sort) {
                     FollowedChannelsSortDialog.SORT_FOLLOWED_AT -> "created_at"
                     FollowedChannelsSortDialog.SORT_ALPHABETICALLY -> "login"
+                    FollowedChannelsSortDialog.SORT_SOURCE -> "source"
                     else -> "login"
                 },
                 order = when (order) {
@@ -76,7 +77,8 @@ class FollowedChannelsViewModel @Inject constructor(
     private fun normalizeSort(sort: String?): String {
         return when (sort) {
             FollowedChannelsSortDialog.SORT_FOLLOWED_AT,
-            FollowedChannelsSortDialog.SORT_ALPHABETICALLY -> sort
+            FollowedChannelsSortDialog.SORT_ALPHABETICALLY,
+            FollowedChannelsSortDialog.SORT_SOURCE -> sort
             else -> FollowedChannelsSortDialog.SORT_ALPHABETICALLY
         }
     }

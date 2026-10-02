@@ -50,8 +50,9 @@ class NotificationChannelsAdapter(
                 onToggle(entry, checked)
             }
             val logo = entry.logoUrl
-            if (logo != null) {
-                binding.userImage.isVisible = true
+            binding.userImage.isVisible = true
+            binding.userImage.setImageResource(R.drawable.baseline_person_black_24)
+            if (!logo.isNullOrBlank()) {
                 context.imageLoader.enqueue(
                     ImageRequest.Builder(context).apply {
                         data(logo)
@@ -62,8 +63,6 @@ class NotificationChannelsAdapter(
                         target(binding.userImage)
                     }.build()
                 )
-            } else {
-                binding.userImage.isVisible = false
             }
         }
     }

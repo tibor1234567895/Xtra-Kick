@@ -113,7 +113,8 @@ class KickDailyRewardDialog : DialogFragment() {
         }
         val dailyChallenge = try {
             KickRewardsPolicy.selectDaily(rewardsRepository.getDailyChallenges())
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.xtrakick.app.util.DiagnosticLogger.w("KickRewards", "getDailyChallenges failed: ${e.message}", e)
             if (!isPeriodicRefresh && isAdded && _binding != null) {
                 showLoadError(R.string.daily_reward_load_failed)
             }
@@ -152,8 +153,16 @@ class KickDailyRewardDialog : DialogFragment() {
         currentBinding.claimButton.apply {
             isVisible = true
             isEnabled = true
-            setText(R.string.retry)
-            setOnClickListener { lifecycleScope.launch { loadReward() } }
+            if (messageRes == R.string.daily_reward_login_required) {
+                setText(R.string.log_in)
+                setOnClickListener {
+                    dismiss()
+                    startActivity(Intent(requireContext(), com.xtrakick.app.ui.login.LoginActivity::class.java))
+                }
+            } else {
+                setText(R.string.retry)
+                setOnClickListener { lifecycleScope.launch { loadReward() } }
+            }
         }
     }
 
@@ -252,7 +261,8 @@ class KickDailyRewardDialog : DialogFragment() {
         lifecycleScope.launch {
             val result = try {
                 rewardsRepository.claimDailyChallenge(activeChallenge.id)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                com.xtrakick.app.util.DiagnosticLogger.w("KickRewards", "claimDailyChallenge failed: ${e.message}", e)
                 isClaiming = false
                 _binding?.let { b ->
                     b.loadingIndicator.isVisible = false

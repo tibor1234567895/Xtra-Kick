@@ -117,6 +117,44 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
         }
     }
 
+    private fun executeSaveFollow(kickFollow: Boolean) {
+        val setting = requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0
+        viewModel.saveFollowChannel(
+            requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
+            args.channelId,
+            args.channelLogin,
+            args.channelName,
+            setting,
+            false,
+            requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+            KickApiHelper.getKickWebHeaders(requireContext(), true),
+            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+            kickFollow = kickFollow,
+        )
+    }
+
+    private fun showFollowChoiceBottomSheet() {
+        val displayName = if (args.channelLogin != null && !args.channelLogin.equals(args.channelName, true)) {
+            when (requireContext().prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
+                "0" -> "${args.channelName}(${args.channelLogin})"
+                "1" -> args.channelName ?: args.channelLogin ?: ""
+                else -> args.channelLogin ?: ""
+            }
+        } else {
+            args.channelName ?: args.channelLogin ?: ""
+        }
+        val myUsername = requireContext().tokenPrefs().getString(AppConstants.USERNAME, null)?.trim()
+        val isOwnChannel = !myUsername.isNullOrBlank() && (
+            args.channelLogin?.trim()?.equals(myUsername, ignoreCase = true) == true ||
+            args.channelName?.trim()?.equals(myUsername, ignoreCase = true) == true
+        )
+        childFragmentManager.setFragmentResultListener(FollowChannelBottomSheet.REQUEST_KEY, viewLifecycleOwner) { _, bundle ->
+            val kickFollow = bundle.getBoolean(FollowChannelBottomSheet.RESULT_KICK_FOLLOW, true)
+            executeSaveFollow(kickFollow)
+        }
+        FollowChannelBottomSheet.newInstance(displayName, isOwnChannel).show(childFragmentManager, "follow_sheet")
+    }
+
     override val currentFragment: Fragment?
         get() = childFragmentManager.findFragmentByTag("f${binding.viewPager.currentItem}")
 
@@ -259,6 +297,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                     ))
                                     .setNegativeButton(getString(R.string.no), null)
                                     .setPositiveButton(getString(R.string.yes)) { _, _ ->
+                                        val kickFollow = setting == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
                                         viewModel.deleteFollowChannel(
                                             requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
                                             args.channelId,
@@ -267,21 +306,28 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                             requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
                                             KickApiHelper.getKickWebHeaders(requireContext(), true),
                                             requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                                            kickFollow = kickFollow,
                                         )
                                     }
                                     .show()
                             } else {
-                                viewModel.saveFollowChannel(
-                                    requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                    args.channelId,
-                                    args.channelLogin,
-                                    args.channelName,
-                                    setting,
-                                    requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false),
-                                    requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                    requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                                val isKickLoggedIn = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+                                val isRemembered = requireContext().prefs().getBoolean(AppConstants.FOLLOW_MODE_REMEMBERED, false)
+                                val myUsername = requireContext().tokenPrefs().getString(AppConstants.USERNAME, null)?.trim()
+                                val isOwnChannel = !myUsername.isNullOrBlank() && (
+                                    args.channelLogin?.trim()?.equals(myUsername, ignoreCase = true) == true ||
+                                    args.channelName?.trim()?.equals(myUsername, ignoreCase = true) == true
                                 )
+                                if (isOwnChannel) {
+                                    executeSaveFollow(false)
+                                    Toast.makeText(requireContext(), R.string.following_own_channel_locally, Toast.LENGTH_SHORT).show()
+                                } else if (!isKickLoggedIn) {
+                                    executeSaveFollow(false)
+                                } else if (isRemembered) {
+                                    executeSaveFollow(setting == 0)
+                                } else {
+                                    showFollowChoiceBottomSheet()
+                                }
                             }
                         }
                         true
@@ -440,6 +486,14 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                 viewModel.follow.value = null
                             }
                         }
+                    }
+                }
+                toolbar.post {
+                    toolbar.findViewById<View>(R.id.followButton)?.setOnLongClickListener {
+                        if (com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext()) && viewModel.isFollowing.value != true) {
+                            showFollowChoiceBottomSheet()
+                            true
+                        } else false
                     }
                 }
             }
@@ -828,26 +882,34 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                 KickApiHelper.getKickPublicApiHeaders(requireContext()),
                             )
                         }
-                        "follow" -> viewModel.saveFollowChannel(
-                            requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                            args.channelId,
-                            args.channelLogin,
-                            args.channelName,
-                            requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                            requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false),
-                            requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getKickWebHeaders(requireContext(), true),
-                            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                        )
-                        "unfollow" -> viewModel.deleteFollowChannel(
-                            requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                            args.channelId,
-                            args.channelLogin,
-                            requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                            requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getKickWebHeaders(requireContext(), true),
-                            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                        )
+                        "follow" -> {
+                            val kickFollow = (requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0) == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+                            viewModel.saveFollowChannel(
+                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
+                                args.channelId,
+                                args.channelLogin,
+                                args.channelName,
+                                requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
+                                false,
+                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                                kickFollow = kickFollow,
+                            )
+                        }
+                        "unfollow" -> {
+                            val kickFollow = (requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0) == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+                            viewModel.deleteFollowChannel(
+                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
+                                args.channelId,
+                                args.channelLogin,
+                                requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
+                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                                kickFollow = kickFollow,
+                            )
+                        }
                         "enableNotifications" -> {
                             viewModel.enableNotifications(
                                 requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),

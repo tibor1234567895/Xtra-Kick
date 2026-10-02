@@ -397,6 +397,15 @@
     <string name="irc_notice_whisper_restricted_recipient">That user\'s settings prevent them from receiving this whisper.</string>
     <string name="position">Position: %s</string>
     <string name="player_viewerlist">Open viewer list from view count</string>
+    <string name="broadcaster">Broadcaster</string>
+    <string name="moderators">Moderators</string>
+    <string name="vips">VIPs</string>
+    <string name="ogs">OGs</string>
+    <string name="chatters">Chatters</string>
+    <string name="search_chatters">Search chatters…</string>
+    <string name="no_chatters_found">No chatters found</string>
+    <string name="error_loading_chatters">Failed to load chatters</string>
+    <string name="copied_username">Copied %s</string>
     <string name="use_followpager">Use tabs for \"Following\" page</string>
     <string name="sleep_timer_lock">Lock screen after</string>
     <string name="sleep_timer_lock_permissions">Lock screen after (requires device admin permissions)</string>
@@ -510,7 +519,10 @@
     <string name="retry_ivs">Retry low latency player</string>
     <string name="sub_only_summary">For sub-only content</string>
     <string name="follow_button">Follow button</string>
+    <string name="follow_kick_account">Follow on Kick</string>
     <string name="follow_local">Follow locally</string>
+    <string name="follow_mode_remembered_title">Remember follow mode</string>
+    <string name="follow_mode_remembered_summary">When off, always ask whether to follow on Kick or locally</string>
     <string name="hide">Hide</string>
     <string name="redeemed">Redeemed %s</string>
     <string name="user_redeemed">%1$s redeemed %2$s</string>
@@ -993,6 +1005,27 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="open_url">Open URL</string>
     <string name="open_browser_login_recommended" translatable="false">Open in browser (Not recommended)</string>
     <string name="loading_kick_login" translatable="false">Loading Kick login…</string>
+    <string name="continue_with_kick" translatable="false">Continue with Kick</string>
+    <string name="continue_with_google" translatable="false">Continue with Google</string>
+    <string name="sign_in_title" translatable="false">Sign in to Xtra-Kick</string>
+    <string name="google_sign_in_failed" translatable="false">Google sign-in failed. Try again or use Kick login.</string>
+    <string name="logout_clear_follows_title" translatable="false">Clear local follows?</string>
+    <string name="logout_clear_follows_message" translatable="false">Channels you follow locally in the app can be removed when you log out.</string>
+    <string name="logout_follows_clear" translatable="false">Clear</string>
+    <string name="logout_follows_keep" translatable="false">Keep</string>
+    <string name="follow_channel_title" translatable="false">Follow %1$s</string>
+    <string name="follow_channel_subtitle" translatable="false">Choose how you want to follow this channel</string>
+    <string name="follow_on_kick" translatable="false">Follow on Kick</string>
+    <string name="follow_on_kick_desc" translatable="false">Syncs to your Kick account and unlocks follower-only chat</string>
+    <string name="follow_local_only" translatable="false">Follow locally only</string>
+    <string name="follow_local_only_desc" translatable="false">Saved in Xtra without affecting your Kick account</string>
+    <string name="remember_choice" translatable="false">Remember my choice</string>
+    <string name="default_tag" translatable="false">(Default)</string>
+    <string name="follow_on_kick_own_account_unsupported" translatable="false">Not supported on Kick for your own account</string>
+    <string name="following_own_channel_locally" translatable="false">Followed locally (own account cannot be followed on Kick)</string>
+    <string name="sort_by_source" translatable="false">Source</string>
+    <string name="source_kick_first" translatable="false">Kick first</string>
+    <string name="source_local_first" translatable="false">Local first</string>
     <string name="logging_in" translatable="false">Logging in…</string>
     <string name="importing_kick_follows" translatable="false">Importing followed channels…</string>
     <string name="importing_kick_follows_progress" translatable="false">Importing followed channels (%1$d found)…</string>

@@ -678,7 +678,12 @@ class ChatViewModel @Inject constructor(
                     globalBadges.clear()
                 }
             }
-            loadKickInitialRoomStateIfNeeded(channelId, channelLogin)
+            // Replay chat (downloaded VOD or network replay) must not adopt the
+            // channel's current LIVE room state — a followers-only notice from today's
+            // live stream has no meaning over a past VOD.
+            if (chatUrl == null && videoId == null && !kickReplayFallback) {
+                loadKickInitialRoomStateIfNeeded(channelId, channelLogin)
+            }
             startReplayChat(videoId, startTime, chatUrl, getCurrentPosition, getCurrentSpeed, channelId, channelLogin, kickReplayFallback, kickReplayStartTime, kickReplayUrl)
             if (videoId != null || kickReplayFallback) {
                 loadEmotes(channelId, channelLogin)
@@ -1315,10 +1320,16 @@ class ChatViewModel @Inject constructor(
 
     private suspend fun resolveKickRealtimeChatroomId(channelId: String, channelLogin: String): String {
         val cached = getCachedKickRealtimeChatroomId(channelId, channelLogin)
-        // Prefer a fresh resolve: the cache may hold a channel/user id stored after a transient failure.
-        val resolvedChatroomId = runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelLogin) }.getOrNull().orEmpty().firstOrNull()
+        val fresh = runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelLogin) }.getOrNull().orEmpty().firstOrNull()
             ?: runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelId) }.getOrNull().orEmpty().firstOrNull()
             ?: runCatching { kickRepository.getChannel(channelLogin) }.getOrNull()?.let(kickRepository::getChatroomId)
+        // Prefer a freshly resolved dedicated chatroom id: a cached value may be a
+        // poisoned fallback (channel/user id cached after a transient failure).
+        // Subscribing to chatrooms.{channelId}.v2 yields zero messages (e.g. Asmongold
+        // channel 13809 vs chatroom 13808), which presents as "no incoming chat"
+        // on one device while another device with a correct cache works fine.
+        val resolvedChatroomId = fresh?.takeIf { it.isNotBlank() }
+            ?: cached?.takeIf { it.isNotBlank() && !it.equals(channelId, ignoreCase = true) }
             ?: cached?.takeIf { it.isNotBlank() }
             ?: channelId
         cacheKickRealtimeChatroomId(resolvedChatroomId, channelId, channelLogin)
@@ -2776,17 +2787,38 @@ class ChatViewModel @Inject constructor(
                 debugKickRealtimeChat,
                 sessionGeneration
             )
+            // Resolve the realtime provider config up front so the server decides
+            // whether Centrifugo runs at all (mirrors the official app's realtime
+            // provider-config flow). Centrifugo stays advisory-only: on config failure
+            // it still starts as before, but a config that lists only other providers
+            // skips it entirely.
+            var centrifugoConnection = runCatching {
+                kickRepository.getCentrifugoChatConnection(effectiveChannelId)
+            }.getOrNull()
+            val centrifugoEnabledByServer = centrifugoConnection == null ||
+                centrifugoConnection.providers.isEmpty() ||
+                centrifugoConnection.providers.any { it.equals("centrifugo", ignoreCase = true) }
             kickCentrifugoChatWebSocket = KickCentrifugoChatWebSocket(
                 chatroomId = kickChatroomId,
                 channelId = effectiveChannelId,
                 publicChannelNames = buildList {
                     categoryId?.let { add("drops_category_$it") }
                 },
-                fetchConnectionUrl = { kickRepository.getCentrifugoChatConnection(effectiveChannelId) },
-                fetchAuthToken = { kickRepository.getCentrifugoToken() },
+                fetchConnectionUrl = {
+                    val refreshed = kickRepository.getCentrifugoChatConnection(effectiveChannelId)
+                    if (refreshed != null) centrifugoConnection = refreshed
+                    (refreshed ?: centrifugoConnection)?.wsUrl
+                },
+                // The connection token must be minted for the client id used in the
+                // connection request, so reuse it instead of generating a fresh UUID.
+                fetchAuthToken = { kickRepository.getCentrifugoToken(centrifugoConnection?.clientId) },
+                fetchChannelToken = { channelName -> kickRepository.getCentrifugoChannelToken(channelName) },
                 trustManager = trustManager,
-                // Best-effort fallback: share chat events (deduped via kickMessageIds) but stay
-                // silent on disconnects so Centrifugo failures never disturb the Pusher connection.
+                // Centrifugo is a best-effort fallback alongside Pusher (which web
+                // still uses: ws-us2.pusher.com chatrooms.{id}.v2). It shares chat-event
+                // handling for dedup via kickMessageIds, but must never own connection
+                // state: a Centrifugo token/url failure must stay silent instead of
+                // emitting disconnect/reconnect timeline noise or restarting Pusher.
                 listener = object : KickPusherChatWebSocket.Listener {
                     override suspend fun onChatEvent(eventName: String, channelName: String?, messageJson: String) {
                         kickPusherListener.onChatEvent(eventName, channelName, messageJson)
@@ -2794,7 +2826,14 @@ class ChatViewModel @Inject constructor(
                 },
                 debugLogging = debugKickRealtimeChat
             )
-            val centrifugoJob = kickCentrifugoChatWebSocket?.connect(this)
+            val centrifugoJob = if (centrifugoEnabledByServer) {
+                kickCentrifugoChatWebSocket?.connect(this)
+            } else {
+                if (debugKickRealtimeChat) {
+                    Log.d("KickRealtimeChat", "centrifugo skipped: server provider config excludes it")
+                }
+                null
+            }
 
             val hasKickWebsiteSession = kickRepository.hasUsableKickWebsiteSession()
             kickPusherChatWebSocket = KickPusherChatWebSocket(
@@ -3746,8 +3785,11 @@ class ChatViewModel @Inject constructor(
     private fun sendMessage(message: CharSequence, networkLibrary: String?, channelId: String?, channelLogin: String?, replyId: String? = null) {
         try {
             viewModelScope.launch {
-                // Advisory only: never block sends on local follow/sub state (fetch failures
-                // look like "not following"); the server is authoritative.
+                // NOTE: chatRestriction is advisory only (input hint + timeline notice).
+                // Never hard-block sends on local follow/sub/ban state: the relationship
+                // fetch returns an empty default on any network failure, which previously
+                // false-blocked legitimate sends (e.g. long-time followers). The server
+                // is authoritative and its errors are mapped via formatKickChatSendError.
                 val accessToken = try {
                     getKickAccessTokenForChatSend()
                 } catch (e: Exception) {

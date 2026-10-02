@@ -54,6 +54,7 @@ android {
     }
 
     val kickClientId = projectPropertyOrDefault("KICK_CLIENT_ID").replace("\"", "\\\"")
+    val googleWebClientId = projectPropertyOrDefault("GOOGLE_WEB_CLIENT_ID").replace("\"", "\\\"")
     val kickOAuthBackendBaseUrl = projectPropertyOrDefault("KICK_OAUTH_BACKEND_BASE_URL", "https://kickauth.example.invalid").replace("\"", "\\\"")
     val kickOAuthBackendHmacSecret = projectPropertyOrDefault("KICK_OAUTH_BACKEND_HMAC_SECRET").replace("\"", "\\\"")
     val targetAbi = (project.findProperty("TARGET_ABI") as String?)?.trim()?.takeIf { it.isNotBlank() }
@@ -130,6 +131,7 @@ android {
                 versionNameSuffix = "-TEST"
             }
             buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
+            buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_HMAC_SECRET", "\"$kickOAuthBackendHmacSecret\"")
         }
@@ -150,6 +152,7 @@ android {
                 )
             }
             buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
+            buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_HMAC_SECRET", "\"$kickOAuthBackendHmacSecret\"")
         }
@@ -210,6 +213,9 @@ android {
 dependencies {
     implementation("com.google.guava:guava:33.7.1-android") // exoplayer
     implementation("com.google.android.gms:play-services-cronet:18.1.1")
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
     implementation(libs.material)
     implementation(libs.markwon.core)
     implementation(libs.markwon.linkify)

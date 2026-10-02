@@ -6,4 +6,5 @@ class ChannelViewerList(
     val vips: List<String>,
     val viewers: List<String>,
     val count: Int?,
+    val ogs: List<String> = emptyList(),
 )

@@ -5,6 +5,7 @@ import android.util.Log
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
@@ -183,32 +184,49 @@ class FollowedLiveStreamsRepository @Inject constructor(
         var sawRateLimit = false
         val isRateLimitMessage = { message: String? -> message?.contains("429", ignoreCase = true) == true }
 
-        try {
-            val officialLive = kickRepository.getUserLiveFollowedStreams()
-            officialLive.forEach(::putStream)
-            val liveLogins = officialLive.mapNotNull { it.channelLogin?.trim()?.lowercase(Locale.ROOT) }
-            if (liveLogins.isNotEmpty()) {
-                localFollowsChannel.markKickFollows(liveLogins)
+        var officialLiveSucceeded = false
+        if (kickRepository.hasKickAccountFollowCapability()) {
+            try {
+                val officialLive = kickRepository.getUserLiveFollowedStreams()
+                officialLive.forEach(::putStream)
+                val liveLogins = officialLive.mapNotNull { it.channelLogin?.trim()?.lowercase(Locale.ROOT) }
+                if (liveLogins.isNotEmpty()) {
+                    localFollowsChannel.markKickFollows(liveLogins)
+                }
+                if (officialLive.isNotEmpty()) {
+                    onPartial(resolved.values.toList().sortedByViewersDesc())
+                }
+                officialLiveSucceeded = true
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                diagnosticWarn("Official followed-live path failed: ${failureDetail(error)}")
             }
-            if (officialLive.isNotEmpty()) {
-                onPartial(resolved.values.toList().sortedByViewersDesc())
-            }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            diagnosticWarn("Official followed-live path failed: ${failureDetail(error)}")
         }
 
-        val alreadyResolvedLogins = resolved.values.mapNotNull { it.channelLogin?.trim()?.lowercase(Locale.ROOT) }.toSet()
-        val alreadyResolvedIds = resolved.values.mapNotNull { it.channelId?.trim() }.toSet()
-        val localOnlyFollows = follows.filter { follow ->
-            if (!follow.isLocalOnlyFollow) return@filter false
+        val alreadyResolvedLogins = hashSetOf<String>()
+        val alreadyResolvedIds = hashSetOf<String>()
+        for (stream in resolved.values) {
+            stream.channelLogin?.trim()?.lowercase(Locale.ROOT)?.let(alreadyResolvedLogins::add)
+            stream.channelId?.trim()?.let(alreadyResolvedIds::add)
+        }
+        val unresolvedFollows = follows.filter { follow ->
+            // If the official web session path succeeded, Kick follows were already checked;
+            // only local-only follows still need resolution. If the official path failed (e.g.
+            // 401 on an OAuth session or network error), all follows need resolution.
+            if (officialLiveSucceeded && !follow.isLocalOnlyFollow) return@filter false
             val login = follow.userLogin?.trim()?.lowercase(Locale.ROOT)
             val id = follow.userId?.trim()
             (login == null || login !in alreadyResolvedLogins) && (id == null || id !in alreadyResolvedIds)
         }
-        val fast = try {
-            if (localOnlyFollows.isEmpty()) null else loadFromPublicApi(localOnlyFollows)
+        // Google mobile-login sessions hold a mobile-gateway token that api.kick.com's
+        // OAuth-armed public API always rejects with 401 — skip those arms instead of
+        // burning two guaranteed-failed calls per refresh.
+        val googleSession = AuthStateHelper.isKickGoogleSession(applicationContext)
+        val fast = if (googleSession) {
+            null
+        } else try {
+            if (unresolvedFollows.isEmpty()) null else loadFromPublicApi(unresolvedFollows)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -221,8 +239,10 @@ class FollowedLiveStreamsRepository @Inject constructor(
             onPartial(resolved.values.toList().sortedByViewersDesc())
         }
 
-        val unresolvedAfterFast = fast?.unresolved ?: localOnlyFollows
-        val bulk = try {
+        val unresolvedAfterFast = fast?.unresolved ?: unresolvedFollows
+        val bulk = if (googleSession) {
+            null
+        } else try {
             loadFromBulkFallback(unresolvedAfterFast)
         } catch (error: CancellationException) {
             throw error
@@ -238,10 +258,10 @@ class FollowedLiveStreamsRepository @Inject constructor(
 
         val unresolvedAfterBulk = bulk?.unresolved ?: unresolvedAfterFast
         if (allowPerChannelFallback && unresolvedAfterBulk.isNotEmpty()) {
-            if (sawRateLimit || (resolved.isNotEmpty() && unresolvedAfterBulk.size > 6)) {
+            if (sawRateLimit || (!googleSession && resolved.isNotEmpty() && unresolvedAfterBulk.size > 6)) {
                 diagnosticWarn("Skipping per-channel fallback: kick API is rate limiting")
             } else {
-                unresolvedAfterBulk.chunked(PER_CHANNEL_BATCH_SIZE).forEach { batch ->
+                unresolvedAfterBulk.take(20).chunked(PER_CHANNEL_BATCH_SIZE).forEach { batch ->
                     currentCoroutineContext().ensureActive()
                     val batchResults = coroutineScope {
                         batch.map { follow ->
@@ -287,14 +307,22 @@ class FollowedLiveStreamsRepository @Inject constructor(
             return null
         }
         val broadcasterIdsByLogin = loadBroadcasterIdCache()
+        var cacheChanged = false
         val followsByBroadcasterId = follows
             .mapNotNull { follow ->
-                follow.userLogin
-                    ?.takeIf { it.isNotBlank() }
-                    ?.lowercase()
-                    ?.let { login -> broadcasterIdsByLogin[login]?.let { id -> id to follow } }
+                val login = follow.userLogin?.takeIf { it.isNotBlank() }?.lowercase(Locale.ROOT)
+                val followUserId = follow.userId?.trim()?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+                val resolvedId = followUserId ?: login?.let { broadcasterIdsByLogin[it] }
+                if (login != null && resolvedId != null && broadcasterIdsByLogin[login] != resolvedId) {
+                    broadcasterIdsByLogin[login] = resolvedId
+                    cacheChanged = true
+                }
+                resolvedId?.let { id -> id to follow }
             }
             .toMap()
+        if (cacheChanged) {
+            persistBroadcasterIdCache(broadcasterIdsByLogin)
+        }
         if (followsByBroadcasterId.isEmpty()) {
             debugInfo("Fast path skipped: no cached broadcaster ids")
             return null

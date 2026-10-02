@@ -972,7 +972,9 @@ class IvsPlayerFragment : PlayerFragment() {
         sameUrlRetryAttempted = false
         playbackService?.stopPlayback()
         if (!reloadIvsLiveStreamWithFreshUrl("offline check")) {
-            showOfflineOverlay(R.string.stream_ended)
+            // A playlist load failure while offline is a connection loss, not the stream ending.
+            val isOffline = networkMonitor.networkType.value == NetworkMonitor.NetworkType.NONE
+            showOfflineOverlay(if (isOffline) R.string.no_connection else R.string.stream_ended)
         }
     }
 

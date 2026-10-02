@@ -92,6 +92,7 @@ import com.xtrakick.app.ui.channel.ChannelPagerFragmentDirections
 import com.xtrakick.app.ui.common.BaseNetworkFragment
 import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.main.MainActivity
+import com.xtrakick.app.ui.multipov.MultiPovFragment
 import com.xtrakick.app.ui.player.PlayerFragment
 import com.xtrakick.app.ui.view.GridAutofitLayoutManager
 import com.xtrakick.app.ui.view.AutoCompleteAdapter
@@ -2483,7 +2484,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         }
                         replyView.visibility = View.GONE
                         send.setOnClickListener { sendMessage() }
-                        if ((view.parent?.parent?.parent?.parent as? View)?.id == R.id.slidingLayout && !requireContext().prefs().getBoolean(AppConstants.KEY_CHAT_BAR_VISIBLE, true)) {
+                        val isPlayerContext = parentFragment is PlayerFragment || parentFragment is MultiPovFragment || (view.parent?.parent?.parent?.parent as? View)?.id == R.id.slidingLayout
+                        if (isPlayerContext && !requireContext().prefs().getBoolean(AppConstants.KEY_CHAT_BAR_VISIBLE, true)) {
                             messageView.visibility = View.GONE
                         } else {
                             messageView.visibility = View.VISIBLE
@@ -3042,7 +3044,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     }
                 }
             }
-            if ((view.parent?.parent?.parent?.parent as? View)?.id != R.id.slidingLayout) {
+            val isPlayerContext = parentFragment is PlayerFragment || parentFragment is MultiPovFragment || (view.parent?.parent?.parent?.parent as? View)?.id == R.id.slidingLayout
+            if (!isPlayerContext) {
                 ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
                     if (activity?.findViewById<LinearLayout>(R.id.navBarContainer)?.isVisible == false) {
                         val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -3461,7 +3464,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 channelLogo = channelLogo
             )
         )
-        (parentFragment as? PlayerFragment)?.minimize()
+        (parentFragment as? PlayerFragment)?.minimize() ?: (parentFragment as? MultiPovFragment)?.minimize()
     }
 
     override fun onNetworkRestored() {

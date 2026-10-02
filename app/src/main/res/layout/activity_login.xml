@@ -55,6 +55,24 @@
             android:textAppearance="?attr/textAppearanceBodyMedium"
             android:textColor="?attr/colorOnSurfaceVariant"
             android:visibility="gone" />
+
+        <Button
+            android:id="@+id/googleLoginButton"
+            style="?attr/elevatedButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/continue_with_google"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/kickLoginButton"
+            style="?attr/elevatedButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/continue_with_kick"
+            android:visibility="gone" />
     </LinearLayout>
 
     <WebView

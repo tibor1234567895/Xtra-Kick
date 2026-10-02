@@ -25,7 +25,15 @@ import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.lifecycle.lifecycleScope
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.ActivityLoginBinding
 import com.xtrakick.app.model.kick.auth.KickBackendExchangeRequest
@@ -45,6 +53,7 @@ import com.xtrakick.app.util.tokenPrefs
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -60,6 +69,9 @@ class LoginActivity : AppCompatActivity() {
 
     @Inject
     lateinit var authRepository: AuthRepository
+
+    @Inject
+    lateinit var kickRepository: com.xtrakick.app.repository.KickRepository
 
     @Inject
     lateinit var followImporter: KickFollowImporter
@@ -115,12 +127,40 @@ class LoginActivity : AppCompatActivity() {
         binding.havingTrouble.setOnClickListener { startKickLoginExternal() }
         binding.openUrl.setOnClickListener { startKickLoginExternal() }
         binding.next.setOnClickListener { retryPendingKickCallback() }
+        binding.googleLoginButton.setOnClickListener { startGoogleLogin() }
+        binding.kickLoginButton.setOnClickListener { startKickLogin() }
 
         configureWebView()
 
         if (!tryHandleKickCallback(intent.data)) {
-            startKickLogin()
+            showLoginOptions()
         }
+    }
+
+    /** Entry chooser: Google (native, no browser) or Kick (in-app WebView), external browser as fallback. */
+    private fun showLoginOptions() {
+        callbackHandled = false
+        pendingKickCallback = null
+        binding.loadingContainer.visibility = View.VISIBLE
+        binding.progressBar.visibility = View.GONE
+        binding.loadingTitle.text = getString(R.string.sign_in_title)
+        binding.loadingSubtitle.visibility = View.GONE
+        binding.webView.visibility = View.GONE
+        binding.secondaryWebView.visibility = View.GONE
+        binding.codeText.visibility = View.GONE
+        binding.copyCode.visibility = View.GONE
+        binding.openUrl.visibility = View.GONE
+        binding.next.visibility = View.GONE
+        binding.googleLoginButton.visibility = if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank()) View.VISIBLE else View.GONE
+        binding.kickLoginButton.visibility = View.VISIBLE
+        binding.havingTrouble.visibility = View.VISIBLE
+        binding.havingTrouble.text = getString(R.string.open_browser_login_recommended)
+    }
+
+    private fun hideLoginOptions() {
+        binding.googleLoginButton.visibility = View.GONE
+        binding.kickLoginButton.visibility = View.GONE
+        binding.havingTrouble.visibility = View.GONE
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -326,6 +366,7 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun showKickLoginInWebView(url: String) {
+        hideLoginOptions()
         binding.loadingContainer.visibility = View.VISIBLE
         binding.loadingTitle.text = getString(R.string.loading_kick_login)
         binding.loadingSubtitle.visibility = View.GONE
@@ -338,7 +379,6 @@ class LoginActivity : AppCompatActivity() {
         binding.copyCode.visibility = View.GONE
         binding.openUrl.visibility = View.GONE
         binding.next.visibility = View.GONE
-        binding.havingTrouble.visibility = View.GONE
 
         // Delay showing "Having trouble?" button so users aren't distracted during fast loads
         cancelDelayedFallbackButton()
@@ -356,6 +396,7 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun showKickExchangeLoading() {
+        hideLoginOptions()
         cancelDelayedFallbackButton()
         binding.webProgressBar.visibility = View.GONE
         binding.webView.visibility = View.GONE
@@ -460,39 +501,61 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun logoutAndFinish() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.logout_clear_follows_title)
+            .setMessage(R.string.logout_clear_follows_message)
+            .setPositiveButton(R.string.logout_follows_clear) { _, _ -> performLogout(clearLocalFollows = true) }
+            .setNegativeButton(R.string.logout_follows_keep) { _, _ -> performLogout(clearLocalFollows = false) }
+            .setOnCancelListener { performLogout(clearLocalFollows = false) }
+            .show()
+    }
+
+    private fun performLogout(clearLocalFollows: Boolean) {
         lifecycleScope.launch {
             var revokeSucceeded = true
-            try {
-                val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-                val backendBaseUrl = KickOAuthConfig.getBackendBaseUrl(this@LoginActivity)
-                val accessToken = tokenPrefs().getString(AppConstants.KICK_ACCESS_TOKEN, null)
-                val refreshToken = tokenPrefs().getString(AppConstants.KICK_REFRESH_TOKEN, null)
+            val googleSession = tokenPrefs().getString(AppConstants.KICK_LOGIN_METHOD, null) ==
+                AppConstants.KICK_LOGIN_METHOD_GOOGLE
+            if (googleSession) {
+                // The mobile-gateway token has no OAuth revoke endpoint; clearing it
+                // locally is the complete logout.
+                revokeSucceeded = true
+            } else {
+                try {
+                    val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
+                    val backendBaseUrl = KickOAuthConfig.getBackendBaseUrl(this@LoginActivity)
+                    val accessToken = tokenPrefs().getString(AppConstants.KICK_ACCESS_TOKEN, null)
+                    val refreshToken = tokenPrefs().getString(AppConstants.KICK_REFRESH_TOKEN, null)
 
-                if (!backendBaseUrl.isNullOrBlank()) {
-                    for ((token, hint) in listOf(accessToken to "access_token", refreshToken to "refresh_token")) {
-                        if (token.isNullOrBlank()) continue
-                        try {
-                            authRepository.revokeKickToken(
-                                networkLibrary = networkLibrary,
-                                backendBaseUrl = backendBaseUrl,
-                                request = KickBackendRevokeRequest(token = token, tokenTypeHint = hint),
-                            )
-                        } catch (error: Exception) {
-                            if (error is kotlinx.coroutines.CancellationException) throw error
-                            revokeSucceeded = false
+                    if (!backendBaseUrl.isNullOrBlank()) {
+                        for ((token, hint) in listOf(accessToken to "access_token", refreshToken to "refresh_token")) {
+                            if (token.isNullOrBlank()) continue
+                            try {
+                                authRepository.revokeKickToken(
+                                    networkLibrary = networkLibrary,
+                                    backendBaseUrl = backendBaseUrl,
+                                    request = KickBackendRevokeRequest(token = token, tokenTypeHint = hint),
+                                )
+                            } catch (error: Exception) {
+                                if (error is kotlinx.coroutines.CancellationException) throw error
+                                revokeSucceeded = false
+                            }
                         }
+                    } else if (!accessToken.isNullOrBlank() || !refreshToken.isNullOrBlank()) {
+                        revokeSucceeded = false
                     }
-                } else if (!accessToken.isNullOrBlank() || !refreshToken.isNullOrBlank()) {
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     revokeSucceeded = false
+                    // Local state is still cleared below so the user isn't stuck, but don't claim
+                    // the server-side revoke worked — the tokens may still be live at Kick.
+                    Log.e(TAG, "Kick token revocation failed", e)
                 }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                revokeSucceeded = false
-                // Local state is still cleared below so the user isn't stuck, but don't claim
-                // the server-side revoke worked — the tokens may still be live at Kick.
-                Log.e(TAG, "Kick token revocation failed", e)
             }
-            localFollowChannelRepository.clearKickFollows()
+            if (clearLocalFollows) {
+                localFollowChannelRepository.deleteAllFollows()
+            } else {
+                localFollowChannelRepository.clearKickFollows()
+            }
             prefs().edit {
                 remove(AppConstants.KICK_FOLLOW_MARK_DONE)
             }
@@ -506,6 +569,118 @@ class LoginActivity : AppCompatActivity() {
             ).show()
             setResult(RESULT_OK)
             finish()
+        }
+    }
+
+    /**
+     * Native Google sign-in: Credential Manager yields a Google idToken, which is
+     * exchanged for Kick's own mobile bearer — the same login the official Kick app
+     * performs. No browser involved. Falls back to the Kick WebView login when
+     * Google Play Services or the account picker is unavailable.
+     */
+    private fun startGoogleLogin() {
+        if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isBlank()) {
+            Toast.makeText(this@LoginActivity, R.string.google_sign_in_failed, Toast.LENGTH_SHORT).show()
+            showLoginOptions()
+            return
+        }
+        hideLoginOptions()
+        binding.loadingContainer.visibility = View.VISIBLE
+        binding.progressBar.visibility = View.VISIBLE
+        binding.loadingTitle.text = getString(R.string.logging_in)
+        binding.loadingSubtitle.visibility = View.GONE
+        lifecycleScope.launch {
+            val idToken = try {
+                val credentialManager = CredentialManager.create(this@LoginActivity)
+                val googleIdOption = GetGoogleIdOption.Builder()
+                    .setServerClientId(BuildConfig.GOOGLE_WEB_CLIENT_ID)
+                    .setFilterByAuthorizedAccounts(false)
+                    .setAutoSelectEnabled(false)
+                    .build()
+                val result = credentialManager.getCredential(
+                    this@LoginActivity,
+                    GetCredentialRequest.Builder()
+                        .addCredentialOption(googleIdOption)
+                        .build(),
+                )
+                val credential = result.credential
+                if (credential !is CustomCredential ||
+                    credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+                ) {
+                    throw IllegalStateException("unexpected credential type: ${credential.type}")
+                }
+                GoogleIdTokenCredential.createFrom(credential.data).idToken
+            } catch (e: GetCredentialException) {
+                Log.w(TAG, "Google credential picker failed", e)
+                if (e !is GetCredentialCancellationException) {
+                    Toast.makeText(this@LoginActivity, R.string.google_sign_in_failed, Toast.LENGTH_LONG).show()
+                }
+                showLoginOptions()
+                return@launch
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                // Most commonly NoClassDefFoundError on devices without Play Services,
+                // or an unexpected credential payload from the framework.
+                Log.w(TAG, "Google sign-in failed before token exchange", e)
+                Toast.makeText(this@LoginActivity, R.string.google_sign_in_failed, Toast.LENGTH_LONG).show()
+                showLoginOptions()
+                return@launch
+            }
+            if (idToken.isBlank()) {
+                Toast.makeText(this@LoginActivity, R.string.google_sign_in_failed, Toast.LENGTH_LONG).show()
+                showLoginOptions()
+                return@launch
+            }
+            try {
+                val mobileToken = kickRepository.exchangeGoogleMobileLogin(idToken)
+                val user = runCatching { kickRepository.getKickMobileUser(mobileToken) }.getOrNull()
+                var userId = user?.optString("id")?.takeIf { it.isNotBlank() && it != "null" }
+                var loginName = user?.optString("username")?.takeIf { it.isNotBlank() && it != "null" } ?: userId
+
+                if (userId.isNullOrBlank() && loginName.isNullOrBlank()) {
+                    val jwtClaims = runCatching {
+                        val parts = mobileToken.split(".")
+                        if (parts.size >= 2) {
+                            val decoded = android.util.Base64.decode(parts[1], android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)
+                            JSONObject(String(decoded, Charsets.UTF_8))
+                        } else null
+                    }.getOrNull()
+                    userId = jwtClaims?.optString("sub")?.takeIf { it.isNotBlank() && it != "null" }
+                    loginName = jwtClaims?.optString("username")?.takeIf { it.isNotBlank() && it != "null" }
+                        ?: jwtClaims?.optString("name")?.takeIf { it.isNotBlank() && it != "null" }
+                        ?: userId
+                }
+
+                if (userId.isNullOrBlank() && loginName.isNullOrBlank()) {
+                    Log.w(TAG, "Google login failed: unable to resolve user identity from token")
+                    Toast.makeText(this@LoginActivity, R.string.google_sign_in_failed, Toast.LENGTH_LONG).show()
+                    showLoginOptions()
+                    return@launch
+                }
+
+                AuthStateHelper.clearLegacyWebAuth(this@LoginActivity)
+                tokenPrefs().edit {
+                    putString(AppConstants.KICK_ACCESS_TOKEN, mobileToken)
+                    remove(AppConstants.KICK_REFRESH_TOKEN)
+                    putLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L)
+                    putString(AppConstants.KICK_TOKEN_TYPE, "Bearer")
+                    putString(AppConstants.KICK_LOGIN_METHOD, AppConstants.KICK_LOGIN_METHOD_GOOGLE)
+                    putString(AppConstants.KICK_USER_ID, userId)
+                    putString(AppConstants.KICK_USER_LOGIN, loginName)
+                    putString(AppConstants.USER_ID, userId)
+                    putString(AppConstants.USERNAME, loginName)
+                }
+                val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
+                followImporter.schedulePostLoginImport(networkLibrary)
+                setResult(RESULT_OK)
+                finish()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Google idToken exchange with Kick failed", e)
+                Toast.makeText(this@LoginActivity, R.string.connection_error, Toast.LENGTH_LONG).show()
+                showLoginOptions()
+            }
         }
     }
 

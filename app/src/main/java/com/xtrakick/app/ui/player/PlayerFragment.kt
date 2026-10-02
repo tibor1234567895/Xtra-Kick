@@ -1419,6 +1419,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         minimize()
                     }
                 }
+                viewersLayout.setOnClickListener {
+                    if (requireContext().prefs().getBoolean(AppConstants.PLAYER_VIEWERLIST, false)) {
+                        showController(force = true)
+                        showViewerList()
+                    }
+                }
                 val titleText = requireArguments().getString(KEY_TITLE)
                 if (!titleText.isNullOrBlank() && prefs.getBoolean(AppConstants.PLAYER_TITLE, true)) {
                     title.visibility = View.VISIBLE
@@ -1911,8 +1917,38 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     val setting = prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0
                     if (prefs.getBoolean(AppConstants.PLAYER_FOLLOW, true) && (setting == 0 || setting == 1)) {
                         follow.visibility = View.VISIBLE
+                        val executeSaveFollow = { kickFollow: Boolean ->
+                            viewModel.saveFollowChannel(
+                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
+                                requireArguments().getString(KEY_CHANNEL_ID),
+                                requireArguments().getString(KEY_CHANNEL_LOGIN),
+                                requireArguments().getString(KEY_CHANNEL_NAME),
+                                setting,
+                                false,
+                                requireArguments().getString(KEY_STARTED_AT),
+                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                                kickFollow = kickFollow,
+                            )
+                        }
+                        val myUsername = requireContext().tokenPrefs().getString(AppConstants.USERNAME, null)?.trim()
+                        val channelLoginArg = requireArguments().getString(KEY_CHANNEL_LOGIN)?.trim()
+                        val channelNameArg = requireArguments().getString(KEY_CHANNEL_NAME)?.trim()
+                        val isOwnChannel = !myUsername.isNullOrBlank() && (
+                            channelLoginArg?.equals(myUsername, ignoreCase = true) == true ||
+                            channelNameArg?.equals(myUsername, ignoreCase = true) == true
+                        )
+                        val showFollowChoiceBottomSheet = {
+                            childFragmentManager.setFragmentResultListener(com.xtrakick.app.ui.channel.FollowChannelBottomSheet.REQUEST_KEY, viewLifecycleOwner) { _, bundle ->
+                                val kickFollow = bundle.getBoolean(com.xtrakick.app.ui.channel.FollowChannelBottomSheet.RESULT_KICK_FOLLOW, true)
+                                executeSaveFollow(kickFollow)
+                            }
+                            com.xtrakick.app.ui.channel.FollowChannelBottomSheet.newInstance(displayName, isOwnChannel).show(childFragmentManager, "follow_sheet")
+                        }
                         follow.setOnClickListener {
                             viewModel.isFollowing.value?.let {
+                                val kickFollow = setting == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
                                 if (it) {
                                     requireContext().getAlertDialogBuilder()
                                         .setMessage(getString(R.string.unfollow_channel, displayName))
@@ -1926,24 +1962,31 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                                 requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
                                                 KickApiHelper.getKickWebHeaders(requireContext(), true),
                                                 requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                                                kickFollow = kickFollow,
                                             )
                                         }
                                         .show()
                                 } else {
-                                    viewModel.saveFollowChannel(
-                                        requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                        requireArguments().getString(KEY_CHANNEL_ID),
-                                        requireArguments().getString(KEY_CHANNEL_LOGIN),
-                                        requireArguments().getString(KEY_CHANNEL_NAME),
-                                        setting,
-                                        requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false),
-                                        requireArguments().getString(KEY_STARTED_AT),
-                                        requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                        KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                        requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                                    )
+                                    val isKickLoggedIn = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+                                    val isRemembered = prefs.getBoolean(AppConstants.FOLLOW_MODE_REMEMBERED, false)
+                                    if (isOwnChannel) {
+                                        executeSaveFollow(false)
+                                        Toast.makeText(requireContext(), R.string.following_own_channel_locally, Toast.LENGTH_SHORT).show()
+                                    } else if (!isKickLoggedIn) {
+                                        executeSaveFollow(false)
+                                    } else if (isRemembered) {
+                                        executeSaveFollow(setting == 0)
+                                    } else {
+                                        showFollowChoiceBottomSheet()
+                                    }
                                 }
                             }
+                        }
+                        follow.setOnLongClickListener {
+                            if (com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext()) && viewModel.isFollowing.value != true) {
+                                showFollowChoiceBottomSheet()
+                                true
+                            } else false
                         }
                         viewLifecycleOwner.lifecycleScope.launch {
                             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -2264,6 +2307,17 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     fun showVolumeDialog() {
         PlayerVolumeDialog.newInstance(getCurrentVolume()).show(childFragmentManager, "closeOnPip")
+    }
+
+    fun showViewerList() {
+        val cid = requireArguments().getString(KEY_CHANNEL_ID) ?: viewModel.stream.value?.channelId
+        val login = requireArguments().getString(KEY_CHANNEL_LOGIN) ?: viewModel.stream.value?.channelLogin ?: requireArguments().getString(KEY_CHANNEL_NAME)
+        val name = requireArguments().getString(KEY_CHANNEL_NAME) ?: viewModel.stream.value?.channelName ?: login
+        PlayerViewerListDialog.newInstance(
+            channelId = cid,
+            channelLogin = login,
+            channelName = name,
+        ).show(childFragmentManager, "closeOnPip")
     }
 
     fun toggleChatBar() {
@@ -4287,27 +4341,35 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 KickApiHelper.getKickPublicApiHeaders(requireContext()),
                             )
                         }
-                        "follow" -> viewModel.saveFollowChannel(
-                            requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                            requireArguments().getString(KEY_CHANNEL_ID),
-                            requireArguments().getString(KEY_CHANNEL_LOGIN),
-                            requireArguments().getString(KEY_CHANNEL_NAME),
-                            prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                            requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false),
-                            requireArguments().getString(KEY_STARTED_AT),
-                            requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getKickWebHeaders(requireContext(), true),
-                            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                        )
-                        "unfollow" -> viewModel.deleteFollowChannel(
-                            requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                            requireArguments().getString(KEY_CHANNEL_ID),
-                            requireArguments().getString(KEY_CHANNEL_LOGIN),
-                            prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                            requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getKickWebHeaders(requireContext(), true),
-                            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                        )
+                        "follow" -> {
+                            val kickFollow = (prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0) == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+                            viewModel.saveFollowChannel(
+                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
+                                requireArguments().getString(KEY_CHANNEL_ID),
+                                requireArguments().getString(KEY_CHANNEL_LOGIN),
+                                requireArguments().getString(KEY_CHANNEL_NAME),
+                                prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
+                                false,
+                                requireArguments().getString(KEY_STARTED_AT),
+                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                                kickFollow = kickFollow,
+                            )
+                        }
+                        "unfollow" -> {
+                            val kickFollow = (prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0) == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+                            viewModel.deleteFollowChannel(
+                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
+                                requireArguments().getString(KEY_CHANNEL_ID),
+                                requireArguments().getString(KEY_CHANNEL_LOGIN),
+                                prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
+                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                                KickApiHelper.getKickWebHeaders(requireContext(), true),
+                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                                kickFollow = kickFollow,
+                            )
+                        }
                     }
                 }
             }

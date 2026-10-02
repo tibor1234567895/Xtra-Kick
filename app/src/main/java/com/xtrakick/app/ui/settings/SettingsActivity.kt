@@ -645,6 +645,7 @@ class SettingsActivity : AppCompatActivity() {
             findPreference<ListPreference>(AppConstants.COMPACT_STREAMS)?.onPreferenceChangeListener = resultListener
             findPreference<ListPreference>(AppConstants.UI_NAME_DISPLAY)?.onPreferenceChangeListener = resultListener
             findPreference<ListPreference>(AppConstants.UI_FOLLOW_BUTTON)?.onPreferenceChangeListener = resultListener
+            findPreference<SwitchPreferenceCompat>(AppConstants.FOLLOW_MODE_REMEMBERED)?.onPreferenceChangeListener = resultListener
             findPreference<SwitchPreferenceCompat>(AppConstants.UI_ROUNDUSERIMAGE)?.onPreferenceChangeListener = resultListener
             findPreference<SwitchPreferenceCompat>(AppConstants.UI_TRUNCATEVIEWCOUNT)?.onPreferenceChangeListener = resultListener
             findPreference<SwitchPreferenceCompat>(AppConstants.UI_UPTIME)?.onPreferenceChangeListener = resultListener

@@ -149,6 +149,14 @@
         app:singleLineTitle="false" />
 
     <SwitchPreferenceCompat
+        android:defaultValue="false"
+        android:key="follow_mode_remembered"
+        android:summary="@string/follow_mode_remembered_summary"
+        android:title="@string/follow_mode_remembered_title"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
         android:defaultValue="true"
         android:key="ui_rounduserimage"
         android:title="@string/rounduserimage"

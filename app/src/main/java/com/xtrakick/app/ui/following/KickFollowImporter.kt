@@ -11,6 +11,7 @@ import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -252,6 +253,13 @@ class KickFollowImporter @Inject constructor(
     }
 
     private suspend fun enrichImportedFollows(logins: List<String>) {
+        if (AuthStateHelper.isKickGoogleSession(context)) {
+            // The imported follows carry slugs; numeric ids get resolved lazily when a
+            // channel is opened. The api.kick.com users arm would 401 on a Google
+            // mobile-login session, so skip it instead of logging a guaranteed failure.
+            debugLogI("skip imported follow id enrichment: google mobile-login session")
+            return
+        }
         val normalizedLogins = logins
             .map { it.trim().lowercase() }
             .filter { it.isNotBlank() }

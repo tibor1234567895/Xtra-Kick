@@ -51,6 +51,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.doOnPreDraw
 import androidx.core.view.isVisible
 import android.view.HapticFeedbackConstants
+import android.view.ViewTreeObserver
+import android.view.inputmethod.InputMethodManager
+import com.xtrakick.app.util.isKeyboardShown
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
@@ -71,6 +74,7 @@ import com.xtrakick.app.ui.common.CompactDialogs.compact
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.ui.player.IvsPlayerService
 import com.xtrakick.app.ui.player.PlayerVolumeDialog
+import com.xtrakick.app.ui.player.PlayerViewerListDialog
 import com.xtrakick.app.ui.player.VideoZoomController
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.AppConstants
@@ -132,6 +136,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     private var latencyPollJob: Job? = null
     private var backgroundPauseRunnable: Runnable? = null
     private val backgroundGraceMs = 20_000L
+    private var isKeyboardShown = false
+    private var keyboardLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
     /**
      * When set, only this stream fills the video area (in-MultiPOV fullscreen).
@@ -261,6 +267,37 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         setupGestures()
         setupDividerGesture()
         updateFocusedControlsVisibility(show = false)
+
+        val root = binding.multiPovRoot
+        val keyboardListener = ViewTreeObserver.OnGlobalLayoutListener {
+            if (_binding == null || !isAdded) return@OnGlobalLayoutListener
+            if (root.isKeyboardShown) {
+                if (!isKeyboardShown) {
+                    isKeyboardShown = true
+                    if (!isPortrait) {
+                        _binding?.chatFragmentContainer?.updateLayoutParams {
+                            width = (root.width / 1.8f).toInt()
+                        }
+                        showStatusBar()
+                    }
+                }
+            } else {
+                if (isKeyboardShown) {
+                    isKeyboardShown = false
+                    _binding?.chatFragmentContainer?.findViewById<View>(R.id.chatLayout)?.clearFocus()
+                    if (!isPortrait) {
+                        _binding?.chatFragmentContainer?.updateLayoutParams {
+                            width = chatWidthLandscape
+                        }
+                        if (isMaximized) {
+                            hideStatusBar()
+                        }
+                    }
+                }
+            }
+        }
+        keyboardLayoutListener = keyboardListener
+        root.viewTreeObserver.addOnGlobalLayoutListener(keyboardListener)
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -453,8 +490,14 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             audioOnly.isVisible = false
             sleepTimer.isVisible = false
             follow.isVisible = false
-            aspectRatio.isVisible = false
-            toggleChatInput.isVisible = false
+            val isLoggedIn = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+            val chatBarToggleEnabled = prefs.getBoolean(AppConstants.PLAYER_CHATBARTOGGLE, false)
+            val chatDisabled = prefs.getBoolean(AppConstants.CHAT_DISABLE, false)
+            toggleChatInput.isVisible = isLoggedIn && chatBarToggleEnabled && !chatDisabled
+            toggleChatInput.setOnClickListener {
+                showControlsTemporarily()
+                toggleChatBar()
+            }
 
             playPause.isVisible = prefs.getBoolean(AppConstants.PLAYER_PAUSE, false)
             playPause.setOnClickListener {
@@ -487,7 +530,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 restartFocused()
             }
 
-            seekLive.isVisible = true
+            seekLive.isVisible = prefs.getBoolean(AppConstants.PLAYER_SEEKLIVE, false)
             seekLive.setOnClickListener {
                 showControlsTemporarily()
                 playbackController?.seekToLive(viewModel.uiState.value.focusedKey)
@@ -506,7 +549,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             }
 
             toggleChat.isVisible = prefs.getBoolean(AppConstants.PLAYER_CHATTOGGLE, true) &&
-                !prefs.getBoolean(AppConstants.CHAT_DISABLE, false)
+                !chatDisabled
             toggleChat.setOnClickListener {
                 showControlsTemporarily()
                 toggleChat()
@@ -525,8 +568,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             viewersLayout.isVisible = true
             viewersLayout.setOnClickListener {
                 if (prefs.getBoolean(AppConstants.PLAYER_VIEWERLIST, false)) {
-                    // Viewer list needs Kick API context — open focused stream solo for now.
-                    openFocusedSolo()
+                    showFocusedViewerList()
                 }
             }
         }
@@ -575,6 +617,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 uptimeLayout.isVisible = false
                 latencyLayout.isVisible = false
                 toggleChat.isVisible = false
+                toggleChatInput.isVisible = false
 
                 // Bottom left has ONLY volume — no crowding
                 volume.isVisible = prefs.getBoolean(AppConstants.PLAYER_VOLUMEBUTTON, true)
@@ -603,15 +646,18 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                     topRightLayout.addView(quality)
                     topRightLayout.addView(menu)
                 }
+                val isLoggedIn = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+                val chatBarToggleEnabled = prefs.getBoolean(AppConstants.PLAYER_CHATBARTOGGLE, false)
+                val chatDisabled = prefs.getBoolean(AppConstants.CHAT_DISABLE, false)
                 topRightLayout.isVisible = true
                 topLeftLayout.isVisible = true
                 playPause.isVisible = prefs.getBoolean(AppConstants.PLAYER_PAUSE, false)
                 restart.isVisible = prefs.getBoolean(AppConstants.PLAYER_RESTART, true)
-                seekLive.isVisible = true
+                seekLive.isVisible = prefs.getBoolean(AppConstants.PLAYER_SEEKLIVE, false)
                 audioCompressor.isVisible = prefs.getBoolean(AppConstants.PLAYER_AUDIO_COMPRESSOR_BUTTON, true)
                 volume.isVisible = prefs.getBoolean(AppConstants.PLAYER_VOLUMEBUTTON, true)
-                toggleChat.isVisible = prefs.getBoolean(AppConstants.PLAYER_CHATTOGGLE, true) &&
-                    !prefs.getBoolean(AppConstants.CHAT_DISABLE, false)
+                toggleChatInput.isVisible = isLoggedIn && chatBarToggleEnabled && !chatDisabled
+                toggleChat.isVisible = prefs.getBoolean(AppConstants.PLAYER_CHATTOGGLE, true) && !chatDisabled
                 quality.isVisible = prefs.getBoolean(AppConstants.PLAYER_SETTINGS, true)
                 fullscreen.isVisible = prefs.getBoolean(AppConstants.PLAYER_FULLSCREEN, true)
                 menu.isVisible = prefs.getBoolean(AppConstants.PLAYER_MENU, true)
@@ -922,6 +968,10 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     private fun showFocusedPlayerMenu() {
+        val prefs = requireContext().prefs()
+        val chatDisabled = prefs.getBoolean(AppConstants.CHAT_DISABLE, false)
+        val isLoggedIn = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+        val chatFrag = childFragmentManager.findFragmentById(R.id.chatFragmentContainer) as? ChatFragment
         val items = buildList {
             add(getString(R.string.multipov_stream_quality))
             add(getString(R.string.multipov_add_stream))
@@ -940,6 +990,22 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 )
             )
             add(getString(R.string.restart_player))
+            if (!chatDisabled) {
+                if (isLoggedIn && prefs.getBoolean(AppConstants.PLAYER_MENU_CHAT_BAR, true)) {
+                    val isChatBarVisible = prefs.getBoolean(AppConstants.KEY_CHAT_BAR_VISIBLE, true)
+                    add(getString(if (isChatBarVisible) R.string.hide_chat_bar else R.string.show_chat_bar))
+                }
+                if (prefs.getBoolean(AppConstants.PLAYER_MENU_CHAT_TOGGLE, true)) {
+                    add(getString(if (isChatOpen) R.string.hide_chat else R.string.show_chat))
+                }
+                if (prefs.getBoolean(AppConstants.PLAYER_MENU_CHAT_DISCONNECT, true)) {
+                    if (chatFrag?.isActive() == true) {
+                        add(getString(R.string.disconnect_chat))
+                    } else {
+                        add(getString(R.string.connect_chat))
+                    }
+                }
+            }
             if (viewModel.uiState.value.slots.size > 1) {
                 add(getString(R.string.multipov_remove))
             }
@@ -966,6 +1032,12 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                         ).show()
                     }
                     getString(R.string.restart_player) -> restartFocused()
+                    getString(R.string.hide_chat_bar),
+                    getString(R.string.show_chat_bar) -> toggleChatBar()
+                    getString(R.string.hide_chat),
+                    getString(R.string.show_chat) -> toggleChat()
+                    getString(R.string.disconnect_chat) -> chatFrag?.disconnect()
+                    getString(R.string.connect_chat) -> chatFrag?.reconnect()
                     getString(R.string.multipov_remove) ->
                         viewModel.uiState.value.focusedKey?.let { removeSlot(it) }
                     getString(R.string.multipov_open_solo) -> openFocusedSolo()
@@ -1343,6 +1415,19 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         (activity as? MainActivity)?.expandMultiPovFocus(focused.stream, focused.resolvedUrl)
     }
 
+    private fun showFocusedViewerList() {
+        val slot = viewModel.uiState.value.focusedSlot ?: return
+        val stream = slot.stream
+        val cid = stream.channelId
+        val login = stream.channelLogin ?: stream.channelName
+        val name = stream.channelName ?: stream.channelLogin
+        PlayerViewerListDialog.newInstance(
+            channelId = cid,
+            channelLogin = login,
+            channelName = name,
+        ).show(childFragmentManager, "closeOnPip")
+    }
+
     override fun onStart() {
         super.onStart()
         // Cancel pending grace-period pause if user returned quickly.
@@ -1391,6 +1476,10 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         chatProgressAnimator = null
         velocityTracker?.recycle()
         velocityTracker = null
+        keyboardLayoutListener?.let {
+            _binding?.multiPovRoot?.viewTreeObserver?.removeOnGlobalLayoutListener(it)
+        }
+        keyboardLayoutListener = null
         stopLatencyPolling()
         chatDragActive = false
         chatDragCandidate = false
@@ -2754,6 +2843,38 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     private fun toggleChat() {
         if (requireContext().prefs().getBoolean(AppConstants.CHAT_DISABLE, false)) return
         settleChatOpen(open = !isChatOpen, animate = !isPortrait)
+    }
+
+    fun toggleChatBar() {
+        val container = _binding?.chatFragmentContainer ?: return
+        val messageView = container.findViewById<LinearLayout>(R.id.messageView)
+        val chatFrag = childFragmentManager.findFragmentById(R.id.chatFragmentContainer) as? ChatFragment
+        val prefs = requireContext().prefs()
+        if (!isChatOpen) {
+            settleChatOpen(open = true, animate = !isPortrait)
+            messageView?.visibility = View.VISIBLE
+            prefs.edit { putBoolean(AppConstants.KEY_CHAT_BAR_VISIBLE, true) }
+            return
+        }
+        if (messageView != null) {
+            if (messageView.isVisible) {
+                val chatLayout = container.findViewById<View>(R.id.chatLayout) ?: container
+                (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                    ?.hideSoftInputFromWindow(chatLayout.windowToken, 0)
+                chatLayout.clearFocus()
+                if (chatFrag?.emoteMenuIsVisible() == true) {
+                    chatFrag.toggleEmoteMenu(false)
+                }
+                messageView.visibility = View.GONE
+                prefs.edit { putBoolean(AppConstants.KEY_CHAT_BAR_VISIBLE, false) }
+            } else {
+                messageView.visibility = View.VISIBLE
+                prefs.edit { putBoolean(AppConstants.KEY_CHAT_BAR_VISIBLE, true) }
+            }
+        } else {
+            val currentlyVisible = prefs.getBoolean(AppConstants.KEY_CHAT_BAR_VISIBLE, true)
+            prefs.edit { putBoolean(AppConstants.KEY_CHAT_BAR_VISIBLE, !currentlyVisible) }
+        }
     }
 
     private fun updateChatToggleIcon() {

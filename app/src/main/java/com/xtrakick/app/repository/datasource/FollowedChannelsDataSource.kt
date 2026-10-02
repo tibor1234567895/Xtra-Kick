@@ -37,7 +37,8 @@ class FollowedChannelsDataSource(
             channelLogin = userLogin,
             channelName = userName,
             profileImageUrl = channelLogo,
-            followLocal = true,
+            followLocal = isLocalOnlyFollow,
+            followAccount = isKickFollow,
         )
     }
 
@@ -50,6 +51,13 @@ class FollowedChannelsDataSource(
             }
             "login" -> {
                 if (order == "asc") sortedWith(nameComparator) else sortedWith(nameComparator.reversed())
+            }
+            "source" -> {
+                // Asc = Kick-account follows first, desc = local follows first;
+                // each group stays alphabetical.
+                val alphabetical = sortedWith(nameComparator)
+                val (kick, local) = alphabetical.partition { it.user.followAccount }
+                if (order == "asc") kick + local else local + kick
             }
             else -> {
                 sortedWith(nameComparator)

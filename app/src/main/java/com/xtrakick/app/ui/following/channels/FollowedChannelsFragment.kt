@@ -129,12 +129,15 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
         sortText: CharSequence = getString(
             when (viewModel.sort) {
                 FollowedChannelsSortDialog.SORT_FOLLOWED_AT -> R.string.time_followed
+                FollowedChannelsSortDialog.SORT_SOURCE -> R.string.sort_by_source
                 else -> R.string.alphabetically
             }
         ),
         orderText: CharSequence = getString(
-            when (viewModel.order) {
-                FollowedChannelsSortDialog.ORDER_ASC -> R.string.ascending
+            when {
+                viewModel.sort == FollowedChannelsSortDialog.SORT_SOURCE && viewModel.order == FollowedChannelsSortDialog.ORDER_ASC -> R.string.source_kick_first
+                viewModel.sort == FollowedChannelsSortDialog.SORT_SOURCE -> R.string.source_local_first
+                viewModel.order == FollowedChannelsSortDialog.ORDER_ASC -> R.string.ascending
                 else -> R.string.descending
             }
         ),
