@@ -52,6 +52,7 @@ import com.xtrakick.app.util.FcmSyncManager
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -688,7 +689,7 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun downloadClip(networkLibrary: String?, filesDir: String, clipId: String?, title: String?, uploadDate: String?, duration: Double?, videoId: String?, vodOffset: Int?, channelId: String?, channelLogin: String?, channelName: String?, channelLogo: String?, thumbnail: String?, gameId: String?, gameSlug: String?, gameName: String?, url: String, downloadPath: String, quality: String, downloadChat: Boolean, downloadChatEmotes: Boolean, wifiOnly: Boolean) {
+    fun downloadClip(networkLibrary: String?, filesDir: String, clipId: String?, title: String?, uploadDate: String?, duration: Double?, videoId: String?, vodOffset: Int?, channelId: String?, channelLogin: String?, channelName: String?, channelLogo: String?, thumbnail: String?, gameId: String?, gameSlug: String?, gameName: String?, url: String, downloadPath: String, quality: String, downloadChat: Boolean, downloadChatEmotes: Boolean, playlistToFile: Boolean, wifiOnly: Boolean) {
         viewModelScope.launch {
             val downloadedThumbnail = clipId.takeIf { !it.isNullOrBlank() }?.let { id ->
                 thumbnail.takeIf { !it.isNullOrBlank() }?.let {
@@ -826,7 +827,8 @@ class MainViewModel @Inject constructor(
                     clipId = clipId,
                     quality = if (!quality.contains("Audio", true)) quality else "audio",
                     downloadChat = downloadChat,
-                    downloadChatEmotes = downloadChatEmotes
+                    downloadChatEmotes = downloadChatEmotes,
+                    playlistToFile = playlistToFile
                 )
             ).toInt()
             WorkManager.getInstance(applicationContext).enqueueUniqueWork(
@@ -874,17 +876,31 @@ class MainViewModel @Inject constructor(
                     // it. The official app validates it against GET /api/v1/user instead.
                     val user = try {
                         kickRepository.getKickMobileUser(accessToken)
+                    } catch (e: CancellationException) {
+                        // Caller cancellation is not an auth failure — let it propagate.
+                        throw e
                     } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
                         if (KickAuthRequestException.isUnauthorized(e)) {
                             throw IllegalStateException("401")
                         }
                         if (isNetworkDebugEnabled()) {
-                            DiagnosticLogger.w(kickAuthValidateTag, "Kick mobile user validation non-fatal error: ${e.message}")
+                            DiagnosticLogger.w(
+                                kickAuthValidateTag,
+                                "Kick mobile user validation non-fatal error: ${e.message}",
+                            )
                         }
                         return@launch
                     }
                     if (user == null) {
+                        // Kick can return 403/404 during transient Cloudflare challenges on the
+                        // mobile user endpoint. Do not clear the session or force logout on a null
+                        // user here — leave the token in place so transient blocks don't wipe auth.
+                        if (isNetworkDebugEnabled()) {
+                            DiagnosticLogger.w(
+                                kickAuthValidateTag,
+                                "Kick mobile user validation returned null (possible transient 403/404/WAF), skipping profile refresh",
+                            )
+                        }
                         return@launch
                     }
                     val userId = user.optString("id").takeIf { it.isNotBlank() && it != "null" }

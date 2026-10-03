@@ -76,6 +76,7 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
                     kickFollowImporter.importState.collect { state ->
                         when (state) {
                             is KickFollowImportState.Importing -> {
+                                importProgressContainer.setOnClickListener(null)
                                 importProgressContainer.alpha = 1f
                                 importProgressContainer.visibility = View.VISIBLE
                                 importProgressBar.visibility = View.VISIBLE
@@ -102,9 +103,24 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
                                     importProgressContainer.visibility = View.GONE
                                 }
                             }
+                            is KickFollowImportState.NeedsManualImport -> {
+                                if (!com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())) {
+                                    importProgressContainer.visibility = View.GONE
+                                    importProgressContainer.setOnClickListener(null)
+                                } else {
+                                    importProgressBar.visibility = View.GONE
+                                    importProgressText.text = getString(R.string.import_kick_followed_manual_hint)
+                                    importProgressContainer.visibility = View.VISIBLE
+                                    importProgressContainer.alpha = 1f
+                                    importProgressContainer.setOnClickListener {
+                                        KickFollowImportDialog().show(childFragmentManager, "kick_follow_import")
+                                    }
+                                }
+                            }
                             is KickFollowImportState.Error,
                             is KickFollowImportState.Idle -> {
                                 importProgressContainer.visibility = View.GONE
+                                importProgressContainer.setOnClickListener(null)
                             }
                         }
                     }

@@ -27,6 +27,7 @@ import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.bundleOf
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.util.Locale
 import javax.inject.Inject
@@ -143,7 +144,12 @@ class PlayerViewerListDialog : BottomSheetDialogFragment() {
                 }
 
                 filterList(binding.searchInput.text?.toString().orEmpty())
+            } catch (e: CancellationException) {
+                // viewLifecycleOwner.lifecycleScope cancels on onDestroyView, which also
+                // nulls _binding; touching the binding here would NPE.
+                throw e
             } catch (e: Exception) {
+                android.util.Log.e("PlayerViewerListDialog", "Failed to load viewer list for $channelLogin", e)
                 binding.loadingProgress.isVisible = false
                 binding.errorLayout.isVisible = true
             }
@@ -172,7 +178,13 @@ class PlayerViewerListDialog : BottomSheetDialogFragment() {
             return
         }
 
-        val list = currentViewerList ?: return
+        val list = currentViewerList
+        if (list == null) {
+            // Data has not arrived yet — keep the "no results" hint hidden and let
+            // loadData() re-apply the current query once it completes.
+            binding.emptySearchText.isVisible = false
+            return
+        }
         val items = buildList {
             fun addSection(role: Role, titleRes: Int, users: List<String>) {
                 val matches = users.filter { it.contains(q, ignoreCase = true) }

@@ -15,10 +15,26 @@ object AuthStateHelper {
      * is Kick's mobile-gateway credential — it works on kick.com endpoints but is
      * rejected by api.kick.com's OAuth-armed public API, so callers should skip those
      * arms and use scrape/bearer paths instead.
+     *
+     * Heals a stale flag: Google sessions never carry an OAuth refresh token and never
+     * set an expiry, so a stored refresh token (or a real expiry) proves the flag is
+     * left over from an earlier Google login and the current tokens are OAuth.
      */
     fun isKickGoogleSession(context: Context): Boolean {
-        return context.tokenPrefs().getString(AppConstants.KICK_LOGIN_METHOD, null) ==
+        val prefs = context.tokenPrefs()
+        if (prefs.getString(AppConstants.KICK_LOGIN_METHOD, null) !=
             AppConstants.KICK_LOGIN_METHOD_GOOGLE
+        ) {
+            return false
+        }
+        return !isStaleGoogleLoginMethod(
+            refreshToken = prefs.getString(AppConstants.KICK_REFRESH_TOKEN, null),
+            expiresAt = prefs.getLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L),
+        )
+    }
+
+    internal fun isStaleGoogleLoginMethod(refreshToken: String?, expiresAt: Long): Boolean {
+        return !refreshToken.isNullOrBlank() || expiresAt > 0L
     }
 
     fun isKickLoggedIn(context: Context, nowEpochSeconds: Long = System.currentTimeMillis() / 1000L): Boolean {
@@ -98,9 +114,12 @@ object AuthStateHelper {
             ?.substringAfter('=')
             ?.takeIf { it.isNotBlank() }
             ?: return null
+        // Accept any non-blank session_token: the legacy format is `user_id|opaque-token`
+        // (URL-encoded), the current format is an opaque `kat_…` value. Either is the
+        // website bearer credential once decoded.
         return runCatching { URLDecoder.decode(encodedToken, Charsets.UTF_8.name()) }
             .getOrDefault(encodedToken)
-            .takeIf { it.isNotBlank() && it.contains('|') }
+            .takeIf { it.isNotBlank() }
     }
 
     internal fun selectKickWebsiteCookieHeader(vararg cookieHeaders: String?): String? {
@@ -131,6 +150,7 @@ object AuthStateHelper {
             remove(AppConstants.KICK_REFRESH_TOKEN)
             remove(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT)
             remove(AppConstants.KICK_TOKEN_TYPE)
+            remove(AppConstants.KICK_LOGIN_METHOD)
             remove(AppConstants.KICK_USER_ID)
             remove(AppConstants.KICK_USER_LOGIN)
             remove(AppConstants.KICK_AUTH_STATE)

@@ -14,4 +14,30 @@ class CustomSwipeRefreshLayout : SwipeRefreshLayout {
         setProgressBackgroundColorSchemeColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurface))
         setColorSchemeColors(MaterialColors.getColor(this, androidx.appcompat.R.attr.colorControlNormal))
     }
+
+    override fun setRefreshing(refreshing: Boolean) {
+        super.setRefreshing(refreshing)
+        if (!refreshing) {
+            dismissCircleViewIfIdle()
+        }
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        dismissCircleViewIfIdle()
+    }
+
+    private fun dismissCircleViewIfIdle() {
+        post {
+            if (!isRefreshing) {
+                for (i in 0 until childCount) {
+                    val child = getChildAt(i)
+                    if (child.javaClass.simpleName == "CircleImageView" && child.visibility == VISIBLE) {
+                        child.clearAnimation()
+                        child.visibility = GONE
+                    }
+                }
+            }
+        }
+    }
 }

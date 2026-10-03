@@ -297,7 +297,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                     ))
                                     .setNegativeButton(getString(R.string.no), null)
                                     .setPositiveButton(getString(R.string.yes)) { _, _ ->
-                                        val kickFollow = setting == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+                                        val kickFollow = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
                                         viewModel.deleteFollowChannel(
                                             requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
                                             args.channelId,
@@ -898,7 +898,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                             )
                         }
                         "unfollow" -> {
-                            val kickFollow = (requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0) == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+                            val kickFollow = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
                             viewModel.deleteFollowChannel(
                                 requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
                                 args.channelId,

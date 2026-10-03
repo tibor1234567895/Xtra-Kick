@@ -86,6 +86,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
@@ -1907,14 +1908,18 @@ class KickRepository @Inject constructor(
         }.getOrNull()
     }
 
-    /** True when the app has a usable website session token or active Kick login. */
-    fun hasUsableKickWebsiteSession(): Boolean {
+    /** True when the WebView jar holds a website session cookie (no login fallback). */
+    fun hasKickWebsiteSessionCookieOnly(): Boolean {
         val cookies = getKickCookieHeader()
-        val hasCookieSession = cookies?.let {
+        return cookies?.let {
             AuthStateHelper.extractKickSessionToken(it)?.isNotBlank() == true ||
                 extractKickWebAuthToken(it)?.isNotBlank() == true
         } == true
-        return hasCookieSession || AuthStateHelper.isKickLoggedIn(context)
+    }
+
+    /** True when the app has a usable website session token or active Kick login. */
+    fun hasUsableKickWebsiteSession(): Boolean {
+        return hasKickWebsiteSessionCookieOnly() || AuthStateHelper.isKickLoggedIn(context)
     }
 
     /**
@@ -1923,12 +1928,7 @@ class KickRepository @Inject constructor(
      * OAuth-only sessions cannot authenticate against private kick.com web endpoints.
      */
     fun hasKickAccountFollowCapability(): Boolean {
-        val cookies = getKickCookieHeader()
-        val hasCookieSession = cookies?.let {
-            AuthStateHelper.extractKickSessionToken(it)?.isNotBlank() == true ||
-                extractKickWebAuthToken(it)?.isNotBlank() == true
-        } == true
-        return hasCookieSession || AuthStateHelper.isKickGoogleSession(context)
+        return hasKickWebsiteSessionCookieOnly() || AuthStateHelper.isKickGoogleSession(context)
     }
 
     /**
@@ -1995,17 +1995,66 @@ class KickRepository @Inject constructor(
     suspend fun setKickAccountFollow(channelSlug: String, follow: Boolean): Boolean = withContext(Dispatchers.IO) {
         val slug = channelSlug.trim().takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("channel slug is required")
-        val raw = executeKickWebSessionRequest(
-            "https://kick.com/api/v2/channels/${urlEncode(slug)}/follow",
-            method = if (follow) "POST" else "DELETE",
-        )
+        val method = if (follow) "POST" else "DELETE"
+        DiagnosticLogger.i(tag, "Executing Kick account follow request: $method for $slug")
+        val raw = try {
+            executeKickWebSessionRequest(
+                "https://kick.com/api/v2/channels/${urlEncode(slug)}/follow",
+                method = method,
+            )
+        } catch (e: KickWebResponseException) {
+            if (e.statusCode == 422) {
+                val body = e.responseBody.orEmpty()
+                val isAlreadyFollowing = body.contains("already following", ignoreCase = true)
+                val isNotFollowing = body.contains("not following", ignoreCase = true)
+                if ((follow && isAlreadyFollowing) || (!follow && isNotFollowing)) {
+                    DiagnosticLogger.i(tag, "Kick account $method for $slug returned 422 ($body) -> target follow state is already satisfied")
+                    return@withContext true
+                }
+            }
+            throw e
+        }
         if (raw.isBlank()) {
+            // The endpoint answers with an empty 2xx body on success, and non-2xx already
+            // threw above — an empty body here is therefore a real success.
+            DiagnosticLogger.i(tag, "Kick account $method for $slug returned empty 2xx body -> success")
             return@withContext true
         }
-        runCatching {
-            val root = JSONObject(raw)
-            root.optBoolean("status", root.optBoolean("success", true))
-        }.getOrDefault(true)
+        val trimmed = raw.trim()
+        val primitiveFlag = when (trimmed.lowercase(Locale.ROOT)) {
+            "true", "1", "success", "ok", "followed" -> true
+            "false", "0", "error", "failed" -> false
+            else -> null
+        }
+        if (primitiveFlag != null) {
+            DiagnosticLogger.i(tag, "Kick account $method for $slug returned primitive flag: $primitiveFlag")
+            return@withContext primitiveFlag
+        }
+        val root = runCatching { JSONObject(raw) }.getOrElse {
+            // Never default an unreadable body to "followed": that is exactly the silent
+            // false success this method's contract is meant to prevent.
+            throw IOException("Malformed JSON from Kick follow endpoint for $slug")
+        }
+        // Only an explicit negative counts as a failure — the endpoint has been observed
+        // returning an empty envelope, `{status: true}`, and string statuses such as
+        // "followed". A flag-less body is a successful write.
+        val asFlag: (Any?) -> Boolean? = { value ->
+            when (value) {
+                is Boolean -> value
+                is Number -> value.toInt() != 0
+                is String -> when (value.trim().lowercase(Locale.ROOT)) {
+                    "true", "1", "success", "ok", "followed" -> true
+                    "false", "0", "error", "failed" -> false
+                    else -> null
+                }
+                else -> null
+            }
+        }
+        val applied = listOf("status", "success", "is_following", "followed")
+            .firstNotNullOfOrNull { asFlag(root.opt(it)) }
+            ?: true
+        DiagnosticLogger.i(tag, "Kick account $method for $slug parsed status: $applied (raw: $raw)")
+        applied
     }
 
     /**
@@ -3005,15 +3054,11 @@ class KickRepository @Inject constructor(
     }
 
     suspend fun getChannelViewerList(channelId: String?, channelLogin: String? = null): ChannelViewerList = withContext(Dispatchers.IO) {
-        var cid = channelId?.trim()?.takeIf { it.isNotBlank() }
-        var login = channelLogin?.trim()?.takeIf { it.isNotBlank() }
-        if (cid == null && !login.isNullOrBlank()) {
-            val channel = runCatching { getChannel(login) }.getOrNull()
-            cid = channel?.id?.toString()
-            if (login.isBlank()) {
-                login = channel?.slug ?: channel?.user?.username
-            }
-        }
+        val login = channelLogin?.trim()?.takeIf { it.isNotBlank() }
+        // The active-chatters endpoint is keyed by the numeric channel id, so a
+        // login-only caller has to resolve it first.
+        val cid = channelId?.trim()?.takeIf { it.isNotBlank() }
+            ?: login?.let { runCatching { getChannel(it) }.getOrNull()?.id?.toString() }
         if (cid.isNullOrBlank()) {
             val fallbackList = if (!login.isNullOrBlank()) listOf(login) else emptyList()
             return@withContext ChannelViewerList(
@@ -4636,8 +4681,7 @@ class KickRepository @Inject constructor(
 
     companion object {
         /** Fixed client token the official app sends as X-CLIENT-TOKEN on the viewer socket token fetch. */
-        private const val KICK_VIEWER_CLIENT_TOKEN =
-            "f3a7c8b1e5d9246aa8f6b37d5c8e9a2fd4e1c0abf79d3826b4c5e7a9d8f2b6c3"
+        private val KICK_VIEWER_CLIENT_TOKEN = BuildConfig.KICK_VIEWER_CLIENT_TOKEN
 
         fun parseActiveChattersResponse(rawJson: String): List<String> {
             if (rawJson.isBlank()) return emptyList()
@@ -5569,6 +5613,7 @@ class KickRepository @Inject constructor(
             ?: throw IOException("Kick login is required.")
         val engine = cronetEngine?.get()
             ?: return executeKickWebSessionRequestWithOkHttp(url, body, post, extraHeaders, method)
+        DiagnosticLogger.i(tag, "executeKickWebSessionRequest [Cronet] $method $url")
         return try {
             val response = withTimeout(15_000L) {
                 suspendCancellableCoroutine { continuation ->
@@ -5602,12 +5647,30 @@ class KickRepository @Inject constructor(
                 }
             }
             val raw = String(response.second, Charsets.UTF_8)
+            DiagnosticLogger.i(tag, "executeKickWebSessionRequest [Cronet] $method $url status=${response.first.httpStatusCode}")
             if (response.first.httpStatusCode !in 200..299) {
-                throw IOException("Kick request failed (${response.first.httpStatusCode}) for $url")
+                throw KickWebResponseException(response.first.httpStatusCode, raw, "Kick request failed (${response.first.httpStatusCode}) for $url")
             }
             raw
+        } catch (e: TimeoutCancellationException) {
+            // withTimeout's own timeout surfaces as TimeoutCancellationException, which is a
+            // stalled Cronet request rather than a caller cancellation: fall back to OkHttp
+            // instead of rethrowing it as if the download had been cancelled.
+            Log.w(tag, "Cronet web session request timed out for $url, falling back to OkHttp: ${e.message}")
+            executeKickWebSessionRequestWithOkHttp(url, body, post, extraHeaders, method)
+        } catch (e: CancellationException) {
+            // A real caller cancellation must propagate untouched so the scope stays cancelled.
+            throw e
+        } catch (e: KickWebResponseException) {
+            // A 4xx is the server's final answer for these credentials and headers —
+            // OkHttp would send the same request and get the same error, so rethrow
+            // instead of doubling every client failure (e.g. 401s) across transports.
+            if (e.statusCode in 400..499) {
+                throw e
+            }
+            Log.w(tag, "Cronet web session request failed for $url (${e.statusCode}), falling back to OkHttp: ${e.message}")
+            executeKickWebSessionRequestWithOkHttp(url, body, post, extraHeaders, method)
         } catch (e: Exception) {
-            if (e is CancellationException) throw e
             Log.w(tag, "Cronet web session request failed for $url, falling back to OkHttp: ${e.message}")
             executeKickWebSessionRequestWithOkHttp(url, body, post, extraHeaders, method)
         }
@@ -5620,6 +5683,7 @@ class KickRepository @Inject constructor(
         extraHeaders: Map<String, String> = emptyMap(),
         method: String = if (post) "POST" else "GET",
     ): String {
+        DiagnosticLogger.i(tag, "executeKickWebSessionRequestWithOkHttp $method $url")
         return withContext(Dispatchers.IO) {
             val builder = createRequestBuilder(url, isKickWeb = true)
             extraHeaders.forEach { (name, value) -> builder.header(name, value) }
@@ -5631,10 +5695,12 @@ class KickRepository @Inject constructor(
                 method != "GET" -> builder.method(method, null)
             }
             okHttpClient.newCall(builder.build()).execute().use { response ->
+                DiagnosticLogger.i(tag, "executeKickWebSessionRequestWithOkHttp $method $url status=${response.code}")
+                val bodyString = response.body.string()
                 if (!response.isSuccessful) {
-                    throw IOException("Kick request failed (${response.code}) for $url")
+                    throw KickWebResponseException(response.code, bodyString, "Kick request failed (${response.code}) for $url")
                 }
-                response.body.string()
+                bodyString
             }
         }
     }
@@ -6290,3 +6356,9 @@ class KickRepository @Inject constructor(
         return builder.build().query?.let { "?$it" } ?: ""
     }
 }
+
+open class KickWebResponseException(
+    val statusCode: Int,
+    val responseBody: String?,
+    message: String = "Kick request failed ($statusCode)",
+) : IOException(message)

@@ -136,7 +136,9 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     private var latencyPollJob: Job? = null
     private var backgroundPauseRunnable: Runnable? = null
     private val backgroundGraceMs = 20_000L
-    private var isKeyboardShown = false
+    // Tracks the soft keyboard state for the POV layout; named to avoid shadowing the
+    // `View.isKeyboardShown` extension imported below.
+    private var keyboardVisible = false
     private var keyboardLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
     /**
@@ -272,8 +274,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         val keyboardListener = ViewTreeObserver.OnGlobalLayoutListener {
             if (_binding == null || !isAdded) return@OnGlobalLayoutListener
             if (root.isKeyboardShown) {
-                if (!isKeyboardShown) {
-                    isKeyboardShown = true
+                if (!keyboardVisible) {
+                    keyboardVisible = true
                     if (!isPortrait) {
                         _binding?.chatFragmentContainer?.updateLayoutParams {
                             width = (root.width / 1.8f).toInt()
@@ -282,8 +284,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                     }
                 }
             } else {
-                if (isKeyboardShown) {
-                    isKeyboardShown = false
+                if (keyboardVisible) {
+                    keyboardVisible = false
                     _binding?.chatFragmentContainer?.findViewById<View>(R.id.chatLayout)?.clearFocus()
                     if (!isPortrait) {
                         _binding?.chatFragmentContainer?.updateLayoutParams {

@@ -1948,7 +1948,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         }
                         follow.setOnClickListener {
                             viewModel.isFollowing.value?.let {
-                                val kickFollow = setting == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+                                val kickFollow = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
                                 if (it) {
                                     requireContext().getAlertDialogBuilder()
                                         .setMessage(getString(R.string.unfollow_channel, displayName))
@@ -4358,7 +4358,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             )
                         }
                         "unfollow" -> {
-                            val kickFollow = (prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0) == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
+                            val kickFollow = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
                             viewModel.deleteFollowChannel(
                                 requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
                                 requireArguments().getString(KEY_CHANNEL_ID),

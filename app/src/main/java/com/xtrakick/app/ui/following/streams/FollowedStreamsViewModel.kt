@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 @HiltViewModel
 @OptIn(FlowPreview::class)
@@ -50,6 +51,15 @@ class FollowedStreamsViewModel @Inject constructor(
     private var refreshJob: Job? = null
     private var refreshGeneration = 0L
     private var lastRefreshedAt = 0L
+    private var refreshStartedAt = 0L
+
+    companion object {
+        // Hard ceiling for one Following > Live load. Launched-with-screen-off
+        // installs saw the first load hang past unlock (slow radio, per-channel
+        // fallback chaining) with the full-screen spinner stuck until restart.
+        private const val REFRESH_TIMEOUT_MS = 30_000L
+        private const val STALE_CACHE_MAX_AGE_MS = 24L * 60L * 60L * 1000L
+    }
 
     fun maybeRefreshIfStale(minAgeMs: Long = 30_000L, silent: Boolean = true): Boolean {
         val now = System.currentTimeMillis()
@@ -63,8 +73,12 @@ class FollowedStreamsViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             localFollowsChannel.followsChanged
-                .debounce(250L)
-                .collect { refresh() }
+                .debounce(500L)
+                .collect {
+                    if (refreshJob?.isActive != true) {
+                        refresh()
+                    }
+                }
         }
     }
 
@@ -99,11 +113,23 @@ class FollowedStreamsViewModel @Inject constructor(
         }
     }
 
-    fun refresh(silent: Boolean = false) {
+    fun refresh(silent: Boolean = false, isPullToRefresh: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (silent && refreshJob?.isActive == true) {
+            // A hung first load must not starve unlock/pull retries forever.
+            if (now - refreshStartedAt < REFRESH_TIMEOUT_MS) {
+                return
+            }
+            refreshJob?.cancel()
+        }
         val generation = ++refreshGeneration
+        refreshStartedAt = now
         refreshJob?.cancel()
 
-        val cachedItems = if (silent) emptyList() else followedLiveStreamsRepository.peekCache().distinctByStreamer().sortedForFollowedLive()
+        // Stale-while-revalidate: seed even the first load from cache (up to a
+        // day old) so unlock shows a list + top spinner instead of a stuck
+        // full-screen spinner when the network is slow (screen-off launch).
+        val cachedItems = followedLiveStreamsRepository.peekCache(STALE_CACHE_MAX_AGE_MS).distinctByStreamer().sortedForFollowedLive()
         val currentState = _uiState.value
         val currentItems = when {
             cachedItems.isNotEmpty() -> cachedItems
@@ -111,26 +137,33 @@ class FollowedStreamsViewModel @Inject constructor(
             else -> emptyList()
         }
 
+        val isInitial = !silent && currentItems.isEmpty() && !isPullToRefresh && !currentState.hasLoadedOnce
+        val isRefreshing = !silent && (currentItems.isNotEmpty() || isPullToRefresh)
+
         _uiState.value = currentState.copy(
             items = currentItems,
-            isInitialLoading = !silent && currentItems.isEmpty(),
-            isRefreshing = !silent && currentItems.isNotEmpty(),
-            showEmpty = false,
+            isInitialLoading = isInitial,
+            isRefreshing = isRefreshing,
+            showEmpty = currentItems.isEmpty() && currentState.hasLoadedOnce,
             integrityAction = null,
             hasLoadedOnce = currentState.hasLoadedOnce || currentItems.isNotEmpty(),
         )
 
         refreshJob = viewModelScope.launch {
             try {
-                val result = followedLiveStreamsRepository.loadLiveFollowed(
-                    forceRefresh = true,
-                    allowPerChannelFallback = true,
-                    onPartial = { items ->
-                        if (!silent) updateStateForGeneration(
-                            generation, items.sortedForFollowedLive(), false, true, false, hasLoadedOnce = true,
-                        )
-                    },
-                )
+                val result = withTimeout(REFRESH_TIMEOUT_MS) {
+                    followedLiveStreamsRepository.loadLiveFollowed(
+                        forceRefresh = true,
+                        allowPerChannelFallback = true,
+                        onPartial = { items ->
+                            if (items.isNotEmpty()) {
+                                updateStateForGeneration(
+                                    generation, items.sortedForFollowedLive(), false, !silent, false, hasLoadedOnce = true,
+                                )
+                            }
+                        },
+                    )
+                }
                 val items = result.items.sortedForFollowedLive()
                 lastRefreshedAt = System.currentTimeMillis()
                 updateStateForGeneration(generation, items, false, false, items.isEmpty(), hasLoadedOnce = true)
@@ -153,6 +186,15 @@ class FollowedStreamsViewModel @Inject constructor(
             } finally {
                 if (refreshGeneration == generation) {
                     refreshJob = null
+                    val finalState = _uiState.value
+                    if (finalState.isRefreshing || finalState.isInitialLoading) {
+                        _uiState.value = finalState.copy(
+                            isInitialLoading = false,
+                            isRefreshing = false,
+                            showEmpty = finalState.items.isEmpty() && finalState.hasLoadedOnce,
+                            hasLoadedOnce = true,
+                        )
+                    }
                 }
             }
         }

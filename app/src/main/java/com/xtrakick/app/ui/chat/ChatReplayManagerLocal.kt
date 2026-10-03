@@ -25,6 +25,15 @@ class ChatReplayManagerLocal(
             }
             return low
         }
+        internal fun messageUpperBound(messages: List<ChatMessage>, timestamp: Long): Int {
+            var low = 0
+            var high = messages.size
+            while (low < high) {
+                val middle = (low + high) ushr 1
+                if ((messages[middle].timestamp ?: Long.MAX_VALUE) <= timestamp) low = middle + 1 else high = middle
+            }
+            return low
+        }
         private const val LARGE_SEEK_THRESHOLD_MS = 20_000L
         private const val PRELOAD_MAX_AGE_MS = 90_000L
         private const val PRELOAD_MAX_MESSAGES = 200
@@ -111,7 +120,12 @@ class ChatReplayManagerLocal(
         loadJob?.cancel()
         loadJob = coroutineScope.launch {
             try {
-                val index = messageLowerBound(messages, position)
+                // Upper bound: everything already due pops in at once (one bulk
+                // submit), the future keeps trickling in sync with playback.
+                // Previously messages exactly at the current position streamed
+                // one-by-one with stagger, which made downloaded clips look like
+                // chat was "streaming in weirdly" instead of popping like VODs.
+                val index = messageUpperBound(messages, position)
                 val preloadMessages = if (preload) {
                     val from = max(messageLowerBound(messages, max(position - PRELOAD_MAX_AGE_MS, 0L)), index - PRELOAD_MAX_MESSAGES)
                     messages.subList(from, index)

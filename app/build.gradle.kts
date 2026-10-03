@@ -57,6 +57,13 @@ android {
     val googleWebClientId = projectPropertyOrDefault("GOOGLE_WEB_CLIENT_ID").replace("\"", "\\\"")
     val kickOAuthBackendBaseUrl = projectPropertyOrDefault("KICK_OAUTH_BACKEND_BASE_URL", "https://kickauth.example.invalid").replace("\"", "\\\"")
     val kickOAuthBackendHmacSecret = projectPropertyOrDefault("KICK_OAUTH_BACKEND_HMAC_SECRET").replace("\"", "\\\"")
+    // Fixed client token the official app sends as X-CLIENT-TOKEN when minting the viewer
+    // watch socket token. Kept as a build-time value so a Kick rotation is an .env/-P change
+    // (or an over-the-air update) instead of a source edit and a full release.
+    val kickViewerClientToken = projectPropertyOrDefault(
+        "KICK_VIEWER_CLIENT_TOKEN",
+        "f3a7c8b1e5d9246aa8f6b37d5c8e9a2fd4e1c0abf79d3826b4c5e7a9d8f2b6c3",
+    ).replace("\"", "\\\"")
     val targetAbi = (project.findProperty("TARGET_ABI") as String?)?.trim()?.takeIf { it.isNotBlank() }
     val localDebugKeystorePath = projectPropertyOrDefault("LOCAL_DEBUG_KEYSTORE_FILE", "${project.projectDir}/debug-keystore.jks")
     val localDebugStorePassword = projectPropertyOrDefault("LOCAL_DEBUG_STORE_PASSWORD")
@@ -134,6 +141,7 @@ android {
             buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_HMAC_SECRET", "\"$kickOAuthBackendHmacSecret\"")
+            buildConfigField("String", "KICK_VIEWER_CLIENT_TOKEN", "\"$kickViewerClientToken\"")
         }
         release {
             isShrinkResources = true
@@ -155,6 +163,7 @@ android {
             buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
             buildConfigField("String", "KICK_OAUTH_BACKEND_HMAC_SECRET", "\"$kickOAuthBackendHmacSecret\"")
+            buildConfigField("String", "KICK_VIEWER_CLIENT_TOKEN", "\"$kickViewerClientToken\"")
         }
     }
     buildFeatures {
@@ -225,6 +234,7 @@ dependencies {
     implementation(libs.constraintlayout)
     implementation(libs.coordinatorlayout)
     implementation(libs.core.ktx)
+    implementation(libs.documentfile)
     implementation(libs.fragment.ktx)
     implementation(libs.lifecycle.viewmodel)
     implementation(libs.navigation.fragment)

@@ -78,7 +78,7 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
         (binding.recyclerView.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
         binding.swipeRefresh.isEnabled = true
         binding.swipeRefresh.setOnRefreshListener {
-            viewModel.refresh()
+            viewModel.refresh(isPullToRefresh = true)
         }
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
             if (activity?.findViewById<LinearLayout>(R.id.navBarContainer)?.isVisible == false) {
@@ -109,7 +109,7 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
         }
         val prefs = requireContext().prefs()
         val refreshOnReturn = prefs.getBoolean(AppConstants.FOLLOWED_LIVE_REFRESH_ON_RETURN, true)
-        if (refreshOnReturn) {
+        if (refreshOnReturn && viewModel.uiState.value.hasLoadedOnce) {
             viewModel.maybeRefreshIfStale(minAgeMs = 30_000L, silent = true)
         }
     }
@@ -131,7 +131,7 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
                         preloadThumbnails(state.items)
                     }
                     binding.progressBar.isVisible = state.isInitialLoading && state.items.isEmpty()
-                    binding.swipeRefresh.isRefreshing = state.isRefreshing && state.items.isNotEmpty()
+                    binding.swipeRefresh.isRefreshing = state.isRefreshing
                     binding.nothingHere.isVisible = state.showEmpty
                     if (state.integrityAction == "refresh" &&
                         requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&

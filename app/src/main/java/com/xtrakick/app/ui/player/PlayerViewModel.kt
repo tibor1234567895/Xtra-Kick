@@ -618,11 +618,22 @@ class PlayerViewModel @Inject constructor(
     /** Best-effort mirror of the follow onto the logged-in Kick account. */
     private fun mirrorFollowOnKick(channelLogin: String?, follow: Boolean, enabled: Boolean) {
         val slug = channelLogin?.trim()?.takeIf { it.isNotBlank() } ?: return
+        DiagnosticLogger.i("PlayerViewModel", "mirrorFollowOnKick slug=$slug follow=$follow enabled=$enabled hasCapability=${kickRepository.hasKickAccountFollowCapability()}")
         if (!enabled || !kickRepository.hasKickAccountFollowCapability()) return
         viewModelScope.launch {
-            runCatching { kickRepository.setKickAccountFollow(slug, follow) }.onFailure {
-                android.util.Log.w("PlayerViewModel", "Kick account ${if (follow) "follow" else "unfollow"} failed for $slug: ${it.message}")
-            }
+            val verb = if (follow) "follow" else "unfollow"
+            DiagnosticLogger.i("PlayerViewModel", "Starting Kick account $verb for $slug...")
+            runCatching { kickRepository.setKickAccountFollow(slug, follow) }
+                .onSuccess { applied ->
+                    if (applied) {
+                        DiagnosticLogger.i("PlayerViewModel", "Kick account $verb succeeded for $slug")
+                    } else {
+                        DiagnosticLogger.w("PlayerViewModel", "Kick account $verb returned a negative status for $slug")
+                    }
+                }
+                .onFailure {
+                    DiagnosticLogger.w("PlayerViewModel", "Kick account $verb failed for $slug: ${it.message}")
+                }
         }
     }
 
@@ -633,7 +644,7 @@ class PlayerViewModel @Inject constructor(
                 val followId = (channelId ?: channelLogin)?.trim()?.takeIf { it.isNotBlank() }
                 if (followId != null) {
                     val existing = localFollowsChannel.getFollow(channelId, channelLogin)
-                    val wasKickFollow = existing?.isKickFollow ?: kickFollow
+                    val wasKickFollow = existing?.isKickFollow == true || (kickFollow && kickRepository.hasKickAccountFollowCapability())
                     existing?.let { localFollowsChannel.deleteFollow(it) }
                     _isFollowing.value = false
                     follow.value = Pair(false, null)
@@ -641,7 +652,7 @@ class PlayerViewModel @Inject constructor(
                     notificationUsersRepository.disableNotificationsForChannel(candidateKeys)
                 }
             } catch (e: Exception) {
-
+                DiagnosticLogger.w("PlayerViewModel", "deleteFollowChannel failed: ${e.message}")
             }
         }
     }

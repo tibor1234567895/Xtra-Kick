@@ -884,11 +884,10 @@ object ChatAdapterUtils {
         }
     }
 
-    private fun replaceImageSpan(
+    private fun removeImageSpan(
         builder: SpannableStringBuilder,
         start: Int,
         end: Int,
-        span: CenteredImageSpan,
     ) {
         val existingSpans = builder.getSpans(start, end, ImageSpan::class.java)
         for (i in 0 until existingSpans.size) {
@@ -897,6 +896,15 @@ object ChatAdapterUtils {
                 builder.removeSpan(existing)
             }
         }
+    }
+
+    private fun replaceImageSpan(
+        builder: SpannableStringBuilder,
+        start: Int,
+        end: Int,
+        span: CenteredImageSpan,
+    ) {
+        removeImageSpan(builder, start, end)
         builder.setSpan(span, start, end, SPAN_EXCLUSIVE_EXCLUSIVE)
     }
 
@@ -1354,12 +1362,17 @@ object ChatAdapterUtils {
                 badgeSize
             }
             loadImage(imageLibrary, fragment, image, emoteQuality, imageSize) { loaded ->
-                val result = prepareDrawableForChat(fragment, loaded, imageSize, itemView, animateGifs, animatedEmoteFps)
-                if (image.overlayEmote != null) {
-                    val drawables = arrayOf(result)
-                    nextOverlayEmote(imageLibrary, fragment, drawables, image.overlayEmote!!, image, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps)
+                if (loaded != null) {
+                    val result = prepareDrawableForChat(fragment, loaded, imageSize, itemView, animateGifs, animatedEmoteFps)
+                    if (image.overlayEmote != null) {
+                        val drawables = arrayOf(result)
+                        nextOverlayEmote(imageLibrary, fragment, drawables, image.overlayEmote!!, image, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps)
+                    } else {
+                        replaceImageSpan(builder, image.start, image.end, CenteredImageSpan(result))
+                        bind(builder)
+                    }
                 } else {
-                    replaceImageSpan(builder, image.start, image.end, CenteredImageSpan(result))
+                    removeImageSpan(builder, image.start, image.end)
                     bind(builder)
                 }
             }
@@ -1368,33 +1381,47 @@ object ChatAdapterUtils {
 
     private fun nextOverlayEmote(imageLibrary: String?, fragment: Fragment, drawables: Array<Drawable>, image: Image, bottomImage: Image, itemView: View, bind: (SpannableStringBuilder) -> Unit, builder: SpannableStringBuilder, emoteSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int) {
         loadImage(imageLibrary, fragment, image, emoteQuality, emoteSize) { loaded ->
-            val result = prepareDrawableForChat(fragment, loaded, emoteSize, itemView, animateGifs, animatedEmoteFps)
-            val array = drawables.plus(result)
+            val array = if (loaded != null) {
+                val result = prepareDrawableForChat(fragment, loaded, emoteSize, itemView, animateGifs, animatedEmoteFps)
+                drawables.plus(result)
+            } else {
+                drawables
+            }
             if (image.overlayEmote != null) {
                 nextOverlayEmote(imageLibrary, fragment, array, image.overlayEmote!!, bottomImage, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps)
-            } else {
+            } else if (array.isNotEmpty()) {
                 val layer = LayerDrawable(array)
                 val width = array.maxOf { it.bounds.right }
                 val height = array.maxOf { it.bounds.bottom }
                 layer.setBounds(0, 0, width, height)
                 replaceImageSpan(builder, bottomImage.start, bottomImage.end, CenteredImageSpan(layer))
                 bind(builder)
+            } else {
+                removeImageSpan(builder, bottomImage.start, bottomImage.end)
+                bind(builder)
             }
         }
     }
 
-    private fun loadImage(imageLibrary: String?, fragment: Fragment, image: Image, emoteQuality: String, targetHeight: Int, onLoaded: (Drawable) -> Unit) {
+    private fun loadImage(imageLibrary: String?, fragment: Fragment, image: Image, emoteQuality: String, targetHeight: Int, onLoaded: (Drawable?) -> Unit) {
         image.localDataLoader?.let { load ->
             fragment.viewLifecycleOwner.lifecycleScope.launch {
                 val source = withContext(Dispatchers.IO) {
                     runCatching { load() }.getOrNull()
                 }
-                if (source == null) return@launch
-                loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { it?.let(onLoaded) }
+                if (source == null) {
+                    onLoaded(null)
+                    return@launch
+                }
+                loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { onLoaded(it) }
             }
             return
         }
-        val source = resolveImageSource(image, emoteQuality) ?: return
+        val source = resolveImageSource(image, emoteQuality)
+        if (source == null) {
+            onLoaded(null)
+            return
+        }
         val key = createChatImageKey(image, source, targetHeight)
         if (key != null) {
             chatImageCoordinator.load(
@@ -1405,12 +1432,16 @@ object ChatAdapterUtils {
                     }
                 },
                 callback = { cached ->
-                    cached?.let { cloneDrawableForBind(fragment, it) }?.let(onLoaded)
+                    if (cached != null) {
+                        onLoaded(cloneDrawableForBind(fragment, cached))
+                    } else {
+                        onLoaded(null)
+                    }
                 },
             )
         } else {
             loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { result ->
-                result?.let(onLoaded)
+                onLoaded(result)
             }
         }
     }

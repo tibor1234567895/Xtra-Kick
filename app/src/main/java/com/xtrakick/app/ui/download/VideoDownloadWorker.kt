@@ -42,6 +42,8 @@ import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.m3u8.PlaylistUtils
 import com.xtrakick.app.util.m3u8.Segment
 import com.xtrakick.app.util.prefs
+import com.xtrakick.app.util.DownloadStorage
+import com.xtrakick.app.util.SafStorageUtils
 import dagger.Lazy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -147,11 +149,14 @@ class VideoDownloadWorker @AssistedInject constructor(
         runCatching { context.contentResolver.openOutputStream(fileUri)!! }.getOrNull()?.let { return it }
         return documentCreationMutex.withLock {
             runCatching { context.contentResolver.openOutputStream(fileUri)!! }.getOrNull()?.let { return it }
-            DocumentsContract.createDocument(context.contentResolver, parentUri.toUri(), "", displayName)
+            val created = runCatching {
+                DocumentsContract.createDocument(context.contentResolver, parentUri.toUri(), "video/mp2t", displayName)
+            }.getOrNull()
+            val targetUri = created ?: fileUri
             var lastError: Exception? = null
             repeat(3) {
                 try {
-                    return context.contentResolver.openOutputStream(fileUri)!!
+                    return context.contentResolver.openOutputStream(targetUri)!!
                 } catch (e: Exception) {
                     lastError = e
                     delay(300)
@@ -164,11 +169,13 @@ class VideoDownloadWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         offlineVideo = offlineRepository.getVideoById(inputData.getInt(KEY_VIDEO_ID, 0)) ?: return Result.failure()
         val forceChatRedownload = inputData.getBoolean(KEY_FORCE_CHAT_REDOWNLOAD, false)
-        offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
-        setForeground(createForegroundInfo())
+        try {
+            offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
+            setForeground(createForegroundInfo())
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         val sourceUrl = offlineVideo.sourceUrl!!
         if (isStopped) {
+            runCatching { offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
             return Result.failure()
         }
         val downloadPath = offlineVideo.downloadPath
@@ -230,11 +237,18 @@ class VideoDownloadWorker @AssistedInject constructor(
                 }
             }
             if (playlist.segments.isEmpty()) {
-                playlistUrl = getFirstVariantPlaylistUrl(networkLibrary, sourceUrl) ?: return Result.failure()
-                playlist = (playerRepository.loadTextFromUrl(networkLibrary, playlistUrl) ?: return Result.failure())
+                playlistUrl = getFirstVariantPlaylistUrl(networkLibrary, sourceUrl) ?: run {
+                    runCatching { offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
+                    return Result.failure()
+                }
+                playlist = (playerRepository.loadTextFromUrl(networkLibrary, playlistUrl) ?: run {
+                    runCatching { offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
+                    return Result.failure()
+                })
                     .byteInputStream()
                     .use { PlaylistUtils.parseMediaPlaylist(it) }
                 if (playlist.segments.isEmpty()) {
+                    runCatching { offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
                     return Result.failure()
                 }
             }
@@ -320,19 +334,14 @@ class VideoDownloadWorker @AssistedInject constructor(
                     }
                     fileUri
                 } else {
-                    val fileName = "${offlineVideo.videoId ?: ""}${offlineVideo.quality ?: ""}${offlineVideo.downloadDate}.${remainingSegments.first().uri.substringAfterLast(".")}"
+                    val ext = remainingSegments.first().uri.substringAfterLast(".").substringBefore("?").takeIf { it.isNotBlank() } ?: "mp4"
+                    val fileName = DownloadStorage.singleFileNameFor(offlineVideo, ext)
                     val fileUri = if (isShared) {
-                        val documentId = DocumentsContract.getTreeDocumentId(path.toUri())
-                        val directoryUri = DocumentsContract.buildDocumentUriUsingTree(path.toUri(), documentId)
-                        val fileUri = directoryUri.toString() + (if (!directoryUri.toString().endsWith("%3A")) "%2F" else "") + fileName
-                        try {
-                            context.contentResolver.openOutputStream(fileUri.toUri())!!.close()
-                        } catch (e: IllegalArgumentException) {
-                            DocumentsContract.createDocument(context.contentResolver, directoryUri, "", fileName)
-                        }
-                        fileUri
+                        val dirDoc = DownloadStorage.containerDoc(context, path.toUri(), offlineVideo)
+                        SafStorageUtils.getOrCreateFileInDir(dirDoc, fileName, "video/mp4").toString()
                     } else {
-                        "$path${File.separator}$fileName"
+                        val dir = DownloadStorage.containerFile(path, offlineVideo)
+                        "$dir${File.separator}$fileName"
                     }
                     val startPosition = relativeStartTimes[fromIndex]
                     val initSegmentBytes = if (playlist.initSegmentUri != null) {
@@ -400,10 +409,20 @@ class VideoDownloadWorker @AssistedInject constructor(
                     fileUri
                 }
                 coroutineScope {
+                    // Staging files share the single process cache dir while concurrent
+                    // downloads (one unique-work chain per video) write to it in parallel,
+                    // so only reclaim leftovers from crashed runs instead of deleting
+                    // files a sibling worker may still be appending right now.
+                    val staleCutoff = System.currentTimeMillis() - STALE_STAGING_FILE_AGE_MS
                     runCatching {
-                        context.cacheDir?.listFiles { _, name -> name.startsWith("vodseg_") && name.endsWith(".part") }
+                        context.cacheDir
+                            ?.listFiles { _, name ->
+                                name.startsWith(STAGING_FILE_PREFIX) && name.endsWith(STAGING_FILE_SUFFIX)
+                            }
+                            ?.filter { it.lastModified() in 1..staleCutoff }
                             ?.forEach { it.delete() }
                     }
+                    val stagingRunToken = System.nanoTime()
                     val segmentIds = generateSequence(0) { it + 1 }.iterator()
                     remainingSegments.map {
                         val id = segmentIds.next()
@@ -415,7 +434,8 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 // and OOMs the process on long VODs; staging keeps the
                                 // configured thread count fully parallel with disk, not
                                 // RAM, absorbing out-of-order completions.
-                                val stagingFile = File(context.cacheDir, "vodseg_${id}_${System.nanoTime()}.part")
+                                val stagingName = "$STAGING_FILE_PREFIX${stagingRunToken}_$id$STAGING_FILE_SUFFIX"
+                                val stagingFile = File(context.cacheDir, stagingName)
                                 var stagedBytes = 0L
                                 try {
                                     when {
@@ -456,7 +476,13 @@ class VideoDownloadWorker @AssistedInject constructor(
                                         }
                                     }
                                     count.first { turn -> turn == id }
-                                    if (stagingFile.exists() && stagingFile.length() > 0L) {
+                                    // A vanished staging file means the cache was trimmed or a
+                                    // sibling run reclaimed it; fail loudly instead of silently
+                                    // writing a download with a hole in the byte stream.
+                                    check(stagingFile.exists()) {
+                                        "Staging file for segment $id disappeared before it could be appended"
+                                    }
+                                    if (stagingFile.length() > 0L) {
                                         val outputStream = if (isShared) {
                                             context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!
                                         } else {
@@ -480,38 +506,22 @@ class VideoDownloadWorker @AssistedInject constructor(
                     }
                 }
             } else {
-                val videoDirectoryName = if (!offlineVideo.videoId.isNullOrBlank()) {
-                    "${offlineVideo.videoId}${offlineVideo.quality ?: ""}"
-                } else {
-                    "${offlineVideo.downloadDate}"
-                }
+                val videoDirectoryName = DownloadStorage.containerNameFor(offlineVideo)
                 if (isShared) {
-                    val documentId = DocumentsContract.getTreeDocumentId(path.toUri())
-                    val directoryUri = DocumentsContract.buildDocumentUriUsingTree(path.toUri(), documentId)
-                    val videoDirectoryUri = directoryUri.toString() + (if (!directoryUri.toString().endsWith("%3A")) "%2F" else "") + videoDirectoryName
-                    try {
-                        context.contentResolver.openOutputStream(videoDirectoryUri.toUri())!!.close()
-                    } catch (e: Exception) {
-                        if (e is IllegalArgumentException) {
-                            DocumentsContract.createDocument(context.contentResolver, directoryUri, DocumentsContract.Document.MIME_TYPE_DIR, videoDirectoryName)
-                        }
-                    }
+                    val dirDoc = DownloadStorage.containerDoc(context, path.toUri(), offlineVideo)
+                    val videoDirectoryUri = dirDoc.uri.toString()
                     val playlistFileUri = if (!offlineVideo.url.isNullOrBlank()) {
                         offlineVideo.url!!
                     } else {
+                        val fileName = "${offlineVideo.downloadDate}.m3u8"
+                        val playlistDocUri = SafStorageUtils.getOrCreateFileInDir(dirDoc, fileName, "application/x-mpegURL")
+                        val playlistFileUri = playlistDocUri.toString()
                         val sharedSegments = ArrayList<Segment>()
                         for (i in fromIndex..toIndex) {
                             val segment = playlist.segments[i]
                             sharedSegments.add(segment.copy(uri = videoDirectoryUri + "%2F" + segment.uri.replace("-unmuted", "-muted")))
                         }
-                        val fileName = "${offlineVideo.downloadDate}.m3u8"
-                        val playlistFileUri = "$videoDirectoryUri%2F$fileName"
-                        try {
-                            context.contentResolver.openOutputStream(playlistFileUri.toUri())!!
-                        } catch (e: IllegalArgumentException) {
-                            DocumentsContract.createDocument(context.contentResolver, videoDirectoryUri.toUri(), "", fileName)
-                            context.contentResolver.openOutputStream(playlistFileUri.toUri())!!
-                        }.use {
+                        context.contentResolver.openOutputStream(playlistDocUri, "wt")!!.use {
                             PlaylistUtils.writeMediaPlaylist(playlist.copy(
                                 initSegmentUri = playlist.initSegmentUri?.let { uri -> "$videoDirectoryUri%2F$uri" },
                                 segments = sharedSegments
@@ -519,18 +529,13 @@ class VideoDownloadWorker @AssistedInject constructor(
                         }
                         val startPosition = relativeStartTimes[fromIndex]
                         if (playlist.initSegmentUri != null) {
-                            val initSegmentFileUri = (videoDirectoryUri + "%2F" + playlist.initSegmentUri).toUri()
+                            val initSegmentFileUri = SafStorageUtils.getOrCreateFileInDir(dirDoc, playlist.initSegmentUri, "video/mp2t")
                             when {
                                 networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                                     val response = suspendCoroutine { continuation ->
                                         httpEngine!!.get().newUrlRequestBuilder(urlPath + playlist.initSegmentUri, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
                                     }
-                                    try {
-                                        context.contentResolver.openOutputStream(initSegmentFileUri)!!
-                                    } catch (e: IllegalArgumentException) {
-                                        DocumentsContract.createDocument(context.contentResolver, videoDirectoryUri.toUri(), "", playlist.initSegmentUri)
-                                        context.contentResolver.openOutputStream(initSegmentFileUri)!!
-                                    }.use {
+                                    context.contentResolver.openOutputStream(initSegmentFileUri)!!.use {
                                         it.write(response.second)
                                     }
                                 }
@@ -545,23 +550,13 @@ class VideoDownloadWorker @AssistedInject constructor(
                                         }
                                         response.second
                                     }
-                                    try {
-                                        context.contentResolver.openOutputStream(initSegmentFileUri)!!
-                                    } catch (e: IllegalArgumentException) {
-                                        DocumentsContract.createDocument(context.contentResolver, videoDirectoryUri.toUri(), "", playlist.initSegmentUri)
-                                        context.contentResolver.openOutputStream(initSegmentFileUri)!!
-                                    }.use {
+                                    context.contentResolver.openOutputStream(initSegmentFileUri)!!.use {
                                         it.write(response)
                                     }
                                 }
                                 else -> {
                                     okHttpClient.newCall(Request.Builder().url(urlPath + playlist.initSegmentUri).build()).execute().use { response ->
-                                        try {
-                                            context.contentResolver.openOutputStream(initSegmentFileUri)!!
-                                        } catch (e: IllegalArgumentException) {
-                                            DocumentsContract.createDocument(context.contentResolver, videoDirectoryUri.toUri(), "", playlist.initSegmentUri)
-                                            context.contentResolver.openOutputStream(initSegmentFileUri)!!
-                                        }.use { outputStream ->
+                                        context.contentResolver.openOutputStream(initSegmentFileUri)!!.use { outputStream ->
                                             response.body.byteStream().use { inputStream ->
                                                 inputStream.copyTo(outputStream)
                                             }
@@ -681,11 +676,11 @@ class VideoDownloadWorker @AssistedInject constructor(
                         }
                     }
                 } else {
-                    val directory = "$path${File.separator}$videoDirectoryName${File.separator}"
+                    val directory = "${DownloadStorage.containerFile(path, offlineVideo).absolutePath}${File.separator}"
                     val playlistFileUri = if (!offlineVideo.url.isNullOrBlank()) {
                         offlineVideo.url!!
                     } else {
-                        File(directory).mkdir()
+                        File(directory).mkdirs()
                         val playlistUri = "$directory${offlineVideo.downloadDate}.m3u8"
                         FileOutputStream(playlistUri).use {
                             PlaylistUtils.writeMediaPlaylist(playlist.copy(segments = remainingSegments), it)
@@ -829,23 +824,21 @@ class VideoDownloadWorker @AssistedInject constructor(
             val videoFileUri = if (!offlineVideo.url.isNullOrBlank()) {
                 offlineVideo.url!!
             } else {
-                val fileName = if (!offlineVideo.clipId.isNullOrBlank()) {
-                    "${offlineVideo.clipId}${offlineVideo.quality ?: ""}.mp4"
-                } else {
-                    "${offlineVideo.downloadDate}.mp4"
+                val fileName = DownloadStorage.singleFileNameFor(
+                    offlineVideo,
+                    if (!offlineVideo.clipId.isNullOrBlank()) "mp4" else "mp4"
+                ).let {
+                    // Preserve clip naming uniqueness while using sanitized titles.
+                    if (!offlineVideo.clipId.isNullOrBlank() && !it.contains(offlineVideo.clipId!!)) {
+                        "${DownloadStorage.sanitizeSegment(offlineVideo.clipId, "clip")}_${it}"
+                    } else it
                 }
                 val fileUri = if (isShared) {
-                    val documentId = DocumentsContract.getTreeDocumentId(path.toUri())
-                    val directoryUri = DocumentsContract.buildDocumentUriUsingTree(path.toUri(), documentId)
-                    val fileUri = directoryUri.toString() + (if (!directoryUri.toString().endsWith("%3A")) "%2F" else "") + fileName
-                    try {
-                        context.contentResolver.openOutputStream(fileUri.toUri())!!.close()
-                    } catch (e: IllegalArgumentException) {
-                        DocumentsContract.createDocument(context.contentResolver, directoryUri, "", fileName)
-                    }
-                    fileUri
+                    val dirDoc = DownloadStorage.containerDoc(context, path.toUri(), offlineVideo)
+                    SafStorageUtils.getOrCreateFileInDir(dirDoc, fileName, "video/mp4").toString()
                 } else {
-                    "$path${File.separator}$fileName"
+                    val dir = DownloadStorage.containerFile(path, offlineVideo)
+                    "$dir${File.separator}$fileName"
                 }
                 offlineRepository.updateVideo(offlineVideo.apply {
                     url = fileUri
@@ -936,6 +929,39 @@ class VideoDownloadWorker @AssistedInject constructor(
             offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
         } else {
             offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADED })
+            runCatching {
+                val infoJson = DownloadStorage.buildInfoJson(offlineVideo, context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown")
+                val urlStr = offlineVideo.url
+                if (!urlStr.isNullOrBlank()) {
+                    if (DownloadStorage.isContentUri(urlStr)) {
+                        // Write next to the video, never into a freshly ensured container:
+                        // legacy flat rows must not sprout orphan subfolders.
+                        val container = DownloadStorage.containerOfUrl(urlStr, offlineVideo.downloadPath)
+                        val parentUri = runCatching { (container ?: offlineVideo.downloadPath)?.toUri() }.getOrNull()
+                        if (parentUri != null && parentUri.scheme == ContentResolver.SCHEME_CONTENT) {
+                            runCatching {
+                                val treeUri = offlineVideo.downloadPath!!.toUri()
+                                val target = DownloadStorage.findFileInDir(
+                                    context, treeUri, parentUri, DownloadStorage.INFO_FILE_NAME
+                                ) ?: android.provider.DocumentsContract.createDocument(
+                                    context.contentResolver, parentUri, "application/json", DownloadStorage.INFO_FILE_NAME
+                                )
+                                target?.let { uri ->
+                                    context.contentResolver.openOutputStream(uri, "wt")?.use {
+                                        it.write(infoJson.toByteArray())
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        val parent = runCatching { File(urlStr).parentFile }.getOrNull()
+                        if (parent != null) {
+                            DownloadStorage.writeInfoJsonToDir(parent, infoJson)
+                            DownloadStorage.scanFileIfPublic(context, urlStr)
+                        }
+                    }
+                }
+            }
             val notification = NotificationCompat.Builder(context, context.getString(R.string.notification_downloads_channel_id)).apply {
                 setGroup(GROUP_KEY)
                 setContentTitle(ContextCompat.getString(context, R.string.downloaded))
@@ -958,6 +984,16 @@ class VideoDownloadWorker @AssistedInject constructor(
             notificationManager.notify(-offlineVideo.id, notification)
         }
         return Result.success()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Log.e("VideoDownloadWorker", "Video download failed: ${e.message}", e)
+            DiagnosticLogger.e("VideoDownloadWorker", "Video download failed: ${e.message}", e)
+            runCatching {
+                offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
+            }
+            return Result.failure()
+        }
     }
 
     // Per-chain collection for the parallel chat history walk; merged after join.
@@ -1040,7 +1076,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                 val durationSeconds = maxOf((duration / 1000).toInt(), requestedDurationSeconds)
                 val requestedEndTimeSeconds = offlineVideo.toTime?.let { (it / 1000L).toInt() } ?: 0
                 val endTimeSeconds = maxOf(startTimeSeconds + durationSeconds, requestedEndTimeSeconds + 120)
-                val fileName = "${videoId}${offlineVideo.quality ?: ""}${offlineVideo.downloadDate}_chat.json"
+                val fileName = "${DownloadStorage.sanitizeSegment(videoId, "video")}${offlineVideo.quality ?: ""}${offlineVideo.downloadDate}_chat.json"
                 val savedChatEmotes = hashSetOf<String>()
                 val savedBadges = hashSetOf<Pair<String, String>>()
                 val savedEmotes = hashSetOf<String>()
@@ -1052,19 +1088,45 @@ class VideoDownloadWorker @AssistedInject constructor(
                 }
                 val fileUri = if (forceChatRedownload && existingChatFileAccessible) {
                     existingChatFileUri!!
+                } else if (!offlineVideo.url.isNullOrBlank()) {
+                    // Co-locate chat with the video container (new subfolder or legacy flat).
+                    val container = DownloadStorage.containerOfUrl(offlineVideo.url, path)
+                    val resolved = if (isShared) {
+                        val parentUri = runCatching { container?.toUri() ?: path.toUri() }.getOrNull() ?: path.toUri()
+                        runCatching {
+                            context.contentResolver.let { resolver ->
+                                val existing = runCatching {
+                                    androidx.documentfile.provider.DocumentFile.fromTreeUri(context, path.toUri())
+                                        ?.findFile(fileName)?.takeIf { it.isFile }?.uri
+                                }.getOrNull()
+                                existing?.toString()
+                                    ?: android.provider.DocumentsContract.createDocument(resolver, parentUri, "application/json", fileName)?.toString()
+                                    ?: run {
+                                        val dirDoc = DownloadStorage.containerDoc(context, path.toUri(), offlineVideo)
+                                        SafStorageUtils.getOrCreateFileInDir(dirDoc, fileName, "application/json").toString()
+                                    }
+                            }
+                        }.getOrNull() ?: run {
+                            val dirDoc = DownloadStorage.containerDoc(context, path.toUri(), offlineVideo)
+                            SafStorageUtils.getOrCreateFileInDir(dirDoc, fileName, "application/json").toString()
+                        }
+                    } else {
+                        val parent = container ?: path
+                        File(parent).mkdirs()
+                        "$parent${File.separator}$fileName"
+                    }
+                    offlineRepository.updateVideo(offlineVideo.apply {
+                        maxChatProgress = durationSeconds
+                        chatUrl = resolved
+                    })
+                    resolved
                 } else {
                     val fileUri = if (isShared) {
-                        val documentId = DocumentsContract.getTreeDocumentId(path.toUri())
-                        val directoryUri = DocumentsContract.buildDocumentUriUsingTree(path.toUri(), documentId)
-                        val fileUri = directoryUri.toString() + (if (!directoryUri.toString().endsWith("%3A")) "%2F" else "") + fileName
-                        try {
-                            context.contentResolver.openOutputStream(fileUri.toUri())!!.close()
-                        } catch (e: IllegalArgumentException) {
-                            DocumentsContract.createDocument(context.contentResolver, directoryUri, "", fileName)
-                        }
-                        fileUri
+                        val dirDoc = DownloadStorage.containerDoc(context, path.toUri(), offlineVideo)
+                        SafStorageUtils.getOrCreateFileInDir(dirDoc, fileName, "application/json").toString()
                     } else {
-                        "$path${File.separator}$fileName"
+                        val dir = DownloadStorage.containerFile(path, offlineVideo)
+                        "$dir${File.separator}$fileName"
                     }
                     offlineRepository.updateVideo(offlineVideo.apply {
                         maxChatProgress = durationSeconds
@@ -1689,6 +1751,13 @@ class VideoDownloadWorker @AssistedInject constructor(
 
         const val KEY_VIDEO_ID = "KEY_VIDEO_ID"
         const val KEY_FORCE_CHAT_REDOWNLOAD = "forceChatRedownload"
+
+        private const val STAGING_FILE_PREFIX = "vodseg_"
+        private const val STAGING_FILE_SUFFIX = ".part"
+
+        // A staging file only lives while its own segment downloads, so anything this old
+        // is guaranteed to be a leftover from a crashed or killed run.
+        private const val STALE_STAGING_FILE_AGE_MS = 60L * 60L * 1000L
 
         // Serialized across worker instances: the provider rejects concurrent creates.
         val documentCreationMutex = Mutex()

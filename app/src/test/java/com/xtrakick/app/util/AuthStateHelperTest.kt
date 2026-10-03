@@ -101,6 +101,37 @@ class AuthStateHelperTest {
     }
 
     @Test
+    fun opaqueSessionTokenWithoutPipeIsAccepted() {
+        assertEquals(
+            "kat_waGPSvjwaJlY0123456789abcdefghij012345678",
+            AuthStateHelper.extractKickSessionToken(
+                "kick_session=opaque; session_token=kat_waGPSvjwaJlY0123456789abcdefghij012345678"
+            ),
+        )
+    }
+
+    @Test
+    fun blankSessionTokenIsRejected() {
+        assertNull(AuthStateHelper.extractKickSessionToken("kick_session=opaque; session_token=   "))
+        assertNull(AuthStateHelper.extractKickSessionToken("kick_session=opaque"))
+    }
+
+    @Test
+    fun staleGoogleFlagDetectedFromRefreshToken() {
+        assertTrue(AuthStateHelper.isStaleGoogleLoginMethod(refreshToken = "refresh-token", expiresAt = 0L))
+    }
+
+    @Test
+    fun staleGoogleFlagDetectedFromExpiry() {
+        assertTrue(AuthStateHelper.isStaleGoogleLoginMethod(refreshToken = null, expiresAt = 1791039633L))
+    }
+
+    @Test
+    fun genuineGoogleSessionIsNotStale() {
+        assertFalse(AuthStateHelper.isStaleGoogleLoginMethod(refreshToken = null, expiresAt = 0L))
+    }
+
+    @Test
     fun cookieSelectionPrefersHeaderWithUsableSessionToken() {
         val selected = AuthStateHelper.selectKickWebsiteCookieHeader(
             "auth-token=oauth-token; kick_session=opaque",

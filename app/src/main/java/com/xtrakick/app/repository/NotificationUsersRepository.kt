@@ -327,10 +327,15 @@ class NotificationUsersRepository @Inject constructor(
             "120409948" to ("ananped" to "Ananped"),
             "120340753" to ("lazenxd" to "LAZENXD"),
         )
-        for ((uid, pair) in knownSeeds) {
-            saveChannelMetadata(uid, pair.first, pair.second, null)
-            localFollowChannelRepository?.get()?.let { repo ->
-                repo.getFollow(uid, pair.first)?.let { f ->
+        val followRepo = localFollowChannelRepository?.get()
+        for ((uid, seed) in knownSeeds) {
+            // Fill gaps only — a real lookup may already have cached this id with its logo,
+            // and writing the hardcoded seed on top would blank that logo out.
+            if (getChannelMetadata(uid) == null) {
+                saveChannelMetadata(uid, seed.first, seed.second, null)
+            }
+            followRepo?.let { repo ->
+                repo.getFollow(uid, seed.first)?.let { f ->
                     if (f.userId.isNullOrBlank()) {
                         f.userId = uid
                         repo.updateFollow(f)

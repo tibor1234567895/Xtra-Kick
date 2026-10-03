@@ -373,7 +373,7 @@ class ChannelPagerViewModel @Inject constructor(
             try {
                 val candidateKeys = allCandidateKeys(channelId, channelLogin)
                 val existing = localFollowsChannel.getFollow(channelId ?: args.channelId, channelLogin ?: args.channelLogin)
-                val wasKickFollow = existing?.isKickFollow ?: kickFollow
+                val wasKickFollow = existing?.isKickFollow == true || (kickFollow && kickRepository.hasKickAccountFollowCapability())
                 existing?.let { localFollowsChannel.deleteFollow(it) }
                 _isFollowing.value = false
                 follow.value = Pair(false, null)
@@ -393,10 +393,21 @@ class ChannelPagerViewModel @Inject constructor(
      */
     private suspend fun followOnKickAccount(channelLogin: String?, follow: Boolean, enabled: Boolean) {
         val slug = channelLogin?.trim()?.takeIf { it.isNotBlank() } ?: return
+        DiagnosticLogger.i(TAG, "followOnKickAccount slug=$slug follow=$follow enabled=$enabled hasCapability=${kickRepository.hasKickAccountFollowCapability()}")
         if (!enabled || !kickRepository.hasKickAccountFollowCapability()) return
-        runCatching { kickRepository.setKickAccountFollow(slug, follow) }.onFailure {
-            DiagnosticLogger.w(TAG, "Kick account ${if (follow) "follow" else "unfollow"} failed for $slug: ${it.message}")
-        }
+        val verb = if (follow) "follow" else "unfollow"
+        DiagnosticLogger.i(TAG, "Starting Kick account $verb for $slug...")
+        runCatching { kickRepository.setKickAccountFollow(slug, follow) }
+            .onSuccess { applied ->
+                if (applied) {
+                    DiagnosticLogger.i(TAG, "Kick account $verb succeeded for $slug")
+                } else {
+                    DiagnosticLogger.w(TAG, "Kick account $verb returned a negative status for $slug")
+                }
+            }
+            .onFailure {
+                DiagnosticLogger.w(TAG, "Kick account $verb failed for $slug: ${it.message}")
+            }
     }
 
     fun updateLocalUser(networkLibrary: String?, filesDir: String, user: User) {

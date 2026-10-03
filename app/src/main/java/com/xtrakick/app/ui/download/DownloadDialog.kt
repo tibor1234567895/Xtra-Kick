@@ -193,17 +193,21 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
         }
         directoryResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
-                result.data?.data?.let {
-                    when {
-                        it.authority?.startsWith("com.android.providers") == true -> Toast.makeText(requireActivity(), R.string.invalid_directory, Toast.LENGTH_LONG).show()
-                        else -> {
-                            requireContext().contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                            sharedPath = it.toString()
-                            requireContext().prefs().edit { putString(AppConstants.DOWNLOAD_SHARED_PATH, sharedPath) }
-                            binding.download.isEnabled = true
-                            binding.storageSelectionContainer.directory.visibility = View.VISIBLE
-                            binding.storageSelectionContainer.directory.text = it.path?.substringAfter("/tree/")?.removeSuffix(":")
+                result.data?.data?.let { uri ->
+                    try {
+                        runCatching {
+                            requireContext().contentResolver.takePersistableUriPermission(
+                                uri,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                            )
                         }
+                        sharedPath = uri.toString()
+                        requireContext().prefs().edit { putString(AppConstants.DOWNLOAD_SHARED_PATH, sharedPath) }
+                        binding.download.isEnabled = true
+                        binding.storageSelectionContainer.directory.visibility = View.VISIBLE
+                        binding.storageSelectionContainer.directory.text = com.xtrakick.app.util.SafStorageUtils.getDisplayPath(requireContext(), uri)
+                    } catch (e: Exception) {
+                        Toast.makeText(requireActivity(), R.string.invalid_directory, Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -398,12 +402,12 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                     when {
                         sharedPath != null -> {
                             directory.visibility = View.VISIBLE
-                            directory.text = Uri.decode(sharedPath?.substringAfter("/tree/"))
+                            directory.text = com.xtrakick.app.util.SafStorageUtils.getDisplayPath(requireContext(), sharedPath!!.toUri())
                         }
                         !savedSharedPath.isNullOrBlank() -> {
                             directory.visibility = View.VISIBLE
-                            val decoded = Uri.decode(savedSharedPath.substringAfter("/tree/"))
-                            directory.text = "$decoded (${getString(R.string.storage_permission_required)})"
+                            val label = com.xtrakick.app.util.SafStorageUtils.getDisplayPath(requireContext(), savedSharedPath.toUri())
+                            directory.text = "$label (${getString(R.string.storage_permission_required)})"
                         }
                         else -> {
                             directory.visibility = View.GONE
@@ -415,6 +419,11 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                         val downloadChat = binding.downloadChat.isChecked
                         val downloadChatEmotes = binding.downloadChatEmotes.isChecked
                         val initialUri = sharedPath ?: savedSharedPath
+                        val canUseInitialUri = !initialUri.isNullOrBlank() &&
+                            hasSharedPermission &&
+                            !Uri.decode(initialUri).contains("download", ignoreCase = true) &&
+                            !Uri.decode(initialUri).contains("android/data", ignoreCase = true) &&
+                            !Uri.decode(initialUri).contains("android/obb", ignoreCase = true)
                         requireContext().prefs().edit {
                             putInt(AppConstants.DOWNLOAD_LOCATION, location)
                             when (location) {
@@ -431,7 +440,8 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                             putBoolean(AppConstants.DOWNLOAD_CHAT_EMOTES, downloadChatEmotes)
                         }
                         directoryResultLauncher?.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !initialUri.isNullOrBlank()) {
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && canUseInitialUri) {
                                 putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri.toUri())
                             }
                         })
@@ -560,7 +570,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                                 to = to,
                                 downloadChat = downloadChat,
                                 downloadChatEmotes = downloadChatEmotes,
-                                playlistToFile = requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_PLAYLIST_TO_FILE, false),
+                                playlistToFile = requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_PLAYLIST_TO_FILE, true),
                                 wifiOnly = requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_WIFI_ONLY, false)
                             )
                         }
@@ -586,6 +596,7 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                                 quality = quality.key,
                                 downloadChat = downloadChat,
                                 downloadChatEmotes = downloadChatEmotes,
+                                playlistToFile = requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_PLAYLIST_TO_FILE, true),
                                 wifiOnly = requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_WIFI_ONLY, false)
                             )
                         }

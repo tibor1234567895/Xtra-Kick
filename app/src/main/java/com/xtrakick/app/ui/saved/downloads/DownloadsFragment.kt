@@ -5,6 +5,7 @@ import android.content.ContentResolver
 import android.content.Intent
 import android.os.Bundle
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
@@ -12,8 +13,10 @@ import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.RadioButton
+import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
@@ -282,6 +285,9 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
                 }, null))
             }
         }, {
+            // openInFolder
+            openDownloadInFolder(it)
+        }, {
             // deleteVideo
             val delete = getString(R.string.delete)
             val checkBox = CheckBox(requireContext()).apply {
@@ -304,6 +310,17 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
                             .setAction(R.string.leftover_files_delete) { leftoverUi.open() }
                             .show()
                     }
+                }
+                .setNegativeButton(getString(android.R.string.cancel), null)
+                .show()
+        }, {
+            // fileMissing: files were deleted outside the app (e.g. in a file
+            // explorer). Never open a blank player; offer entry removal instead.
+            requireActivity().getAlertDialogBuilder()
+                .setTitle(getString(R.string.delete))
+                .setMessage(getString(R.string.download_unavailable))
+                .setPositiveButton(getString(R.string.delete)) { _, _ ->
+                    viewModel.delete(it, false)
                 }
                 .setNegativeButton(getString(android.R.string.cancel), null)
                 .show()
@@ -346,6 +363,90 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
 
     override fun scrollToTop() {
         binding.recyclerView.scrollToPosition(0)
+    }
+
+    private fun openDownloadInFolder(video: OfflineVideo) {
+        val context = requireContext()
+        val urlStr = video.url
+        if (urlStr.isNullOrBlank()) {
+            Toast.makeText(context, getString(R.string.download_unavailable), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val urlUri = runCatching { urlStr.toUri() }.getOrNull()
+        if (urlUri == null) {
+            Toast.makeText(context, getString(R.string.download_unavailable), Toast.LENGTH_SHORT).show()
+            return
+        }
+        // SAF shared storage: open the tree folder in the system Files app,
+        // fallback to viewing the document itself.
+        if (urlUri.scheme == ContentResolver.SCHEME_CONTENT) {
+            val treeUri = video.downloadPath?.toUri()?.takeIf { it.scheme == ContentResolver.SCHEME_CONTENT }
+            val folderUri = treeUri?.let { tree ->
+                val treeId = runCatching { DocumentsContract.getTreeDocumentId(tree) }.getOrNull()
+                if (treeId != null) {
+                    runCatching { DocumentsContract.buildDocumentUriUsingTree(tree, treeId) }.getOrNull()
+                } else {
+                    tree
+                }
+            }
+            val candidates = buildList {
+                folderUri?.let {
+                    add(Intent(Intent.ACTION_VIEW).setDataAndType(it, DocumentsContract.Document.MIME_TYPE_DIR))
+                }
+                val mime = runCatching { context.contentResolver.getType(urlUri) }.getOrNull()
+                    ?: if (urlStr.endsWith(".m3u8")) "application/x-mpegURL" else "video/*"
+                add(Intent(Intent.ACTION_VIEW).setDataAndType(urlUri, mime))
+            }
+            for (intent in candidates) {
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                try {
+                    startActivity(Intent.createChooser(intent, getString(R.string.open_in_folder)))
+                    return
+                } catch (_: Exception) {
+                    // try next fallback
+                }
+            }
+            Toast.makeText(context, getString(R.string.no_file_explorer), Toast.LENGTH_SHORT).show()
+            return
+        }
+        // App-private File path: external explorers cannot browse it (scoped storage),
+        // so expose the file via FileProvider ("Open with…"). Folder reveal via file://
+        // is attempted first for OEM file managers that still handle it.
+        try {
+            val file = File(urlStr)
+            val target = if (file.isFile || file.exists()) file else file.parentFile ?: file
+            val folder = target.takeIf { it.isDirectory } ?: target.parentFile ?: target
+            runCatching {
+                val folderIntent = Intent(Intent.ACTION_VIEW).setDataAndType(
+                    android.net.Uri.fromFile(folder),
+                    DocumentsContract.Document.MIME_TYPE_DIR
+                )
+                startActivity(Intent.createChooser(folderIntent, getString(R.string.open_in_folder)))
+                return
+            }
+            val openFile = if (target.isDirectory) {
+                target.listFiles()?.firstOrNull { it.isFile } ?: target
+            } else {
+                target
+            }
+            if (!openFile.exists()) {
+                Toast.makeText(context, getString(R.string.download_unavailable), Toast.LENGTH_SHORT).show()
+                return
+            }
+            val contentUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.downloads-file-provider",
+                openFile
+            )
+            val mime = runCatching { context.contentResolver.getType(contentUri) }.getOrNull()
+                ?: if (openFile.name.endsWith(".m3u8")) "application/x-mpegURL" else "video/*"
+            val viewFile = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(contentUri, mime)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(Intent.createChooser(viewFile, getString(R.string.open_in_folder)))
+        } catch (_: Exception) {
+            Toast.makeText(context, getString(R.string.no_file_explorer), Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onNetworkRestored() {

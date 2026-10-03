@@ -470,6 +470,7 @@ class LoginActivity : AppCompatActivity() {
                     putString(AppConstants.KICK_REFRESH_TOKEN, refreshToken)
                     putLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, expiresAt)
                     putString(AppConstants.KICK_TOKEN_TYPE, tokenResponse.tokenType)
+                    remove(AppConstants.KICK_LOGIN_METHOD)
                     putString(AppConstants.KICK_USER_ID, userId)
                     putString(AppConstants.KICK_USER_LOGIN, loginName)
                     remove(AppConstants.KICK_AUTH_STATE)
@@ -659,6 +660,9 @@ class LoginActivity : AppCompatActivity() {
                 }
 
                 AuthStateHelper.clearLegacyWebAuth(this@LoginActivity)
+                // The mobile bearer is cookie-independent; drop any previous account's
+                // website session so web requests can't mix accounts.
+                AuthStateHelper.clearWebViewSession()
                 tokenPrefs().edit {
                     putString(AppConstants.KICK_ACCESS_TOKEN, mobileToken)
                     remove(AppConstants.KICK_REFRESH_TOKEN)

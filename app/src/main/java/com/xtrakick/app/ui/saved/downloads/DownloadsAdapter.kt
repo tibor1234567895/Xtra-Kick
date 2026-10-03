@@ -33,6 +33,7 @@ import com.xtrakick.app.ui.game.GameMediaFragmentDirections
 import com.xtrakick.app.ui.game.GamePagerFragmentDirections
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.DownloadStorage
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
 import kotlin.math.min
@@ -47,7 +48,9 @@ class DownloadsAdapter(
     private val updateChatUrl: (OfflineVideo) -> Unit,
     private val redownloadChat: (OfflineVideo) -> Unit,
     private val shareVideo: (OfflineVideo) -> Unit,
+    private val openInFolder: (OfflineVideo) -> Unit,
     private val deleteVideo: (OfflineVideo) -> Unit,
+    private val fileMissing: (OfflineVideo) -> Unit,
 ) : PagingDataAdapter<OfflineVideo, DownloadsAdapter.PagingViewHolder>(
     object : DiffUtil.ItemCallback<OfflineVideo>() {
         override fun areItemsTheSame(oldItem: OfflineVideo, newItem: OfflineVideo): Boolean {
@@ -105,6 +108,13 @@ class DownloadsAdapter(
                         )
                     }
                     root.setOnClickListener {
+                        val stillThere = runCatching {
+                            DownloadStorage.exists(fragment.requireContext(), item.url)
+                        }.getOrDefault(false)
+                        if (!stillThere) {
+                            fileMissing(item)
+                            return@setOnClickListener
+                        }
                         (fragment.activity as MainActivity).startOfflineVideo(item)
                     }
                     root.setOnLongClickListener { deleteVideo(item); true }
@@ -268,6 +278,9 @@ class DownloadsAdapter(
                                     if (item.url?.toUri()?.scheme == ContentResolver.SCHEME_CONTENT) {
                                         menu.findItem(R.id.shareVideo).isVisible = true
                                     }
+                                    if (item.url != null) {
+                                        menu.findItem(R.id.openInFolder).isVisible = true
+                                    }
                                 }
                             }
                             setOnMenuItemClickListener {
@@ -279,6 +292,7 @@ class DownloadsAdapter(
                                     R.id.updateChatUrl -> updateChatUrl(item)
                                     R.id.redownloadChat -> redownloadChat(item)
                                     R.id.shareVideo -> shareVideo(item)
+                                    R.id.openInFolder -> openInFolder(item)
                                     R.id.delete -> deleteVideo(item)
                                     else -> menu.close()
                                 }

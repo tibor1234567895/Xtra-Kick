@@ -532,7 +532,7 @@
     <string name="pinned_message_collapse">Collapse pinned message</string>
     <string name="pinned_gift_title_prefix">Sent by </string>
     <string name="pinned_gift_pinned_by_prefix">Pinned by </string>
-    <string name="pinned_gift_pinned_by_suffix_with_seconds"> for %1$ds</string>
+    <string name="pinned_gift_pinned_by_suffix_with_seconds">" for %1$ds"</string>
     <string name="pinned_gift_unknown_user">Unknown user</string>
     <string name="kick_automod">Kick AutoMod</string>
     <string name="pinned_gift_message_fallback">Pinned message</string>
@@ -668,6 +668,7 @@
     <string name="import_kick_followed_success">Imported %d followed channels</string>
     <string name="import_kick_followed_empty">No followed channels found</string>
     <string name="import_kick_followed_error">Kick follow import failed: %s</string>
+    <string name="import_kick_followed_manual_hint">Automatic import needs a Kick website session. Tap here to import manually.</string>
     <string name="keep_files">Keep files</string>
     <string name="import_app_downloads">Import downloads from app storage</string>
     <string name="leftover_files">Leftover download files</string>
@@ -696,6 +697,8 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="download_chat">Download chat replay</string>
     <string name="download_chat_emotes">Download emotes and badges</string>
     <string name="redownload_chat">Redownload chat</string>
+    <string name="open_in_folder">Show in file explorer</string>
+    <string name="no_file_explorer">No file explorer found</string>
     <string name="chat_downloading_progress">Chat: %d%%</string>
     <string name="change_chat_file">Change chat file</string>
     <string name="download_queued">Queued</string>

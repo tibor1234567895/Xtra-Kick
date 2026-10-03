@@ -35,7 +35,7 @@ class LocalFollowChannelRepository @Inject constructor(
     }
 
     suspend fun saveFollow(item: LocalFollowChannel) = withContext(Dispatchers.IO) {
-        upsertLocalFollow(item.userId, item.userLogin, item.userName, item.channelLogo)
+        upsertLocalFollow(item.userId, item.userLogin, item.userName, item.channelLogo, item.sourceMask)
     }
 
     suspend fun deleteFollow(item: LocalFollowChannel) = withContext(Dispatchers.IO) {
@@ -115,7 +115,7 @@ class LocalFollowChannelRepository @Inject constructor(
         }
     }
 
-    suspend fun markKickFollows(logins: Collection<String>): Int = withContext(Dispatchers.IO) {
+    suspend fun markKickFollows(logins: Collection<String>, notify: Boolean = true): Int = withContext(Dispatchers.IO) {
         val normalized = logins.mapNotNull { it.trim().takeIf(String::isNotBlank)?.lowercase() }.toSet()
         if (normalized.isEmpty()) return@withContext 0
         var marked = 0
@@ -127,7 +127,7 @@ class LocalFollowChannelRepository @Inject constructor(
                 marked++
             }
         }
-        if (marked > 0) notifyFollowsChanged()
+        if (marked > 0 && notify) notifyFollowsChanged()
         marked
     }
 

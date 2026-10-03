@@ -176,7 +176,12 @@ fun isPersistedUriGranted(
     needWrite: Boolean = false
 ): Boolean {
     if (targetUri.isNullOrBlank()) return false
-    return permUri.trimEnd('/') == targetUri.trimEnd('/') &&
+    val permNormalized = permUri.trimEnd('/')
+    val targetNormalized = targetUri.trimEnd('/')
+    val matches = permNormalized.equals(targetNormalized, ignoreCase = true) ||
+        permNormalized.replace("%2f", "/", ignoreCase = true).replace("%2F", "/") ==
+        targetNormalized.replace("%2f", "/", ignoreCase = true).replace("%2F", "/")
+    return matches &&
         (!needRead || hasRead) &&
         (!needWrite || hasWrite)
 }

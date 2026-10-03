@@ -626,7 +626,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 )
             )
             pinnedGift.pinnedSeconds?.takeIf { it > 0 }?.let {
-                builder.append(getString(R.string.pinned_gift_pinned_by_suffix_with_seconds, it))
+                builder.append(" ")
+                builder.append(getString(R.string.pinned_gift_pinned_by_suffix_with_seconds, it).trimStart())
             }
         }
         if (builder.isEmpty()) {

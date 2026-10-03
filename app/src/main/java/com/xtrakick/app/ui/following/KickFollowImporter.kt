@@ -8,6 +8,7 @@ import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
+import com.xtrakick.app.repository.KickWebResponseException
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.util.AppConstants
@@ -95,6 +96,11 @@ sealed class KickFollowImportState {
     data class Importing(val count: Int) : KickFollowImportState()
     data class Success(val count: Int) : KickFollowImportState()
     data class Error(val message: String?) : KickFollowImportState()
+    /**
+     * Auto import failed with an auth error and there is no website session to retry
+     * with (typical after external-browser login). The UI should point at manual import.
+     */
+    object NeedsManualImport : KickFollowImportState()
 }
 
 @Singleton
@@ -188,9 +194,25 @@ class KickFollowImporter @Inject constructor(
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
+                if (isManualImportNeeded(error)) {
+                    _importState.value = KickFollowImportState.NeedsManualImport
+                }
                 Log.i(LOG_TAG, "Post-login Kick follow import skipped or unavailable: ${error.message}")
             }
         }
+    }
+
+    private fun isManualImportNeeded(error: Exception): Boolean {
+        if (!com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(context)) return false
+        if (com.xtrakick.app.util.AuthStateHelper.isKickGoogleSession(context)) return false
+        if (kickRepository.hasKickWebsiteSessionCookieOnly()) return false
+        val webResponse = error as? KickWebResponseException
+        if (webResponse != null) {
+            return webResponse.statusCode == 401 || webResponse.statusCode == 403
+        }
+        val message = error.message.orEmpty()
+        return message.contains("401", ignoreCase = true) ||
+            message.contains("unauthenticated", ignoreCase = true)
     }
 
     /** One-time backfill: mark locally stored follows that also exist on Kick. Safe to re-run. */

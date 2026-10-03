@@ -45,6 +45,8 @@ import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.hasPersistedUriPermission
 import com.xtrakick.app.util.m3u8.PlaylistUtils
+import com.xtrakick.app.util.DownloadStorage
+import com.xtrakick.app.util.SafStorageUtils
 import com.xtrakick.app.util.prefs
 import dagger.Lazy
 import dagger.assisted.Assisted
@@ -131,7 +133,8 @@ class StreamDownloadWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         val firstVideo = offlineRepository.getVideoById(inputData.getInt(KEY_VIDEO_ID, 0)) ?: return Result.failure()
         offlineVideo = firstVideo
-        offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_WAITING_FOR_STREAM })
+        try {
+            offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_WAITING_FOR_STREAM })
         setForeground(createForegroundInfo(false, firstVideo))
         val path = offlineVideo.downloadPath!!
         if (path.toUri().scheme == ContentResolver.SCHEME_CONTENT &&
@@ -361,6 +364,16 @@ class StreamDownloadWorker @AssistedInject constructor(
             }
         }
         return Result.success()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Log.e("StreamDownloadWorker", "Stream download failed: ${e.message}", e)
+            DiagnosticLogger.e("StreamDownloadWorker", "Stream download failed: ${e.message}", e)
+            runCatching {
+                offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
+            }
+            return Result.failure()
+        }
     }
 
     @Suppress("UNUSED_EXPRESSION", "UNREACHABLE_CODE")
@@ -472,19 +485,14 @@ class StreamDownloadWorker @AssistedInject constructor(
             }
             fileUri
         } else {
-            val fileName = "${offlineVideo.channelLogin ?: ""}${offlineVideo.quality ?: ""}${downloadDate}.${firstUrls.first().substringAfterLast(".").substringBefore("?")}"
+            val ext = firstUrls.first().substringAfterLast(".").substringBefore("?").takeIf { it.isNotBlank() } ?: "mp4"
+            val fileName = DownloadStorage.singleFileNameFor(offlineVideo, ext)
             val fileUri = if (isShared) {
-                val documentId = DocumentsContract.getTreeDocumentId(path.toUri())
-                val directoryUri = DocumentsContract.buildDocumentUriUsingTree(path.toUri(), documentId)
-                val fileUri = directoryUri.toString() + (if (!directoryUri.toString().endsWith("%3A")) "%2F" else "") + fileName
-                try {
-                    context.contentResolver.openOutputStream(fileUri.toUri())!!.close()
-                } catch (e: IllegalArgumentException) {
-                    DocumentsContract.createDocument(context.contentResolver, directoryUri, "", fileName)
-                }
-                fileUri
+                val dirDoc = DownloadStorage.containerDoc(context, path.toUri(), offlineVideo)
+                SafStorageUtils.getOrCreateFileInDir(dirDoc, fileName, "video/mp4").toString()
             } else {
-                "$path${File.separator}$fileName"
+                val dir = DownloadStorage.containerFile(path, offlineVideo)
+                "$dir${File.separator}$fileName"
             }
             val initSegmentBytes = initSegmentUri?.let {
                 when {
@@ -885,7 +893,8 @@ class StreamDownloadWorker @AssistedInject constructor(
 
     private suspend fun startChatJob(channelLogin: String, path: String, downloadDate: Long, streamStartTime: String) {
         val isShared = path.toUri().scheme == ContentResolver.SCHEME_CONTENT
-        val fileName = "${channelLogin}${offlineVideo.quality ?: ""}${downloadDate}_chat.json"
+        val safeChannel = DownloadStorage.sanitizeSegment(channelLogin, "live")
+        val fileName = "${safeChannel}${offlineVideo.quality ?: ""}${downloadDate}_chat.json"
         val resumed = !offlineVideo.chatUrl.isNullOrBlank() && offlineVideo.chatBytes > 0L
         val savedChatEmotes = mutableListOf<String>()
         val savedBadges = mutableListOf<Pair<String, String>>()
@@ -1022,17 +1031,19 @@ class StreamDownloadWorker @AssistedInject constructor(
             fileUri
         } else {
             val fileUri = if (isShared) {
-                val documentId = DocumentsContract.getTreeDocumentId(path.toUri())
-                val directoryUri = DocumentsContract.buildDocumentUriUsingTree(path.toUri(), documentId)
-                val fileUri = directoryUri.toString() + (if (!directoryUri.toString().endsWith("%3A")) "%2F" else "") + fileName
-                try {
-                    context.contentResolver.openOutputStream(fileUri.toUri())!!.close()
-                } catch (e: IllegalArgumentException) {
-                    DocumentsContract.createDocument(context.contentResolver, directoryUri, "", fileName)
+                // Co-locate with video container when already created, else new subfolder.
+                val container = DownloadStorage.containerOfUrl(offlineVideo.url, path)
+                val parentUri = runCatching { container?.toUri() ?: path.toUri() }.getOrNull() ?: path.toUri()
+                runCatching {
+                    android.provider.DocumentsContract.createDocument(context.contentResolver, parentUri, "application/json", fileName)?.toString()
+                }.getOrNull() ?: run {
+                    val dirDoc = DownloadStorage.containerDoc(context, path.toUri(), offlineVideo)
+                    SafStorageUtils.getOrCreateFileInDir(dirDoc, fileName, "application/json").toString()
                 }
-                fileUri
             } else {
-                "$path${File.separator}$fileName"
+                val container = DownloadStorage.containerOfUrl(offlineVideo.url, path) ?: DownloadStorage.containerFile(path, offlineVideo).absolutePath
+                File(container).mkdirs()
+                "$container${File.separator}$fileName"
             }
             offlineRepository.updateVideo(offlineVideo.apply {
                 chatUrl = fileUri

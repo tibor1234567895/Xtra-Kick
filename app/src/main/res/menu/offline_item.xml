@@ -29,6 +29,10 @@
         android:title="@string/share"
         android:visible="false" />
     <item
+        android:id="@+id/openInFolder"
+        android:title="@string/open_in_folder"
+        android:visible="false" />
+    <item
         android:id="@+id/delete"
         android:title="@string/delete" />
 </menu>

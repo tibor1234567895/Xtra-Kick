@@ -191,7 +191,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
                 officialLive.forEach(::putStream)
                 val liveLogins = officialLive.mapNotNull { it.channelLogin?.trim()?.lowercase(Locale.ROOT) }
                 if (liveLogins.isNotEmpty()) {
-                    localFollowsChannel.markKickFollows(liveLogins)
+                    localFollowsChannel.markKickFollows(liveLogins, notify = false)
                 }
                 if (officialLive.isNotEmpty()) {
                     onPartial(resolved.values.toList().sortedByViewersDesc())
