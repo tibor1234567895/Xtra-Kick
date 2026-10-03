@@ -5,17 +5,21 @@ import androidx.lifecycle.viewModelScope
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.model.ui.MutedChatUser
 import com.xtrakick.app.model.ui.User
+import com.xtrakick.app.repository.KickAccountMutedUsersStore
 import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.repository.MutedChatUsersRepository
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.DiagnosticLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+private const val TAG = "MessageClickedViewModel"
 
 data class MessageClickedUiState(
     val user: User? = null,
@@ -31,6 +35,7 @@ data class MessageClickedUiState(
 class MessageClickedViewModel @Inject constructor(
     private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
+    private val kickAccountMutedUsersStore: KickAccountMutedUsersStore,
     private val localFollowChannelRepository: LocalFollowChannelRepository,
     private val mutedChatUsersRepository: MutedChatUsersRepository,
 ) : ViewModel() {
@@ -241,15 +246,48 @@ class MessageClickedViewModel @Inject constructor(
             uiState.value = uiState.value.copy(isMuteActionInProgress = true)
             if (isMuted) {
                 mutedChatUsersRepository.removeMutedUser(userId, userLogin, userName)
-                _events.emit("Messages restored for ${userName ?: userLogin ?: "user"}")
             } else {
                 mutedChatUsersRepository.saveMutedUser(MutedChatUser(userId, userLogin, userName))
-                _events.emit("Muted ${userName ?: userLogin ?: "user"} in chat")
+            }
+            val displayName = userName ?: userLogin ?: "user"
+            val verb = if (isMuted) "Unmuted" else "Muted"
+            when (mirrorMuteOnKickAccount(userId, !isMuted)) {
+                true -> _events.emit("$verb $displayName on Kick")
+                false -> _events.emit("$verb $displayName in chat (account sync failed)")
+                else -> _events.emit(if (isMuted) "Messages restored for $displayName" else "$verb $displayName in chat")
             }
             uiState.value = uiState.value.copy(
                 isMuted = !isMuted,
                 isMuteActionInProgress = false,
             )
         }
+    }
+
+    /**
+     * Mirrors the mute onto the logged-in Kick account (best-effort), mirroring the
+     * local-first follow pattern. Null means not attempted (not a Kick stream, no
+     * numeric user id, or no account capability); otherwise the applied outcome.
+     */
+    private suspend fun mirrorMuteOnKickAccount(userId: String?, mute: Boolean): Boolean? {
+        if (!currentIsKick) return null
+        val id = userId?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        if (!kickRepository.hasKickAccountFollowCapability()) return null
+        // The account store mirrors the server's silenced-users list — when it already
+        // has the target state, the write would be an idempotent no-op.
+        val alreadyMuted = kickAccountMutedUsersStore.users.value.any { it.id == id }
+        if (mute == alreadyMuted) return true
+        val applied = runCatching { kickRepository.setKickAccountMutedUser(id, mute) }
+            .onFailure { DiagnosticLogger.w(TAG, "Kick account mute mirror failed for $id: ${it.message}") }
+            .getOrNull() == true
+        if (applied) {
+            // Keep the shared account store in sync so the chat filter releases
+            // remote mutes immediately instead of waiting for the next refresh.
+            if (mute) {
+                kickAccountMutedUsersStore.onAccountMuteApplied(id, currentChannelName ?: currentChannelLogin)
+            } else {
+                kickAccountMutedUsersStore.onAccountUnmuteApplied(id)
+            }
+        }
+        return applied
     }
 }

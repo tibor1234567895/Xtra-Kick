@@ -14,6 +14,7 @@ import com.xtrakick.app.model.chat.ChannelPointReward
 import com.xtrakick.app.model.chat.ChatEmote
 import com.xtrakick.app.model.chat.ChatMessage
 import com.xtrakick.app.model.chat.Emote
+import com.xtrakick.app.model.chat.KickGiftTrainSnapshot
 import com.xtrakick.app.model.chat.PinnedGift
 import com.xtrakick.app.model.chat.Poll
 import com.xtrakick.app.model.chat.Prediction
@@ -68,6 +69,7 @@ import com.xtrakick.app.model.kick.auth.KickBackendRefreshRequest
 import com.xtrakick.app.model.ui.ChannelViewerList
 import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.model.ui.Game
+import com.xtrakick.app.model.ui.KickMutedUser
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.model.ui.User
 import com.xtrakick.app.model.ui.Video
@@ -356,6 +358,7 @@ class KickRepository @Inject constructor(
         val clearTargetUserId: String? = null,
         val clearTargetUserLogin: String? = null,
         val clearTargetUserName: String? = null,
+        val giftTrain: KickGiftTrainSnapshot? = null,
     )
 
     data class KickChannelMoveEvent(
@@ -905,10 +908,14 @@ class KickRepository @Inject constructor(
         )
     }
 
+    /**
+     * Returns null when the relationship could not be fetched (network failure, non-JSON
+     * response). Callers must not read a null result as "not following".
+     */
     suspend fun getChannelUserRelationship(
         channelSlug: String,
         userSlug: String,
-    ): KickChannelUserRelationship = withContext(Dispatchers.IO) {
+    ): KickChannelUserRelationship? = withContext(Dispatchers.IO) {
         val normalizedChannelSlug = channelSlug.trim()
         val normalizedUserSlug = userSlug.trim()
         if (normalizedChannelSlug.isBlank() || normalizedUserSlug.isBlank()) {
@@ -946,7 +953,7 @@ class KickRepository @Inject constructor(
                 isBanned = isBanned,
                 banReason = banReason,
             )
-        }.getOrDefault(KickChannelUserRelationship())
+        }.getOrNull()
     }
 
     suspend fun canAccessKickSubscriberEmotes(channelSlug: String): Boolean = withContext(Dispatchers.IO) {
@@ -1373,7 +1380,8 @@ class KickRepository @Inject constructor(
                 val event = decodeKickOfficialRealtimePayload<KickOfficialChannelSubscriptionGiftsEvent>(messageJson) ?: return null
                 val kickMessage = officialGiftEventToKickMessage(event)
                 KickRealtimeParsedEvent(
-                    chatMessage = toChatMessage(kickMessage, eventName)
+                    chatMessage = toChatMessage(kickMessage, eventName),
+                    giftTrain = event.toGiftTrainSnapshot(),
                 )
             }
             "channel.subscription.new" -> {
@@ -1543,7 +1551,13 @@ class KickRepository @Inject constructor(
                     1 -> context.getString(R.string.kick_gifted_sub_to, gifterName, giftedUsernames.first())
                     else -> context.getString(R.string.kick_gifted_subs, gifterName, giftedUsernames.size)
                 }
-                KickRealtimeParsedEvent(chatMessage = createKickNoticeMessage(message, root.primitiveOrNull("created_at")))
+                KickRealtimeParsedEvent(
+                    chatMessage = createKickNoticeMessage(message, root.primitiveOrNull("created_at")),
+                    giftTrain = KickGiftTrainSnapshot(
+                        gifterName = gifterName,
+                        giftees = giftedUsernames,
+                    ),
+                )
             }
             "subscriptionevent",
             "app\\events\\subscriptionevent" -> {
@@ -2079,6 +2093,56 @@ class KickRepository @Inject constructor(
                 else -> null
             }
         }.getOrNull()
+    }
+
+    /**
+     * Lists the logged-in Kick account's muted users via `GET /api/v2/silenced-users` —
+     * the website's own endpoint, also used by the official app (verified in the
+     * 40.31.0 bundle). Each entry carries the numeric user id and username.
+     */
+    suspend fun getKickAccountMutedUsers(): List<KickMutedUser> = withContext(Dispatchers.IO) {
+        val raw = executeKickWebSessionRequest("https://kick.com/api/v2/silenced-users")
+        val root = runCatching { JSONObject(raw) }.getOrElse {
+            throw IOException("Malformed JSON from Kick silenced-users endpoint")
+        }
+        val array = root.optJSONArray("data")
+            ?: throw IOException("Kick silenced-users response was missing a data array")
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val id = item.optString("id").takeIf { it.isNotBlank() } ?: continue
+                add(KickMutedUser(id = id, username = item.optString("username").takeIf { it.isNotBlank() }))
+            }
+        }
+    }
+
+    /**
+     * Mutes/unmutes a user on the logged-in Kick account via
+     * `POST /api/v2/silenced-users` with `{"user_id": <id>}` (mute) and
+     * `DELETE /api/v2/silenced-users/{id}` (unmute) — the website's own endpoints.
+     * A 2xx response means applied; failures throw so callers can distinguish
+     * account-side outcomes.
+     */
+    suspend fun setKickAccountMutedUser(userId: String, mute: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val normalizedId = userId.trim().takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("user id is required")
+        DiagnosticLogger.i(tag, "Executing Kick account mute request: ${if (mute) "POST" else "DELETE"} for $normalizedId")
+        if (mute) {
+            // The endpoint takes a numeric id; fall back to the raw string for anything else.
+            val payload = JSONObject().apply {
+                put("user_id", normalizedId.toLongOrNull() ?: normalizedId)
+            }.toString()
+            executeKickWebSessionRequest(
+                "https://kick.com/api/v2/silenced-users",
+                body = payload,
+            )
+        } else {
+            executeKickWebSessionRequest(
+                "https://kick.com/api/v2/silenced-users/${urlEncode(normalizedId)}",
+                method = "DELETE",
+            )
+        }
+        true
     }
 
     /** Fetches the short-lived bearer used by Kick's viewer watch WebSocket. */
@@ -3935,6 +3999,15 @@ class KickRepository @Inject constructor(
                 put("event", JsonPrimitive("channel.subscription.gifts"))
                 put("gifted_count", JsonPrimitive(event.giftees.size.coerceAtLeast(1)))
             },
+        )
+    }
+
+    private fun KickOfficialChannelSubscriptionGiftsEvent.toGiftTrainSnapshot(): KickGiftTrainSnapshot {
+        val gifter = gifter ?: subscriber
+        val gifteeNames = giftees.mapNotNull { it.username?.takeIf(String::isNotBlank) ?: it.channelSlug?.takeIf(String::isNotBlank) }
+        return KickGiftTrainSnapshot(
+            gifterName = gifter?.username?.takeIf(String::isNotBlank) ?: gifter?.channelSlug?.takeIf(String::isNotBlank),
+            giftees = gifteeNames,
         )
     }
 

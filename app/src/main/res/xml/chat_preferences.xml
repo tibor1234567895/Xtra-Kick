@@ -1,6 +1,12 @@
 <androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <Preference
+        android:key="nav_muted_users"
+        android:title="@string/muted_users"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
     <SwitchPreferenceCompat
         android:defaultValue="false"
         android:key="chat_boldnames"
@@ -210,6 +216,13 @@
         android:defaultValue="true"
         android:key="chat_show_usernotice"
         android:title="@string/show_usernotice"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="false"
+        android:key="chat_disable_gift_train_banner"
+        android:title="@string/disable_gift_train_banner"
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 

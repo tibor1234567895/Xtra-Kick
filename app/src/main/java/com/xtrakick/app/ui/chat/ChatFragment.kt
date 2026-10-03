@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.SystemClock
 import android.os.CountDownTimer
 import android.text.InputType
 import android.text.SpannableStringBuilder
@@ -76,6 +77,7 @@ import com.xtrakick.app.databinding.FragmentChatBinding
 import com.xtrakick.app.model.chat.ChatMessage
 import com.xtrakick.app.model.chat.Chatter
 import com.xtrakick.app.model.chat.Emote
+import com.xtrakick.app.model.chat.KickGiftTrain
 import com.xtrakick.app.model.chat.PinnedGift
 import com.xtrakick.app.model.chat.Poll
 import com.xtrakick.app.model.chat.Prediction
@@ -142,6 +144,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private var lastRoomStateSignature: String? = null
     private var delayBadgeFirstShown = false
     private var raidCountdownTimer: CountDownTimer? = null
+    private var giftTrainAdapter: GiftTrainCardsAdapter? = null
+    private var giftTrainTimer: CountDownTimer? = null
     private val hideDelayBadgeRunnable = Runnable {
         _binding?.chatDelayText?.visibility = View.GONE
         updateHeaderBadgeLayout()
@@ -166,6 +170,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private val chatPreferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key in LIVE_CHAT_RENDER_SETTING_KEYS) {
             refreshLiveChatRenderSettings()
+        }
+        if (key == AppConstants.CHAT_DISABLE_GIFT_TRAIN_BANNER) {
+            viewModel.dismissGiftTrain()
         }
     }
 
@@ -269,6 +276,50 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 }
             }
         }.also { it.start() }
+    }
+
+    private fun renderGiftTrain(train: KickGiftTrain?) {
+        val binding = _binding ?: return
+        giftTrainTimer?.cancel()
+        giftTrainTimer = null
+        if (train == null) {
+            binding.giftTrainLayout.visibility = View.GONE
+            return
+        }
+        binding.giftTrainLayout.visibility = View.VISIBLE
+        binding.giftTrainTitle.text = buildGiftTrainTitle(train)
+        giftTrainAdapter?.submit(train.gifterName, train.giftees)
+        val durationMs = train.displayDurationMs
+        val remainingMs = (train.lastUpdatedAtMs + durationMs - SystemClock.elapsedRealtime()).coerceIn(1L, durationMs)
+        binding.giftTrainProgress.progress = ((remainingMs.toFloat() / durationMs) * binding.giftTrainProgress.max).toInt()
+        giftTrainTimer = object : CountDownTimer(remainingMs, 100L) {
+            override fun onTick(millisUntilFinished: Long) {
+                val binding = _binding ?: return
+                binding.giftTrainProgress.progress = ((millisUntilFinished.toFloat() / durationMs) * binding.giftTrainProgress.max).toInt()
+            }
+
+            override fun onFinish() {
+                giftTrainTimer = null
+                _binding?.giftTrainLayout?.visibility = View.GONE
+            }
+        }.also { it.start() }
+    }
+
+    private fun buildGiftTrainTitle(train: KickGiftTrain): CharSequence {
+        val binding = _binding ?: return ""
+        val gifter = train.gifterName ?: binding.root.context.getString(R.string.kick_gift_train_someone)
+        val text = if (train.totalGifted > 1) {
+            binding.root.context.getString(R.string.kick_gift_train_banner, gifter, train.totalGifted)
+        } else {
+            binding.root.context.getString(R.string.kick_gift_train_banner_one, gifter)
+        }
+        return SpannableStringBuilder(text).apply {
+            val start = text.indexOf(gifter)
+            if (start >= 0) {
+                setSpan(StyleSpan(Typeface.BOLD), start, start + gifter.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                setSpan(ForegroundColorSpan(binding.root.context.getColor(R.color.giftTrainAccent)), start, start + gifter.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
     }
 
     private fun setupEmotePicker() {
@@ -2405,6 +2456,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     renderBufferedMessages()
                     renderPinnedGift()
                     renderChannelPointsButton()
+                    giftTrainAdapter = GiftTrainCardsAdapter()
+                    binding.giftTrainCards.apply {
+                        layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+                        adapter = giftTrainAdapter
+                    }
+                    binding.giftTrainClose.setOnClickListener {
+                        viewModel.dismissGiftTrain()
+                    }
                     pinnedGiftClose.setOnClickListener {
                         viewModel.dismissPinnedGift()
                     }
@@ -2519,6 +2578,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 toggleEmoteMenu(true)
                             } else {
                                 toggleEmoteMenu(false)
+                            }
+                        }
+                        if (BuildConfig.DEBUG) {
+                            emotes.setOnLongClickListener {
+                                viewModel.simulateGiftTrain()
+                                true
                             }
                         }
                         messagingEnabled = true
@@ -2655,6 +2720,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.pinnedGiftExpanded.collectLatest {
                                 renderPinnedGift()
+                            }
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.giftTrain.collectLatest { train ->
+                                renderGiftTrain(train)
                             }
                         }
                     }
@@ -3512,6 +3584,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         requireContext().prefs().unregisterOnSharedPreferenceChangeListener(chatPreferenceChangeListener)
         raidCountdownTimer?.cancel()
         raidCountdownTimer = null
+        giftTrainTimer?.cancel()
+        giftTrainTimer = null
+        giftTrainAdapter = null
         channelPointsDialog?.dismiss()
         channelPointsDialog = null
         _binding?.emoteSections?.adapter = null

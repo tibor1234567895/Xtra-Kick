@@ -224,6 +224,7 @@ object AppConstants {
     const val CHAT_RECENT = "chat_recent"
     const val CHAT_RECENT_LIMIT = "chat_recent_limit"
     const val CHAT_SHOW_USERNOTICE = "chat_show_usernotice"
+    const val CHAT_DISABLE_GIFT_TRAIN_BANNER = "chat_disable_gift_train_banner"
     const val CHAT_SHOW_CLEARMSG = "chat_show_clearmsg"
     const val CHAT_SHOW_CLEARCHAT = "chat_show_clearchat"
     const val CHAT_ENABLE_STV = "chat_enable_stv"

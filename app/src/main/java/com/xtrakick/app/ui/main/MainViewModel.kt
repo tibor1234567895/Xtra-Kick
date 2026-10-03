@@ -30,6 +30,7 @@ import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.model.ui.User
 import com.xtrakick.app.model.ui.Video
 import com.xtrakick.app.repository.AuthRepository
+import com.xtrakick.app.repository.KickAccountMutedUsersStore
 import com.xtrakick.app.repository.KickAuthRequestException
 import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
@@ -101,11 +102,19 @@ class MainViewModel @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val json: Json,
     private val fcmSyncManager: Lazy<FcmSyncManager>,
+    private val kickAccountMutedUsersStore: KickAccountMutedUsersStore,
 ) : ViewModel() {
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { fcmSyncManager.get().syncSubscriptions() }
+        }
+        // Warm the account muted-users list at app launch so account-level mutes
+        // (e.g. made on the web) are already filtering before any chat connects.
+        viewModelScope.launch {
+            if (kickRepository.hasKickAccountFollowCapability()) {
+                runCatching { kickAccountMutedUsersStore.refreshIfStale() }
+            }
         }
     }
 

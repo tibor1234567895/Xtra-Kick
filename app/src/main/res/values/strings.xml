@@ -209,9 +209,13 @@
     <string name="founder_badge_duration">Founder badge: %1$s</string>
     <string name="badges_label">Badges</string>
     <string name="show_usernotice">Show user notices (subs, raids...)</string>
+    <string name="disable_gift_train_banner">Disable gift train banner</string>
     <string name="kick_gifted_sub">%1$s gifted a sub</string>
     <string name="kick_gifted_sub_to">%1$s gifted a sub to %2$s</string>
     <string name="kick_gifted_subs">%1$s gifted %2$d subs</string>
+    <string name="kick_gift_train_banner">%1$s has gifted %2$d subs</string>
+    <string name="kick_gift_train_banner_one">%1$s has gifted a sub</string>
+    <string name="kick_gift_train_someone">Someone</string>
     <string name="kick_followed_notice">%1$s followed %2$s</string>
     <string name="kick_subscribed_notice">%1$s subscribed</string>
     <string name="kick_subscribed_for_months_notice">%1$s subscribed for %2$d months</string>
@@ -631,6 +635,12 @@
     <string name="mute">Mute</string>
     <string name="muted">Muted</string>
     <string name="unmute">Unmute</string>
+    <string name="muted_users">Muted users</string>
+    <string name="muted_users_account_section">Kick account</string>
+    <string name="muted_users_device_section">On this device</string>
+    <string name="muted_users_load_failed">Failed to load muted users</string>
+    <string name="muted_users_empty">No muted users</string>
+    <string name="muted_users_unmute_failed">Couldn\'t unmute %s</string>
     <string name="pip_controls">Picture-in-Picture controls</string>
     <string name="pip_show_audio_only">Audio-Only action</string>
     <string name="pip_show_audio_only_summary">Show Audio-Only quick action in PiP</string>

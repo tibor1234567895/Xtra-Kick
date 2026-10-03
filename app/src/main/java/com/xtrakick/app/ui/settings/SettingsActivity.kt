@@ -1134,6 +1134,10 @@ class SettingsActivity : AppCompatActivity() {
                     value = storedStrength
                 }
             }
+            findPreference<Preference>("nav_muted_users")?.setOnPreferenceClickListener {
+                MutedUsersDialog().show(childFragmentManager, "muted_users")
+                true
+            }
         }
 
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {

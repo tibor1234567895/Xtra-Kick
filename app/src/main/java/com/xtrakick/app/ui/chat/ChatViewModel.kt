@@ -21,6 +21,8 @@ import com.xtrakick.app.model.chat.ChatMessage
 import com.xtrakick.app.model.chat.Chatter
 import com.xtrakick.app.model.chat.CheerEmote
 import com.xtrakick.app.model.chat.Emote
+import com.xtrakick.app.model.chat.KickGiftTrain
+import com.xtrakick.app.model.chat.KickGiftTrainSnapshot
 import com.xtrakick.app.model.chat.NamePaint
 import com.xtrakick.app.model.chat.Poll
 import com.xtrakick.app.model.chat.PinnedGift
@@ -37,6 +39,7 @@ import com.xtrakick.app.model.kick.KickMessage
 import com.xtrakick.app.model.kick.KickOfficialReward
 import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickAuthRequestException
+import com.xtrakick.app.repository.KickAccountMutedUsersStore
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.MutedChatUsersRepository
 import com.xtrakick.app.repository.PlayerRepository
@@ -138,6 +141,7 @@ class ChatViewModel @Inject constructor(
     private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
     private val mutedChatUsersRepository: MutedChatUsersRepository,
+    private val kickAccountMutedUsersStore: KickAccountMutedUsersStore,
     private val playerRepository: PlayerRepository,
     private val shownNotificationsRepository: ShownNotificationsRepository,
     private val trustManager: X509TrustManager?,
@@ -302,6 +306,8 @@ class ChatViewModel @Inject constructor(
     var streamId: String? = null
     private val rewardList = mutableListOf<ChatMessage>()
     private var lastPinnedGiftId: String? = null
+    private val giftTrainAggregator = GiftTrainAggregator()
+    private var giftTrainExpiryJob: Job? = null
     val namePaints = mutableListOf<NamePaint>()
     val stvBadges = mutableListOf<StvBadge>()
     val personalEmoteSets = mutableMapOf<String, List<Emote>>()
@@ -317,6 +323,7 @@ class ChatViewModel @Inject constructor(
     val pinnedGift = MutableStateFlow<PinnedGift?>(null)
     val pinnedGiftDismissed = MutableStateFlow(false)
     val pinnedGiftExpanded = MutableStateFlow(false)
+    val giftTrain = MutableStateFlow<KickGiftTrain?>(null)
     val channelPointsBalance = MutableStateFlow<Int?>(null)
     val channelPointRewards = MutableStateFlow<List<ChannelPointReward>>(emptyList())
     val channelPointRewardsAvailable = MutableStateFlow(false)
@@ -377,6 +384,49 @@ class ChatViewModel @Inject constructor(
         lastPinnedGiftId = nextPinnedGift.id
     }
 
+    fun dismissGiftTrain() {
+        giftTrainExpiryJob?.cancel()
+        giftTrainExpiryJob = null
+        giftTrainAggregator.clear()
+        giftTrain.value = null
+    }
+
+    private val giftTrainSimulatorGiftees = listOf("kkosu", "CJPJAM", "itnog", "ftschrissy", "porkneck", "aayush_mb", "Mrchow289", "jormas23")
+    private val giftTrainSimulatorGifters = listOf("rembbu", "llnahiara")
+    private var giftTrainSimulatorPressCount = 0
+
+    /** Debug-only: injects fake gifted-subs events so the banner can be previewed without a real gift. Presses alternate gifters to exercise overlapping trains. */
+    fun simulateGiftTrain() {
+        if (!BuildConfig.DEBUG) return
+        val press = giftTrainSimulatorPressCount++
+        val gifter = giftTrainSimulatorGifters[press % giftTrainSimulatorGifters.size]
+        val batch = List(5) { giftTrainSimulatorGiftees[(press * 5 + it) % giftTrainSimulatorGiftees.size] }
+        updateGiftTrain(KickGiftTrainSnapshot(gifterName = gifter, giftees = batch))
+    }
+
+    private fun updateGiftTrain(snapshot: KickGiftTrainSnapshot) {
+        if (applicationContext.prefs().getBoolean(AppConstants.CHAT_DISABLE_GIFT_TRAIN_BANNER, false)) return
+        viewModelScope.launch {
+            val trains = giftTrainAggregator.onGiftEvent(snapshot, SystemClock.elapsedRealtime())
+            giftTrain.value = trains.maxByOrNull(KickGiftTrain::lastUpdatedAtMs)
+            scheduleGiftTrainExpiry()
+        }
+    }
+
+    private fun scheduleGiftTrainExpiry() {
+        giftTrainExpiryJob?.cancel()
+        val current = giftTrain.value ?: return
+        val delayMs = (current.lastUpdatedAtMs + current.displayDurationMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+        giftTrainExpiryJob = viewModelScope.launch {
+            delay(delayMs)
+            val trains = giftTrainAggregator.prune(SystemClock.elapsedRealtime())
+            giftTrain.value = trains.maxByOrNull(KickGiftTrain::lastUpdatedAtMs)
+            if (trains.isNotEmpty()) {
+                scheduleGiftTrainExpiry()
+            }
+        }
+    }
+
     private fun updateChannelPointsSummary() {
         channelPointsSummary.value = ChannelPointsSummary(
             balance = channelPointsBalance.value,
@@ -421,12 +471,28 @@ class ChatViewModel @Inject constructor(
     @Volatile
     private var mutedUserKeys = emptySet<String>()
     @Volatile
+    private var accountMutedUserKeys = emptySet<String>()
+    @Volatile
     private var kickLivePollingFallbackActive = false
     init {
         viewModelScope.launch {
             mutedChatUsersRepository.loadUsersFlow().collectLatest { users ->
                 mutedUserKeys = buildMutedUserKeys(users)
                 rebuildVisibleMessages()
+            }
+        }
+        viewModelScope.launch {
+            kickAccountMutedUsersStore.users.collectLatest { users ->
+                accountMutedUserKeys = buildAccountMutedUserKeys(users)
+                rebuildVisibleMessages()
+            }
+        }
+        viewModelScope.launch {
+            // Pull the account's silenced users so mutes made on the web or other
+            // devices also filter this chat, like the official app. Failures
+            // (logged out, offline) leave the local mutes in charge.
+            if (kickRepository.hasKickAccountFollowCapability()) {
+                runCatching { kickAccountMutedUsersStore.refreshIfStale() }
             }
         }
         viewModelScope.launch {
@@ -478,8 +544,10 @@ class ChatViewModel @Inject constructor(
         val userLogin = getKickAccountLogin()
         val isLoggedIn = !userLogin.isNullOrBlank() && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(applicationContext)
 
-        if (isLoggedIn && isFetchingUserRelationship) {
-            // Still loading Kick user relationship; defer evaluation until relationship completes to avoid false warnings
+        if (isLoggedIn && (isFetchingUserRelationship || relationship == null)) {
+            // Relationship still loading, or the last fetch failed (e.g. mid WiFi-to-data
+            // switch) and came back null. A missing relationship must never be read as
+            // "not following" — defer the restriction until a fetch succeeds.
             return
         }
 
@@ -532,7 +600,9 @@ class ChatViewModel @Inject constructor(
                 } else {
                     val followedAtMs = KickApiHelper.parseIso8601DateUTC(relationship.followingSince)
                     if (followedAtMs != null && reqMinutes > 0) {
-                        val elapsedMinutes = ((System.currentTimeMillis() - followedAtMs) / 60000L).toInt()
+                        // Clock skew can make followingSince land in the future; a negative
+                        // elapsed would fabricate a "wait even longer" restriction.
+                        val elapsedMinutes = (((System.currentTimeMillis() - followedAtMs) / 60000L).toInt()).coerceAtLeast(0)
                         if (elapsedMinutes < reqMinutes) {
                             val remainingMinutes = reqMinutes - elapsedMinutes
                             val remainingSeconds = (remainingMinutes * 60).toString()
@@ -604,8 +674,29 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    private fun buildAccountMutedUserKeys(users: List<com.xtrakick.app.model.ui.KickMutedUser>): Set<String> {
+        return buildSet {
+            users.forEach { user ->
+                user.id.trim().takeIf { it.isNotEmpty() }?.let { add("id:$it") }
+                user.username?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() }?.let {
+                    add("login:$it")
+                    add("name:$it")
+                }
+            }
+        }
+    }
+
     private fun isMutedUser(userId: String?, userLogin: String?, userName: String?): Boolean {
-        val keys = mutedUserKeys
+        return isMutedUserByKeys(userId, userLogin, userName, mutedUserKeys) ||
+            isMutedUserByKeys(userId, userLogin, userName, accountMutedUserKeys)
+    }
+
+    private fun isMutedUserByKeys(
+        userId: String?,
+        userLogin: String?,
+        userName: String?,
+        keys: Set<String>,
+    ): Boolean {
         if (keys.isEmpty()) return false
         return (!userId.isNullOrBlank() && keys.contains("id:$userId")) ||
             (!userLogin.isNullOrBlank() && keys.contains("login:${userLogin.lowercase(Locale.ROOT)}")) ||
@@ -3183,6 +3274,7 @@ class ChatViewModel @Inject constructor(
                 loadKickInitialRoomStateIfNeeded(channelId, channelLogin, forceRefresh = true)
             }
             kickRepository.parseKickRealtimeEvent(eventName, messageJson)?.let { parsedEvent ->
+                parsedEvent.giftTrain?.let(::updateGiftTrain)
                 if (!parsedEvent.clearTargetUserId.isNullOrBlank() ||
                     !parsedEvent.clearTargetUserLogin.isNullOrBlank() ||
                     !parsedEvent.clearTargetUserName.isNullOrBlank()
