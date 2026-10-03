@@ -102,10 +102,11 @@ class AuthStateHelperTest {
 
     @Test
     fun opaqueSessionTokenWithoutPipeIsAccepted() {
+        val fixture = "EXAMPLE_OPAQUE_SESSION_TOKEN_WITHOUT_PIPE" // gitleaks:allow - synthetic test fixture, not a credential.
         assertEquals(
-            "kat_waGPSvjwaJlY0123456789abcdefghij012345678",
+            fixture,
             AuthStateHelper.extractKickSessionToken(
-                "kick_session=opaque; session_token=kat_waGPSvjwaJlY0123456789abcdefghij012345678"
+                "kick_session=opaque; session_token=$fixture" // gitleaks:allow - synthetic test fixture, not a credential.
             ),
         )
     }

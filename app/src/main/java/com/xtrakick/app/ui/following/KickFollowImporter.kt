@@ -4,16 +4,12 @@ import android.content.Context
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.edit
-import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
-import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.KickWebResponseException
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.AuthStateHelper
-import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -107,11 +103,8 @@ sealed class KickFollowImportState {
 class KickFollowImporter @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val localFollowsChannel: LocalFollowChannelRepository,
-    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
 ) {
-
-    private val enrichmentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // Outlives the login screen so a post-login import keeps running after LoginActivity finishes.
     private val postLoginImportScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -121,26 +114,6 @@ class KickFollowImporter @Inject constructor(
 
     companion object {
         private const val LOG_TAG = "KickFollowImport"
-    }
-
-    private fun isDebugLoggingEnabled(): Boolean {
-        return BuildConfig.DEBUG && context.prefs().getBoolean(AppConstants.DEBUG_KICK_FOLLOW_IMPORT_LOGS, false)
-    }
-
-    private fun debugLogI(message: String) {
-        if (isDebugLoggingEnabled()) {
-            Log.i(LOG_TAG, message)
-        }
-    }
-
-    private fun logWarn(message: String, throwable: Throwable? = null) {
-        if (isDebugLoggingEnabled()) {
-            if (throwable != null) {
-                Log.w(LOG_TAG, message, throwable)
-            } else {
-                Log.w(LOG_TAG, message)
-            }
-        }
     }
 
     suspend fun importPayload(payload: String): Int {
@@ -241,12 +214,18 @@ class KickFollowImporter @Inject constructor(
     }
 
     internal suspend fun importFollows(follows: List<KickImportedFollow>): Int {
+        val ownLogin = context.prefs().getString(AppConstants.KICK_USER_LOGIN, null)
+            ?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
         val dedupedFollows = follows
             .asSequence()
             .mapNotNull { follow ->
                 val login = follow.login.trim().takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 follow.copy(login = login)
             }
+            // Kick's api.kick.com users arm ignores `login` filters and echoes the token
+            // owner back; importers upstream of this call could therefore wrap the
+            // logged-in account itself as a followed channel. Never store it.
+            .filter { ownLogin == null || it.login.lowercase() != ownLogin }
             .distinctBy { it.login.lowercase() }
             .toList()
         localFollowsChannel.upsertLocalFollows(dedupedFollows.map { follow ->
@@ -259,63 +238,6 @@ class KickFollowImporter @Inject constructor(
             )
         })
         Log.i(LOG_TAG, "Kick follow import stored follows count=${dedupedFollows.size}")
-        enqueueImportedFollowEnrichment(dedupedFollows.map { it.login })
         return dedupedFollows.size
-    }
-
-    private fun enqueueImportedFollowEnrichment(logins: List<String>) {
-        val snapshot = logins.toList()
-        enrichmentScope.launch {
-            runCatching {
-                enrichImportedFollows(snapshot)
-            }.onFailure { error ->
-                logWarn("imported follow enrichment failed: ${error.message}", error)
-            }
-        }
-    }
-
-    private suspend fun enrichImportedFollows(logins: List<String>) {
-        if (AuthStateHelper.isKickGoogleSession(context)) {
-            // The imported follows carry slugs; numeric ids get resolved lazily when a
-            // channel is opened. The api.kick.com users arm would 401 on a Google
-            // mobile-login session, so skip it instead of logging a guaranteed failure.
-            debugLogI("skip imported follow id enrichment: google mobile-login session")
-            return
-        }
-        val normalizedLogins = logins
-            .map { it.trim().lowercase() }
-            .filter { it.isNotBlank() }
-            .distinct()
-        if (normalizedLogins.isEmpty()) {
-            return
-        }
-        val headers = KickApiHelper.getKickPublicApiHeaders(context)
-        if (headers[AppConstants.HEADER_TOKEN].isNullOrBlank()) {
-            debugLogI("skip imported follow id enrichment: missing auth token")
-            return
-        }
-        val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-        normalizedLogins.chunked(100).forEach { chunk ->
-            val response = kickPublicApiRepository.getUsers(
-                networkLibrary = networkLibrary,
-                headers = headers,
-                logins = chunk,
-            )
-            val enrichedFollows = response.data.mapNotNull { user ->
-                val login = user.channelLogin?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                val channelId = user.channelId?.takeIf { it.isNotBlank() }
-                val name = user.channelName?.takeIf { it.isNotBlank() }
-                val profileImageUrl = user.profileImageUrl?.takeIf { it.isNotBlank() }
-                LocalFollowChannel(
-                    userId = channelId,
-                    userLogin = login,
-                    userName = name,
-                    channelLogo = profileImageUrl,
-                    sourceMask = AppConstants.FOLLOW_SOURCE_MASK_KICK,
-                )
-            }
-            localFollowsChannel.upsertLocalFollows(enrichedFollows)
-        }
-        debugLogI("enriched imported follows with broadcaster ids count=${normalizedLogins.size}")
     }
 }
