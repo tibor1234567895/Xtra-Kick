@@ -288,7 +288,7 @@ testImplementation("org.json:json:20260814")
     testImplementation("org.robolectric:robolectric:4.17")
     // conscrypt-android ships JNI only for Android. Robolectric loads it on the JVM, so the
     // desktop build supplies the matching native library. Test runtime only.
-    testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.7.0")
+    testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.8.0")
 }
 
 // Robolectric 4.17 reaches FileDescriptor internals via jdk.internal.access.SharedSecrets,
