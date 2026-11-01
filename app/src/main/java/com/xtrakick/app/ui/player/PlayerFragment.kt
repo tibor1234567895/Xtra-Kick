@@ -1515,9 +1515,17 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         minimize()
                     }
                 }
-                if (prefs.getBoolean(AppConstants.PLAYER_MINIMIZE, true)) {
+                val hasMinimize = prefs.getBoolean(AppConstants.PLAYER_MINIMIZE, true)
+                if (hasMinimize) {
                     minimize.visibility = View.VISIBLE
                     minimize.setOnClickListener { minimize() }
+                }
+                streamInfoLayout.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                    marginStart = TypedValue.applyDimension(
+                        TypedValue.COMPLEX_UNIT_DIP,
+                        if (hasMinimize) 55f else 10f,
+                        resources.displayMetrics
+                    ).toInt()
                 }
                 if (prefs.getBoolean(AppConstants.PLAYER_VOLUMEBUTTON, true)) {
                     volume.visibility = View.VISIBLE

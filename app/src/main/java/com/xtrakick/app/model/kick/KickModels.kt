@@ -97,6 +97,7 @@ class KickChannelSummary(
 )
 
 @Serializable
+@OptIn(ExperimentalSerializationApi::class)
 class KickChannelLivestream(
     val id: Long? = null,
     @SerialName("created_at")
@@ -111,7 +112,9 @@ class KickChannelLivestream(
     val vodId: String? = null,
     val thumbnail: KickThumbnail? = null,
     val category: KickCategory? = null,
+    @JsonNames("custom_tags")
     val tags: List<String>? = null,
+    @JsonNames("language_code")
     val language: String? = null,
     @SerialName("is_mature")
     val isMature: Boolean? = null,
@@ -261,7 +264,9 @@ class KickUser(
     val profilePicture: String? = null,
 ) {
     val profileImage: String?
-        get() = profilePic ?: profilePicV2 ?: profilePicture
+        get() = profilePic?.takeIf { it.isNotBlank() }
+            ?: profilePicV2?.takeIf { it.isNotBlank() }
+            ?: profilePicture?.takeIf { it.isNotBlank() }
 }
 
 @Serializable

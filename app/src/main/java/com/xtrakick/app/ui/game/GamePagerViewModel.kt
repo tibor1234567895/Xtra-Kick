@@ -81,7 +81,8 @@ class GamePagerViewModel @Inject constructor(
                         gameName = fetchedGame.gameName ?: args.gameName ?: _game.value?.gameName,
                         boxArtUrl = fetchedGame.boxArtUrl ?: args.boxArt ?: _game.value?.boxArtUrl,
                         viewersCount = fetchedGame.viewersCount,
-                        broadcastersCount = fetchedGame.broadcastersCount
+                        broadcastersCount = fetchedGame.broadcastersCount,
+                        tags = fetchedGame.tags,
                     )
                     return@launch
                 }

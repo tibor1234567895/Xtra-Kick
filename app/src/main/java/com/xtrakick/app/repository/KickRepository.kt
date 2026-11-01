@@ -4364,11 +4364,15 @@ class KickRepository @Inject constructor(
 
     fun toStream(channel: KickChannelResponse, livestreamOverride: KickChannelLivestream? = null): Stream {
         val livestream = livestreamOverride ?: channel.livestream
-        val catId = livestream?.category?.id?.toString()
-        val catSlug = livestream?.category?.slug
-        val catName = livestream?.category?.name
+        val fallback = channel.livestream?.takeIf {
+            livestream?.id == null || it.id == null || livestream.id == it.id
+        }
+        val category = livestream?.category ?: fallback?.category
+        val catId = category?.id?.toString()
+        val catSlug = category?.slug
+        val catName = category?.name
         cacheCategorySlug(catId, catName, catSlug)
-        livestream?.category?.let { cat ->
+        category?.let { cat ->
             cacheCategoryTags(cat.id?.toString(), cat.slug, cat.name, cat.tags)
         }
         // Canonical key must be the broadcaster user id so the polling fallback road shares
@@ -4378,24 +4382,25 @@ class KickRepository @Inject constructor(
             ?: canonicalChannelId?.let { getCachedChannelEventTitle(it) }
         val combinedTags = buildList {
             eventTitle?.takeIf { it.isNotBlank() }?.let(::add)
-            livestream?.language?.takeIf { it.isNotBlank() }?.let(::add)
-            if (livestream?.isMature == true) add("18+")
-            livestream?.tags?.filter { it.isNotBlank() }?.let(::addAll)
+            (livestream?.language ?: fallback?.language)?.takeIf { it.isNotBlank() }?.let(::add)
+            if ((livestream?.isMature ?: fallback?.isMature) == true) add("18+")
+            (livestream?.tags ?: fallback?.tags)?.filter { it.isNotBlank() }?.let(::addAll)
         }.distinct().ifEmpty { null }
         return Stream(
-            id = livestream?.id?.toString(),
+            id = (livestream?.id ?: fallback?.id)?.toString(),
             source = AppConstants.KICK,
             channelId = canonicalChannelId,
             channelLogin = channel.slug,
             channelName = channel.user?.username,
-            playbackUrl = livestream?.playbackUrl ?: channel.playbackUrl?.takeIf { livestream != null },
+            playbackUrl = livestream?.playbackUrl ?: fallback?.playbackUrl
+                ?: channel.playbackUrl?.takeIf { livestream != null },
             gameId = catId,
             gameSlug = catSlug,
             gameName = catName,
-            title = livestream?.title,
-            viewerCount = livestream?.viewerCount,
-            startedAt = normalizeDate(livestream?.createdAt),
-            thumbnailUrl = livestream?.thumbnail?.imageUrl,
+            title = livestream?.title ?: fallback?.title,
+            viewerCount = livestream?.viewerCount ?: fallback?.viewerCount,
+            startedAt = normalizeDate(livestream?.createdAt ?: fallback?.createdAt),
+            thumbnailUrl = livestream?.thumbnail?.imageUrl ?: fallback?.thumbnail?.imageUrl,
             profileImageUrl = channel.user?.profileImage,
             tags = combinedTags
         )
@@ -6006,13 +6011,19 @@ class KickRepository @Inject constructor(
         return changed
     }
 
-    private fun parseChannelLivestream(root: JsonElement): KickChannelLivestream? {
+    internal fun parseChannelLivestream(root: JsonElement): KickChannelLivestream? {
         val payload = when (root) {
             is JsonObject -> root.objOrNull("data")
                 ?: root.firstObjectOrNull("livestream", "stream")
                 ?: root
             else -> null
         } ?: return null
+
+        fun JsonObject.readTags(): List<String>? =
+            (arrayOrNull("tags") ?: arrayOrNull("custom_tags"))?.mapNotNull {
+                (it as? JsonPrimitive)?.takeIf { tag -> tag.isString }?.contentOrNull
+                    ?.trim()?.takeIf { tag -> tag.isNotBlank() }
+            }?.distinct()
 
         val categoryObject = payload.firstObjectOrNull("category", "subcategory")
             ?: payload.arrayOrNull("categories")?.firstOrNull()?.asJsonObjectOrNull()
@@ -6021,6 +6032,7 @@ class KickRepository @Inject constructor(
                 id = it.firstLongOrNull("id"),
                 name = it.firstPrimitiveOrNull("name", "title"),
                 slug = it.firstPrimitiveOrNull("slug"),
+                tags = it.readTags(),
             )
         }
 
@@ -6045,6 +6057,9 @@ class KickRepository @Inject constructor(
             playbackUrl = payload.firstPrimitiveOrNull("playback_url", "playlist_url", "hls_url"),
             thumbnail = thumbnail,
             category = category,
+            tags = payload.readTags(),
+            language = payload.firstPrimitiveOrNull("language", "language_code"),
+            isMature = payload.firstBooleanOrNull("is_mature"),
         )
     }
 

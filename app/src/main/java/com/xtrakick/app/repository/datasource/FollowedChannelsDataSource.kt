@@ -1,5 +1,6 @@
 package com.xtrakick.app.repository.datasource
 
+import android.os.SystemClock
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.xtrakick.app.model.ui.LocalFollowChannel
@@ -7,39 +8,73 @@ import com.xtrakick.app.model.ui.User
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 class FollowedChannelsDataSource(
     private val sort: String,
     private val order: String,
     private val localFollowsChannel: LocalFollowChannelRepository,
     private val kickRepository: KickRepository? = null,
+    private val avatarScope: CoroutineScope,
+    private val elapsedTimeMs: () -> Long = { SystemClock.elapsedRealtime() },
 ) : PagingSource<Int, User>() {
 
     companion object {
-        private val attemptedLogins = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        private const val AVATAR_RETRY_DELAY_MS = 60_000L
+        private val avatarRetryAfter = ConcurrentHashMap<String, Long>()
     }
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, User> {
         val follows = localFollowsChannel.loadFollows()
         kickRepository?.let { repo ->
-            val missing = follows.filter {
-                it.channelLogo.isNullOrBlank() && !it.userLogin.isNullOrBlank() && attemptedLogins.add(it.userLogin!!)
-            }
+            if (!avatarScope.isActive) return@let
+            val now = elapsedTimeMs()
+            val missing = follows.mapNotNull { follow ->
+                if (!follow.channelLogo.isNullOrBlank()) return@mapNotNull null
+                val login = follow.userLogin?.trim()?.takeIf { it.isNotBlank() }
+                    ?.lowercase(Locale.ROOT) ?: return@mapNotNull null
+                val retryAfter = avatarRetryAfter[login]
+                val reserved = if (retryAfter == null) {
+                    avatarRetryAfter.putIfAbsent(login, Long.MAX_VALUE) == null
+                } else {
+                    retryAfter <= now && avatarRetryAfter.replace(login, retryAfter, Long.MAX_VALUE)
+                }
+                if (reserved) login to follow else null
+            }.toMap()
             if (missing.isNotEmpty()) {
-                CoroutineScope(Dispatchers.IO).launch {
-                    for (follow in missing) {
-                        val login = follow.userLogin ?: continue
+                val pendingLogins = ConcurrentHashMap.newKeySet<String>().apply {
+                    addAll(missing.keys)
+                }
+                val job = avatarScope.launch(Dispatchers.IO) {
+                    for ((login, follow) in missing) {
+                        ensureActive()
                         try {
-                            val channelResp = repo.getChannel(login)
-                            val pic = channelResp.user?.profilePic ?: channelResp.user?.profilePicV2
+                            val channelResp = repo.getChannel(login, prefetchBadgeCatalog = false, forceRefresh = true)
+                            val pic = channelResp.user?.profileImage
                             if (!pic.isNullOrBlank()) {
-                                follow.channelLogo = pic
-                                localFollowsChannel.updateFollow(follow)
+                                val current = localFollowsChannel.getFollow(follow.userId, follow.userLogin)
+                                if (current != null && current.channelLogo.isNullOrBlank()) {
+                                    current.channelLogo = pic
+                                    localFollowsChannel.updateFollow(current)
+                                }
                             }
-                        } catch (_: Exception) {}
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (_: Exception) {
+                        } finally {
+                            avatarRetryAfter[login] = elapsedTimeMs() + AVATAR_RETRY_DELAY_MS
+                            pendingLogins.remove(login)
+                        }
                     }
+                }
+                job.invokeOnCompletion {
+                    pendingLogins.forEach { avatarRetryAfter.remove(it, Long.MAX_VALUE) }
                 }
             }
         }

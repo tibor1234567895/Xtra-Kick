@@ -61,6 +61,7 @@ class FollowedChannelsViewModel @Inject constructor(
                 },
                 localFollowsChannel = localFollowsChannel,
                 kickRepository = kickRepository,
+                avatarScope = viewModelScope,
             ).also { currentDataSource = it }
         }.flow
     }.cachedIn(viewModelScope)
