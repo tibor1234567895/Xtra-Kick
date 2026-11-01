@@ -5,9 +5,11 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -51,7 +53,32 @@ data class KickDailyClaimResult(
     val challengeId: String?,
     val roulette: List<KickDailyRouletteItem>,
     val winner: KickDailyRewardWinner?,
-)
+) {
+    /** Inverse of `KickRewardsParsing.parseDailyClaim` for persisting the debug replay payload. */
+    fun toJsonElement(): JsonElement = buildJsonObject {
+        challengeId?.let { put("challenge_id", JsonPrimitive(it)) }
+        put(
+            "roulette",
+            JsonArray(roulette.map { item ->
+                buildJsonObject {
+                    put("id", JsonPrimitive(item.id))
+                    item.itemUrl?.let { put("item_url", JsonPrimitive(it)) }
+                }
+            }),
+        )
+        winner?.let { w ->
+            put(
+                "winner",
+                buildJsonObject {
+                    put("id", JsonPrimitive(w.id))
+                    w.cardUrl?.let { put("card_url", JsonPrimitive(it)) }
+                    w.rarity?.let { put("rarity", JsonPrimitive(it)) }
+                    w.thumbnailUrl?.let { put("thumbnail_url", JsonPrimitive(it)) }
+                },
+            )
+        }
+    }
+}
 
 data class KickDailyRouletteItem(
     val id: String,

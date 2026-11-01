@@ -622,6 +622,9 @@
     <string name="stop_download">Download anhalten</string>
     <string name="resume_download">Download fortsetzen</string>
     <string name="show_view_count_icon">Symbole für Zuschauerzahl und Laufzeit anzeigen</string>
+    <string name="player_viewer_count_position">Position der Zuschauerzahl</string>
+    <string name="viewer_count_position_top">Oben</string>
+    <string name="viewer_count_position_bottom">Unten</string>
     <string name="playback_speeds">Wiedergabegeschwindigkeiten</string>
     <string name="use_custom_proxy">Benutzerdefinierten Proxy verwenden</string>
     <string name="use_custom_proxy_desc">Erfordert eine URL, die eine Playlist zurückgibt</string>

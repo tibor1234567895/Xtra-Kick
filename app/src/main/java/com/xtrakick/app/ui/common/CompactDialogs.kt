@@ -1,12 +1,13 @@
 package com.xtrakick.app.ui.common
 
 import android.app.Dialog
-import android.content.res.Configuration
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.coordinatorlayout.widget.CoordinatorLayout
 import androidx.fragment.app.FragmentManager
+import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import kotlin.math.roundToInt
 
@@ -27,6 +28,30 @@ object CompactDialogs {
     }
 
     /**
+     * Apply compact constraints to a bottom sheet.
+     * Keeps layoutParams.width as MATCH_PARENT so portrait stays full-width,
+     * while behavior.maxWidth caps width in landscape and centers the sheet.
+     */
+    fun applySheetConstraints(
+        dialog: Dialog?,
+        resources: android.content.res.Resources,
+        maxWidthDp: Int = SHEET_MAX_WIDTH_DP,
+    ): View? {
+        val sheet = dialog?.findViewById<View>(
+            com.google.android.material.R.id.design_bottom_sheet
+        ) ?: return null
+        val behavior = BottomSheetBehavior.from(sheet)
+        val maxPx = (maxWidthDp * resources.displayMetrics.density).roundToInt()
+        behavior.maxWidth = maxPx
+        (sheet.layoutParams as? CoordinatorLayout.LayoutParams)?.let { params ->
+            params.width = ViewGroup.LayoutParams.MATCH_PARENT
+            params.gravity = Gravity.CENTER_HORIZONTAL
+            sheet.layoutParams = params
+        }
+        return sheet
+    }
+
+    /**
      * Constrain every BottomSheetDialogFragment under this manager to a centered
      * panel in landscape. Portrait sheets keep full-width bottom behavior.
      * Recursive, so child-fragment sheets (player, chat) are covered.
@@ -43,17 +68,18 @@ object CompactDialogs {
                     if (f !is BottomSheetDialogFragment) return
                     v.post {
                         if (!f.isAdded) return@post
-                        val res = f.resources
-                        if (res.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE) return@post
-                        val maxPx = (maxWidthDp * res.displayMetrics.density).roundToInt()
-                        if (res.displayMetrics.widthPixels <= maxPx) return@post
-                        val sheet = f.dialog?.findViewById<View>(
-                            com.google.android.material.R.id.design_bottom_sheet
-                        ) ?: return@post
-                        (sheet.layoutParams as? CoordinatorLayout.LayoutParams)?.let { params ->
-                            params.width = maxPx
-                            params.gravity = Gravity.CENTER_HORIZONTAL
-                            sheet.layoutParams = params
+                        applySheetConstraints(f.dialog, f.resources, maxWidthDp)
+                        f.dialog?.window?.decorView?.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+                            if (!f.isAdded) return@addOnLayoutChangeListener
+                            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                                val sheet = applySheetConstraints(f.dialog, f.resources, maxWidthDp) ?: return@addOnLayoutChangeListener
+                                val behavior = BottomSheetBehavior.from(sheet)
+                                sheet.post {
+                                    if (f.isAdded) {
+                                        behavior.state = BottomSheetBehavior.STATE_EXPANDED
+                                    }
+                                }
+                            }
                         }
                     }
                 }

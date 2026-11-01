@@ -1465,12 +1465,14 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     channelName ?: channelLogin
                 }
                 updateChannelName(channelLogin, channelName)
-                viewersLayout.setOnClickListener {
-                    if (requireContext().prefs().getBoolean(AppConstants.PLAYER_VIEWERLIST, false)) {
+                val onViewerListClick = View.OnClickListener {
+                    if (prefs.getBoolean(AppConstants.PLAYER_VIEWERLIST, false)) {
                         showController(force = true)
                         showViewerList()
                     }
                 }
+                viewersLayout.setOnClickListener(onViewerListClick)
+                viewersLayoutBottom.setOnClickListener(onViewerListClick)
                 val titleText = requireArguments().getString(KEY_TITLE)
                 if (!titleText.isNullOrBlank() && prefs.getBoolean(AppConstants.PLAYER_TITLE, true)) {
                     title.visibility = View.VISIBLE
@@ -2344,6 +2346,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     if (prefs.getBoolean(AppConstants.PLAYER_SHOW_LATENCY, true) && !latencyText.text.isNullOrBlank()) {
                         latencyLayout.visibility = View.VISIBLE
                     }
+                    updateViewerCount(lastViewerCount)
                 }
             }
         }
@@ -2714,20 +2717,40 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         )
     }
 
+    private var lastViewerCount: Int? = null
+
     fun updateViewerCount(viewerCount: Int?) {
+        lastViewerCount = viewerCount
         with(binding.playerControls) {
+            val isBottom = prefs.getString(
+                AppConstants.PLAYER_VIEWER_COUNT_POSITION,
+                AppConstants.PLAYER_VIEWER_COUNT_POSITION_TOP
+            ) == AppConstants.PLAYER_VIEWER_COUNT_POSITION_BOTTOM
+
+            val activeLayout = if (isBottom) viewersLayoutBottom else viewersLayout
+            val inactiveLayout = if (isBottom) viewersLayout else viewersLayoutBottom
+            val activeText = if (isBottom) viewersTextBottom else viewersText
+            val inactiveText = if (isBottom) viewersText else viewersTextBottom
+            val activeIcon = if (isBottom) viewersIconBottom else viewersIcon
+            val inactiveIcon = if (isBottom) viewersIcon else viewersIconBottom
+
+            inactiveLayout.visibility = View.GONE
+            inactiveText.text = null
+            inactiveIcon.visibility = View.GONE
+
             if (viewerCount != null) {
-                viewersLayout.visibility = View.VISIBLE
-                viewersText.text = KickApiHelper.formatCount(viewerCount, requireContext().prefs().getBoolean(AppConstants.UI_TRUNCATEVIEWCOUNT, true))
-                if (prefs.getBoolean(AppConstants.PLAYER_VIEWERICON, true)) {
-                    viewersIcon.visibility = View.VISIBLE
-                } else {
-                    viewersIcon.visibility = View.GONE
-                }
+                val formatted = KickApiHelper.formatCount(
+                    viewerCount,
+                    prefs.getBoolean(AppConstants.UI_TRUNCATEVIEWCOUNT, true)
+                )
+                val showIcon = prefs.getBoolean(AppConstants.PLAYER_VIEWERICON, true)
+                activeText.text = formatted
+                activeIcon.visibility = if (showIcon) View.VISIBLE else View.GONE
+                activeLayout.visibility = View.VISIBLE
             } else {
-                viewersLayout.visibility = View.GONE
-                viewersText.text = null
-                viewersIcon.visibility = View.GONE
+                activeLayout.visibility = View.GONE
+                activeText.text = null
+                activeIcon.visibility = View.GONE
             }
         }
     }
@@ -2764,7 +2787,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             if (liveOffsetMs != null && prefs.getBoolean(AppConstants.PLAYER_SHOW_LATENCY, true)) {
                 latencyLayout.visibility = View.VISIBLE
                 val seconds = liveOffsetMs / 1000.0
-                latencyText.text = if (targetOffsetMs != null) {
+                latencyText.text = if (targetOffsetMs != null && !isPortrait) {
                     "~%.1fs / %.1fs".format(seconds, targetOffsetMs / 1000.0)
                 } else {
                     "~%.1fs".format(seconds)

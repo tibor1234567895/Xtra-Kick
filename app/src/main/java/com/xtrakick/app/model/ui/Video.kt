@@ -34,4 +34,5 @@ class Video(
         get() = KickApiHelper.getTemplateUrl(thumbnailUrl, "video")
     val channelLogo: String?
         get() = KickApiHelper.getTemplateUrl(profileImageUrl, "profileimage")
+            ?: KickApiHelper.getDefaultProfilePicture(channelId, channelLogin ?: channelName)
 }

@@ -154,6 +154,7 @@
                     android:ellipsize="end"
                     android:gravity="center_vertical|start"
                     android:maxLines="1"
+                    android:minWidth="48dp"
                     android:textColor="@android:color/white"
                     android:textSize="18sp"
                     android:textStyle="bold"
@@ -161,6 +162,8 @@
                     app:layout_constrainedWidth="true"
                     app:layout_constraintHorizontal_bias="0.0"
                     app:layout_constraintHorizontal_chainStyle="packed"
+                    app:layout_constraintHorizontal_weight="1"
+                    app:layout_constraintWidth_default="wrap"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toStartOf="@id/viewersLayout"
                     app:layout_constraintTop_toTopOf="parent"
@@ -455,6 +458,43 @@
                 android:layout_height="wrap_content"
                 android:textColor="@android:color/white"
                 android:textSize="12sp" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/viewersLayoutBottom"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="6dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <ImageView
+                android:id="@+id/viewersIconBottom"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:layout_marginEnd="4dp"
+                android:background="@android:color/transparent"
+                android:src="@drawable/baseline_person_black_24"
+                android:visibility="gone"
+                app:tint="@android:color/white"
+                tools:visibility="visible" />
+
+            <TextView
+                android:id="@+id/viewersTextBottom"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:singleLine="true"
+                android:textColor="@android:color/white"
+                android:textSize="12sp"
+                tools:text="13.3K" />
 
         </LinearLayout>
 

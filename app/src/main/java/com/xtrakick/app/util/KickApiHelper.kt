@@ -50,6 +50,9 @@ object KickApiHelper {
                 else -> null
             }
         }
+        if (url.startsWith("https://kick.com/img/")) {
+            return url
+        }
         val width = when (type) {
             "game" -> "285"
             "video" -> "1280"
@@ -68,6 +71,32 @@ object KickApiHelper {
             url.contains("{width}") -> url.replace("{width}", width).replace("{height}", height)
             else -> url.replace(DIMENSION_PATTERN, "-${width}x${height}.")
         }
+    }
+
+    fun getDefaultProfilePicture(userId: String?, userLogin: String? = null): String {
+        val numericId = userId?.toLongOrNull()
+            ?: userLogin?.hashCode()?.toLong()?.let { kotlin.math.abs(it) }
+            ?: 1L
+        val id = if (numericId > 0) numericId else 1L
+        val n = ((id % 6) + 1).coerceIn(1, 6)
+        return "https://kick.com/img/default-profile-pictures/default-avatar-$n.webp"
+    }
+
+    fun getDefaultProfilePicture(userId: Long?): String {
+        return getDefaultProfilePicture(userId?.toString(), null)
+    }
+
+    fun getDefaultBanner(channelIdOrUserId: String?, userLogin: String? = null): String {
+        val numericId = channelIdOrUserId?.toLongOrNull()
+            ?: userLogin?.hashCode()?.toLong()?.let { kotlin.math.abs(it) }
+            ?: 0L
+        val id = if (numericId >= 0) numericId else 0L
+        val n = ((id % 4) + 1).coerceIn(1, 4)
+        return "https://kick.com/img/default-channel-banners/new-default-banner-$n.webp"
+    }
+
+    fun getDefaultBanner(channelIdOrUserId: Long?): String {
+        return getDefaultBanner(channelIdOrUserId?.toString(), null)
     }
 
     fun getType(context: Context, type: String?): String? {

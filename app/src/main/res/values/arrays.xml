@@ -452,4 +452,14 @@
         <item>de</item>
         <item>tr</item>
     </string-array>
+
+    <string-array name="playerViewerCountPositionEntries">
+        <item>@string/viewer_count_position_top</item>
+        <item>@string/viewer_count_position_bottom</item>
+    </string-array>
+
+    <string-array name="playerViewerCountPositionValues">
+        <item>top</item>
+        <item>bottom</item>
+    </string-array>
 </resources>

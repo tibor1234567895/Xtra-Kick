@@ -31,4 +31,5 @@ class Clip(
         get() = KickApiHelper.getTemplateUrl(thumbnailUrl, "clip")
     val channelLogo: String?
         get() = KickApiHelper.getTemplateUrl(profileImageUrl, "profileimage")
+            ?: KickApiHelper.getDefaultProfilePicture(channelId, channelLogin ?: channelName)
 }

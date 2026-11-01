@@ -622,6 +622,9 @@
     <string name="stop_download">İndirmeyi durdur</string>
     <string name="resume_download">İndirmeye devam et</string>
     <string name="show_view_count_icon">İzleyici sayısı ve yayın süresi simgelerini göster</string>
+    <string name="player_viewer_count_position">İzleyici sayısı konumu</string>
+    <string name="viewer_count_position_top">Üst</string>
+    <string name="viewer_count_position_bottom">Alt</string>
     <string name="playback_speeds">Oynatma hızları</string>
     <string name="use_custom_proxy">Özel vekil sunucu kullan</string>
     <string name="use_custom_proxy_desc">Oynatma listesi döndüren bir URL gerektirir</string>

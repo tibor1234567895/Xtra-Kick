@@ -1,5 +1,7 @@
 package com.xtrakick.app.repository
 
+import android.util.Log
+import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.model.kick.KickDailyChallenge
 import com.xtrakick.app.model.kick.KickDailyClaimResult
 import com.xtrakick.app.model.kick.KickDropCampaign
@@ -39,7 +41,10 @@ class KickRewardsRepository @Inject constructor(
     fun canAttemptClaims(): Boolean = kickRepository.hasUsableKickWebsiteSession()
 
     suspend fun getDailyChallenges(): List<KickDailyChallenge> =
-        getAndParse("$BASE_URL/gamification/challenges") { KickRewardsParsing.parseChallenges(it) }.also {
+        getAndParse("$BASE_URL/gamification/challenges") {
+            logRawJson("daily challenges", it)
+            KickRewardsParsing.parseChallenges(it)
+        }.also {
             _dailyChallengesFlow.value = it
         }
 
@@ -72,6 +77,7 @@ class KickRewardsRepository @Inject constructor(
 
     suspend fun claimDailyChallenge(challengeId: String): KickDailyClaimResult =
         postAndParse("$BASE_URL/gamification/challenges/${urlEncode(challengeId)}/claim", body = null) {
+            logRawJson("daily claim", it)
             KickRewardsParsing.parseDailyClaim(it)
         }.also {
             kickRepository.clearKickEmoteGroupsCache()
@@ -119,4 +125,21 @@ class KickRewardsRepository @Inject constructor(
 
     private fun urlEncode(value: String): String =
         URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+    /**
+     * Debug-only capture of the raw gamification payloads (event crates like Trick or Treat
+     * carry shapes the parser can't reveal — empty roulette, placeholder winners, real video URLs).
+     */
+    private fun logRawJson(label: String, root: JsonElement) {
+        if (!BuildConfig.DEBUG) return
+        val raw = root.toString()
+        val chunkSize = 3_500
+        var start = 0
+        var part = 0
+        while (start < raw.length) {
+            val end = (start + chunkSize).coerceAtMost(raw.length)
+            Log.d("KickRewardsRaw", "$label part=${part++}: ${raw.substring(start, end)}")
+            start = end
+        }
+    }
 }

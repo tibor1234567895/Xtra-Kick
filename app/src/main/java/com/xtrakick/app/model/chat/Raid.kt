@@ -15,4 +15,5 @@ class Raid(
 
     val targetLogo: String?
         get() = KickApiHelper.getTemplateUrl(targetProfileImage, "profileimage")
+            ?: KickApiHelper.getDefaultProfilePicture(targetId, targetLogin ?: targetName)
 }

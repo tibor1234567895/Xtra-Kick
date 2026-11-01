@@ -622,6 +622,9 @@
     <string name="stop_download">Parar download</string>
     <string name="resume_download">Retomar download</string>
     <string name="show_view_count_icon">Mostrar ícones de visualizações e tempo de transmissão</string>
+    <string name="player_viewer_count_position">Posição da contagem de espectadores</string>
+    <string name="viewer_count_position_top">Superior</string>
+    <string name="viewer_count_position_bottom">Inferior</string>
     <string name="playback_speeds">Velocidades de reprodução</string>
     <string name="use_custom_proxy">Usar proxy personalizado</string>
     <string name="use_custom_proxy_desc">Requer uma URL que retorne uma playlist</string>

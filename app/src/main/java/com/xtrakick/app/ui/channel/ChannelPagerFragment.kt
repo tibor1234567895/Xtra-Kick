@@ -228,24 +228,20 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     userName.visibility = View.GONE
                 }
             }
-            args.channelLogo.let {
-                if (it != null) {
-                    userLayout.visibility = View.VISIBLE
-                    userImage.visibility = View.VISIBLE
-                    requireContext().imageLoader.enqueue(
-                        ImageRequest.Builder(requireContext()).apply {
-                            data(it)
-                            if (requireContext().prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
-                                transformations(CircleCropTransformation())
-                            }
-                            crossfade(true)
-                            target(userImage)
-                        }.build()
-                    )
-                } else {
-                    userImage.visibility = View.GONE
-                }
-            }
+            val initialLogo = args.channelLogo
+                ?: KickApiHelper.getDefaultProfilePicture(args.channelId, args.channelLogin ?: args.channelName)
+            userLayout.visibility = View.VISIBLE
+            userImage.visibility = View.VISIBLE
+            requireContext().imageLoader.enqueue(
+                ImageRequest.Builder(requireContext()).apply {
+                    data(initialLogo)
+                    if (requireContext().prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
+                        transformations(CircleCropTransformation())
+                    }
+                    crossfade(true)
+                    target(userImage)
+                }.build()
+            )
             val isLoggedIn = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
             val setting = requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0
             val navController = findNavController()
@@ -676,25 +672,21 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
             // Fall back to the logo the page was opened with: Kick's channel
             // response sometimes omits the profile image, and hiding the avatar
             // we already displayed looks broken.
-            (stream?.channelLogo ?: args.channelLogo).let {
-                if (it != null) {
-                    userLayout.visibility = View.VISIBLE
-                    userImage.visibility = View.VISIBLE
-                    requireContext().imageLoader.enqueue(
-                        ImageRequest.Builder(requireContext()).apply {
-                            data(it)
-                            if (requireContext().prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
-                                transformations(CircleCropTransformation())
-                            }
-                            crossfade(true)
-                            target(userImage)
-                        }.build()
-                    )
-                    requireArguments().putString(AppConstants.CHANNEL_PROFILEIMAGE, it)
-                } else {
-                    userImage.visibility = View.GONE
-                }
-            }
+            val streamOrArgLogo = stream?.channelLogo ?: args.channelLogo
+                ?: KickApiHelper.getDefaultProfilePicture(stream?.channelId ?: args.channelId, stream?.channelLogin ?: args.channelLogin)
+            userLayout.visibility = View.VISIBLE
+            userImage.visibility = View.VISIBLE
+            requireContext().imageLoader.enqueue(
+                ImageRequest.Builder(requireContext()).apply {
+                    data(streamOrArgLogo)
+                    if (requireContext().prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
+                        transformations(CircleCropTransformation())
+                    }
+                    crossfade(true)
+                    target(userImage)
+                }.build()
+            )
+            requireArguments().putString(AppConstants.CHANNEL_PROFILEIMAGE, streamOrArgLogo)
             stream?.channelName.let {
                 if (it != null && it != args.channelName) {
                     userLayout.visibility = View.VISIBLE
@@ -818,12 +810,14 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
 
     private fun updateUserLayout(user: User) {
         with(binding) {
-            if (!userImage.isVisible && user.channelLogo != null) {
+            val logo = user.channelLogo
+                ?: KickApiHelper.getDefaultProfilePicture(user.channelId, user.channelLogin ?: user.channelName)
+            if (!userImage.isVisible) {
                 userLayout.visibility = View.VISIBLE
                 userImage.visibility = View.VISIBLE
                 requireContext().imageLoader.enqueue(
                     ImageRequest.Builder(requireContext()).apply {
-                        data(user.channelLogo)
+                        data(logo)
                         if (requireContext().prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
                             transformations(CircleCropTransformation())
                         }
@@ -831,31 +825,27 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                         target(userImage)
                     }.build()
                 )
-                requireArguments().putString(AppConstants.CHANNEL_PROFILEIMAGE, user.channelLogo)
+                requireArguments().putString(AppConstants.CHANNEL_PROFILEIMAGE, logo)
             }
-            if (user.bannerImageURL != null) {
-                bannerImage.visibility = View.VISIBLE
-                requireContext().imageLoader.enqueue(
-                    ImageRequest.Builder(requireContext()).apply {
-                        data(user.bannerImageURL)
-                        crossfade(true)
-                        target(bannerImage)
-                    }.build()
-                )
-                if (userName.isVisible) {
-                    userName.setTextColor(Color.WHITE)
-                    userName.setShadowLayer(4f, 0f, 0f, Color.BLACK)
-                }
-            } else {
-                bannerImage.visibility = View.GONE
+            val banner = user.bannerUrl ?: user.bannerImageURL
+                ?: KickApiHelper.getDefaultBanner(user.channelId, user.channelLogin ?: user.channelName)
+            bannerImage.visibility = View.VISIBLE
+            requireContext().imageLoader.enqueue(
+                ImageRequest.Builder(requireContext()).apply {
+                    data(banner)
+                    crossfade(true)
+                    target(bannerImage)
+                }.build()
+            )
+            if (userName.isVisible) {
+                userName.setTextColor(Color.WHITE)
+                userName.setShadowLayer(4f, 0f, 0f, Color.BLACK)
             }
             if (user.createdAt != null) {
                 userCreated.visibility = View.VISIBLE
                 userCreated.text = getString(R.string.created_at, KickApiHelper.formatTimeString(requireContext(), user.createdAt))
-                if (user.bannerImageURL != null) {
-                    userCreated.setTextColor(Color.LTGRAY)
-                    userCreated.setShadowLayer(4f, 0f, 0f, Color.BLACK)
-                }
+                userCreated.setTextColor(Color.LTGRAY)
+                userCreated.setShadowLayer(4f, 0f, 0f, Color.BLACK)
             } else {
                 userCreated.visibility = View.GONE
             }
@@ -867,10 +857,8 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     count,
                     KickApiHelper.formatCount(count, requireContext().prefs().getBoolean(AppConstants.UI_TRUNCATEVIEWCOUNT, true))
                 )
-                if (user.bannerImageURL != null) {
-                    userFollowers.setTextColor(Color.LTGRAY)
-                    userFollowers.setShadowLayer(4f, 0f, 0f, Color.BLACK)
-                }
+                userFollowers.setTextColor(Color.LTGRAY)
+                userFollowers.setShadowLayer(4f, 0f, 0f, Color.BLACK)
             } else {
                 userFollowers.visibility = View.GONE
             }
@@ -887,10 +875,8 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
             if (typeString != null) {
                 userType.visibility = View.VISIBLE
                 userType.text = typeString
-                if (user.bannerImageURL != null) {
-                    userType.setTextColor(Color.LTGRAY)
-                    userType.setShadowLayer(4f, 0f, 0f, Color.BLACK)
-                }
+                userType.setTextColor(Color.LTGRAY)
+                userType.setShadowLayer(4f, 0f, 0f, Color.BLACK)
             } else {
                 userType.visibility = View.GONE
             }

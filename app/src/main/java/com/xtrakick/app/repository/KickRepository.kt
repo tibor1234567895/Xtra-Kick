@@ -85,6 +85,7 @@ import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.KickClipApi
+import com.xtrakick.app.util.RouletteAnimationAssets
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
@@ -292,6 +293,9 @@ class KickRepository @Inject constructor(
     private val inFlightChannelLivestreamRequests = mutableMapOf<String, CompletableDeferred<KickChannelLivestream?>>()
     private val badgeCacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val livestreamPrefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Kick's daily-reward stage videos (idle/unbox/background) are shipped on static.kick.com
+    // as immutable files; prefetching them at cold start keeps the claim animation instant.
+    private val stageAssetPrefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val channelPointRewardsCacheTtlMs = 60_000L
     // Web badge scrape costs the kick.com HTML plus up to 18 Next.js chunks; badge
     // image URLs barely ever change, so the disk cache is trusted for a full day
@@ -337,6 +341,9 @@ class KickRepository @Inject constructor(
             // must run after the restore: the scrape's TTL check reads the persisted
             // refresh timestamps, and racing the restore made every cold start rescrape
             runCatching { maybeRefreshKickBadgeCatalogOnAppOpenInBackground() }
+        }
+        stageAssetPrefetchScope.launch {
+            runCatching { RouletteAnimationAssets.ensureDailyAnimationAssetsCached(context, okHttpClient) }
         }
     }
 

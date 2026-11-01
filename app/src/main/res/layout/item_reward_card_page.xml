@@ -22,6 +22,47 @@
             android:layout_height="match_parent"
             android:clipChildren="false">
 
+            <!-- Roulette Reel Stage: unbox one-shot + looping glitch-particle background video + strip.
+                 Z-order matches kick.com: reel pops in above the fading crate at spin start,
+                 and rewardImage (last child) mounts above the reel during the handoff. -->
+            <FrameLayout
+                android:id="@+id/rouletteContainer"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipChildren="false"
+                android:background="#000000"
+                android:visibility="gone">
+
+                <androidx.media3.ui.PlayerView
+                    android:id="@+id/stageUnboxVideo"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="@null"
+                    app:resize_mode="zoom"
+                    app:surface_type="texture_view"
+                    app:use_controller="false" />
+
+                <androidx.media3.ui.PlayerView
+                    android:id="@+id/reelBackgroundVideo"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="@null"
+                    android:visibility="gone"
+                    app:resize_mode="zoom"
+                    app:surface_type="texture_view"
+                    app:use_controller="false" />
+
+                <!-- The horizontal scrolling strip of reward tiles -->
+                <LinearLayout
+                    android:id="@+id/rouletteStrip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:clipChildren="false"
+                    android:orientation="horizontal"
+                    android:visibility="gone" />
+            </FrameLayout>
+
             <ImageView
                 android:id="@+id/rewardImage"
                 android:layout_width="match_parent"
@@ -30,52 +71,6 @@
                 android:padding="16dp"
                 android:scaleType="fitCenter"
                 tools:src="@tools:sample/avatars" />
-
-            <!-- Horizontal Roulette Reel Container -->
-            <FrameLayout
-                android:id="@+id/rouletteContainer"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:clipChildren="false"
-                android:visibility="gone">
-
-                <!-- Center vertical indicator line -->
-                <View
-                    android:id="@+id/rouletteCenterLine"
-                    android:layout_width="1.5dp"
-                    android:layout_height="match_parent"
-                    android:layout_gravity="center_horizontal"
-                    android:background="#4053FC18" />
-
-                <!-- The horizontal scrolling strip of cards -->
-                <LinearLayout
-                    android:id="@+id/rouletteStrip"
-                    android:layout_width="wrap_content"
-                    android:layout_height="match_parent"
-                    android:clipChildren="false"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal" />
-
-                <!-- Top indicator arrow pointing down -->
-                <ImageView
-                    android:id="@+id/rouletteTopIndicator"
-                    android:layout_width="16dp"
-                    android:layout_height="12dp"
-                    android:layout_gravity="top|center_horizontal"
-                    android:layout_marginTop="8dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/ic_roulette_indicator_down" />
-
-                <!-- Bottom indicator arrow pointing up -->
-                <ImageView
-                    android:id="@+id/rouletteBottomIndicator"
-                    android:layout_width="16dp"
-                    android:layout_height="12dp"
-                    android:layout_gravity="bottom|center_horizontal"
-                    android:layout_marginBottom="8dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/ic_roulette_indicator_up" />
-            </FrameLayout>
         </FrameLayout>
     </com.google.android.material.card.MaterialCardView>
 </FrameLayout>

@@ -1,22 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<com.google.android.material.card.MaterialCardView
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+<!-- Full-bleed roulette tile; size and trailing gap (web flex gap 8px) are set in code. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/slotCard"
     android:layout_width="96dp"
-    android:layout_height="96dp"
-    android:layout_marginHorizontal="6dp"
-    android:layout_gravity="center_vertical"
-    app:cardBackgroundColor="#18181B"
-    app:cardCornerRadius="14dp"
-    app:strokeColor="#2E2E33"
-    app:strokeWidth="1.5dp">
+    android:layout_height="96dp">
 
     <ImageView
         android:id="@+id/slotImage"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:padding="12dp"
         android:contentDescription="@null"
         android:scaleType="fitCenter" />
-</com.google.android.material.card.MaterialCardView>
+</FrameLayout>

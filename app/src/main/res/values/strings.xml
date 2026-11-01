@@ -627,6 +627,9 @@
     <string name="stop_download">Stop download</string>
     <string name="resume_download">Resume download</string>
     <string name="show_view_count_icon">Show view count and uptime icons</string>
+    <string name="player_viewer_count_position">Viewer count position</string>
+    <string name="viewer_count_position_top">Top</string>
+    <string name="viewer_count_position_bottom">Bottom</string>
     <string name="playback_speeds">Playback speeds</string>
     <string name="use_custom_proxy">Use custom proxy</string>
     <string name="use_custom_proxy_desc">Requires a URL that returns a playlist</string>

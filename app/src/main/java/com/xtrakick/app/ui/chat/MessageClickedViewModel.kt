@@ -12,6 +12,7 @@ import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.repository.MutedChatUsersRepository
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.KickApiHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -136,23 +137,27 @@ class MessageClickedViewModel @Inject constructor(
                         channelSlug = currentTargetLogin,
                         userSlug = requireNotNull(currentChannelLogin)
                     )
+                    val resolvedId = response.id?.toString() ?: kickUser.id?.toString() ?: currentChannelId
+                    val resolvedBanner = response.bannerUrl
+                        ?: KickApiHelper.getDefaultBanner(resolvedId, kickUser.username)
                     User(
-                        channelId = response.id?.toString() ?: kickUser.id?.toString(),
+                        channelId = resolvedId,
                         channelLogin = kickUser.username,
                         channelName = kickUser.username,
                         profileImageUrl = kickUser.profileImage,
-                        bannerImageURL = response.bannerUrl,
+                        bannerImageURL = resolvedBanner,
                         createdAt = userCardDetails.createdAt ?: kickUser.createdAt,
                         followedAt = userCardDetails.followingSince
                     )
                 } ?: throw Exception("Invalid response")
             } catch (_: Exception) {
+                val resolvedId = currentChannelId
                 User(
-                    channelId = currentChannelId ?: "",
+                    channelId = resolvedId ?: "",
                     channelLogin = currentChannelLogin,
                     channelName = currentChannelName ?: currentChannelLogin,
                     profileImageUrl = null,
-                    bannerImageURL = null,
+                    bannerImageURL = KickApiHelper.getDefaultBanner(resolvedId, currentChannelLogin),
                     createdAt = null,
                     followedAt = null
                 )

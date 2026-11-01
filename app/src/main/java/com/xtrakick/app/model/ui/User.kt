@@ -27,4 +27,9 @@ class User(
 
     val channelLogo: String?
         get() = KickApiHelper.getTemplateUrl(profileImageUrl, "profileimage")
+            ?: KickApiHelper.getDefaultProfilePicture(channelId, channelLogin ?: channelName)
+
+    val bannerUrl: String?
+        get() = bannerImageURL?.takeIf { it.isNotBlank() }
+            ?: KickApiHelper.getDefaultBanner(channelId, channelLogin ?: channelName)
 }
