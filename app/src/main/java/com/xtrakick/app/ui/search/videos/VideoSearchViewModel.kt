@@ -1,6 +1,7 @@
 package com.xtrakick.app.ui.search.videos
 
 import android.content.Context
+import com.xtrakick.app.R
 import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
@@ -70,6 +71,7 @@ class VideoSearchViewModel @Inject constructor(
             SearchVideosDataSource(
                 query = query,
                 kickRepository = kickRepository,
+                loadFailureMessage = applicationContext.getString(R.string.videos_load_failed),
             )
         }.flow
     }.cachedIn(viewModelScope)
@@ -83,9 +85,6 @@ class VideoSearchViewModel @Inject constructor(
     fun saveRecentSearch(query: String) {
         if (query.isNotBlank()) {
             viewModelScope.launch {
-                recentSearchRepository.getItem(query, RecentSearch.TYPE_VIDEO)?.let {
-                    recentSearchRepository.delete(it)
-                }
                 recentSearchRepository.save(RecentSearch(query, RecentSearch.TYPE_VIDEO, System.currentTimeMillis()))
             }
         }

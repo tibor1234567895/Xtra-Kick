@@ -622,7 +622,7 @@ class IvsPlayerService : Service() {
                         // stopped behind another activity (e.g. in-app Settings):
                         // surface detached, audio still foreground. Stopping here
                         // would kill its recovery.
-                        if (!surfaceAttached && boundClients == 0) {
+                        if (!surfaceAttached && boundClients == 0 && !backgroundPlaybackEnabled) {
                             // Background playback failed for good — stop instead of
                             // leaving a dead ERROR-state notification up.
                             stopPlaybackForGood()
@@ -1012,6 +1012,19 @@ class IvsPlayerService : Service() {
         }
         attachedSurfaceRef = surface
         surfaceAttached = surface != null
+        if (surface == null) {
+            // Android's SurfaceHolder.Callback.surfaceDestroyed requires that the surface
+            // is no longer being accessed before surfaceDestroyed returns. If setSurface(null)
+            // is only posted asynchronously to playerExecutor, Android tears down the native
+            // BLASTBufferQueue while MediaCodec is still rendering, causing a fatal
+            // MediaCodec$CodecException (rendering to non-initialized surface / UNKNOWN_ERROR 0x80000000).
+            // Detach synchronously right here on the calling thread (matching Amazon's PlayerView).
+            try {
+                player?.setSurface(null)
+            } catch (e: Exception) {
+                playerDebugWarn("synchronous detachSurface failed: ${e.message}")
+            }
+        }
         runPlayerOp("attachSurface attached=$surfaceAttached") { player ->
             val targetSurface = surface?.takeIf { it.isValid && attachedSurfaceRef == surface }
             player.setSurface(targetSurface)
@@ -1159,6 +1172,10 @@ class IvsPlayerService : Service() {
         disarmDeadStreamWatchdog()
         surfaceAttached = false
         attachedSurfaceRef = null
+        try {
+            player?.setSurface(null)
+        } catch (_: Exception) {
+        }
         abandonAudioFocus()
         // Queued behind in-flight load/play so play() can't resurrect after stop.
         runPlayerOp("stop") {

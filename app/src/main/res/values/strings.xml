@@ -1279,4 +1279,6 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="rewind_rel_30_minutes">Rewind 30 minutes</string>
     <string name="recording">Recording</string>
     <string name="rewind_unavailable">Rewind is not available for this stream</string>
+    <string name="stream_event_tag">Event: %1$s</string>
+    <string name="videos_load_failed">Could not load videos. Try again.</string>
 </resources>

@@ -1261,4 +1261,6 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="rewind_rel_30_minutes">Retroceder 30 minutos</string>
     <string name="recording">Gravação</string>
     <string name="rewind_unavailable">O retrocesso não está disponível para esta transmissão</string>
+    <string name="stream_event_tag">Evento: %1$s</string>
+    <string name="videos_load_failed">Não foi possível carregar os vídeos. Tente novamente.</string>
 </resources>

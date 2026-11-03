@@ -8,6 +8,7 @@ import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.util.AppConstants
 import java.util.Collections
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 
 class StreamsDataSource(
     private val gqlSort: String?,
@@ -19,12 +20,15 @@ class StreamsDataSource(
     private var api: String? = null
     private var offset: String? = null
     private val seenStreamKeys = Collections.synchronizedSet(mutableSetOf<String>())
+    private val languageCursors = mutableMapOf<Int, String>()
+    private var languageEndpointActive = false
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Stream> {
         return if (!offset.isNullOrBlank()) {
             try {
                 loadFromApi(api, params)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 LoadResult.Error(e)
             }
         } else {
@@ -34,6 +38,7 @@ class StreamsDataSource(
                 try {
                     return loadFromApi(pref, params)
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     lastError = e
                 }
             }
@@ -50,6 +55,25 @@ class StreamsDataSource(
     }
 
     private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
+        kickRepository.getEventFilterStreams(tags.toList())?.let { streams ->
+            return LoadResult.Page(data = filterEventStreams(streams, languages.toList(), gqlSort), prevKey = null, nextKey = null)
+        }
+        val languageCodes = requestedLanguageCodes(languages.toList(), tags.toList())
+        if (languageCodes.isNotEmpty() && gqlSort != "VIEWER_COUNT_ASC" && gqlSort != "RECENT") {
+            val page = params.key ?: 1
+            val cursor = if (page == 1) null else languageCursors[page] ?: error("Missing language page cursor")
+            kickRepository.getLanguageFilteredLivestreams(null, languageCodes, cursor, params.loadSize,
+                awaitEventMetadata = kickRepository.hasCachedEventFilter(tags.toList()))?.let { response ->
+                languageEndpointActive = true
+                val streams = response.livestreams
+                    .filter { matchesFilters(it.toLegacyLivestream()) }
+                    .map { kickRepository.toStream(it) }
+                    .filter { seenStreamKeys.add(it.channelId ?: it.channelLogin ?: it.id.orEmpty()) }
+                val next = response.pagination.nextCursor?.takeIf { it.isNotBlank() && it != cursor }
+                    ?.let { languageCursors[page + 1] = it; page + 1 }
+                return LoadResult.Page(data = streams, prevKey = null, nextKey = next)
+            }
+        }
         val targetSize = params.loadSize
         val hasFilters = languages.isNotEmpty() || tags.isNotEmpty()
         val minTargetSize = if (hasFilters) minOf(targetSize, 8) else targetSize
@@ -64,6 +88,7 @@ class StreamsDataSource(
                 page = currentPage,
                 limit = targetSize,
                 sort = if (gqlSort == "VIEWER_COUNT_ASC") "asc" else "desc",
+                awaitEventMetadata = kickRepository.hasCachedEventFilter(tags.toList()),
             )
             val matched = response.data
                 .filter { matchesFilters(it) }
@@ -101,9 +126,11 @@ class StreamsDataSource(
      * loadSize while a filter is active; Paging compensates by loading more pages.
      */
     private fun matchesFilters(item: KickLivestream): Boolean =
-        matchesFilters(item, languages.toList(), tags.toList())
+        matchesFilters(item, languages.toList(), tags.toList(),
+            kickRepository.getCachedChannelEventTitle((item.channel?.id ?: item.channelId)?.toString()))
 
     override fun getRefreshKey(state: PagingState<Int, Stream>): Int? {
+        if (languageEndpointActive) return null
         return state.anchorPosition?.let { anchorPosition ->
             val anchorPage = state.closestPageToPosition(anchorPosition)
             anchorPage?.prevKey?.plus(1) ?: anchorPage?.nextKey?.minus(1)
@@ -111,10 +138,51 @@ class StreamsDataSource(
     }
 
     companion object {
+        internal fun requestedLanguageCodes(languages: Collection<String>?, tags: Collection<String>?): List<String> {
+            if (!languages.isNullOrEmpty()) return languages.toList()
+            return tags.orEmpty().map { tag ->
+                val value = tag.trim().lowercase(Locale.ROOT)
+                LANGUAGE_NAMES.entries.find { (code, names) -> code.equals(value, true) || value in names }?.key
+                    ?: return emptyList()
+            }
+        }
+
+        internal fun filterEventStreams(streams: List<Stream>, languages: Collection<String>?, sort: String?): List<Stream> {
+            val matched = streams.filter { stream ->
+                languages.isNullOrEmpty() || languages.any { code ->
+                    stream.tags.orEmpty().drop(1).any { matchesLanguage(code, it.lowercase(Locale.ROOT)) }
+                }
+            }
+            return if (sort == "VIEWER_COUNT_ASC") matched.sortedBy { it.viewerCount ?: Int.MAX_VALUE }
+            else matched.sortedByDescending { it.viewerCount ?: -1 }
+        }
+
+        internal fun isLanguageQuery(query: String): Boolean {
+            val value = query.trim().lowercase(Locale.ROOT)
+            return LANGUAGE_NAMES.any { (code, names) ->
+                names.isNotEmpty() && (code.lowercase(Locale.ROOT) == value || value in names)
+            }
+        }
+
+        internal fun matchesSearchTag(item: KickLivestream, query: String): Boolean {
+            val value = query.trim().lowercase(Locale.ROOT)
+            if (value.isBlank()) return false
+            if (isLanguageQuery(value)) {
+                val codes = LANGUAGE_NAMES.filter { (code, names) ->
+                    code.lowercase(Locale.ROOT) == value || value in names
+                }.keys
+                val language = item.language?.trim()?.lowercase(Locale.ROOT) ?: return false
+                return codes.any { code -> language == code.lowercase(Locale.ROOT) || matchesLanguage(code, language) }
+            }
+            return item.tags.orEmpty().any { it.trim().equals(value, ignoreCase = true) } ||
+                (item.isMature == true && value in setOf("18+", "mature"))
+        }
+
         internal fun matchesFilters(
             item: KickLivestream,
             languages: Collection<String>?,
             tags: Collection<String>?,
+            eventTitle: String? = null,
         ): Boolean {
             if (!languages.isNullOrEmpty()) {
                 val streamLanguage = item.language?.trim()?.lowercase(Locale.ROOT)
@@ -125,6 +193,7 @@ class StreamsDataSource(
             }
             if (!tags.isNullOrEmpty()) {
                 val streamTags = buildList {
+                    eventTitle?.takeIf { it.isNotBlank() }?.let { add(it.lowercase(Locale.ROOT)) }
                     item.tags?.forEach { add(it.trim().lowercase(Locale.ROOT)) }
                     item.categories?.forEach { cat ->
                         cat.tags?.forEach { add(it.trim().lowercase(Locale.ROOT)) }

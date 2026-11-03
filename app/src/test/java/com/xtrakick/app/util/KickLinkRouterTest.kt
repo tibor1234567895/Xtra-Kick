@@ -9,6 +9,13 @@ import org.junit.Test
 class KickLinkRouterTest {
 
     @Test
+    fun externalClipLinkPreservesTheFullIdentifier() {
+        val clip = KickLinkRouter.parse("https://kick.com/capped/clips/clip_01M6AYFE19H181D7YM0R043GTE") as KickLink.Clip
+        assertEquals("clip_01M6AYFE19H181D7YM0R043GTE", clip.clipId)
+        assertEquals("capped", clip.channelLogin)
+    }
+
+    @Test
     fun testParseVod_withChannelAndUuid() {
         val link = KickLinkRouter.parse("https://kick.com/buddha/videos/01a068e3-9748-7889-8f65-6019c5de8156")
         assertNotNull(link)

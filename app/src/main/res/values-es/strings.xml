@@ -1266,4 +1266,6 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="rewind_rel_30_minutes">Rebobinar 30 minutos</string>
     <string name="recording">Grabación</string>
     <string name="rewind_unavailable">El rebobinado no está disponible para esta transmisión</string>
+    <string name="stream_event_tag">Evento: %1$s</string>
+    <string name="videos_load_failed">No se pudieron cargar los vídeos. Inténtalo de nuevo.</string>
 </resources>

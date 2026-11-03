@@ -17,6 +17,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -53,7 +55,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
         private const val LIVESTREAM_BATCH_SIZE = 50
         private const val USER_LOOKUP_BATCH_SIZE = 100
         private const val PUBLIC_API_PARALLELISM = 3
-        private const val PER_CHANNEL_BATCH_SIZE = 12
+        private const val PER_CHANNEL_BATCH_SIZE = 4
     }
 
     @Serializable
@@ -73,6 +75,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
         val thumbnailUrl: String? = null,
         val profileImageUrl: String? = null,
         val tags: List<String>? = null,
+        val eventTitle: String? = null,
     ) {
         fun toStream(): Stream = Stream(
             id = id,
@@ -90,6 +93,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
             thumbnailUrl = thumbnailUrl,
             profileImageUrl = profileImageUrl,
             tags = tags,
+            eventTitle = eventTitle,
         )
     }
 
@@ -104,6 +108,9 @@ class FollowedLiveStreamsRepository @Inject constructor(
         val items: List<Stream>,
         val fromCache: Boolean,
     )
+
+    private data class LiveCache(val account: String, val cachedAt: Long, val items: List<Stream>)
+    @Volatile private var liveCache: LiveCache? = null
 
     /**
      * @param forceRefresh ignore TTL cache
@@ -120,6 +127,12 @@ class FollowedLiveStreamsRepository @Inject constructor(
             if (account != accountKey()) throw CancellationException("Following account changed")
             onPartial(items)
         }
+        if (!forceRefresh && (!allowPerChannelFallback || lastLoadAllowedFallback)) {
+            freshCache()?.let {
+                publish(it)
+                return LoadResult(it, true)
+            }
+        }
         val observedGeneration = loadGeneration
         return loadMutex.withLock {
             if ((!forceRefresh || observedGeneration != loadGeneration) &&
@@ -130,7 +143,10 @@ class FollowedLiveStreamsRepository @Inject constructor(
                     return@withLock LoadResult(it, true)
                 }
             }
-            loadLiveFollowedUncached(allowPerChannelFallback, account, ::publish).also {
+            loadLiveFollowedUncached(allowPerChannelFallback, account) { items ->
+                liveCache = LiveCache(account, System.currentTimeMillis(), items)
+                publish(items)
+            }.also {
                 lastLoadAllowedFallback = allowPerChannelFallback
                 loadGeneration++
             }
@@ -139,7 +155,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
 
     private val loadMutex = Mutex()
     @Volatile private var loadGeneration = 0L
-    private var lastLoadAllowedFallback = false
+    @Volatile private var lastLoadAllowedFallback = false
 
     private suspend fun loadLiveFollowedUncached(
         allowPerChannelFallback: Boolean,
@@ -176,6 +192,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
                     thumbnailUrl = existing.thumbnailUrl?.takeIf { hasUsableThumbnail(it) } ?: stream.thumbnailUrl,
                     profileImageUrl = existing.profileImageUrl ?: stream.profileImageUrl,
                     tags = existing.tags ?: stream.tags,
+                    eventTitle = existing.eventTitle ?: stream.eventTitle,
                     user = existing.user ?: stream.user,
                 )
             } else {
@@ -189,7 +206,8 @@ class FollowedLiveStreamsRepository @Inject constructor(
         var officialLiveSucceeded = false
         if (kickRepository.hasKickAccountFollowCapability()) {
             try {
-                val officialLive = kickRepository.getUserLiveFollowedStreams()
+                val officialLive = withTimeoutOrNull(30_000L) { kickRepository.getUserLiveFollowedStreams() }
+                    ?: throw java.io.IOException("Followed-live request timed out")
                 officialLive.forEach(::putStream)
                 val liveLogins = officialLive.mapNotNull { it.channelLogin?.trim()?.lowercase(Locale.ROOT) }
                 if (liveLogins.isNotEmpty()) {
@@ -228,7 +246,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
         val fast = if (googleSession) {
             null
         } else try {
-            if (unresolvedFollows.isEmpty()) null else loadFromPublicApi(unresolvedFollows)
+            if (unresolvedFollows.isEmpty()) null else withTimeoutOrNull(30_000L) { loadFromPublicApi(unresolvedFollows) }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -245,7 +263,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
         val bulk = if (googleSession) {
             null
         } else try {
-            loadFromBulkFallback(unresolvedAfterFast)
+            withTimeoutOrNull(30_000L) { loadFromBulkFallback(unresolvedAfterFast) }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -260,20 +278,31 @@ class FollowedLiveStreamsRepository @Inject constructor(
 
         val unresolvedAfterBulk = bulk?.unresolved ?: unresolvedAfterFast
         if (allowPerChannelFallback && unresolvedAfterBulk.isNotEmpty()) {
-            if (sawRateLimit || (!googleSession && resolved.isNotEmpty() && unresolvedAfterBulk.size > 6)) {
+            if (sawRateLimit) {
                 diagnosticWarn("Skipping per-channel fallback: kick API is rate limiting")
             } else {
-                unresolvedAfterBulk.take(20).chunked(PER_CHANNEL_BATCH_SIZE).forEach { batch ->
+                for (batch in unresolvedAfterBulk.chunked(PER_CHANNEL_BATCH_SIZE)) {
                     currentCoroutineContext().ensureActive()
                     val batchResults = coroutineScope {
                         batch.map { follow ->
-                            async { loadStreamForFollow(follow) }
+                            async {
+                                try {
+                                    Result.success(withTimeoutOrNull(10_000L) { loadStreamForFollow(follow) })
+                                } catch (error: CancellationException) {
+                                    throw error
+                                } catch (error: Exception) {
+                                    Result.failure(error)
+                                }
+                            }
                         }.awaitAll()
-                    }.filterNotNull()
-                    batchResults.forEach(::putStream)
-                    if (batchResults.isNotEmpty()) {
-                        onPartial(resolved.values.toList().sortedByViewersDesc())
                     }
+                    batchResults.mapNotNull { it.getOrNull() }.forEach(::putStream)
+                    onPartial(resolved.values.toList().sortedByViewersDesc())
+                    if (batchResults.any { isRateLimitMessage(it.exceptionOrNull()?.message) }) {
+                        diagnosticWarn("Stopping per-channel fallback after rate limit")
+                        break
+                    }
+                    delay(250L)
                 }
             }
         }
@@ -289,6 +318,9 @@ class FollowedLiveStreamsRepository @Inject constructor(
     private fun accountKey(): String = applicationContext.tokenPrefs().getString(AppConstants.KICK_USER_ID, null).orEmpty()
 
     private fun freshCache(maxAgeMs: Long = CACHE_TTL_MS): List<Stream>? {
+        liveCache?.let {
+            if (it.account == accountKey() && System.currentTimeMillis() - it.cachedAt <= maxAgeMs) return it.items
+        }
         val payload = applicationContext.prefs().getString(CACHE_KEY, null)
             ?.let { encoded -> runCatching { json.decodeFromString<CachePayload>(encoded) }.getOrNull() }
             ?: return null
@@ -476,9 +508,14 @@ class FollowedLiveStreamsRepository @Inject constructor(
         val id = follow.userId?.takeIf { it.isNotBlank() }
         return when {
             !login.isNullOrBlank() -> {
-                val channel = runCatching {
+                val channel = try {
                     kickRepository.getChannel(channelSlug = login, prefetchBadgeCatalog = false)
-                }.getOrNull() ?: return null
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    if (error.message?.contains("429") == true) throw error
+                    return null
+                }
                 rememberBroadcasterId(
                     channel.slug ?: login,
                     channel.userId?.toString() ?: channel.user?.id?.toString()
@@ -495,9 +532,14 @@ class FollowedLiveStreamsRepository @Inject constructor(
                 kickRepository.toStream(channel, enriched)
             }
             !id.isNullOrBlank() -> {
-                val channel = runCatching {
+                val channel = try {
                     kickRepository.getChannel(channelSlug = id, prefetchBadgeCatalog = false)
-                }.getOrNull() ?: return null
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    if (error.message?.contains("429") == true) throw error
+                    return null
+                }
                 rememberBroadcasterId(
                     channel.slug,
                     channel.userId?.toString() ?: channel.user?.id?.toString()
@@ -538,6 +580,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
             thumbnailUrl = thumbnail,
             profileImageUrl = profilePicture ?: follow?.channelLogo,
             tags = combinedTags,
+            eventTitle = eventTitle,
         )
     }
 
@@ -563,6 +606,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
                     thumbnailUrl = it.thumbnailUrl,
                     profileImageUrl = it.profileImageUrl,
                     tags = it.tags,
+                    eventTitle = it.eventTitle,
                 )
             }
         )

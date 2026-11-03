@@ -22,14 +22,17 @@ import com.amazonaws.ivs.player.Cue
 import com.amazonaws.ivs.player.Player
 import com.amazonaws.ivs.player.PlayerException
 import com.amazonaws.ivs.player.Quality
+import com.amazonaws.ivs.player.TextCue
+import com.amazonaws.ivs.player.TextTrack
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.model.ui.VideoStatsInfo
-import java.util.Locale
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.getAlertDialogBuilder
+import java.util.Locale
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.NetworkMonitor
 
@@ -40,6 +43,21 @@ class IvsPlayerFragment : PlayerFragment() {
     private var serviceConnection: ServiceConnection? = null
     private val player: Player?
         get() = playbackService?.player
+    private var displayedCaption: String? = null
+    private val captionTimeline = IvsCaptionTimeline()
+    private val updateCaptionsAction = object : Runnable {
+        override fun run() {
+            val binding = bindingOrNull ?: return
+            val text = captionTimeline.textAt(player?.position ?: 0L)
+            if (text != displayedCaption) {
+                displayedCaption = text
+                binding.subtitleView.setCues(text?.let {
+                    listOf(androidx.media3.common.text.Cue.Builder().setText(it).build())
+                } ?: emptyList())
+            }
+            if (!captionTimeline.isEmpty) binding.subtitleView.postDelayed(this, 100L)
+        }
+    }
     private var playerListener: Player.Listener? = null
     private var surfaceHolderCallback: SurfaceHolder.Callback? = null
     private var surfaceCreated = false
@@ -195,7 +213,25 @@ class IvsPlayerFragment : PlayerFragment() {
                 }
                 restoreForegroundCeiling()
                 val listener = object : Player.Listener() {
-                    override fun onCue(cue: Cue) = Unit
+                    override fun onTextTracksChanged(tracks: List<TextTrack>) {
+                        if (bindingOrNull == null) return
+                        toggleSubtitles(prefs.getBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, false))
+                    }
+
+                    override fun onTextTrackChanged(track: TextTrack?) {
+                        clearCaptions()
+                        setSubtitlesButton()
+                    }
+
+                    override fun onCue(cue: Cue) {
+                        if (cue !is TextCue || !prefs.getBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, false)) return
+                        val selected = player?.textTrack ?: return
+                        if (cue.trackId != null && cue.trackId != selected.id) return
+                        val subtitleView = bindingOrNull?.subtitleView ?: return
+                        captionTimeline.add(cue.text, cue.startTime, cue.endTime, player?.position ?: 0L)
+                        subtitleView.removeCallbacks(updateCaptionsAction)
+                        updateCaptionsAction.run()
+                    }
 
                     override fun onDurationChanged(duration: Long) {
                         binding.playerControls.progressBar.setDuration(duration.coerceAtLeast(0L))
@@ -210,6 +246,9 @@ class IvsPlayerFragment : PlayerFragment() {
                     }
 
                     override fun onStateChanged(state: Player.State) {
+                        if (state == Player.State.READY) toggleSubtitles(prefs.getBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, false))
+                        if (state == Player.State.IDLE || state == Player.State.ENDED) clearCaptions()
+                        setSubtitlesButton()
                         binding.bufferingIndicator.isVisible = state == Player.State.BUFFERING
                         if (state == Player.State.READY || state == Player.State.PLAYING) {
                             pendingSeekPosition?.let { pos ->
@@ -321,6 +360,7 @@ class IvsPlayerFragment : PlayerFragment() {
                     }
                 }
                 player?.addListener(listener)
+                toggleSubtitles(prefs.getBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, false))
                 playerListener = listener
                 if (resumeOnStart && player?.state != Player.State.PLAYING) {
                     resumePlaybackOrReload(boundService, "onServiceConnected")
@@ -491,6 +531,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun startStream(url: String?) {
+        clearCaptions()
         val resolvedUrl = url?.takeIf { it.isNotBlank() } ?: return
         hideOfflineOverlay()
         recoveryInProgress = false
@@ -548,6 +589,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun getCurrentSpeed(): Float? = player?.playbackRate
+    override fun isPlaybackPlaying() = player?.state == Player.State.PLAYING
 
     override fun getCurrentVolume(): Float? = player?.volume
 
@@ -575,6 +617,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun seek(position: Long) {
+        clearCaptions()
         runIvsOp("fragment-seek") { it.seekTo(position) }
         activeChatFragment()?.seekTo(position)
     }
@@ -613,6 +656,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun seekToLivePosition() {
+        clearCaptions()
         if (viewModel.isLiveRewound) {
             returnLiveEdge()
             context?.let {
@@ -1079,8 +1123,64 @@ class IvsPlayerFragment : PlayerFragment() {
         updatePlayingState()
     }
 
+    private fun clearCaptions() {
+        captionTimeline.clear()
+        displayedCaption = null
+        bindingOrNull?.subtitleView?.apply {
+            removeCallbacks(updateCaptionsAction)
+            setCues(emptyList())
+        }
+    }
+
     override fun setSubtitlesButton() {
-        binding.playerControls.subtitles.visibility = View.GONE
+        val controls = bindingOrNull?.playerControls ?: return
+        val available = !player?.textTracks.isNullOrEmpty()
+        val isEnabled = available && prefs.getBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, false)
+        controls.subtitles.isVisible = available && prefs.getBoolean(AppConstants.PLAYER_SUBTITLES, false)
+        controls.subtitles.setImageResource(if (isEnabled) androidx.media3.ui.R.drawable.exo_ic_subtitle_on else androidx.media3.ui.R.drawable.exo_ic_subtitle_off)
+        controls.subtitles.setOnClickListener { showSubtitleSelection() }
+        (childFragmentManager.findFragmentByTag("closeOnPip") as? PlayerSettingsDialog)?.setSubtitles(available)
+    }
+
+    override fun toggleSubtitles(enabled: Boolean) {
+        clearCaptions()
+        val tracks = player?.textTracks.orEmpty()
+        val language = prefs.getString(AppConstants.PLAYER_CAPTION_LANGUAGE, Locale.getDefault().language)
+        player?.textTrack = if (enabled) tracks.find { it.languageTag == language }
+            ?: tracks.find { it.languageTag == "en" } ?: tracks.firstOrNull() else null
+        setSubtitlesButton()
+    }
+
+    override fun showSubtitleSelection() {
+        val tracks = player?.textTracks.orEmpty()
+        if (tracks.isEmpty()) return
+        val labels = listOf(getString(R.string.hide_subtitles)) + tracks.map {
+            Locale.forLanguageTag(it.languageTag).getDisplayLanguage(Locale.getDefault()).ifBlank { it.label }
+        }
+        val selected = if (prefs.getBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, false)) {
+            val current = player?.textTrack
+            if (current != null) {
+                tracks.indexOf(current) + 1
+            } else {
+                val savedLang = prefs.getString(AppConstants.PLAYER_CAPTION_LANGUAGE, Locale.getDefault().language)
+                val idx = tracks.indexOfFirst { it.languageTag == savedLang }
+                if (idx >= 0) idx + 1 else 1
+            }
+        } else {
+            0
+        }
+        requireContext().getAlertDialogBuilder()
+            .setTitle(R.string.subtitles)
+            .setSingleChoiceItems(labels.toTypedArray(), selected) { dialog, index ->
+                prefs.edit {
+                    putBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, index > 0)
+                    if (index > 0) putString(AppConstants.PLAYER_CAPTION_LANGUAGE, tracks[index - 1].languageTag)
+                }
+                clearCaptions()
+                player?.textTrack = tracks.getOrNull(index - 1)
+                setSubtitlesButton()
+                dialog.dismiss()
+            }.show()
     }
 
     override fun showPlaylistTags(mediaPlaylist: Boolean) {
@@ -1088,19 +1188,20 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun close() {
+        clearCaptions()
         clearFreezeFrame()
         cancelQualityNudge()
         lastQualityNudgeTimeMs = 0L
         backgroundSaverApplied = false
         cancelNetworkLossGrace()
         networkPauseApplied = false
-        binding.playerControls.root.removeCallbacks(updateProgressAction)
+        bindingOrNull?.playerControls?.root?.removeCallbacks(updateProgressAction)
         val service = playbackService
         val ivsPlayer = service?.player
         resetCatchupState()
         playerListener?.let { ivsPlayer?.removeListener(it) }
         playerListener = null
-        surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
+        surfaceHolderCallback?.let { bindingOrNull?.playerSurface?.holder?.removeCallback(it) }
         surfaceHolderCallback = null
         service?.attachSurface(null)
         service?.stopPlayback()
@@ -1116,6 +1217,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun onStop() {
+        clearCaptions()
         super.onStop()
         if (shouldClosePlaybackAfterPipDismiss()) {
             close()
@@ -1149,7 +1251,7 @@ class IvsPlayerFragment : PlayerFragment() {
                 }
                 backgroundSaverApplied =
                     prefs.getBoolean(AppConstants.PLAYER_DISABLE_BACKGROUND_VIDEO, true) &&
-                        applyAudioSaverCeiling(deferred = true)
+                        applyAudioSaverCeiling(deferred = false)
                 resumeOnStart = false
             } else {
                 playbackService?.setBackgroundPlaybackEnabled(false)
@@ -1197,6 +1299,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun onDestroyView() {
+        clearCaptions()
         binding.playerControls.root.removeCallbacks(updateProgressAction)
         surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
         surfaceHolderCallback = null

@@ -2621,9 +2621,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
-                            viewModel.kickViewerCount.collectLatest { count ->
-                                if (count != null) {
-                                    (parentFragment as? PlayerFragment)?.updateViewerCount(count)
+                            viewModel.kickViewerCount.collectLatest { update ->
+                                if (update != null) {
+                                    (parentFragment as? PlayerFragment)?.updateViewerCount(update.first, updatedAt = update.second)
                                 }
                             }
                         }
@@ -3141,7 +3141,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                             kickReplayFallback = kickReplayFallback,
                             kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
-                            kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL)
+                            kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL),
+                            isClipReplay = args.getBoolean(KEY_IS_CLIP_REPLAY),
+                            isPlaybackPlaying = (parentFragment as PlayerFragment)::isPlaybackPlaying
                         )
                     }
                 } else {
@@ -3187,7 +3189,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                         kickReplayFallback = args.getBoolean(KEY_KICK_REPLAY_FALLBACK),
                         kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
-                        kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL)
+                        kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL),
+                        isClipReplay = args.getBoolean(KEY_IS_CLIP_REPLAY),
+                        isPlaybackPlaying = (parentFragment as PlayerFragment)::isPlaybackPlaying
                     )
                 }
             }
@@ -3218,7 +3222,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                 kickReplayFallback = args.getBoolean(KEY_KICK_REPLAY_FALLBACK),
                 kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
-                kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL)
+                kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL),
+                isClipReplay = args.getBoolean(KEY_IS_CLIP_REPLAY),
+                isPlaybackPlaying = (parentFragment as PlayerFragment)::isPlaybackPlaying
             )
         }
     }
@@ -3322,7 +3328,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             replayStartTimeMs = startTimeMs,
             targetPositionMs = targetPositionMs,
             getCurrentPosition = getCurrentPosition,
-            getCurrentSpeed = getCurrentSpeed
+            getCurrentSpeed = getCurrentSpeed,
+            isPlaybackPlaying = { (parentFragment as? PlayerFragment)?.isPlaybackPlaying() == true },
         )
     }
 
@@ -3691,7 +3698,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                     kickReplayFallback = args.getBoolean(KEY_KICK_REPLAY_FALLBACK),
                     kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
-                    kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL)
+                    kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL),
+                    isClipReplay = args.getBoolean(KEY_IS_CLIP_REPLAY),
+                    isPlaybackPlaying = (parentFragment as PlayerFragment)::isPlaybackPlaying
                 )
             }
         }
@@ -3839,6 +3848,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         private const val KEY_KICK_REPLAY_FALLBACK = "kickReplayFallback"
         private const val KEY_KICK_REPLAY_START_TIME = "kickReplayStartTime"
         private const val KEY_KICK_REPLAY_URL = "kickReplayUrl"
+        private const val KEY_IS_CLIP_REPLAY = "isClipReplay"
         private const val KEY_SOURCE = "source"
         private val pinnedInlineEmoteRegex = Regex("\\[emote:(\\d+):([^\\]]+)]")
         private val LIVE_CHAT_RENDER_SETTING_KEYS = setOf(
@@ -3889,6 +3899,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             kickReplayStartTime: String? = null,
             kickReplayUrl: String? = null,
             source: String? = null,
+            isClipReplay: Boolean = false,
         ): ChatFragment {
             return ChatFragment().apply {
                 arguments = Bundle().apply {
@@ -3901,6 +3912,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     putBoolean(KEY_KICK_REPLAY_FALLBACK, kickReplayFallback)
                     putString(KEY_KICK_REPLAY_START_TIME, kickReplayStartTime)
                     putString(KEY_KICK_REPLAY_URL, kickReplayUrl)
+                    putBoolean(KEY_IS_CLIP_REPLAY, isClipReplay)
                     putString(KEY_SOURCE, source)
                 }
             }

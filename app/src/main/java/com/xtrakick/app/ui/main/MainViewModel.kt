@@ -155,6 +155,7 @@ class MainViewModel @Inject constructor(
 
     val video = MutableStateFlow<Pair<Video?, Long?>?>(null)
     val clip = MutableStateFlow<Clip?>(null)
+    val clipLoadFailed = MutableStateFlow(false)
     val user = MutableStateFlow<User?>(null)
     val game = MutableStateFlow<Pair<Game?, String?>?>(null)
 
@@ -264,6 +265,7 @@ class MainViewModel @Inject constructor(
         if (clip.value == null) {
             viewModelScope.launch {
                 val id = clipId?.takeIf { it.isNotBlank() }
+                clipLoadFailed.value = false
                 clip.value = if (id == null) {
                     null
                 } else {
@@ -293,8 +295,8 @@ class MainViewModel @Inject constructor(
                                 )
                             }
                         }.getOrNull()
-                        ?: Clip(id = id)
                 }
+                clipLoadFailed.value = clip.value == null
             }
         }
     }

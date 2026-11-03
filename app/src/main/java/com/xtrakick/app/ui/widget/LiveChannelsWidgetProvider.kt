@@ -10,6 +10,7 @@ import android.net.Uri
 import android.widget.RemoteViews
 import com.xtrakick.app.R
 import com.xtrakick.app.ui.main.MainActivity
+import java.util.concurrent.atomic.AtomicBoolean
 
 class LiveChannelsWidgetProvider : AppWidgetProvider() {
 
@@ -27,7 +28,7 @@ class LiveChannelsWidgetProvider : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         if (intent.action == ACTION_REFRESH) {
-            notifyDataChanged(context)
+            notifyDataChanged(context, forceRefresh = true)
         }
     }
 
@@ -93,12 +94,16 @@ class LiveChannelsWidgetProvider : AppWidgetProvider() {
 
     companion object {
         const val ACTION_REFRESH = "com.xtrakick.app.ACTION_REFRESH_WIDGET"
+        private val refreshRequested = AtomicBoolean()
 
-        fun notifyDataChanged(context: Context) {
+        internal fun consumeRefreshRequest(): Boolean = refreshRequested.getAndSet(false)
+
+        fun notifyDataChanged(context: Context, forceRefresh: Boolean = false) {
             val appWidgetManager = AppWidgetManager.getInstance(context) ?: return
             val componentName = ComponentName(context, LiveChannelsWidgetProvider::class.java)
             val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
             if (appWidgetIds != null && appWidgetIds.isNotEmpty()) {
+                if (forceRefresh) refreshRequested.set(true)
                 // Both overloads are deprecated with no replacement; this is the
                 // supported way to refresh a collection widget's data.
                 @Suppress("DEPRECATION")

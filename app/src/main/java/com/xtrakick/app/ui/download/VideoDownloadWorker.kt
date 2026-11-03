@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.http.HttpEngine
 import android.os.Build
+import android.os.SystemClock
 import android.os.ext.SdkExtensions
 import android.provider.DocumentsContract
 import android.util.Base64
@@ -54,7 +55,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -66,9 +66,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -105,6 +103,23 @@ import kotlin.coroutines.suspendCoroutine
 internal fun canReuseDownloadedTrack(name: String, downloadedTracks: Set<String>, isReadable: () -> Boolean): Boolean =
     name in downloadedTracks && isReadable()
 
+internal suspend fun downloadSegments(
+    segments: List<Segment>,
+    concurrency: Int,
+    download: suspend (Int, Segment) -> Unit,
+): List<Job> = coroutineScope {
+    val next = AtomicInteger()
+    List(minOf(concurrency.coerceAtLeast(1), segments.size)) {
+        launch {
+            while (isActive) {
+                val index = next.getAndIncrement()
+                if (index >= segments.size) break
+                download(index, segments[index])
+            }
+        }
+    }
+}
+
 @HiltWorker
 class VideoDownloadWorker @AssistedInject constructor(
     @Assisted private val context: Context,
@@ -139,6 +154,8 @@ class VideoDownloadWorker @AssistedInject constructor(
 
     private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private lateinit var offlineVideo: OfflineVideo
+    private val notificationMutex = Mutex()
+    private var lastNotificationAt = 0L
     private val collectedBadgeImageUrls = ConcurrentHashMap<Pair<String, String>, String>()
 
     /**
@@ -367,7 +384,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                     remainingSegments.add(segment.copy(uri = segment.uri.replace("-unmuted", "-muted")))
                 }
             }
-            val requestSemaphore = Semaphore(context.prefs().getInt(AppConstants.DOWNLOAD_CONCURRENT_LIMIT, 10).coerceIn(1, 32))
+            val concurrency = context.prefs().getInt(AppConstants.DOWNLOAD_CONCURRENT_LIMIT, 10).coerceIn(1, 32)
             val count = MutableStateFlow(0)
             val jobs = if (offlineVideo.playlistToFile) {
                 val videoFileUri = if (!offlineVideo.url.isNullOrBlank()) {
@@ -481,104 +498,98 @@ class VideoDownloadWorker @AssistedInject constructor(
                             ?.forEach { it.delete() }
                     }
                     val stagingRunToken = System.nanoTime()
-                    val segmentIds = generateSequence(0) { it + 1 }.iterator()
-                    remainingSegments.map {
-                        val id = segmentIds.next()
-                        launch(start = CoroutineStart.UNDISPATCHED) {
-                            requestSemaphore.withPermit {
-                                // Download to a staging file first, then append in write
-                                // order. Waiting for the write turn while holding the open
-                                // network response buffers every in-flight stream in memory
-                                // and OOMs the process on long VODs; staging keeps the
-                                // configured thread count fully parallel with disk, not
-                                // RAM, absorbing out-of-order completions.
-                                val stagingName = "$STAGING_FILE_PREFIX${stagingRunToken}_$id$STAGING_FILE_SUFFIX"
-                                val stagingFile = File(context.cacheDir, stagingName)
-                                var stagedBytes = 0L
-                                try {
-                                    val segmentTargetUrl = resolveSegmentUrl(urlPath, it.uri)
-                                    when {
-                                        networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                            val rangeHeader = segmentRangeHeader(it)
-                                            val response = suspendCoroutine { continuation ->
-                                                val requestBuilder = httpEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation))
-                                                if (rangeHeader != null) requestBuilder.addHeader("Range", rangeHeader)
-                                                requestBuilder.build().start()
-                                            }
-                                            check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
-                                            val body = applySegmentRange(response.second, response.first.httpStatusCode, it)
-                                            stagingFile.outputStream().use {
-                                                it.write(body)
-                                            }
-                                            stagedBytes = body.size.toLong()
-                                        }
-                                        networkLibrary == "Cronet" && cronetEngine != null -> {
-                                            val rangeHeader = segmentRangeHeader(it)
-                                            val (statusCode, body) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                                val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                                val requestBuilder = cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, request.callback, cronetExecutor)
-                                                if (rangeHeader != null) requestBuilder.addHeader("Range", rangeHeader)
-                                                requestBuilder.build().start()
-                                                val cronetResponse = request.future.get()
-                                                cronetResponse.urlResponseInfo.httpStatusCode to (cronetResponse.responseBody as ByteArray)
-                                            } else {
-                                                val response = suspendCoroutine { continuation ->
-                                                    val requestBuilder = cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, getByteArrayCronetCallback(continuation), cronetExecutor)
-                                                    if (rangeHeader != null) requestBuilder.addHeader("Range", rangeHeader)
-                                                    requestBuilder.build().start()
-                                                }
-                                                response.first.httpStatusCode to response.second
-                                            }
-                                            check(statusCode in 200..299) { "HTTP $statusCode downloading segment ${it.uri}" }
-                                            val bytes = applySegmentRange(body, statusCode, it)
-                                            stagingFile.outputStream().use {
-                                                it.write(bytes)
-                                            }
-                                            stagedBytes = bytes.size.toLong()
-                                        }
-                                        else -> {
-                                            val rangeHeader = segmentRangeHeader(it)
-                                            okHttpClient.newCall(Request.Builder().url(segmentTargetUrl).apply {
-                                                if (rangeHeader != null) header("Range", rangeHeader)
-                                            }.build()).useCancellable { response ->
-                                                check(response.isSuccessful || response.code == 206) { "HTTP ${response.code} downloading segment ${it.uri}" }
-                                                stagingFile.outputStream().use { outputStream ->
-                                                    response.body.byteStream().use { inputStream ->
-                                                        copySegmentStream(inputStream, outputStream, response.code, it)
-                                                    }
-                                                }
-                                                stagedBytes = stagingFile.length()
-                                            }
-                                        }
+                    downloadSegments(remainingSegments, concurrency) { id, it ->
+                        // Download to a staging file first, then append in write
+                        // order. Waiting for the write turn while holding the open
+                        // network response buffers every in-flight stream in memory
+                        // and OOMs the process on long VODs; staging keeps the
+                        // configured thread count fully parallel with disk, not
+                        // RAM, absorbing out-of-order completions.
+                        val stagingName = "$STAGING_FILE_PREFIX${stagingRunToken}_$id$STAGING_FILE_SUFFIX"
+                        val stagingFile = File(context.cacheDir, stagingName)
+                        var stagedBytes = 0L
+                        try {
+                            val segmentTargetUrl = resolveSegmentUrl(urlPath, it.uri)
+                            when {
+                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                                    val rangeHeader = segmentRangeHeader(it)
+                                    val response = suspendCoroutine { continuation ->
+                                        val requestBuilder = httpEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation))
+                                        if (rangeHeader != null) requestBuilder.addHeader("Range", rangeHeader)
+                                        requestBuilder.build().start()
                                     }
-                                    count.first { turn -> turn == id }
-                                    // A vanished staging file means the cache was trimmed or a
-                                    // sibling run reclaimed it; fail loudly instead of silently
-                                    // writing a download with a hole in the byte stream.
-                                    check(stagingFile.exists()) {
-                                        "Staging file for segment $id disappeared before it could be appended"
+                                    check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
+                                    val body = applySegmentRange(response.second, response.first.httpStatusCode, it)
+                                    stagingFile.outputStream().use {
+                                        it.write(body)
                                     }
-                                    if (stagingFile.length() > 0L) {
-                                        val outputStream = if (isShared) {
-                                            context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!
-                                        } else {
-                                            FileOutputStream(videoFileUri, true)
-                                        }
-                                        outputStream.use { stream ->
-                                            stagingFile.inputStream().use { it.copyTo(stream) }
-                                        }
-                                    }
-                                    offlineRepository.updateVideo(offlineVideo.apply {
-                                        bytes += stagedBytes
-                                        progress += 1
-                                    })
-                                } finally {
-                                    stagingFile.delete()
+                                    stagedBytes = body.size.toLong()
                                 }
-                                count.update { it + 1 }
-                                setForeground(createForegroundInfo())
+                                networkLibrary == "Cronet" && cronetEngine != null -> {
+                                    val rangeHeader = segmentRangeHeader(it)
+                                    val (statusCode, body) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                                        val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
+                                        val requestBuilder = cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, request.callback, cronetExecutor)
+                                        if (rangeHeader != null) requestBuilder.addHeader("Range", rangeHeader)
+                                        requestBuilder.build().start()
+                                        val cronetResponse = request.future.get()
+                                        cronetResponse.urlResponseInfo.httpStatusCode to (cronetResponse.responseBody as ByteArray)
+                                    } else {
+                                        val response = suspendCoroutine { continuation ->
+                                            val requestBuilder = cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, getByteArrayCronetCallback(continuation), cronetExecutor)
+                                            if (rangeHeader != null) requestBuilder.addHeader("Range", rangeHeader)
+                                            requestBuilder.build().start()
+                                        }
+                                        response.first.httpStatusCode to response.second
+                                    }
+                                    check(statusCode in 200..299) { "HTTP $statusCode downloading segment ${it.uri}" }
+                                    val bytes = applySegmentRange(body, statusCode, it)
+                                    stagingFile.outputStream().use {
+                                        it.write(bytes)
+                                    }
+                                    stagedBytes = bytes.size.toLong()
+                                }
+                                else -> {
+                                    val rangeHeader = segmentRangeHeader(it)
+                                    okHttpClient.newCall(Request.Builder().url(segmentTargetUrl).apply {
+                                        if (rangeHeader != null) header("Range", rangeHeader)
+                                    }.build()).useCancellable { response ->
+                                        check(response.isSuccessful || response.code == 206) { "HTTP ${response.code} downloading segment ${it.uri}" }
+                                        stagingFile.outputStream().use { outputStream ->
+                                            response.body.byteStream().use { inputStream ->
+                                                copySegmentStream(inputStream, outputStream, response.code, it)
+                                            }
+                                        }
+                                        stagedBytes = stagingFile.length()
+                                    }
+                                }
                             }
+                            count.first { turn -> turn == id }
+                            // A vanished staging file means the cache was trimmed or a
+                            // sibling run reclaimed it; fail loudly instead of silently
+                            // writing a download with a hole in the byte stream.
+                            check(stagingFile.exists()) {
+                                "Staging file for segment $id disappeared before it could be appended"
+                            }
+                            if (stagingFile.length() > 0L) {
+                                val outputStream = if (isShared) {
+                                    context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!
+                                } else {
+                                    FileOutputStream(videoFileUri, true)
+                                }
+                                outputStream.use { stream ->
+                                    stagingFile.inputStream().use { it.copyTo(stream) }
+                                }
+                            }
+                            offlineRepository.updateVideo(offlineVideo.apply {
+                                bytes += stagedBytes
+                                progress += 1
+                            })
+                        } finally {
+                            stagingFile.delete()
                         }
+                        count.update { it + 1 }
+                        updateDownloadNotification()
                     }
                 }
             } else {
@@ -675,94 +686,88 @@ class VideoDownloadWorker @AssistedInject constructor(
                         }
                     }
                     coroutineScope {
-                        val segmentIds = generateSequence(0) { it + 1 }.iterator()
-                        remainingSegments.map {
-                            val id = segmentIds.next()
-                            launch(start = CoroutineStart.UNDISPATCHED) {
-                                requestSemaphore.withPermit {
-                                    val fileUri = (videoDirectoryUri + "%2F" + it.uri).toUri()
-                                    val reusable = canReuseDownloadedTrack(it.uri, downloadedTracks) {
-                                        runCatching {
-                                            context.contentResolver.openInputStream(fileUri)?.use { true } ?: false
-                                        }.getOrDefault(false)
-                                    }
-                                    if (reusable) {
-                                        count.first { turn -> turn == id }
-                                        offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
-                                        count.update { it + 1 }
-                                        setForeground(createForegroundInfo())
-                                        return@withPermit
-                                    }
-                                    try {
-                                        context.contentResolver.openOutputStream(fileUri)!!
-                                    } catch (e: IllegalArgumentException) {
-                                        null
-                                    }.use { outputStream ->
-                                        if (!reusable) {
-                                            val segmentTargetUrl = resolveSegmentUrl(urlPath, it.uri)
-                                            when {
-                                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                                    val response = suspendCoroutine { continuation ->
-                                                        httpEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                                    }
-                                                    check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
-                                                    if (outputStream != null) {
-                                                        outputStream
-                                                    } else {
-                                                        openSegmentOutputForWrite(fileUri, videoDirectoryUri, it.uri)
-                                                    }.use {
-                                                        it.write(response.second)
-                                                    }
+                        downloadSegments(remainingSegments, concurrency) { id, it ->
+                            val fileUri = (videoDirectoryUri + "%2F" + it.uri).toUri()
+                            val reusable = canReuseDownloadedTrack(it.uri, downloadedTracks) {
+                                runCatching {
+                                    context.contentResolver.openInputStream(fileUri)?.use { true } ?: false
+                                }.getOrDefault(false)
+                            }
+                            if (reusable) {
+                                count.first { turn -> turn == id }
+                                offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
+                                count.update { it + 1 }
+                                updateDownloadNotification()
+                                return@downloadSegments
+                            }
+                            try {
+                                context.contentResolver.openOutputStream(fileUri)!!
+                            } catch (e: IllegalArgumentException) {
+                                null
+                            }.use { outputStream ->
+                                if (!reusable) {
+                                    val segmentTargetUrl = resolveSegmentUrl(urlPath, it.uri)
+                                    when {
+                                        networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                                            val response = suspendCoroutine { continuation ->
+                                                httpEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
+                                            }
+                                            check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
+                                            if (outputStream != null) {
+                                                outputStream
+                                            } else {
+                                                openSegmentOutputForWrite(fileUri, videoDirectoryUri, it.uri)
+                                            }.use {
+                                                it.write(response.second)
+                                            }
+                                        }
+                                        networkLibrary == "Cronet" && cronetEngine != null -> {
+                                            val response = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                                                val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
+                                                val requestBuilder = cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, request.callback, cronetExecutor)
+                                                requestBuilder.build().start()
+                                                val cronetResponse = request.future.get()
+                                                check(cronetResponse.urlResponseInfo.httpStatusCode in 200..299) { "HTTP ${cronetResponse.urlResponseInfo.httpStatusCode} downloading segment ${it.uri}" }
+                                                cronetResponse.responseBody as ByteArray
+                                            } else {
+                                                val response = suspendCoroutine { continuation ->
+                                                    cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
                                                 }
-                                                networkLibrary == "Cronet" && cronetEngine != null -> {
-                                                    val response = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                                        val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                                        val requestBuilder = cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, request.callback, cronetExecutor)
-                                                        requestBuilder.build().start()
-                                                        val cronetResponse = request.future.get()
-                                                        check(cronetResponse.urlResponseInfo.httpStatusCode in 200..299) { "HTTP ${cronetResponse.urlResponseInfo.httpStatusCode} downloading segment ${it.uri}" }
-                                                        cronetResponse.responseBody as ByteArray
-                                                    } else {
-                                                        val response = suspendCoroutine { continuation ->
-                                                            cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                                        }
-                                                        check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
-                                                        response.second
-                                                    }
-                                                    if (outputStream != null) {
-                                                        outputStream
-                                                    } else {
-                                                        openSegmentOutputForWrite(fileUri, videoDirectoryUri, it.uri)
-                                                    }.use {
-                                                        it.write(response)
-                                                    }
-                                                }
-                                                else -> {
-                                                    // Segment files are idempotent on re-download, so
-                                                    // let in-flight calls finish on stop instead of
-                                                    // cancelling them mid-TLS (see chatCancelScope).
-                                                    okHttpClient.newCall(Request.Builder().url(segmentTargetUrl).build()).useCancellable(cancelCallOnCancellation = false) { response ->
-                                                        check(response.isSuccessful) { "HTTP ${response.code} downloading segment ${it.uri}" }
-                                                        if (outputStream != null) {
-                                                            outputStream
-                                                        } else {
-                                                            openSegmentOutputForWrite(fileUri, videoDirectoryUri, it.uri)
-                                                        }.use { outputStream ->
-                                                            response.body.byteStream().use { inputStream ->
-                                                                inputStream.copyTo(outputStream)
-                                                            }
-                                                        }
+                                                check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
+                                                response.second
+                                            }
+                                            if (outputStream != null) {
+                                                outputStream
+                                            } else {
+                                                openSegmentOutputForWrite(fileUri, videoDirectoryUri, it.uri)
+                                            }.use {
+                                                it.write(response)
+                                            }
+                                        }
+                                        else -> {
+                                            // Segment files are idempotent on re-download, so
+                                            // let in-flight calls finish on stop instead of
+                                            // cancelling them mid-TLS (see chatCancelScope).
+                                            okHttpClient.newCall(Request.Builder().url(segmentTargetUrl).build()).useCancellable(cancelCallOnCancellation = false) { response ->
+                                                check(response.isSuccessful) { "HTTP ${response.code} downloading segment ${it.uri}" }
+                                                if (outputStream != null) {
+                                                    outputStream
+                                                } else {
+                                                    openSegmentOutputForWrite(fileUri, videoDirectoryUri, it.uri)
+                                                }.use { outputStream ->
+                                                    response.body.byteStream().use { inputStream ->
+                                                        inputStream.copyTo(outputStream)
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                    count.first { turn -> turn == id }
-                                    offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
-                                    count.update { it + 1 }
-                                    setForeground(createForegroundInfo())
                                 }
                             }
+                            count.first { turn -> turn == id }
+                            offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
+                            count.update { it + 1 }
+                            updateDownloadNotification()
                         }
                     }
                 } else {
@@ -835,62 +840,56 @@ class VideoDownloadWorker @AssistedInject constructor(
                         p.segments.forEach { downloadedTracks.add(it.uri.substringAfterLast("%2F").substringAfterLast("/")) }
                     }
                     coroutineScope {
-                        val segmentIds = generateSequence(0) { it + 1 }.iterator()
-                        remainingSegments.map {
-                            val id = segmentIds.next()
-                            launch(start = CoroutineStart.UNDISPATCHED) {
-                                requestSemaphore.withPermit {
-                                    val segFileName = it.uri.substringAfterLast("%2F").substringAfterLast("/")
-                                    val segFile = File(directory, segFileName)
-                                    val segmentTargetUrl = resolveSegmentUrl(urlPath, it.uri)
-                                    if (!segFile.exists() || !downloadedTracks.contains(segFileName)) {
-                                        when {
-                                            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                                val response = suspendCoroutine { continuation ->
-                                                    httpEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                                }
-                                                check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
-                                                segFile.outputStream().use {
-                                                    it.write(response.second)
-                                                }
+                        downloadSegments(remainingSegments, concurrency) { id, it ->
+                            val segFileName = it.uri.substringAfterLast("%2F").substringAfterLast("/")
+                            val segFile = File(directory, segFileName)
+                            val segmentTargetUrl = resolveSegmentUrl(urlPath, it.uri)
+                            if (!segFile.exists() || !downloadedTracks.contains(segFileName)) {
+                                when {
+                                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                                        val response = suspendCoroutine { continuation ->
+                                            httpEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
+                                        }
+                                        check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
+                                        segFile.outputStream().use {
+                                            it.write(response.second)
+                                        }
+                                    }
+                                    networkLibrary == "Cronet" && cronetEngine != null -> {
+                                        val response = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                                            val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
+                                            val requestBuilder = cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, request.callback, cronetExecutor)
+                                            requestBuilder.build().start()
+                                            val cronetResponse = request.future.get()
+                                            check(cronetResponse.urlResponseInfo.httpStatusCode in 200..299) { "HTTP ${cronetResponse.urlResponseInfo.httpStatusCode} downloading segment ${it.uri}" }
+                                            cronetResponse.responseBody as ByteArray
+                                        } else {
+                                            val response = suspendCoroutine { continuation ->
+                                                cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
                                             }
-                                            networkLibrary == "Cronet" && cronetEngine != null -> {
-                                                val response = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                                    val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                                    val requestBuilder = cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, request.callback, cronetExecutor)
-                                                    requestBuilder.build().start()
-                                                    val cronetResponse = request.future.get()
-                                                    check(cronetResponse.urlResponseInfo.httpStatusCode in 200..299) { "HTTP ${cronetResponse.urlResponseInfo.httpStatusCode} downloading segment ${it.uri}" }
-                                                    cronetResponse.responseBody as ByteArray
-                                                } else {
-                                                    val response = suspendCoroutine { continuation ->
-                                                        cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                                    }
-                                                    check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
-                                                    response.second
-                                                }
-                                                segFile.outputStream().use {
-                                                    it.write(response)
-                                                }
-                                            }
-                                            else -> {
-                                                okHttpClient.newCall(Request.Builder().url(segmentTargetUrl).build()).useCancellable(cancelCallOnCancellation = false) { response ->
-                                                    check(response.isSuccessful) { "HTTP ${response.code} downloading segment ${it.uri}" }
-                                                    segFile.outputStream().use { outputStream ->
-                                                        response.body.byteStream().use { inputStream ->
-                                                            inputStream.copyTo(outputStream)
-                                                        }
-                                                    }
+                                            check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
+                                            response.second
+                                        }
+                                        segFile.outputStream().use {
+                                            it.write(response)
+                                        }
+                                    }
+                                    else -> {
+                                        okHttpClient.newCall(Request.Builder().url(segmentTargetUrl).build()).useCancellable(cancelCallOnCancellation = false) { response ->
+                                            check(response.isSuccessful) { "HTTP ${response.code} downloading segment ${it.uri}" }
+                                            segFile.outputStream().use { outputStream ->
+                                                response.body.byteStream().use { inputStream ->
+                                                    inputStream.copyTo(outputStream)
                                                 }
                                             }
                                         }
                                     }
-                                    count.first { turn -> turn == id }
-                                    offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
-                                    count.update { it + 1 }
-                                    setForeground(createForegroundInfo())
                                 }
                             }
+                            count.first { turn -> turn == id }
+                            offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
+                            count.update { it + 1 }
+                            updateDownloadNotification()
                         }
                     }
                 }
@@ -900,6 +899,7 @@ class VideoDownloadWorker @AssistedInject constructor(
             // list at "DOWNLOADING: 100%" (chat can be repaired independently).
             if (offlineVideo.progress >= offlineVideo.maxProgress) {
                 offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADED })
+                updateDownloadNotification(force = true)
             }
             try {
                 jobs.joinAll()
@@ -1798,6 +1798,14 @@ class VideoDownloadWorker @AssistedInject constructor(
                 File(fileUri).exists()
             }
         }.getOrDefault(false)
+    }
+
+    private suspend fun updateDownloadNotification(force: Boolean = false) = notificationMutex.withLock {
+        val now = SystemClock.elapsedRealtime()
+        if (force || now - lastNotificationAt >= 1_000L) {
+            lastNotificationAt = now
+            setForeground(createForegroundInfo())
+        }
     }
 
     private fun createForegroundInfo(): ForegroundInfo {

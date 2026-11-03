@@ -23,6 +23,7 @@ class Stream(
     var profileImageUrl: String? = null,
     var tags: List<String>? = null,
     val user: User? = null,
+    var eventTitle: String? = null,
 ) : Parcelable {
 
     val thumbnail: String?

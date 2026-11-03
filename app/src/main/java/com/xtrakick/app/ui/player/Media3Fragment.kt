@@ -796,7 +796,14 @@ class Media3Fragment : PlayerFragment() {
         }
     }
 
-    override fun getCurrentPosition() = player?.currentPosition
+    override fun getCurrentPosition(): Long? {
+        val controller = player ?: return null
+        // The shared service can still report the previous video's playhead during clip loading.
+        if (videoType == CLIP && (activePlaybackUrl == null || mediaItemUri(controller.currentMediaItem)?.toString() != activePlaybackUrl)) {
+            return null
+        }
+        return controller.currentPosition
+    }
 
     override fun pausePlaybackForOverlay() {
         player?.pause()
@@ -807,6 +814,7 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun getCurrentSpeed() = player?.playbackParameters?.speed
+    override fun isPlaybackPlaying() = player?.isPlaying == true
 
     override fun getCurrentVolume() = player?.volume ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
 
@@ -1035,45 +1043,69 @@ class Media3Fragment : PlayerFragment() {
 
     override fun setSubtitlesButton() {
         with(binding.playerControls) {
-            val textTracks = player?.currentTracks?.groups?.find { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
-            if (textTracks != null && prefs.getBoolean(AppConstants.PLAYER_SUBTITLES, false)) {
+            val textTracks = player?.currentTracks?.groups.orEmpty().filter { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
+            if (textTracks.isNotEmpty() && prefs.getBoolean(AppConstants.PLAYER_SUBTITLES, false)) {
                 subtitles.visibility = View.VISIBLE
-                if (textTracks.isSelected) {
-                    subtitles.setImageResource(androidx.media3.ui.R.drawable.exo_ic_subtitle_on)
-                    subtitles.setOnClickListener {
-                        toggleSubtitles(false)
-                        prefs.edit { putBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, false) }
-                    }
-                } else {
-                    subtitles.setImageResource(androidx.media3.ui.R.drawable.exo_ic_subtitle_off)
-                    subtitles.setOnClickListener {
-                        toggleSubtitles(true)
-                        prefs.edit { putBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, true) }
-                    }
-                }
+                subtitles.setImageResource(if (textTracks.any { it.isSelected }) androidx.media3.ui.R.drawable.exo_ic_subtitle_on else androidx.media3.ui.R.drawable.exo_ic_subtitle_off)
+                subtitles.setOnClickListener { showSubtitleSelection() }
             } else {
                 subtitles.visibility = View.GONE
             }
-            (childFragmentManager.findFragmentByTag("closeOnPip") as? PlayerSettingsDialog?)?.setSubtitles(textTracks)
+            (childFragmentManager.findFragmentByTag("closeOnPip") as? PlayerSettingsDialog?)?.setSubtitles(textTracks.isNotEmpty())
         }
     }
 
     override fun toggleSubtitles(enabled: Boolean) {
         player?.let { player ->
             if (enabled) {
-                player.currentTracks.groups.find { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }?.let {
+                val groups = player.currentTracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
+                val language = prefs.getString(AppConstants.PLAYER_CAPTION_LANGUAGE, java.util.Locale.getDefault().language)
+                (groups.find { it.getTrackFormat(0).language == language }
+                    ?: groups.find { it.getTrackFormat(0).language == "en" } ?: groups.firstOrNull())?.let {
                     player.trackSelectionParameters = player.trackSelectionParameters
                         .buildUpon()
+                        .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, false)
                         .setOverrideForType(TrackSelectionOverride(it.mediaTrackGroup, 0))
                         .build()
                 }
             } else {
+                bindingOrNull?.subtitleView?.setCues(emptyList())
                 player.trackSelectionParameters = player.trackSelectionParameters
                     .buildUpon()
+                    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
                     .clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_TEXT)
                     .build()
             }
         }
+    }
+
+    override fun showSubtitleSelection() {
+        val groups = player?.currentTracks?.groups.orEmpty().filter { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
+        if (groups.isEmpty()) return
+        val labels = listOf(getString(R.string.hide_subtitles)) + groups.map {
+            val format = it.getTrackFormat(0)
+            format.language?.let { language -> java.util.Locale.forLanguageTag(language).getDisplayLanguage(java.util.Locale.getDefault()) }
+                ?: format.label ?: getString(R.string.subtitles)
+        }
+        requireContext().getAlertDialogBuilder().setTitle(R.string.subtitles)
+            .setSingleChoiceItems(labels.toTypedArray(), groups.indexOfFirst { it.isSelected } + 1) { dialog, index ->
+                prefs.edit {
+                    putBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, index > 0)
+                    if (index > 0) putString(AppConstants.PLAYER_CAPTION_LANGUAGE, groups[index - 1].getTrackFormat(0).language)
+                }
+                if (index == 0) {
+                    toggleSubtitles(false)
+                } else {
+                    player?.let { player ->
+                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, false)
+                            .setOverrideForType(TrackSelectionOverride(groups[index - 1].mediaTrackGroup, 0))
+                            .build()
+                    }
+                }
+                setSubtitlesButton()
+                dialog.dismiss()
+            }.show()
     }
 
     override fun showPlaylistTags(mediaPlaylist: Boolean) {

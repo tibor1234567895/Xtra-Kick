@@ -11,6 +11,7 @@ import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.res.use
 import androidx.core.widget.TextViewCompat
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.paging.PagingDataAdapter
 import androidx.recyclerview.widget.DiffUtil
@@ -28,9 +29,14 @@ import com.xtrakick.app.ui.game.GamePagerFragmentDirections
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 
 class GamesAdapter(
     private val fragment: Fragment,
+    private val resolveViewersCount: (suspend (Game) -> Int?)? = null,
     private val selectTag: (Tag) -> Unit,
 ) : PagingDataAdapter<Game, GamesAdapter.PagingViewHolder>(
     object : DiffUtil.ItemCallback<Game>() {
@@ -62,11 +68,21 @@ class GamesAdapter(
         holder.bind(getItem(position))
     }
 
+    override fun onViewRecycled(holder: PagingViewHolder) {
+        holder.bind(null)
+        super.onViewRecycled(holder)
+    }
+
     inner class PagingViewHolder(
         private val binding: FragmentGamesListItemBinding,
         private val fragment: Fragment,
     ) : RecyclerView.ViewHolder(binding.root) {
+        private var viewersJob: Job? = null
+
         fun bind(item: Game?) {
+            viewersJob?.cancel()
+            viewersJob = null
+            binding.viewers.visibility = View.GONE
             with(binding) {
                 if (item != null) {
                     val context = fragment.requireContext()
@@ -107,16 +123,19 @@ class GamesAdapter(
                     } else {
                         gameName.visibility = View.GONE
                     }
-                    if (item.viewersCount != null) {
-                        viewers.visibility = View.VISIBLE
-                        val count = item.viewersCount ?: 0
-                        viewers.text = context.resources.getQuantityString(
-                            R.plurals.viewers,
-                            count,
-                            KickApiHelper.formatCount(count, context.prefs().getBoolean(AppConstants.UI_TRUNCATEVIEWCOUNT, true))
-                        )
-                    } else {
-                        viewers.visibility = View.GONE
+                    showViewers(item.viewersCount)
+                    val resolve = resolveViewersCount
+                    if (item.viewersCount == null && resolve != null) {
+                        viewersJob = fragment.viewLifecycleOwner.lifecycleScope.launch {
+                            try {
+                                val count = resolve(item)
+                                ensureActive()
+                                showViewers(count)
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (_: Exception) {
+                            }
+                        }
                     }
                     if (item.broadcastersCount != null && context.prefs().getBoolean(AppConstants.UI_BROADCASTERSCOUNT, true)) {
                         broadcastersCount.visibility = View.VISIBLE
@@ -166,6 +185,15 @@ class GamesAdapter(
                         tagsLayout.visibility = View.GONE
                     }
                 }
+            }
+        }
+
+        private fun showViewers(count: Int?) {
+            val context = binding.root.context
+            binding.viewers.visibility = if (count != null) View.VISIBLE else View.GONE
+            if (count != null) {
+                binding.viewers.text = context.resources.getQuantityString(R.plurals.viewers, count,
+                    KickApiHelper.formatCount(count, context.prefs().getBoolean(AppConstants.UI_TRUNCATEVIEWCOUNT, true)))
             }
         }
     }

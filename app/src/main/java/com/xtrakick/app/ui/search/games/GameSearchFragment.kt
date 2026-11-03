@@ -50,7 +50,7 @@ class GameSearchFragment : PagedListFragment(), Searchable {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        pagingAdapter = GamesAdapter(this) {
+        pagingAdapter = GamesAdapter(this, resolveViewersCount = viewModel::resolveViewersCount) {
             findNavController().navigate(
                 GamesFragmentDirections.actionGlobalGamesFragment(
                     tags = arrayOf(it)
@@ -117,9 +117,9 @@ class GameSearchFragment : PagedListFragment(), Searchable {
         }
     }
 
-    override fun search(query: String) {
+    override fun search(query: String, saveToHistory: Boolean) {
         viewModel.setQuery(query)
-        if (requireContext().prefs().getBoolean(AppConstants.UI_STORE_RECENT_SEARCHES, true)) {
+        if (saveToHistory && requireContext().prefs().getBoolean(AppConstants.UI_STORE_RECENT_SEARCHES, true)) {
             viewModel.saveRecentSearch(query)
         }
     }

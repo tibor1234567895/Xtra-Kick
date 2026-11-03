@@ -214,7 +214,8 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
             private var job: Job? = null
 
             override fun onQueryTextSubmit(query: String): Boolean {
-                (currentFragment as? Searchable)?.search(query)
+                job?.cancel()
+                (currentFragment as? Searchable)?.search(query, saveToHistory = true)
                 return false
             }
 

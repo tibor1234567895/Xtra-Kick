@@ -111,10 +111,11 @@
     <LinearLayout
         android:id="@+id/topLeftLayout"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
+        android:layout_height="40dp"
         android:layout_marginStart="10dp"
         android:layout_marginTop="5dp"
         android:layout_marginEnd="10dp"
+        android:gravity="center_vertical"
         app:layout_constrainedWidth="true"
         app:layout_constraintHorizontal_bias="0.0"
         app:layout_constraintEnd_toStartOf="@id/topRightLayout"
@@ -127,7 +128,7 @@
             android:layout_height="40dp"
             android:layout_marginEnd="5dp"
             android:background="@android:color/transparent"
-            android:src="@drawable/baseline_expand_more_black_48"
+            android:src="@drawable/baseline_expand_more_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
             tools:visibility="visible" />
@@ -135,16 +136,15 @@
         <LinearLayout
             android:id="@+id/infoLayout"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="5dp"
+            android:layout_height="match_parent"
             android:layout_weight="1"
+            android:gravity="center_vertical"
             android:orientation="vertical">
 
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/channelRow"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="2dp">
+                android:layout_height="match_parent">
 
                 <androidx.appcompat.widget.AppCompatTextView
                     android:id="@+id/channel"
@@ -152,6 +152,7 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:gravity="center_vertical|start"
+                    android:includeFontPadding="false"
                     android:maxLines="1"
                     android:textColor="@android:color/white"
                     android:textSize="18sp"
@@ -204,6 +205,7 @@
                         android:id="@+id/viewersText"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
                         android:maxLines="1"
                         android:singleLine="true"
                         android:textColor="@android:color/white"
@@ -297,6 +299,7 @@
                 android:id="@+id/latencyText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:singleLine="true"
                 android:textColor="@android:color/white"

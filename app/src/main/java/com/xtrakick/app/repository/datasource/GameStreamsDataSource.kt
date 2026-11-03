@@ -9,6 +9,7 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import java.util.Collections
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 
 class GameStreamsDataSource(
     private val gameId: String?,
@@ -24,12 +25,15 @@ class GameStreamsDataSource(
     private var api: String? = null
     private var offset: String? = null
     private val seenStreamKeys = Collections.synchronizedSet(mutableSetOf<String>())
+    private val languageCursors = mutableMapOf<Int, String>()
+    private var languageEndpointActive = false
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Stream> {
         return if (!offset.isNullOrBlank()) {
             try {
                 loadFromApi(api, params)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 LoadResult.Error(e)
             }
         } else {
@@ -39,6 +43,7 @@ class GameStreamsDataSource(
                 try {
                     return loadFromApi(pref, params)
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     lastError = e
                 }
             }
@@ -55,6 +60,36 @@ class GameStreamsDataSource(
     }
 
     private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
+        kickRepository.getEventFilterStreams(tags.orEmpty())?.let { streams ->
+            val matched = streams.filter { stream ->
+                (gameId == null || stream.gameId == gameId) &&
+                    (gameSlug == null || stream.gameSlug.equals(gameSlug, true)) &&
+                    (gameName == null || stream.gameName.equals(gameName, true))
+            }
+            return LoadResult.Page(
+                data = StreamsDataSource.filterEventStreams(matched, gqlLanguages, gqlSort),
+                prevKey = null,
+                nextKey = null,
+            )
+        }
+        val languageCodes = StreamsDataSource.requestedLanguageCodes(gqlLanguages, tags)
+        if (languageCodes.isNotEmpty() && !gameId.isNullOrBlank() && gqlSort != "VIEWER_COUNT_ASC" && gqlSort != "RECENT") {
+            val page = params.key ?: 1
+            val cursor = if (page == 1) null else languageCursors[page] ?: error("Missing language page cursor")
+            kickRepository.getLanguageFilteredLivestreams(gameId, languageCodes, cursor, params.loadSize,
+                awaitEventMetadata = kickRepository.hasCachedEventFilter(tags.orEmpty()))?.let { response ->
+                languageEndpointActive = true
+                val streams = response.livestreams
+                    .filter { it.category?.id?.toString() == gameId }
+                    .filter { StreamsDataSource.matchesFilters(it.toLegacyLivestream(), gqlLanguages, tags,
+                        kickRepository.getCachedChannelEventTitle(it.channel.id.toString())) }
+                    .map { kickRepository.toStream(it) }
+                    .filter { seenStreamKeys.add(it.channelId ?: it.channelLogin ?: it.id.orEmpty()) }
+                val next = response.pagination.nextCursor?.takeIf { it.isNotBlank() && it != cursor }
+                    ?.let { languageCursors[page + 1] = it; page + 1 }
+                return LoadResult.Page(data = streams, prevKey = null, nextKey = next)
+            }
+        }
         val targetSize = params.loadSize
         val hasFilters = !gqlLanguages.isNullOrEmpty() || !tags.isNullOrEmpty()
         val minTargetSize = if (hasFilters) minOf(targetSize, 8) else targetSize
@@ -75,7 +110,8 @@ class GameStreamsDataSource(
                 page = currentPage,
                 limit = targetSize,
                 sort = if (gqlSort == "VIEWER_COUNT_ASC") "asc" else "desc",
-                subcategory = slug
+                subcategory = slug,
+                awaitEventMetadata = kickRepository.hasCachedEventFilter(tags.orEmpty()),
             )
             val matched = response.data
                 .filter { item ->
@@ -88,7 +124,8 @@ class GameStreamsDataSource(
                             (normalizedSlug != null && cat.slug?.lowercase(Locale.ROOT) == normalizedSlug) ||
                             (normalizedName != null && cat.name?.lowercase(Locale.ROOT) == normalizedName)
                         }
-                    matchesCategory && StreamsDataSource.matchesFilters(item, gqlLanguages, tags)
+                    matchesCategory && StreamsDataSource.matchesFilters(item, gqlLanguages, tags,
+                        kickRepository.getCachedChannelEventTitle((item.channel?.id ?: item.channelId)?.toString()))
                 }
                 .map {
                     val itemCat = it.categories?.firstOrNull()
@@ -126,6 +163,7 @@ class GameStreamsDataSource(
     }
 
     override fun getRefreshKey(state: PagingState<Int, Stream>): Int? {
+        if (languageEndpointActive) return null
         return state.anchorPosition?.let { anchorPosition ->
             val anchorPage = state.closestPageToPosition(anchorPosition)
             anchorPage?.prevKey?.plus(1) ?: anchorPage?.nextKey?.minus(1)

@@ -1261,4 +1261,6 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="rewind_rel_30_minutes">30 dakika geri sar</string>
     <string name="recording">Kayıt</string>
     <string name="rewind_unavailable">Bu yayın için geri sarma kullanılamıyor</string>
+    <string name="stream_event_tag">Etkinlik: %1$s</string>
+    <string name="videos_load_failed">Videolar yüklenemedi. Tekrar deneyin.</string>
 </resources>

@@ -2,200 +2,101 @@ package com.xtrakick.app.repository.datasource
 
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
-import android.util.Log
-import com.xtrakick.app.model.kick.KickSearchChannel
-import com.xtrakick.app.model.kick.KickUser
 import com.xtrakick.app.model.ui.Stream
-import com.xtrakick.app.repository.KickPublicApiRepository
+import com.xtrakick.app.model.kick.KickEvent
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.KickWebsiteSearchMapper
+import kotlinx.coroutines.CancellationException
 import com.xtrakick.app.util.AppConstants
 
 class SearchStreamsDataSource(
     private val query: String,
-    private val kickPublicApiHeaders: Map<String, String>,
-    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
-    private val networkLibrary: String?,
     private val useLegacyKickSearch: Boolean,
-) : PagingSource<Int, Stream>() {
-    companion object {
-        private const val LOG_TAG = "SearchStreams"
-        private const val KICK_PUBLIC_BATCH_SIZE = 50
-    }
+) : PagingSource<String, Stream>() {
+    private var matchingEvents: List<KickEvent>? = null
+    private val emittedEventChannels = mutableSetOf<String>()
+    private val languageCodes = StreamsDataSource.requestedLanguageCodes(null, listOf(query))
+    private val languageSource = if (!useLegacyKickSearch && languageCodes.isNotEmpty()) {
+        StreamsDataSource("VIEWER_COUNT", languages = languageCodes.toTypedArray(), kickRepository = kickRepository,
+            apiPref = listOf(AppConstants.KICK))
+    } else null
 
-    override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        return if (query.isBlank()) {
-            LoadResult.Page(
-                data = emptyList(),
-                prevKey = null,
-                nextKey = null
-            )
-        } else {
-            try {
-                if (KickSearchLoadStrategy.useLegacySearch(useLegacyKickSearch)) kickLegacyLoad(params) else kickWebsiteLoad(params)
-            } catch (e: Exception) {
-                LoadResult.Error(e)
-            }
-        }
-    }
-
-    private suspend fun kickWebsiteLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        val kickResponse = runCatching { kickRepository.searchWebsite(query) }.getOrNull()
-        val streamsByChannel = linkedMapOf<String, Stream>()
-        kickResponse?.livestreams?.tags.orEmpty()
-            .map { KickWebsiteSearchMapper.toStream(it) }
-            .forEach { stream ->
-                streamIdentity(
-                    channelId = stream.channelId,
-                    channelLogin = stream.channelLogin,
-                    fallback = stream.id
-                )?.let { key ->
-                    if (streamsByChannel[key] == null) {
-                        streamsByChannel[key] = stream
-                    }
+    override suspend fun load(params: LoadParams<String>): LoadResult<String, Stream> {
+        if (query.isBlank()) return LoadResult.Page(emptyList(), null, null)
+        return try {
+            languageSource?.let { source ->
+                val key = params.key?.toIntOrNull()
+                val request = when (params) {
+                    is LoadParams.Refresh -> LoadParams.Refresh(key, params.loadSize, params.placeholdersEnabled)
+                    is LoadParams.Append -> LoadParams.Append(requireNotNull(key), params.loadSize, params.placeholdersEnabled)
+                    is LoadParams.Prepend -> LoadParams.Prepend(requireNotNull(key), params.loadSize, params.placeholdersEnabled)
+                }
+                return when (val result = source.load(request)) {
+                    is LoadResult.Page -> LoadResult.Page(result.data, result.prevKey?.toString(), result.nextKey?.toString())
+                    is LoadResult.Error -> LoadResult.Error(result.throwable)
+                    is LoadResult.Invalid -> LoadResult.Invalid()
                 }
             }
-        val typesenseLiveChannels = runCatching {
-            kickRepository.searchTypesenseChannels(query, page = 1, perPage = 20).hits
-                .map { it.document }
-                .filter { it.isLive == true && !it.slug.isNullOrBlank() }
-                .map { doc ->
-                    KickSearchChannel(
-                        id = doc.id?.toLongOrNull(),
-                        slug = doc.slug,
-                        followersCount = doc.followersCount,
-                        isLive = true,
-                        user = KickUser(
-                            id = doc.id?.toLongOrNull(),
-                            username = doc.username ?: doc.name,
-                            profilePic = doc.profileImage ?: doc.profilePic,
-                        )
-                    )
-                }
-        }.getOrDefault(emptyList())
-
-        val combinedChannels = (typesenseLiveChannels + kickResponse?.channels.orEmpty())
-            .distinctBy { it.slug?.lowercase() ?: it.id?.toString() }
-
-        val liveChannels = combinedChannels
-            .asSequence()
-            .filter { it.isLive == true }
-            .filter { !it.slug.isNullOrBlank() }
-            .toList()
-        val unresolvedChannels = liveChannels
-            .filter { channel ->
-                val channelKey = streamIdentity(
-                    channelId = channel.id?.toString() ?: channel.userId?.toString(),
-                    channelLogin = channel.slug,
-                    fallback = null
-                ) ?: return@filter false
-                !streamsByChannel.containsKey(channelKey)
-            }
-
-        val publicBatchIds = unresolvedChannels
-            .mapNotNull { it.userId?.toString() }
-            .distinct()
-        if (publicBatchIds.isNotEmpty()) {
-            runCatching {
-                publicBatchIds.chunked(KICK_PUBLIC_BATCH_SIZE).forEach { batch ->
-                    val response = kickPublicApiRepository.getLivestreams(
-                        networkLibrary = networkLibrary,
-                        headers = kickPublicApiHeaders,
-                        broadcasterUserIds = batch,
-                    )
-                    response.data.forEach { item ->
-                        val broadcasterId = item.broadcasterUserId?.toString() ?: return@forEach
-                        val matchedChannel = unresolvedChannels.find { it.userId?.toString() == broadcasterId } ?: return@forEach
-                        val channelKey = streamIdentity(
-                            channelId = matchedChannel.id?.toString() ?: matchedChannel.userId?.toString(),
-                            channelLogin = matchedChannel.slug,
-                            fallback = null
-                        ) ?: return@forEach
-                        if (streamsByChannel[channelKey] == null) {
-                            val catId = item.category?.id?.toString()
-                            val catName = item.category?.name
-                            streamsByChannel[channelKey] = Stream(
-                                id = item.channelId?.toString(),
-                                source = AppConstants.KICK,
-                                channelId = item.broadcasterUserId.toString(),
-                                channelLogin = item.slug ?: matchedChannel.slug,
-                                channelName = matchedChannel.user?.username ?: item.slug,
-                                gameId = catId,
-                                gameSlug = kickRepository.getOrInferCachedCategorySlug(catId, catName),
-                                gameName = catName,
-                                title = item.streamTitle,
-                                viewerCount = item.viewerCount,
-                                startedAt = item.startedAt,
-                                thumbnailUrl = item.thumbnail,
-                                profileImageUrl = item.profilePicture ?: matchedChannel.user?.profileImage,
-                                tags = item.customTags,
-                            )
-                        }
-                    }
-                }
-            }.onFailure { error ->
-                Log.w(LOG_TAG, "Kick website stream search batch enrichment failed, using per-channel fallback: ${error.message}")
-            }
-        }
-
-        liveChannels
-            .asSequence()
-            .forEach { channel ->
-                if (streamsByChannel.size >= params.loadSize) return@forEach
-                val channelKey = streamIdentity(
-                    channelId = channel.id?.toString() ?: channel.userId?.toString(),
-                    channelLogin = channel.slug,
-                    fallback = null
-                ) ?: return@forEach
-                if (streamsByChannel.containsKey(channelKey)) return@forEach
-                val livestream = runCatching { kickRepository.getChannelLivestream(channel.slug.orEmpty()) }.getOrNull() ?: return@forEach
-                streamsByChannel[channelKey] = KickWebsiteSearchMapper.toStream(channel, livestream)
-            }
-        return LoadResult.Page(
-            data = streamsByChannel.values.take(params.loadSize),
-            prevKey = null,
-            nextKey = null
-        )
-    }
-
-    private fun streamIdentity(channelId: String?, channelLogin: String?, fallback: String?): String? {
-        return channelId?.takeIf { it.isNotBlank() }
-            ?: channelLogin?.takeIf { it.isNotBlank() }?.lowercase()
-            ?: fallback?.takeIf { it.isNotBlank() }
-    }
-
-    private suspend fun kickLegacyLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
-        var page = params.key ?: 1
-        var nextPage: Int? = page
-        val list = mutableListOf<Stream>()
-        var scannedPages = 0
-        while (list.size < params.loadSize && nextPage != null && scannedPages < 5) {
-            val response = kickRepository.getLivestreams(page = page, limit = params.loadSize, sort = "desc")
-            list.addAll(
-                response.data
-                    .filter { kickRepository.matchesQuery(it, query) }
-                    .map { kickRepository.toStream(it) }
-            )
-            scannedPages += 1
-            nextPage = if (!response.nextPageUrl.isNullOrBlank()) {
-                page + 1
+            if (useLegacyKickSearch) {
+                loadDirectory(params)
             } else {
-                null
+                val events = matchingEvents ?: try {
+                    kickRepository.getSearchEvents().filter { KickWebsiteSearchMapper.matchesEvent(it, query) }
+                        .also { matchingEvents = it }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                if (events.isNotEmpty()) return loadEvent(params, events)
+                val streams = kickRepository.searchWebsite(query).livestreams.tags
+                    .filter { StreamsDataSource.matchesSearchTag(it, query) }
+                    .distinctBy { it.channel?.id ?: it.channelId ?: it.id }
+                    .map { KickWebsiteSearchMapper.toStream(it) }
+                LoadResult.Page(data = streams, prevKey = null, nextKey = null)
             }
-            page += 1
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            LoadResult.Error(e)
         }
-        return LoadResult.Page(
-            data = list.take(params.loadSize),
-            prevKey = null,
-            nextKey = nextPage
-        )
     }
 
-    override fun getRefreshKey(state: PagingState<Int, Stream>): Int? {
-        return state.anchorPosition?.let { anchorPosition ->
-            val anchorPage = state.closestPageToPosition(anchorPosition)
-            anchorPage?.prevKey?.plus(1) ?: anchorPage?.nextKey?.minus(1)
+    private suspend fun loadEvent(params: LoadParams<String>, events: List<KickEvent>): LoadResult<String, Stream> {
+        val eventIndex = params.key?.substringBefore(':')?.toIntOrNull() ?: 0
+        val cursor = params.key?.substringAfter(':', "")?.takeIf { it.isNotBlank() }
+        val event = events[eventIndex]
+        val response = kickRepository.getEventStreams(event.id, cursor)
+        val streams = kickRepository.toEventStreams(event, response.streams)
+            .filter { stream ->
+                val key = stream.channelId ?: stream.channelLogin ?: return@filter false
+                emittedEventChannels.add(key)
+            }
+        val nextKey = when {
+            !response.nextCursor.isNullOrBlank() && response.nextCursor != cursor -> "$eventIndex:${response.nextCursor}"
+            eventIndex + 1 < events.size -> "${eventIndex + 1}:"
+            else -> null
         }
+        return LoadResult.Page(data = streams, prevKey = null, nextKey = nextKey)
     }
+
+    private suspend fun loadDirectory(params: LoadParams<String>): LoadResult<String, Stream> {
+        var page = params.key?.toIntOrNull() ?: 1
+        var nextPage: Int? = page
+        val streams = mutableListOf<Stream>()
+        var scannedPages = 0
+        while (streams.size < minOf(params.loadSize, 8) && nextPage != null && scannedPages < 8) {
+            val response = kickRepository.getLivestreams(page = page, limit = params.loadSize, sort = "desc")
+            streams += response.data
+                .filter { StreamsDataSource.matchesSearchTag(it, query) }
+                .map { kickRepository.toStream(it) }
+            scannedPages++
+            nextPage = if (!response.nextPageUrl.isNullOrBlank()) page + 1 else null
+            page++
+        }
+        return LoadResult.Page(data = streams, prevKey = null, nextKey = nextPage?.toString())
+    }
+
+    override fun getRefreshKey(state: PagingState<String, Stream>): String? = null
 }

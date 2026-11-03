@@ -1,5 +1,7 @@
 package com.xtrakick.app.util.chat
 
+import kotlinx.coroutines.delay
+
 /**
  * Paces VOD chat replay inside a single timestamp bucket.
  *
@@ -18,6 +20,12 @@ package com.xtrakick.app.util.chat
  * distinct positions: those form buckets of one and keep their own timing.
  */
 object ChatReplayPacing {
+
+    suspend fun awaitPlayback(isPlaying: () -> Boolean, pollIntervalMs: Long = 16L) {
+        while (!isPlaying()) {
+            delay(pollIntervalMs)
+        }
+    }
 
     /** Width of a timestamp bucket, and so the window a bucket's messages are spread across. */
     const val SPREAD_WINDOW_MS = 1000L

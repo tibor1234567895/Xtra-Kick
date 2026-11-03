@@ -161,6 +161,7 @@ object AppConstants {
     const val PLAYER_SPEED_LIST = "player_speed_list"
     const val PLAYER_HOLD_TO_SPEED = "player_hold_to_speed"
     const val PLAYER_AUDIO_COMPRESSOR = "player_audio_compressor"
+    const val PLAYER_CAPTION_LANGUAGE = "player_caption_language"
     const val PLAYER_SUBTITLES_ENABLED = "player_subtitles_enabled"
     const val PLAYER_REWIND = "playerRewindV2"
     const val PLAYER_FORWARD = "playerForwardV2"

@@ -2,9 +2,43 @@ package com.xtrakick.app.ui.chat
 
 import com.xtrakick.app.model.chat.ChatMessage
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class KickReplaySeekSyncTest {
+
+    @Test
+    fun timelineStopsBeforeFollowingABackwardCursorIntoOldHistory() {
+        val playhead = 1_793_033_624_108L
+        assertTrue(shouldFetchKickHistoryPage("1793033631260617", playhead))
+        assertFalse(shouldFetchKickHistoryPage("1793033612103572", playhead))
+    }
+
+    @Test
+    fun paginationKeepsTheWholeBoundarySecondAndSupportsOpaqueCursors() {
+        val playhead = 1_793_033_624_108L
+        assertTrue(shouldFetchKickHistoryPage("1793033624000000", playhead))
+        assertFalse(shouldFetchKickHistoryPage("1793033623999999", playhead))
+        assertTrue(shouldFetchKickHistoryPage("opaque-cursor", playhead))
+        assertTrue(shouldFetchKickHistoryPage("1793033612103572", null))
+        assertFalse(shouldFetchKickHistoryPage(null, playhead))
+    }
+
+    @Test
+    fun clipVodOffsetDoesNotBecomeAClipPlaybackSeek() {
+        assertNull(initialKickReplaySeekPosition(10_857, isClipReplay = true))
+        assertNull(initialKickReplaySeekPosition(0, isClipReplay = true))
+        assertNull(initialKickReplaySeekPosition(-1, isClipReplay = true))
+    }
+
+    @Test
+    fun vodReplayKeepsItsRequestedSeekInMilliseconds() {
+        assertEquals(32_000L, initialKickReplaySeekPosition(32, isClipReplay = false))
+        assertNull(initialKickReplaySeekPosition(0, isClipReplay = false))
+        assertNull(initialKickReplaySeekPosition(-1, isClipReplay = false))
+    }
 
     @Test
     fun anchorKeepsSeekTargetWhilePlayerReportsPreSeekPosition() {

@@ -47,7 +47,7 @@ class ChannelSearchFragment : PagedListFragment(), Searchable {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        pagingAdapter = ChannelSearchAdapter(this)
+        pagingAdapter = ChannelSearchAdapter(this, viewModel::resolveProfileImage)
         setAdapter(binding.recyclerView, pagingAdapter)
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
             if (activity?.findViewById<LinearLayout>(R.id.navBarContainer)?.isVisible == false) {
@@ -108,9 +108,9 @@ class ChannelSearchFragment : PagedListFragment(), Searchable {
         }
     }
 
-    override fun search(query: String) {
+    override fun search(query: String, saveToHistory: Boolean) {
         viewModel.setQuery(query)
-        if (requireContext().prefs().getBoolean(AppConstants.UI_STORE_RECENT_SEARCHES, true)) {
+        if (saveToHistory && requireContext().prefs().getBoolean(AppConstants.UI_STORE_RECENT_SEARCHES, true)) {
             viewModel.saveRecentSearch(query)
         }
     }

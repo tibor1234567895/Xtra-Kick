@@ -1449,6 +1449,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         backgroundPauseRunnable = null
         val inPip = isInPipMode()
         if (!inPip) {
+            (activity as? MainActivity)?.hasLockedScreenSinceLastPip = false
+            updatePictureInPictureParams()
             playbackController?.resumeAll()
             syncFocusedToPlaybackService()
         }
@@ -1541,10 +1543,12 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
+        (activity as? MainActivity)?.hasLockedScreenSinceLastPip = false
         if (isInPictureInPictureMode) {
             enterPipUi()
         } else {
             exitPipUi()
+            updatePictureInPictureParams()
         }
     }
 
@@ -1606,8 +1610,17 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 builder.setSeamlessResizeEnabled(true)
+                builder.setAutoEnterEnabled(false)
             }
-            act.enterPictureInPictureMode(builder.build())
+            val params = builder.build()
+            var entered = act.enterPictureInPictureMode(params)
+            if (!entered && !act.isInPictureInPictureMode) {
+                entered = act.enterPictureInPictureMode(params)
+            }
+            if (entered || act.isInPictureInPictureMode) {
+                (act as? MainActivity)?.hasLockedScreenSinceLastPip = false
+            }
+            entered
         } catch (_: IllegalStateException) {
             false
         }
@@ -1626,7 +1639,9 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 setAspectRatio(Rational(16, 9))
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     setSeamlessResizeEnabled(true)
-                    setAutoEnterEnabled(!inPip && canPip)
+                    val hasLocked = (act as? MainActivity)?.hasLockedScreenSinceLastPip == true
+                    val allowAutoEnter = !inPip && canPip && !hasLocked
+                    setAutoEnterEnabled(allowAutoEnter)
                 }
                 val focusedKey = viewModel.uiState.value.focusedKey
                 val focusedView = focusedKey?.let { tileBindings[it]?.root }

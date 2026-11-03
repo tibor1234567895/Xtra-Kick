@@ -825,12 +825,10 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       muxedCaptionFormats = Collections.emptyList();
     }
 
-    muxedCaptionFormats = new ArrayList<>(); // xtra: closed captions
-    muxedCaptionFormats.add(
-            new Format.Builder()
-                    .setSampleMimeType(MimeTypes.APPLICATION_CEA608)
-                    .build()
-    );
+    // Do not invent a CEA-608 track when the master declares no closed captions.
+    if (muxedCaptionFormats == null) {
+      muxedCaptionFormats = Collections.emptyList();
+    }
 
     return new HlsMultivariantPlaylist(
         baseUri,

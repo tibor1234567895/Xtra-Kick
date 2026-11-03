@@ -262,11 +262,14 @@ class KickUser(
     val profilePicV2: String? = null,
     @SerialName("profile_picture")
     val profilePicture: String? = null,
+    @SerialName("profilePic")
+    val profilePicCamelCase: String? = null,
 ) {
     val profileImage: String?
         get() = profilePic?.takeIf { it.isNotBlank() }
             ?: profilePicV2?.takeIf { it.isNotBlank() }
             ?: profilePicture?.takeIf { it.isNotBlank() }
+            ?: profilePicCamelCase?.takeIf { it.isNotBlank() }
 }
 
 @Serializable

@@ -34,6 +34,7 @@ import com.xtrakick.app.util.getByteArrayCronetCallback
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,6 +80,8 @@ class PlayerViewModel @Inject constructor(
     private var streamJob: Job? = null
     val viewerCountUpdate = MutableStateFlow<Int?>(null)
     private var viewerCountJob: Job? = null
+    private var viewerCountLogin: String? = null
+    private var lastViewerCountAt = 0L
     var useCustomProxy = false
 
     val videoResult = MutableStateFlow<String?>(null)
@@ -311,25 +314,35 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    /** 60s polling fallback keeping viewer count live when chat WS is unavailable. */
+    fun onWebSocketViewerCount(receivedAt: Long) {
+        lastViewerCountAt = receivedAt
+    }
+
     private fun startViewerCountPolling(channelLogin: String?) {
         viewerCountJob?.cancel()
         viewerCountUpdate.value = null
         val login = channelLogin?.trim()?.takeIf { it.isNotBlank() } ?: return
+        if (viewerCountLogin != login) {
+            viewerCountLogin = login
+            lastViewerCountAt = 0L
+        }
         viewerCountJob = viewModelScope.launch {
             while (isActive) {
+                delay(60_000L)
+                if (lastViewerCountAt > 0L && SystemClock.elapsedRealtime() - lastViewerCountAt < 60_000L) continue
                 try {
                     val count = runCatching {
                         kickRepository.getChannelLivestream(login, forceRefresh = true)?.viewerCount
-                    }.getOrNull() ?: runCatching {
+                    }.getOrElse { if (it is CancellationException) throw it else null } ?: runCatching {
                         kickRepository.getChannel(login, forceRefresh = true).livestream?.viewerCount
-                    }.getOrNull()
+                    }.getOrElse { if (it is CancellationException) throw it else null }
                     if (count != null && count >= 0) {
                         viewerCountUpdate.value = count
                     }
+                } catch (error: CancellationException) {
+                    throw error
                 } catch (_: Exception) {
                 }
-                delay(60_000L)
             }
         }
     }

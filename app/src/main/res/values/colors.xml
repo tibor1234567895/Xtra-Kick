@@ -31,4 +31,6 @@
     <color name="chatMessageSelected">#80163584</color>
     <color name="liveStreamRed">#DD0000</color>
     <color name="giftTrainAccent">#FF5C87</color>
+    <color name="eventTagForegroundLight">#805000</color>
+    <color name="eventTagForegroundDark">#FFCC80</color>
 </resources>

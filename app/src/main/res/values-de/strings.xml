@@ -1259,4 +1259,6 @@
     <string name="rewind_rel_30_minutes">30 Minuten zurückspulen</string>
     <string name="recording">Aufnahme</string>
     <string name="rewind_unavailable">Zurückspulen ist für diesen Stream nicht verfügbar</string>
+    <string name="stream_event_tag">Veranstaltung: %1$s</string>
+    <string name="videos_load_failed">Videos konnten nicht geladen werden. Bitte erneut versuchen.</string>
 </resources>

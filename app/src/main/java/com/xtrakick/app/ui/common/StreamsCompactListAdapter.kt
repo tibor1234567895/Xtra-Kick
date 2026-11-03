@@ -201,7 +201,7 @@ class StreamsCompactListAdapter(
                         text.id = id
                         ids.add(id)
                         text.text = tag
-                        TagFilterHelper.applyTagStyle(text, tag, activeTags)
+                        TagFilterHelper.applyTagStyle(text, tag, activeTags, isEvent = tag == item.eventTitle)
                         text.setOnClickListener {
                             selectTag(tag)
                         }
@@ -236,7 +236,8 @@ class StreamsCompactListAdapter(
                     oldItem.thumbnailUrl == newItem.thumbnailUrl &&
                     oldItem.profileImageUrl == newItem.profileImageUrl &&
                     oldItem.startedAt == newItem.startedAt &&
-                    oldItem.tags == newItem.tags
+                    oldItem.tags == newItem.tags &&
+                    oldItem.eventTitle == newItem.eventTitle
         }
     }
 }

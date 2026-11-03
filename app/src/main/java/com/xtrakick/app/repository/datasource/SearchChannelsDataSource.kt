@@ -5,6 +5,7 @@ import androidx.paging.PagingState
 import com.xtrakick.app.model.ui.User
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.KickWebsiteSearchMapper
+import kotlinx.coroutines.CancellationException
 
 class SearchChannelsDataSource(
     private val query: String,
@@ -43,6 +44,8 @@ class SearchChannelsDataSource(
                 } else {
                     kickTypesenseLoad(params)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 LoadResult.Error(e)
             }
@@ -74,6 +77,8 @@ class SearchChannelsDataSource(
                 prevKey = prevKey,
                 nextKey = nextKey
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             if (page == 1) {
                 loadWebsiteSearchResults()

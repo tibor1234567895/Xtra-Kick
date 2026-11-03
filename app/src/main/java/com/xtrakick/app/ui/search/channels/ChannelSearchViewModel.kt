@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 
 @HiltViewModel
@@ -29,6 +31,7 @@ class ChannelSearchViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _query = MutableStateFlow("")
+    private val avatarRequests = Semaphore(4)
     val query: StateFlow<String> = _query
     val recentSearches = recentSearchRepository.loadRecentSearchFlow(RecentSearch.TYPE_CHANNEL)
 
@@ -51,12 +54,13 @@ class ChannelSearchViewModel @Inject constructor(
         }
     }
 
+    suspend fun resolveProfileImage(channelLogin: String): String? = avatarRequests.withPermit {
+        kickRepository.getChannel(channelLogin, prefetchBadgeCatalog = false).user?.profileImage
+    }
+
     fun saveRecentSearch(query: String) {
         if (query.isNotBlank()) {
             viewModelScope.launch {
-                recentSearchRepository.getItem(query, RecentSearch.TYPE_CHANNEL)?.let {
-                    recentSearchRepository.delete(it)
-                }
                 recentSearchRepository.save(RecentSearch(query, RecentSearch.TYPE_CHANNEL, System.currentTimeMillis()))
             }
         }

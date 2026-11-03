@@ -5,6 +5,8 @@ import com.xtrakick.app.model.kick.KickChannelLivestream
 import com.xtrakick.app.model.kick.KickSearchChannel
 import com.xtrakick.app.model.kick.KickSubcategory
 import com.xtrakick.app.model.kick.KickTypesenseDocument
+import com.xtrakick.app.model.kick.KickEvent
+import com.xtrakick.app.model.kick.KickEventStream
 import com.xtrakick.app.model.ui.Game
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.model.ui.Tag
@@ -13,6 +15,35 @@ import com.xtrakick.app.util.AppConstants
 import java.util.Locale
 
 internal object KickWebsiteSearchMapper {
+
+    fun matchesEvent(event: KickEvent, query: String): Boolean {
+        val value = query.trim().lowercase(Locale.ROOT).replace('-', ' ')
+        return value.isNotBlank() && event.phase == "live" &&
+            (event.title.lowercase(Locale.ROOT).contains(value) || event.slug.replace('-', ' ').contains(value, true))
+    }
+
+    fun toStream(event: KickEvent, item: KickEventStream): Stream = Stream(
+        id = item.livestream.id,
+        source = AppConstants.KICK,
+        channelId = item.channel.id?.toString(),
+        channelLogin = item.channel.slug,
+        channelName = item.user.username,
+        gameId = event.category?.id?.toString(),
+        gameSlug = event.category?.slug,
+        gameName = event.category?.name,
+        title = item.livestream.title,
+        viewerCount = item.livestream.viewCount.takeIf { item.livestream.showViewCount },
+        thumbnailUrl = item.livestream.thumbnail?.imageUrl,
+        profileImageUrl = item.user.profilePictureUrl,
+        eventTitle = event.title,
+        tags = buildList {
+            add(event.title)
+            item.livestream.language?.takeIf { it.isNotBlank() }?.let { language ->
+                add(Locale.forLanguageTag(language).getDisplayLanguage(Locale.ENGLISH).ifBlank { language })
+            }
+            if (item.livestream.isMature == true) add("18+")
+        },
+    )
 
     fun toUser(item: KickTypesenseDocument): User {
         return User(
@@ -31,7 +62,7 @@ internal object KickWebsiteSearchMapper {
             gameSlug = item.slug,
             gameName = item.name,
             boxArtUrl = item.src,
-            viewersCount = 0
+            viewersCount = null
         )
     }
 

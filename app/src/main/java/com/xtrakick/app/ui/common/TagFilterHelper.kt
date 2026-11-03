@@ -1,11 +1,12 @@
 package com.xtrakick.app.ui.common
 
-import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.widget.TextView
 import androidx.core.widget.TextViewCompat
+import androidx.core.content.ContextCompat
+import com.xtrakick.app.R
 import com.google.android.material.color.MaterialColors
 import java.util.Locale
 
@@ -34,11 +35,13 @@ object TagFilterHelper {
         }
     }
 
-    fun applyTagStyle(text: TextView, tag: String, activeTags: Collection<String>?) {
+    fun applyTagStyle(text: TextView, tag: String, activeTags: Collection<String>?, isEvent: Boolean = false) {
         val context = text.context
         val isHighlighted = isTagActive(tag, activeTags)
         val density = context.resources.displayMetrics.density
-        if (isHighlighted) {
+        text.setCompoundDrawablesRelative(null, null, null, null)
+        text.contentDescription = if (isEvent) context.getString(R.string.stream_event_tag, tag) else null
+        if (isHighlighted && !isEvent) {
             val hPad = (8 * density).toInt()
             val vPad = (2 * density).toInt()
             val cornerRadius = 12 * density
@@ -64,6 +67,14 @@ object TagFilterHelper {
                 typedArray.recycle()
             }
             text.setTypeface(null, Typeface.NORMAL)
+        }
+        if (isEvent) {
+            val surface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurface, Color.BLACK)
+            text.setTextColor(ContextCompat.getColor(context, if (MaterialColors.isColorLight(surface)) {
+                R.color.eventTagForegroundLight
+            } else {
+                R.color.eventTagForegroundDark
+            }))
         }
     }
 }

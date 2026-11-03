@@ -128,9 +128,9 @@ class StreamSearchFragment : PagedListFragment(), Searchable {
         }
     }
 
-    override fun search(query: String) {
+    override fun search(query: String, saveToHistory: Boolean) {
         viewModel.setQuery(query)
-        if (requireContext().prefs().getBoolean(AppConstants.UI_STORE_RECENT_SEARCHES, true)) {
+        if (saveToHistory && requireContext().prefs().getBoolean(AppConstants.UI_STORE_RECENT_SEARCHES, true)) {
             viewModel.saveRecentSearch(query)
         }
     }

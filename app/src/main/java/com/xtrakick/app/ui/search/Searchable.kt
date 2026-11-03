@@ -1,5 +1,5 @@
 package com.xtrakick.app.ui.search
 
 interface Searchable {
-    fun search(query: String)
+    fun search(query: String, saveToHistory: Boolean = false)
 }

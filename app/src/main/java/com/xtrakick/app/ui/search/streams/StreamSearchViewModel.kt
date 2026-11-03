@@ -7,12 +7,10 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import com.xtrakick.app.model.ui.RecentSearch
-import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.RecentSearchRepository
 import com.xtrakick.app.repository.datasource.SearchStreamsDataSource
 import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -27,7 +25,6 @@ import javax.inject.Inject
 class StreamSearchViewModel @Inject constructor(
     @ApplicationContext applicationContext: Context,
     private val recentSearchRepository: RecentSearchRepository,
-    private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
 ) : ViewModel() {
 
@@ -46,10 +43,7 @@ class StreamSearchViewModel @Inject constructor(
         ) {
             SearchStreamsDataSource(
                 query = query,
-                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext),
-                kickPublicApiRepository = kickPublicApiRepository,
                 kickRepository = kickRepository,
-                networkLibrary = applicationContext.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
                 useLegacyKickSearch = applicationContext.prefs().getBoolean(AppConstants.DEBUG_KICK_LEGACY_SEARCH, false),
             )
         }.flow
@@ -64,9 +58,6 @@ class StreamSearchViewModel @Inject constructor(
     fun saveRecentSearch(query: String) {
         if (query.isNotBlank()) {
             viewModelScope.launch {
-                recentSearchRepository.getItem(query, RecentSearch.TYPE_STREAM)?.let {
-                    recentSearchRepository.delete(it)
-                }
                 recentSearchRepository.save(RecentSearch(query, RecentSearch.TYPE_STREAM, System.currentTimeMillis()))
             }
         }

@@ -2,6 +2,9 @@ package com.xtrakick.app.ui.widget
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.os.SystemClock
+import android.util.LruCache
 import android.view.View
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
@@ -17,7 +20,19 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 @EntryPoint
@@ -28,44 +43,48 @@ interface LiveChannelsWidgetEntryPoint {
 
 class LiveChannelsWidgetService : RemoteViewsService() {
     override fun onGetViewFactory(intent: Intent): RemoteViewsFactory {
-        return LiveChannelsRemoteViewsFactory(applicationContext)
+        val repository = EntryPointAccessors.fromApplication(
+            applicationContext, LiveChannelsWidgetEntryPoint::class.java,
+        ).followedLiveStreamsRepository()
+        return LiveChannelsRemoteViewsFactory(applicationContext, repository)
     }
 }
 
 class LiveChannelsRemoteViewsFactory(
     private val context: Context,
+    private val repository: FollowedLiveStreamsRepository,
 ) : RemoteViewsService.RemoteViewsFactory {
 
-    private val entryPoint by lazy {
-        EntryPointAccessors.fromApplication(
-            context,
-            LiveChannelsWidgetEntryPoint::class.java,
-        )
-    }
-
-    private var streams: List<Stream> = emptyList()
+    @Volatile private var streams: List<Stream> = emptyList()
+    private val avatarScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val avatars = LruCache<String, Bitmap>(50)
+    private val avatarRetryAfter = LruCache<String, Long>(50)
+    private val pendingAvatars = ConcurrentHashMap.newKeySet<String>()
+    private val avatarSemaphore = Semaphore(4)
+    private val refreshLock = Any()
+    private var avatarRefreshJob: Job? = null
 
     override fun onCreate() {}
 
     override fun onDataSetChanged() {
-        // Runs on binder background thread: safe to block for fast public API check
         streams = runCatching {
             runBlocking {
-                val repo = entryPoint.followedLiveStreamsRepository()
-                repo.loadLiveFollowed(forceRefresh = true).items
+                repository.loadLiveFollowed(forceRefresh = LiveChannelsWidgetProvider.consumeRefreshRequest()).items
             }
-        }.getOrDefault(emptyList())
+        }.getOrElse { repository.peekCache(maxAgeMs = TimeUnit.HOURS.toMillis(24)) }
     }
 
     override fun onDestroy() {
+        avatarScope.cancel()
+        avatars.evictAll()
+        avatarRetryAfter.evictAll()
         streams = emptyList()
     }
 
     override fun getCount(): Int = streams.size
 
     override fun getViewAt(position: Int): RemoteViews? {
-        if (position !in streams.indices) return null
-        val stream = streams[position]
+        val stream = streams.getOrNull(position) ?: return null
 
         val views = RemoteViews(context.packageName, R.layout.widget_live_channel_item)
         views.setTextViewText(R.id.widgetChannelName, stream.channelName ?: stream.channelLogin.orEmpty())
@@ -91,19 +110,12 @@ class LiveChannelsRemoteViewsFactory(
 
         val logoUrl = stream.channelLogo ?: stream.profileImageUrl
         if (!logoUrl.isNullOrBlank()) {
-            val bitmap = runCatching {
-                Glide.with(context)
-                    .asBitmap()
-                    .load(logoUrl)
-                    .transform(CircleCrop())
-                    .submit(96, 96)
-                    .get(2, TimeUnit.SECONDS)
-            }.getOrNull()
-
+            val bitmap = avatars.get(logoUrl)
             if (bitmap != null) {
                 views.setImageViewBitmap(R.id.widgetChannelLogo, bitmap)
             } else {
                 views.setImageViewResource(R.id.widgetChannelLogo, R.drawable.bg_widget_avatar_placeholder)
+                loadAvatar(logoUrl)
             }
         } else {
             views.setImageViewResource(R.id.widgetChannelLogo, R.drawable.bg_widget_avatar_placeholder)
@@ -119,6 +131,38 @@ class LiveChannelsRemoteViewsFactory(
         views.setOnClickFillInIntent(R.id.widgetItemContainer, fillInIntent)
 
         return views
+    }
+
+    private fun loadAvatar(url: String) {
+        if (!avatarScope.isActive || (avatarRetryAfter.get(url) ?: 0L) > SystemClock.elapsedRealtime() || !pendingAvatars.add(url)) return
+        avatarScope.launch {
+            try {
+                avatarSemaphore.withPermit {
+                    val manager = Glide.with(context)
+                    val target = manager.asBitmap().load(url).transform(CircleCrop()).submit(96, 96)
+                    try {
+                        val bitmap = target.get(2, TimeUnit.SECONDS).copy(Bitmap.Config.ARGB_8888, false)
+                        if (isActive && bitmap != null) avatars.put(url, bitmap)
+                    } finally {
+                        manager.clear(target)
+                    }
+                }
+                synchronized(refreshLock) {
+                    if (avatarRefreshJob?.isActive != true) {
+                        avatarRefreshJob = avatarScope.launch {
+                            delay(250L)
+                            LiveChannelsWidgetProvider.notifyDataChanged(context)
+                        }
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                avatarRetryAfter.put(url, SystemClock.elapsedRealtime() + 60_000L)
+            } finally {
+                pendingAvatars.remove(url)
+            }
+        }
     }
 
     override fun getLoadingView(): RemoteViews? = null

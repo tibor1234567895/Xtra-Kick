@@ -5,9 +5,14 @@ import com.xtrakick.app.model.kick.KickCategory
 import com.xtrakick.app.model.kick.KickChannelLivestream
 import com.xtrakick.app.model.kick.KickSearchChannel
 import com.xtrakick.app.model.kick.KickUser
+import com.xtrakick.app.model.kick.KickLivestream
+import com.xtrakick.app.model.kick.KickEvent
+import com.xtrakick.app.model.kick.KickEventsResponse
+import com.xtrakick.app.model.kick.KickEventStreamsResponse
 import com.xtrakick.app.model.kick.KickThumbnail
 import com.xtrakick.app.model.kick.KickWebsiteSearchResponse
 import com.xtrakick.app.repository.datasource.KickSearchLoadStrategy
+import com.xtrakick.app.repository.datasource.StreamsDataSource
 import com.xtrakick.app.util.AppConstants
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -18,6 +23,95 @@ import org.junit.Test
 class KickWebsiteSearchTest {
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    @Test
+    fun eventSearchMatchesLiveTitlesAndSlugsWithoutReturningPastEvents() {
+        val response = json.decodeFromString<KickEventsResponse>(
+            """{"data":{"events":[{"id":"event-id","slug":"nopixel-v","title":"nopixel V","phase":"live"}]}}"""
+        )
+        val event = response.data.events.single()
+        assertTrue(KickWebsiteSearchMapper.matchesEvent(event, " nopixel V "))
+        assertTrue(KickWebsiteSearchMapper.matchesEvent(event, "NOPIXEL-V"))
+        assertTrue(KickWebsiteSearchMapper.matchesEvent(event, "nopixel"))
+        assertFalse(KickWebsiteSearchMapper.matchesEvent(event, "English"))
+        assertFalse(KickWebsiteSearchMapper.matchesEvent(event, ""))
+        assertFalse(KickWebsiteSearchMapper.matchesEvent(event.copy(phase = "post"), "nopixel V"))
+    }
+
+    @Test
+    fun eventStreamsPreserveChannelIdentityPicturesAndPagination() {
+        val event = KickEvent("event-id", "nopixel-v", "nopixel V", "live", KickCategory(id = 8, name = "GTA", slug = "gta"))
+        val response = json.decodeFromString<KickEventStreamsResponse>(
+            """{"data":{"next_cursor":"next-page","streams":[{
+              "channel":{"id":2833090,"slug":"matteu"},
+              "user":{"id":2890055,"username":"MattEU","profile_picture_url":"https://files.kick.com/avatar.webp"},
+              "livestream":{"id":"uuid-stream-id","title":"Matthew","language":"en","is_mature":true,
+                "show_view_count":true,"view_count":893,"thumbnail":{"src":"https://images.kick.com/thumb.webp"}}
+            }]}}"""
+        )
+        val stream = KickWebsiteSearchMapper.toStream(event, response.data.streams.single())
+        assertEquals("next-page", response.data.nextCursor)
+        assertEquals("2833090", stream.channelId)
+        assertEquals("matteu", stream.channelLogin)
+        assertEquals("MattEU", stream.channelName)
+        assertEquals("uuid-stream-id", stream.id)
+        assertEquals("https://files.kick.com/avatar.webp", stream.profileImageUrl)
+        assertEquals("https://images.kick.com/thumb.webp", stream.thumbnailUrl)
+        assertEquals("8", stream.gameId)
+        assertEquals(893, stream.viewerCount)
+        assertEquals(listOf("nopixel V", "English", "18+"), stream.tags)
+        assertEquals("nopixel V", stream.eventTitle)
+        assertEquals(null, KickWebsiteSearchMapper.toStream(event,
+            response.data.streams.single().copy(livestream = response.data.streams.single().livestream.copy(showViewCount = false))
+        ).viewerCount)
+    }
+
+    @Test
+    fun languageSearchRejectsNameTitleAndCustomTagMatchesInOtherLanguages() {
+        assertFalse(StreamsDataSource.matchesSearchTag(KickLivestream(
+            language = "French", title = "Learn English before sleeping", tags = listOf("English"),
+        ), "english"))
+        assertFalse(StreamsDataSource.matchesSearchTag(KickLivestream(language = "Turkish"), "English"))
+        assertFalse(StreamsDataSource.matchesSearchTag(KickLivestream(title = "English stream"), "English"))
+        assertTrue(StreamsDataSource.matchesSearchTag(KickLivestream(language = "English"), " english "))
+        assertTrue(StreamsDataSource.matchesSearchTag(KickLivestream(language = "en"), "English"))
+        assertTrue(StreamsDataSource.matchesSearchTag(KickLivestream(language = "English"), "EN"))
+    }
+
+    @Test
+    fun customTagSearchRequiresAnActualTag() {
+        assertTrue(StreamsDataSource.matchesSearchTag(KickLivestream(tags = listOf(" Roleplay ")), "roleplay"))
+        assertFalse(StreamsDataSource.matchesSearchTag(KickLivestream(title = "Roleplay", tags = emptyList()), "Roleplay"))
+        assertFalse(StreamsDataSource.matchesSearchTag(KickLivestream(tags = listOf("Roleplayer")), "Roleplay"))
+        assertTrue(StreamsDataSource.matchesSearchTag(KickLivestream(isMature = true), "18+"))
+        assertFalse(StreamsDataSource.matchesSearchTag(KickLivestream(), ""))
+        assertTrue(StreamsDataSource.isLanguageQuery("Français"))
+        assertFalse(StreamsDataSource.isLanguageQuery("Roleplay"))
+    }
+
+    @Test
+    fun websiteSearchMapsCamelCasePicturesToTheirChannels() {
+        val response = json.decodeFromString<KickWebsiteSearchResponse>(
+            """{"channels":[
+              {"slug":"buddha22","user":{"username":"buddha","profilePic":"https://files.kick.com/other.webp"}},
+              {"slug":"buddha","user":{"username":"Buddha","profilePic":"https://files.kick.com/buddha.webp"}}
+            ]}"""
+        )
+        val users = response.channels.map { KickWebsiteSearchMapper.toUser(it) }
+
+        assertEquals("buddha22", users[0].channelLogin)
+        assertEquals("https://files.kick.com/other.webp", users[0].profileImageUrl)
+        assertEquals("buddha", users[1].channelLogin)
+        assertEquals("https://files.kick.com/buddha.webp", users[1].profileImageUrl)
+    }
+
+    @Test
+    fun userProfileImageAcceptsAllSupportedSpellings() {
+        for (field in listOf("profilepic", "profile_pic", "profile_picture", "profilePic")) {
+            val user = json.decodeFromString<KickUser>("""{"$field":"https://files.kick.com/avatar.webp"}""")
+            assertEquals("https://files.kick.com/avatar.webp", user.profileImage)
+        }
+    }
 
     @Test
     fun buildUrlUsesSearchedWordParameter() {
@@ -279,6 +373,7 @@ class KickWebsiteSearchTest {
         assertFalse(user.isLive == true)
 
         val game = KickWebsiteSearchMapper.toGame(result.hits[1].document)
+        assertEquals(null, game.viewersCount)
         assertEquals("1344", game.gameId)
         assertEquals("grand-prix-world", game.gameSlug)
         assertEquals("Grand Prix World", game.gameName)

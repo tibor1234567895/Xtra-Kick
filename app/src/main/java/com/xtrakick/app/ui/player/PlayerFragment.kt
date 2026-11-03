@@ -22,6 +22,7 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
@@ -31,6 +32,8 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.text.format.DateFormat
 import android.text.format.DateUtils
+import android.util.Log
+import android.util.Rational
 import android.util.TypedValue
 import android.view.Display
 import android.view.PixelCopy
@@ -146,6 +149,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     private var _binding: FragmentPlayerBinding? = null
     protected val binding get() = _binding!!
+    protected val bindingOrNull get() = _binding
     protected val viewModel: PlayerViewModel by viewModels()
     protected var chatFragment: ChatFragment? = null
 
@@ -198,11 +202,27 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private var isScreenOff = false
     private var screenReceiverRegistered = false
     protected var lastBackgroundPauseAtMs: Long = 0L
+    protected var hasLockedScreenSinceLastPip = false
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     isScreenOff = true
+                    hasLockedScreenSinceLastPip = true
+                    (activity as? MainActivity)?.hasLockedScreenSinceLastPip = true
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        activity?.let { act ->
+                            if (act.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+                                act.setPictureInPictureParams(
+                                    PictureInPictureParams.Builder()
+                                        .setAspectRatio(Rational(16, 9))
+                                        .setAutoEnterEnabled(false)
+                                        .setSeamlessResizeEnabled(true)
+                                        .build()
+                                )
+                            }
+                        }
+                    }
                     // Late SCREEN_OFF can arrive after onStop already paused for
                     // "unlocked PiP" (PIP_CLOSED=false). If locked prefs would keep
                     // playing, resume in background instead of staying silent.
@@ -264,6 +284,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     open fun startOfflineVideo(url: String?, position: Long) { clearPipDismissState() }
     open fun getCurrentPosition(): Long? = null
     open fun getCurrentSpeed(): Float? = null
+    open fun isPlaybackPlaying(): Boolean = false
     open fun getCurrentVolume(): Float? = null
     open fun playPause() {}
 
@@ -521,6 +542,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     open fun toggleAudioCompressor() {}
     open fun setSubtitlesButton() {}
     open fun toggleSubtitles(enabled: Boolean) {}
+    open fun showSubtitleSelection() {}
     open fun showPlaylistTags(mediaPlaylist: Boolean) {}
     open fun changeQuality(selectedQuality: String?) {}
     open fun startAudioOnly() {
@@ -654,13 +676,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 chatLayout.updatePadding(bottom = insets.bottom)
                 WindowInsetsCompat.CONSUMED
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-                viewLifecycleOwner.lifecycleScope.launch {
-                    repeatOnLifecycle(Lifecycle.State.STARTED) {
-                        requireActivity().trackPipAnimationHintView(playerLayout)
-                    }
-                }
-            }
             if (prefs.getBoolean(AppConstants.PLAYER_KEEP_SCREEN_ON_WHEN_PAUSED, false)) {
                 view.keepScreenOn = true
             }
@@ -673,6 +688,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             ensureChatWidthLandscape()
             chatOpenProgress = if (isChatOpen) 1f else 0f
             resizeMode = prefs.getInt(AppConstants.ASPECT_RATIO_LANDSCAPE, AspectRatioFrameLayout.RESIZE_MODE_FIT)
+            aspectRatioFrameLayout.setAspectRatioListener { targetAspectRatio, _, _ ->
+                playerLayout.videoAspectRatio = targetAspectRatio
+            }
             aspectRatioFrameLayout.setAspectRatio(16f / 9f)
             initLayout()
             videoStatsOverlay.onCloseRequested = {
@@ -1137,14 +1155,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                         }
                                     }
                                 } else {
-                                    val (windowInsets, insets, navBarHeight) = getMinimizeInsets(requireView())
-                                    val scaledXDiff = (slidingLayout.width * (1f - slidingLayout.scaleX)) / 2
-                                    val scaledYDiff = (slidingLayout.height * (1f - slidingLayout.scaleY)) / 2
-                                    val newX = slidingLayout.width - (insets?.right ?: 0) - (playerLayout.width * slidingLayout.scaleX) - (TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 20F, resources.displayMetrics) * slidingLayout.scaleX)
-                                    val newY = slidingLayout.height - navBarHeight - (playerLayout.height * slidingLayout.scaleY) - (TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 30F, resources.displayMetrics) * slidingLayout.scaleY)
+                                    val (x, y) = getMinimizedTranslation(slidingLayout.scaleX, slidingLayout.scaleY)
                                     moveAnimation = slidingLayout.animate().apply {
-                                        translationX(0f - scaledXDiff - ((insets?.left ?: 0) * slidingLayout.scaleX) + newX)
-                                        translationY(0f - scaledYDiff - ((insets?.top ?: 0) * slidingLayout.scaleY) + newY)
+                                        translationX(x)
+                                        translationY(y)
                                         setDuration(250L)
                                         start()
                                     }
@@ -2182,7 +2196,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             isKickClip,
                             requireArguments().getString(KEY_CLIP_REPLAY_START_TIME) ?: requireArguments().getString(KEY_UPLOAD_DATE),
                             clipUrl,
-                            source = requireArguments().getString(KEY_VIDEO_SOURCE) ?: AppConstants.KICK
+                            source = requireArguments().getString(KEY_VIDEO_SOURCE) ?: AppConstants.KICK,
+                            isClipReplay = true
                         )
                     }
                     OFFLINE_VIDEO -> ChatFragment.newLocalInstance(
@@ -2212,6 +2227,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     @Suppress("DEPRECATION")
     private fun initLayout() {
         with(binding) {
+            playerLayout.isMinimized = !isMaximized
             if (isPortrait) {
                 requireActivity().window.decorView.setOnSystemUiVisibilityChangeListener(null)
                 showStatusBar()
@@ -2228,25 +2244,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     height = ViewGroup.LayoutParams.MATCH_PARENT
                     gravity = Gravity.BOTTOM
                 }
-                if (isMaximized) {
-                    chatLayout.visibility = View.VISIBLE
-                } else {
-                    chatLayout.visibility = View.GONE
-                    val (minimizedScaleX, minimizedScaleY) = getScaleValues()
-                    slidingLayout.scaleX = minimizedScaleX
-                    slidingLayout.scaleY = minimizedScaleY
-                    slidingLayout.doOnPreDraw {
-                        val (minimizedScaleX, minimizedScaleY) = getScaleValues()
-                        val (_, insets, navBarHeight) = getMinimizeInsets(requireView())
-                        val playerHeight = (slidingLayout.width / (16f / 9f)).toInt()
-                        val scaledXDiff = (slidingLayout.width * (1f - minimizedScaleX)) / 2
-                        val scaledYDiff = (slidingLayout.height * (1f - minimizedScaleY)) / 2
-                        val newX = slidingLayout.width - (insets?.right ?: 0) - (slidingLayout.width * minimizedScaleX) - (TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 20F, resources.displayMetrics) * minimizedScaleX)
-                        val newY = slidingLayout.height - navBarHeight - (playerHeight * minimizedScaleY) - (TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 30F, resources.displayMetrics) * minimizedScaleY)
-                        slidingLayout.translationX = 0f - scaledXDiff - ((insets?.left ?: 0) * minimizedScaleX) + newX
-                        slidingLayout.translationY = 0f - scaledYDiff - ((insets?.top ?: 0) * minimizedScaleY) + newY
-                    }
-                }
+                chatLayout.visibility = if (isMaximized) View.VISIBLE else View.GONE
                 aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 if (videoZoomFillMode) {
                     aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -2304,22 +2302,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         gravity = Gravity.END
                     }
                     chatLayout.visibility = View.GONE
-                    val (minimizedScaleX, minimizedScaleY) = getScaleValues()
-                    slidingLayout.scaleX = minimizedScaleX
-                    slidingLayout.scaleY = minimizedScaleY
-                    slidingLayout.doOnPreDraw {
-                        val (minimizedScaleX, minimizedScaleY) = getScaleValues()
-                        val (windowInsets, insets, navBarHeight) = getMinimizeInsets(requireView())
-                        val playerWidth = slidingLayout.width - getHorizontalInsets(windowInsets)
-                        val scaledXDiff = (slidingLayout.width * (1f - minimizedScaleX)) / 2
-                        val scaledYDiff = (slidingLayout.height * (1f - minimizedScaleY)) / 2
-                        val newX = slidingLayout.width - (insets?.right ?: 0) - (playerWidth * minimizedScaleX) - (TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 20F, resources.displayMetrics) * minimizedScaleX)
-                        val newY = slidingLayout.height - navBarHeight - (slidingLayout.height * minimizedScaleY) - (TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 30F, resources.displayMetrics) * minimizedScaleY)
-                        slidingLayout.translationX = 0f - scaledXDiff - ((insets?.left ?: 0) * minimizedScaleX) + newX
-                        slidingLayout.translationY = 0f - scaledYDiff - ((insets?.top ?: 0) * minimizedScaleY) + newY
-                    }
                 }
-                aspectRatioFrameLayout.resizeMode = resizeMode
+                aspectRatioFrameLayout.resizeMode = if (isMaximized) resizeMode else AspectRatioFrameLayout.RESIZE_MODE_FIT
                 if (videoZoomFillMode) {
                     aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 }
@@ -2355,6 +2339,17 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         latencyLayout.visibility = View.VISIBLE
                     }
                     updateViewerCount(lastViewerCount)
+                }
+            }
+            if (!isMaximized) {
+                val (minimizedScaleX, minimizedScaleY) = getScaleValues()
+                slidingLayout.scaleX = minimizedScaleX
+                slidingLayout.scaleY = minimizedScaleY
+                slidingLayout.doOnPreDraw {
+                    val (minimizedScaleX, minimizedScaleY) = getScaleValues()
+                    val (x, y) = getMinimizedTranslation(minimizedScaleX, minimizedScaleY)
+                    slidingLayout.translationX = x
+                    slidingLayout.translationY = y
                 }
             }
         }
@@ -2727,7 +2722,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     private var lastViewerCount: Int? = null
 
-    fun updateViewerCount(viewerCount: Int?) {
+    fun updateViewerCount(viewerCount: Int?, updatedAt: Long? = null) {
+        if (updatedAt != null && viewerCount != null) viewModel.onWebSocketViewerCount(updatedAt)
         lastViewerCount = viewerCount
         with(binding.playerControls) {
             val isBottom = prefs.getString(
@@ -3274,7 +3270,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
                     prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
                 ) {
-                    requireActivity().setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(true).build())
+                    setPipActions(lastPipPlaying)
                 }
             } else {
                 controllerHideOnTouch = false
@@ -3284,7 +3280,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
                 ) {
-                    requireActivity().setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
+                    requireActivity().setPictureInPictureParams(
+                        PictureInPictureParams.Builder()
+                            .setAspectRatio(Rational(16, 9))
+                            .setAutoEnterEnabled(false)
+                            .setSeamlessResizeEnabled(true)
+                            .build()
+                    )
                 }
             }
         }
@@ -3410,38 +3412,25 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         binding.playerBackground.isClickable = false
     }
 
-    private fun getHorizontalInsets(windowInsets: WindowInsetsCompat?): Int {
-        return if (windowInsets != null) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && prefs.getBoolean(AppConstants.PLAYER_ROUNDED_CORNER_PADDING, false)) {
-                val rootWindowInsets = requireView().rootWindowInsets
-                val topLeft = rootWindowInsets.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT)
-                val topRight = rootWindowInsets.getRoundedCorner(RoundedCorner.POSITION_TOP_RIGHT)
-                val bottomLeft = rootWindowInsets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT)
-                val bottomRight = rootWindowInsets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT)
-                val leftRadius = max(topLeft?.radius ?: 0, bottomLeft?.radius ?: 0)
-                val rightRadius = max(topRight?.radius ?: 0, bottomRight?.radius ?: 0)
-                if (prefs.getBoolean(AppConstants.UI_DRAW_BEHIND_CUTOUTS, false)) {
-                    leftRadius + rightRadius
-                } else {
-                    val cutoutInsets = windowInsets.getInsets(WindowInsetsCompat.Type.displayCutout())
-                    max(cutoutInsets.left, leftRadius) + max(cutoutInsets.right, rightRadius)
-                }
-            } else {
-                if (prefs.getBoolean(AppConstants.UI_DRAW_BEHIND_CUTOUTS, false)) {
-                    0
-                } else {
-                    val cutoutInsets = windowInsets.getInsets(WindowInsetsCompat.Type.displayCutout())
-                    cutoutInsets.left + cutoutInsets.right
-                }
-            }
-        } else 0
-    }
-
     private fun getScaleValues(): Pair<Float, Float> {
         return if (isPortrait) {
             0.5f to 0.5f
         } else {
-            0.3f to 0.325f
+            0.3f to 0.3f
+        }
+    }
+
+    private fun getMinimizedTranslation(scaleX: Float, scaleY: Float): Pair<Float, Float> {
+        val (_, insets, navBarHeight) = getMinimizeInsets(requireView())
+        val metrics = resources.displayMetrics
+        with(binding) {
+            val scaledXDiff = (slidingLayout.width * (1f - scaleX)) / 2
+            val scaledYDiff = (slidingLayout.height * (1f - scaleY)) / 2
+            val newX = slidingLayout.width - (insets?.right ?: 0) - (playerLayout.width * scaleX) - (TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 20f, metrics) * scaleX)
+            val newY = slidingLayout.height - navBarHeight - (playerLayout.height * scaleY) - (TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 30f, metrics) * scaleY)
+            val x = 0f - scaledXDiff - ((insets?.left ?: 0) * scaleX) + newX
+            val y = 0f - scaledYDiff - ((insets?.top ?: 0) * scaleY) + newY
+            return x to y
         }
     }
 
@@ -3469,8 +3458,50 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         return viewModel.quality != AUDIO_ONLY_QUALITY && viewModel.quality != CHAT_ONLY_QUALITY
     }
 
+    fun enterPictureInPicture(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        val act = activity ?: return false
+        if (!act.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
+        if (!canEnterPictureInPicture()) return false
+        if (isScreenLockedOrOff()) return false
+        return try {
+            val builder = PictureInPictureParams.Builder().apply {
+                setAspectRatio(Rational(16, 9))
+                val videoView = _binding?.aspectRatioFrameLayout
+                if (videoView != null && videoView.isAttachedToWindow && videoView.isShown) {
+                    val rect = Rect()
+                    videoView.getGlobalVisibleRect(rect)
+                    if (!rect.isEmpty) {
+                        setSourceRectHint(rect)
+                    }
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setSeamlessResizeEnabled(true)
+                    setAutoEnterEnabled(false)
+                }
+            }
+            val params = builder.build()
+            var entered = act.enterPictureInPictureMode(params)
+            if (!entered && !act.isInPictureInPictureMode && !isScreenLockedOrOff()) {
+                Log.d("PlayerFragment", "Retrying enterPictureInPictureMode to clear potential OEM intercept")
+                entered = act.enterPictureInPictureMode(params)
+            }
+            if (entered || act.isInPictureInPictureMode) {
+                hasLockedScreenSinceLastPip = false
+                (act as? MainActivity)?.hasLockedScreenSinceLastPip = false
+            }
+            entered
+        } catch (_: IllegalStateException) {
+            false
+        }
+    }
+
     protected fun isScreenLockedOrOff(): Boolean {
         if (isScreenOff) return true
+        val mainAct = activity as? MainActivity
+        if (mainAct != null && !mainAct.hasUserLeaveHint && !isResumed && !isGenuinePip()) {
+            return true
+        }
         val context = context ?: return false
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         if (powerManager?.isInteractive == false) return true
@@ -3478,11 +3509,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         if (keyguardManager?.isKeyguardLocked == true) return true
         @Suppress("DEPRECATION")
         if (keyguardManager?.inKeyguardRestrictedInputMode() == true) return true
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-            try {
-                if (keyguardManager?.isDeviceLocked == true) return true
-            } catch (_: Exception) {
-            }
+        try {
+            if (keyguardManager?.isDeviceLocked == true) return true
+        } catch (_: Exception) {
         }
         val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
@@ -3511,7 +3540,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         if ((activity as? MainActivity)?.isLaunchingSettings() == true) {
             return true
         }
-        val act = activity
         val isLockedOrOff = isScreenLockedOrOff()
         val inGenuinePip = isGenuinePip()
 
@@ -3532,7 +3560,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     protected fun shouldClosePlaybackAfterPipDismiss(): Boolean {
-        if (isScreenLockedOrOff()) return false
+        if (isScreenLockedOrOff() || shouldContinuePlaybackInBackground()) return false
         val act = activity ?: return false
         if (act.isChangingConfigurations) return false
         if (viewModel.quality == AUDIO_ONLY_QUALITY) return false
@@ -3557,11 +3585,22 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         ) {
             act.setPictureInPictureParams(
                 PictureInPictureParams.Builder().apply {
+                    setAspectRatio(Rational(16, 9))
+                    val videoView = _binding?.aspectRatioFrameLayout
+                    if (videoView != null && videoView.isAttachedToWindow && videoView.isShown) {
+                        val rect = Rect()
+                        videoView.getGlobalVisibleRect(rect)
+                        if (!rect.isEmpty) {
+                            setSourceRectHint(rect)
+                        }
+                    }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         setSeamlessResizeEnabled(true)
                         // Each update replaces params, so re-assert auto-enter.
                         val inPip = act.isInPictureInPictureMode
-                        setAutoEnterEnabled(!inPip && canEnterPictureInPicture())
+                        val hasLocked = hasLockedScreenSinceLastPip || (act as? MainActivity)?.hasLockedScreenSinceLastPip == true
+                        val allowAutoEnter = !inPip && canEnterPictureInPicture() && !hasLocked
+                        setAutoEnterEnabled(allowAutoEnter)
                     }
                     val actions = mutableListOf<RemoteAction>()
 
@@ -3643,6 +3682,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     override fun onResume() {
         super.onResume()
         isScreenOff = false
+        hasLockedScreenSinceLastPip = false
+        (activity as? MainActivity)?.hasLockedScreenSinceLastPip = false
         val isInPIPMode = activity?.isInPictureInPictureMode == true
         if (isInPIPMode) {
             if (isPortrait) {
@@ -3653,6 +3694,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             useController = false
         } else {
             clearPipDismissState()
+            setPipActions(lastPipPlaying)
         }
     }
 
@@ -3747,14 +3789,14 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     activePlaybackUrl = clipUrl
                     startClip(clipUrl)
                 }
-                // Kick serves the clip quality ladder through the web playback
-                // endpoint, so fetch it even when the MP4 URL is already known.
-                viewModel.loadClip(
-                    networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
-                    id = requireArguments().getString(KEY_CLIP_ID),
-                    enableIntegrity = requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                )
+                if (clipUrl.isNullOrBlank()) {
+                    viewModel.loadClip(
+                        networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
+                        id = requireArguments().getString(KEY_CLIP_ID),
+                        enableIntegrity = requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+                    )
+                }
             }
             OFFLINE_VIDEO -> {
                 if (prefs.getBoolean(AppConstants.PLAYER_USE_VIDEOPOSITIONS, true)) {
@@ -3924,25 +3966,22 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
+        hasLockedScreenSinceLastPip = false
+        (activity as? MainActivity)?.hasLockedScreenSinceLastPip = false
         if (isInPictureInPictureMode) {
             wasInPictureInPictureMode = true
             pipEnteredAtMs = SystemClock.uptimeMillis()
-        } else {
-            if (isResumed || isVisible) {
-                clearPipDismissState()
-            }
         }
         // Enter is disarmed by setPipActions below; re-arm on exit so the
         // next Home press still PiPs.
         if (!isInPictureInPictureMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             canEnterPictureInPicture() && prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
         ) {
-            requireActivity().setPictureInPictureParams(
-                PictureInPictureParams.Builder().setAutoEnterEnabled(true).setSeamlessResizeEnabled(true).build()
-            )
+            setPipActions(lastPipPlaying)
         }
         with(binding) {
             if (isInPictureInPictureMode) {
+                playerLayout.isMinimized = false
                 resetVideoZoom(false)
                 if (!isMaximized) {
                     isMaximized = true
@@ -3997,6 +4036,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     override fun onStop() {
         super.onStop()
+        if (isScreenLockedOrOff()) {
+            hasLockedScreenSinceLastPip = true
+            (activity as? MainActivity)?.hasLockedScreenSinceLastPip = true
+        }
         unlockOrientationJob?.cancel()
         unlockOrientationJob = null
 
@@ -4007,7 +4050,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private fun isVideoZoomed() = videoZoomScale > MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_EPSILON
 
     private fun restoreVideoResizeMode() {
-        _binding?.aspectRatioFrameLayout?.resizeMode = if (isPortrait) {
+        _binding?.aspectRatioFrameLayout?.resizeMode = if (isPortrait || !isMaximized) {
             AspectRatioFrameLayout.RESIZE_MODE_FIT
         } else {
             resizeMode
@@ -4314,6 +4357,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         with(binding) {
             resetVideoZoom(false)
             isMaximized = false
+            playerLayout.isMinimized = true
+            aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             if (videoType == STREAM && chatFragment?.emoteMenuIsVisible() == true) {
                 chatFragment?.toggleBackPressedCallback(false)
             }
@@ -4324,19 +4369,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             videoStatsOverlay.removeCallbacks(updateVideoStatsAction)
             fun animate() {
                 val (minimizedScaleX, minimizedScaleY) = getScaleValues()
-                val (windowInsets, insets, navBarHeight) = getMinimizeInsets(requireView())
-                val scaledXDiff = (slidingLayout.width * (1f - minimizedScaleX)) / 2
-                val scaledYDiff = (slidingLayout.height * (1f - minimizedScaleY)) / 2
-                val playerWidth = if (isPortrait) {
-                    playerLayout.width
-                } else {
-                    slidingLayout.width - getHorizontalInsets(windowInsets)
-                }
-                val newX = slidingLayout.width - (insets?.right ?: 0) - (playerWidth * minimizedScaleX) - (TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 20F, resources.displayMetrics) * minimizedScaleX)
-                val newY = slidingLayout.height - navBarHeight - (playerLayout.height * minimizedScaleY) - (TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 30F, resources.displayMetrics) * minimizedScaleY)
+                val (x, y) = getMinimizedTranslation(minimizedScaleX, minimizedScaleY)
                 slidingLayout.animate().apply {
-                    translationX(0f - scaledXDiff - ((insets?.left ?: 0) * minimizedScaleX) + newX)
-                    translationY(0f - scaledYDiff - ((insets?.top ?: 0) * minimizedScaleY) + newY)
+                    translationX(x)
+                    translationY(y)
                     scaleX(minimizedScaleX)
                     scaleY(minimizedScaleY)
                     setDuration(250L)
@@ -4392,6 +4428,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             unlockOrientationJob?.cancel()
             unlockOrientationJob = null
             isMaximized = true
+            playerLayout.isMinimized = false
+            restoreVideoResizeMode()
             requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backPressedCallback)
             if (videoType == STREAM && chatFragment?.emoteMenuIsVisible() == true) {
                 chatFragment?.toggleBackPressedCallback(true)
@@ -4906,6 +4944,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     override fun onStart() {
         super.onStart()
         if (activity?.isInPictureInPictureMode != true) {
+            hasLockedScreenSinceLastPip = false
+            (activity as? MainActivity)?.hasLockedScreenSinceLastPip = false
             clearPipDismissState()
         }
         if (videoStatsActiveInSession && isMaximized && !requireActivity().isInPictureInPictureMode) {

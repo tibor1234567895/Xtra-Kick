@@ -4,10 +4,8 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.content.edit
 import com.xtrakick.app.util.bundleOf
 import androidx.core.view.isVisible
-import androidx.media3.common.Tracks
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.PlayerSettingsBinding
 import com.xtrakick.app.util.AppConstants
@@ -260,27 +258,13 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
         }
     }
 
-    fun setSubtitles(subtitles: Tracks.Group? = null) {
+    fun setSubtitles(available: Boolean = false) {
         with(binding) {
-            if (subtitles != null && requireContext().prefs().getBoolean(AppConstants.PLAYER_MENU_SUBTITLES, true)) {
-                menuSubtitles.visibility = View.VISIBLE
-                if (subtitles.isSelected) {
-                    menuSubtitles.text = getString(R.string.hide_subtitles)
-                    menuSubtitles.setOnClickListener {
-                        (parentFragment as? PlayerFragment)?.toggleSubtitles(false)
-                        requireContext().prefs().edit { putBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, false) }
-                        dismiss()
-                    }
-                } else {
-                    menuSubtitles.text = getString(R.string.show_subtitles)
-                    menuSubtitles.setOnClickListener {
-                        (parentFragment as? PlayerFragment)?.toggleSubtitles(true)
-                        requireContext().prefs().edit { putBoolean(AppConstants.PLAYER_SUBTITLES_ENABLED, true) }
-                        dismiss()
-                    }
-                }
-            } else {
-                menuSubtitles.visibility = View.GONE
+            menuSubtitles.isVisible = available && requireContext().prefs().getBoolean(AppConstants.PLAYER_MENU_SUBTITLES, true)
+            menuSubtitles.text = getString(R.string.subtitles)
+            menuSubtitles.setOnClickListener {
+                (parentFragment as? PlayerFragment)?.showSubtitleSelection()
+                dismiss()
             }
         }
     }

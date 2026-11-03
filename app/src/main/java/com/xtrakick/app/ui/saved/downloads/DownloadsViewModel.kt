@@ -25,11 +25,14 @@ import com.xtrakick.app.util.m3u8.Segment
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.io.FileInputStream
@@ -47,6 +50,10 @@ class DownloadsViewModel @Inject internal constructor(
     private val externalScope: CoroutineScope,
 ) : ViewModel() {
 
+    companion object {
+        private val finishMutex = Mutex()
+    }
+
     var selectedVideo: OfflineVideo? = null
     private val videosInUse = mutableListOf<OfflineVideo>()
     private val currentDownloads = mutableListOf<Int>()
@@ -59,31 +66,39 @@ class DownloadsViewModel @Inject internal constructor(
     }.flow.cachedIn(viewModelScope)
 
     fun finishDownload(video: OfflineVideo) {
-        video.chatUrl?.let { url ->
-            val isShared = url.toUri().scheme == ContentResolver.SCHEME_CONTENT
-            if (isShared) {
-                applicationContext.contentResolver.openFileDescriptor(url.toUri(), "rw")!!.use {
-                    FileOutputStream(it.fileDescriptor).use { output ->
-                        output.channel.truncate(video.chatBytes)
+        externalScope.launch(Dispatchers.IO) {
+            try {
+                finishMutex.withLock {
+                    video.chatUrl?.let { url ->
+                        val isShared = url.toUri().scheme == ContentResolver.SCHEME_CONTENT
+                        if (isShared) {
+                            applicationContext.contentResolver.openFileDescriptor(url.toUri(), "rw")!!.use {
+                                FileOutputStream(it.fileDescriptor).use { output ->
+                                    output.channel.truncate(video.chatBytes)
+                                }
+                            }
+                        } else {
+                            FileOutputStream(url, true).use { output ->
+                                output.channel.truncate(video.chatBytes)
+                            }
+                        }
+                        if (isShared) {
+                            applicationContext.contentResolver.openOutputStream(url.toUri(), "wa")!!.bufferedWriter()
+                        } else {
+                            FileOutputStream(url, true).bufferedWriter()
+                        }.use { fileWriter ->
+                            fileWriter.write("}")
+                        }
                     }
+                    repository.updateVideo(video.apply {
+                        status = OfflineVideo.STATUS_DOWNLOADED
+                    })
                 }
-            } else {
-                FileOutputStream(url).use { output ->
-                    output.channel.truncate(video.chatBytes)
-                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                DiagnosticLogger.e("Downloads", "Could not finalize downloaded chat", error)
             }
-            if (isShared) {
-                applicationContext.contentResolver.openOutputStream(url.toUri(), "wa")!!.bufferedWriter()
-            } else {
-                FileOutputStream(url, true).bufferedWriter()
-            }.use { fileWriter ->
-                fileWriter.write("}")
-            }
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.updateVideo(video.apply {
-                status = OfflineVideo.STATUS_DOWNLOADED
-            })
         }
     }
 

@@ -1,10 +1,47 @@
 package com.xtrakick.app.util.chat
 
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatReplayPacingTest {
+
+    @Test
+    fun pauseHoldsTheRestOfABucketUntilPlaybackResumes() = runBlocking {
+        var playing = true
+        val emitted = mutableListOf<Int>()
+        val job = launch(start = CoroutineStart.UNDISPATCHED) {
+            repeat(4) { index ->
+                ChatReplayPacing.awaitPlayback({ playing }, pollIntervalMs = 1L)
+                emitted += index
+                if (index == 0) playing = false
+            }
+        }
+        assertEquals(listOf(0), emitted)
+        assertFalse(job.isCompleted)
+        playing = true
+        withTimeout(1000L) { job.join() }
+        assertEquals(listOf(0, 1, 2, 3), emitted)
+    }
+
+    @Test
+    fun stoppingAPausedReplayDiscardsItsWaitingEmission() = runBlocking {
+        var playing = false
+        var emitted = false
+        val job = launch(start = CoroutineStart.UNDISPATCHED) {
+            ChatReplayPacing.awaitPlayback({ playing }, pollIntervalMs = 1L)
+            emitted = true
+        }
+        job.cancelAndJoin()
+        playing = true
+        assertFalse(emitted)
+    }
 
     /**
      * Walks a bucket the way the replay loop does: emit at the current stagger, then advance using

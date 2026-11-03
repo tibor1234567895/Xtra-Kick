@@ -10,13 +10,20 @@ import androidx.paging.PagingDataAdapter
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.xtrakick.app.databinding.CommonRecyclerViewLayoutBinding
+import com.xtrakick.app.model.ui.Stream
+import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 abstract class PagedListFragment : BaseNetworkFragment(), IntegrityDialog.CallbackListener {
+
+    @Inject lateinit var eventRepository: KickRepository
 
     var concatAdapter: RecyclerView.Adapter<*>? = null
         protected set
@@ -64,6 +71,26 @@ abstract class PagedListFragment : BaseNetworkFragment(), IntegrityDialog.Callba
         }
         concatAdapter = targetAdapter
         recyclerView.adapter = targetAdapter
+        if (adapter is StreamsAdapter || adapter is StreamsCompactAdapter) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    combine(eventRepository.channelEventTitles, adapter.onPagesUpdatedFlow.onStart { emit(Unit) }) { titles, _ -> titles }
+                        .collectLatest { titles ->
+                            adapter.snapshot().forEachIndexed { index, item ->
+                                if (item is Stream && titles.containsKey(item.channelId)) {
+                                    val title = titles[item.channelId]
+                                    if (item.eventTitle != title) {
+                                        val tags = item.tags.orEmpty().filterNot { it == item.eventTitle }
+                                        item.eventTitle = title
+                                        item.tags = (listOfNotNull(title) + tags).distinct().ifEmpty { null }
+                                        adapter.notifyItemChanged(index)
+                                    }
+                                }
+                            }
+                        }
+                }
+            }
+        }
     }
 
     fun shouldShowButton(recyclerView: RecyclerView): Boolean {

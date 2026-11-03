@@ -1,6 +1,7 @@
 package com.xtrakick.app.ui.main
 
 import android.app.ActivityOptions
+import android.app.KeyguardManager
 import android.app.PictureInPictureParams
 import android.app.admin.DevicePolicyManager
 import android.content.ActivityNotFoundException
@@ -25,6 +26,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.text.format.Formatter
 import android.util.Log
+import android.util.Rational
 import android.view.Menu
 import android.view.View
 import android.view.ViewGroup
@@ -138,6 +140,9 @@ class MainActivity : AppCompatActivity() {
         private set
     var multiPovFragment: MultiPovFragment? = null
         private set
+    var hasLockedScreenSinceLastPip: Boolean = false
+    var hasUserLeaveHint: Boolean = false
+        private set
     private var launchingSettings = false
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -173,6 +178,9 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         playerFragment?.toggleMute()
                     }
+                }
+                Intent.ACTION_SCREEN_OFF -> {
+                    hasLockedScreenSinceLastPip = true
                 }
             }
         }
@@ -504,6 +512,7 @@ class MainActivity : AppCompatActivity() {
                 addAction(INTENT_START_AUDIO_ONLY)
                 addAction(INTENT_PLAY_PAUSE_PLAYER)
                 addAction(INTENT_MUTE_UNMUTE_PLAYER)
+                addAction(Intent.ACTION_SCREEN_OFF)
             },
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
@@ -541,6 +550,16 @@ class MainActivity : AppCompatActivity() {
                             startClip(clip)
                         }
                         viewModel.clip.value = null
+                    }
+                }
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.clipLoadFailed.collectLatest { failed ->
+                    if (failed) {
+                        Toast.makeText(this@MainActivity, R.string.video_source_unavailable, Toast.LENGTH_LONG).show()
+                        viewModel.clipLoadFailed.value = false
                     }
                 }
             }
@@ -656,9 +675,23 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        hasUserLeaveHint = false
+        hasLockedScreenSinceLastPip = false
+        playerFragment?.clearPipDismissState()
         launchingSettings = false
         logPlayerShell("onResume restoring existing playerFragment=${playerFragment?.javaClass?.simpleName}")
         restorePlayerFragment()
+        multiPovFragment?.updatePictureInPictureParams()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!hasUserLeaveHint ||
+            (getSystemService(POWER_SERVICE) as? PowerManager)?.isInteractive == false ||
+            (getSystemService(KEYGUARD_SERVICE) as? KeyguardManager)?.isKeyguardLocked == true
+        ) {
+            hasLockedScreenSinceLastPip = true
+        }
     }
 
     private fun maybeShowUnexpectedLogoutNotice() {
@@ -720,20 +753,31 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    private fun isScreenInteractive(): Boolean {
+        val powerManager = getSystemService(POWER_SERVICE) as? PowerManager
+        if (powerManager?.isInteractive == false) return false
+        val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
+        if (keyguardManager?.isKeyguardLocked == true) return false
+        return true
+    }
+
     override fun onUserLeaveHint() {
+        hasUserLeaveHint = true
         super.onUserLeaveHint()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
         ) {
-            try {
-                if (multiPovFragment?.canEnterPictureInPicture() == true) {
-                    multiPovFragment?.enterFocusedPip()
-                } else if (playerFragment?.canEnterPictureInPicture() == true) {
-                    enterPictureInPictureMode(PictureInPictureParams.Builder().build())
+            if (!isInPictureInPictureMode && isScreenInteractive()) {
+                try {
+                    if (multiPovFragment?.canEnterPictureInPicture() == true) {
+                        multiPovFragment?.enterFocusedPip()
+                    } else if (playerFragment?.canEnterPictureInPicture() == true) {
+                        playerFragment?.enterPictureInPicture()
+                    }
+                } catch (e: IllegalStateException) {
+                    //device doesn't support PIP
                 }
-            } catch (e: IllegalStateException) {
-                //device doesn't support PIP
             }
         }
     }
@@ -1013,7 +1057,8 @@ class MainActivity : AppCompatActivity() {
         viewModel.isPlayerOpened = true
         viewModel.isMultiPovOpened = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-            val pipEnabled = prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true) &&
+            val pipEnabled = !hasLockedScreenSinceLastPip &&
+                prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true) &&
                 prefs.getBoolean(AppConstants.MULTIPOV_PIP_FOCUSED, true)
             setPictureInPictureParams(
                 PictureInPictureParams.Builder()
@@ -1169,8 +1214,20 @@ class MainActivity : AppCompatActivity() {
             packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
         ) {
-            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(true).setSeamlessResizeEnabled(true).build())
+            val allowAutoEnter = !hasLockedScreenSinceLastPip
+            setPictureInPictureParams(
+                PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .setAutoEnterEnabled(allowAutoEnter)
+                    .setSeamlessResizeEnabled(true)
+                    .build()
+            )
         }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        hasLockedScreenSinceLastPip = false
     }
 
     fun closePlayer() {
