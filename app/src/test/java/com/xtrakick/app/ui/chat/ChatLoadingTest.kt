@@ -5,7 +5,20 @@ import android.os.SystemClock
 import androidx.lifecycle.ViewModelStore
 import androidx.room.Room
 import com.xtrakick.app.db.AppDatabase
-import com.xtrakick.app.repository.*
+import com.xtrakick.app.model.chat.Emote
+import com.xtrakick.app.model.chat.RecentEmote
+import com.xtrakick.app.repository.AuthRepository
+import com.xtrakick.app.repository.BookmarksRepository
+import com.xtrakick.app.repository.KickAccountMutedUsersStore
+import com.xtrakick.app.repository.KickOfficialApiClient
+import com.xtrakick.app.repository.KickPublicApiRepository
+import com.xtrakick.app.repository.KickRepository
+import com.xtrakick.app.repository.LocalFollowChannelRepository
+import com.xtrakick.app.repository.MutedChatUsersRepository
+import com.xtrakick.app.repository.NotificationUsersRepository
+import com.xtrakick.app.repository.OfflineRepository
+import com.xtrakick.app.repository.PlayerRepository
+import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.util.tokenPrefs
 import com.xtrakick.app.ui.player.PlayerViewModel
 import kotlinx.coroutines.Job
@@ -20,7 +33,10 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -40,6 +56,8 @@ class ChatLoadingTest {
     private val json = Json { ignoreUnknownKeys = true }
     private val requests = CopyOnWriteArrayList<Request>()
     private var historyMode = "empty"
+    private var channelCategory = ""
+    private var livestreamStatus = 200
     private val message = """{"id":"m1","content":"hello","created_at":"2026-11-02T10:00:00Z","sender":{"id":43,"username":"tester"}}"""
     private val client = OkHttpClient.Builder().addInterceptor { chain ->
         val request = chain.request()
@@ -47,6 +65,15 @@ class ChatLoadingTest {
         val path = request.url.encodedPath
         var status = 200
         val body = when {
+            path == "/api/v2/channels/test" -> """
+                {"id":42,"user_id":43,"slug":"test","livestream":{
+                "id":17,"session_title":"Live title","viewer_count":50$channelCategory}}
+            """
+            path == "/api/v2/channels/test/livestream" -> {
+                status = livestreamStatus
+                """{"data":{"id":17,"categories":[{
+                "id":8,"name":"Grand Theft Auto V (GTA)","slug":"grand-theft-auto-v"}]}}"""
+            }
             path == "/api/v2/channels/quiet" -> """{"id":42,"user_id":43,"slug":"quiet","chatroom":{"id":9}}"""
             path == "/api/v2/channels/quiet/livestream" -> """{"data":{"id":17,"viewer_count":21}}"""
             path == "/api/v1/chat/42/history" -> when (historyMode) {
@@ -87,6 +114,100 @@ class ChatLoadingTest {
         job.join()
     }
 
+    private suspend fun loadPlayerStream(
+        channelLogin: String = "test",
+        channelId: String = "43",
+        viewerCount: Int = 50,
+    ): PlayerViewModel {
+        val model = PlayerViewModel(publicApi, kick, follows, shown, notifications, null, null, executor, client,
+            player, BookmarksRepository(database.bookmarks(), database.videos()),
+            OfflineRepository(database.videos(), database.localFollowsChannel(), database.bookmarks()))
+        store.put("player", model)
+        model.loadStream(
+            channelId = channelId,
+            channelLogin = channelLogin,
+            viewerCount = viewerCount,
+            loop = false,
+            networkLibrary = "OkHttp",
+            kickPublicApiHeaders = emptyMap(),
+            kickWebHeaders = emptyMap(),
+            enableIntegrity = false,
+        )
+        withTimeout(5_000) {
+            while (model.stream.value == null) {
+                shadowOf(Looper.getMainLooper()).idle()
+                delay(5)
+            }
+        }
+        return model
+    }
+
+    @Test fun notificationWithoutCategoryGetsLivestreamCategoryOnFirstOpen() = runBlocking {
+        val stream = loadPlayerStream().stream.value!!
+
+        assertEquals("Grand Theft Auto V (GTA)", stream.gameName)
+        assertEquals("8", stream.gameId)
+        assertEquals("grand-theft-auto-v", stream.gameSlug)
+        assertEquals("Live title", stream.title)
+        assertEquals(50, stream.viewerCount)
+        assertTrue(requests.any { it.url.encodedPath == "/api/v2/channels/test/livestream" })
+    }
+
+    @Test fun blankCategoryNameAlsoLoadsLivestreamDetails() = runBlocking {
+        channelCategory = """, "category":{"id":8,"name":" "}"""
+
+        assertEquals("Grand Theft Auto V (GTA)", loadPlayerStream().stream.value!!.gameName)
+    }
+
+    @Test fun completeChannelMetadataAvoidsExtraLivestreamRequest() = runBlocking {
+        channelCategory = """, "category":{"id":16,"name":"Just Chatting","slug":"just-chatting"}"""
+
+        assertEquals("Just Chatting", loadPlayerStream().stream.value!!.gameName)
+        assertFalse(requests.any { it.url.encodedPath == "/api/v2/channels/test/livestream" })
+    }
+
+    @Test fun failedCategoryEnrichmentStillPublishesAvailableStreamInfo() = runBlocking {
+        livestreamStatus = 503
+
+        val stream = loadPlayerStream().stream.value!!
+
+        assertEquals("Live title", stream.title)
+        assertEquals(50, stream.viewerCount)
+        assertNull(stream.gameName)
+    }
+
+    @Test fun emoteSearchDoesNotReadRecentEmotes() {
+        val unreadableRecents = object : AbstractList<RecentEmote>() {
+            override val size: Int get() = error("Search must not read recents")
+            override fun get(index: Int): RecentEmote = error("Search must not read recents")
+        }
+        viewModel.thirdPartyEmotes.addAll(listOf(
+            Emote(name = "Pog", source = Emote.CHANNEL_STV),
+            Emote(name = "Kappa", source = Emote.CHANNEL_STV),
+        ))
+
+        val sections = viewModel.getEmotePickerSections(unreadableRecents, " pOg ")
+
+        assertEquals(listOf("7tv"), sections.map { it.key })
+        assertEquals(listOf("Pog"), sections.single().emotes.map { it.name })
+    }
+
+    @Test fun blankEmoteSearchPreservesRecentOrderingAndRemovesUnknownEmotes() {
+        viewModel.userEmotes.addAll(listOf(Emote(name = "Pog"), Emote(name = "Kappa")))
+        val recents = listOf(
+            RecentEmote("Pog", usedAt = 100L),
+            RecentEmote("Kappa", usedAt = 200L),
+            RecentEmote("Pog", usedAt = 50L),
+            RecentEmote("Unknown", usedAt = 300L),
+        )
+
+        for (query in listOf("", " \t\n")) {
+            val recentSection = viewModel.getEmotePickerSections(recents, query).first()
+            assertEquals("recent", recentSection.key)
+            assertEquals(listOf("Kappa", "Pog"), recentSection.emotes.map { it.name })
+        }
+    }
+
     @Test fun verifiedEmptyChatStopsWithoutProbingOtherIdsOrEndpointFamilies() = runBlocking {
         finish(viewModel.loadRecentMessages("OkHttp", "quiet", "43"))
         assertTrue(viewModel.chatMessages.isEmpty())
@@ -113,22 +234,12 @@ class ChatLoadingTest {
     }
 
     @Test fun viewerPollingWaitsForStaleWebSocketCountsAndStopsForVideos() = runBlocking {
-        val model = PlayerViewModel(publicApi, kick, follows, shown, notifications, null, null, executor, client,
-            player, BookmarksRepository(database.bookmarks(), database.videos()),
-            OfflineRepository(database.videos(), database.localFollowsChannel(), database.bookmarks()))
-        store.put("player", model)
-        model.loadStream("42", "quiet", 10, false, "OkHttp", emptyMap(), emptyMap(), false)
-        withTimeout(5_000) {
-            while (model.stream.value == null) {
-                shadowOf(Looper.getMainLooper()).idle()
-                delay(5)
-            }
-        }
-        assertFalse(requests.any { it.url.encodedPath.endsWith("/livestream") })
+        val model = loadPlayerStream(channelLogin = "quiet", channelId = "42", viewerCount = 10)
+        assertEquals(1, requests.count { it.url.encodedPath.endsWith("/livestream") })
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(30))
         model.onWebSocketViewerCount(SystemClock.elapsedRealtime())
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(30))
-        assertFalse(requests.any { it.url.encodedPath.endsWith("/livestream") })
+        assertEquals(1, requests.count { it.url.encodedPath.endsWith("/livestream") })
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(60))
         withTimeout(5_000) {
             while (model.viewerCountUpdate.value == null) {
@@ -137,9 +248,9 @@ class ChatLoadingTest {
             }
         }
         assertEquals(21, model.viewerCountUpdate.value)
-        assertEquals(1, requests.count { it.url.encodedPath.endsWith("/livestream") })
+        assertEquals(2, requests.count { it.url.encodedPath.endsWith("/livestream") })
         model.loadVideo("OkHttp", emptyMap(), null, "kick", "42", "quiet", null, null, false)
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMinutes(3))
-        assertEquals(1, requests.count { it.url.encodedPath.endsWith("/livestream") })
+        assertEquals(2, requests.count { it.url.encodedPath.endsWith("/livestream") })
     }
 }

@@ -311,6 +311,12 @@ class KickMessage(
     val threadId: String? = null,
     @SerialName("target_message_id")
     val targetMessageId: String? = null,
+    @SerialName("message_id")
+    val messageId: String? = null,
+    @SerialName("target_id")
+    val targetId: String? = null,
+    @SerialName("deleted_message_id")
+    val deletedMessageId: String? = null,
     @SerialName("duration")
     val duration: JsonElement? = null,
     @SerialName("duration_seconds")

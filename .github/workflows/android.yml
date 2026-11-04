@@ -56,6 +56,31 @@ jobs:
         APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -r | head -1)
         "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/*.apk
 
+    - name: Verify release ARM architectures
+      run: |
+        python3 - <<'PY'
+        from pathlib import Path
+        from zipfile import ZipFile
+
+        apk = Path("app/build/outputs/apk/release/app-release.apk")
+        with ZipFile(apk) as archive:
+            native_libraries = [
+                name for name in archive.namelist()
+                if name.startswith("lib/") and name.endswith(".so")
+            ]
+        expected_abis = {"arm64-v8a", "armeabi-v7a"}
+        actual_abis = {name.split("/")[1] for name in native_libraries}
+        if actual_abis != expected_abis:
+            raise SystemExit(f"Expected {sorted(expected_abis)}, found {sorted(actual_abis)}")
+        libraries = {
+            abi: {Path(name).name for name in native_libraries if name.split("/")[1] == abi}
+            for abi in expected_abis
+        }
+        if libraries["arm64-v8a"] != libraries["armeabi-v7a"]:
+            raise SystemExit(f"Native library mismatch: {libraries}")
+        print(f"Verified both ARM architectures: {sorted(libraries['arm64-v8a'])}")
+        PY
+
     - name: Generate release notes
       run: |
         git fetch --tags --force

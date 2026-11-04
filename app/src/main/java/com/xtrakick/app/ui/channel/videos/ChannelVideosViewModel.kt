@@ -8,7 +8,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
-import com.xtrakick.app.model.kick.BroadcastType
 import com.xtrakick.app.model.ui.Bookmark
 import com.xtrakick.app.model.ui.SortChannel
 import com.xtrakick.app.model.ui.User
@@ -21,7 +20,6 @@ import com.xtrakick.app.repository.SortChannelRepository
 import com.xtrakick.app.repository.datasource.ChannelVideosDataSource
 import com.xtrakick.app.ui.channel.ChannelPagerFragmentArgs
 import com.xtrakick.app.ui.common.VideosSortDialog
-import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.NetworkUtils
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel

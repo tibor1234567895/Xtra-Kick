@@ -8,8 +8,6 @@ import android.os.ext.SdkExtensions
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xtrakick.app.R
-import com.xtrakick.app.model.NotificationUser
-import com.xtrakick.app.model.ShownNotification
 import com.xtrakick.app.model.VideoPosition
 import com.xtrakick.app.model.ui.Bookmark
 import com.xtrakick.app.model.ui.Game
@@ -28,7 +26,6 @@ import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.HttpEngineUtils
-import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.KickClipApi
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import dagger.Lazy
@@ -49,7 +46,6 @@ import org.chromium.net.apihelpers.RedirectHandlers
 import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.io.File
 import java.io.FileOutputStream
-import java.net.URI
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import kotlin.coroutines.suspendCoroutine
@@ -169,12 +165,33 @@ class PlayerViewModel @Inject constructor(
     val isFollowing: StateFlow<Boolean?> = _isFollowing
     val followsChanged = localFollowsChannel.followsChanged
     val follow = MutableStateFlow<Pair<Boolean, String?>?>(null)
+    private var loadStreamJob: Job? = null
 
-
-    fun loadStreamResult(networkLibrary: String?, kickWebHeaders: Map<String, String>, channelLogin: String, randomDeviceId: Boolean?, xDeviceId: String?, playerType: String?, supportedCodecs: String?, proxyPlaybackAccessToken: Boolean, proxyHost: String?, proxyPort: Int?, proxyUser: String?, proxyPassword: String?, enableIntegrity: Boolean, forceRefresh: Boolean = false, stalePlaybackUrl: String? = null, forceRefreshRetryAttempted: Boolean = false) {
+    fun loadStreamResult(
+        networkLibrary: String? = null,
+        kickWebHeaders: Map<String, String> = emptyMap(),
+        channelLogin: String,
+        randomDeviceId: Boolean? = null,
+        xDeviceId: String? = null,
+        playerType: String? = null,
+        supportedCodecs: String? = null,
+        proxyPlaybackAccessToken: Boolean = false,
+        proxyHost: String? = null,
+        proxyPort: Int? = null,
+        proxyUser: String? = null,
+        proxyPassword: String? = null,
+        enableIntegrity: Boolean = false,
+        forceRefresh: Boolean = false,
+        stalePlaybackUrl: String? = null,
+        forceRefreshRetryAttempted: Boolean = false
+    ) {
+        if (!forceRefresh && loadStreamJob?.isActive == true) {
+            return
+        }
         if (forceRefresh || streamResult.value == null) {
+            loadStreamJob?.cancel()
             streamError.value = null
-            viewModelScope.launch {
+            loadStreamJob = viewModelScope.launch {
                 try {
                     val playbackUrl = kickRepository.getPlaybackUrl(channelLogin, forceRefresh = forceRefresh)
                         ?.takeIf { it.isNotBlank() }
@@ -285,7 +302,7 @@ class PlayerViewModel @Inject constructor(
             streamJob = viewModelScope.launch {
                 while (isActive) {
                     try {
-                        updateStream(channelId, channelLogin, networkLibrary, kickPublicApiHeaders, kickWebHeaders, enableIntegrity)
+                        updateStream(channelLogin)
                         delay(300000L)
                     } catch (e: Exception) {
                         if (e.message == "failed integrity check" && integrity.value == null) {
@@ -298,7 +315,7 @@ class PlayerViewModel @Inject constructor(
         } else if (viewerCount == null || stream.value?.channelLogo.isNullOrBlank()) {
             viewModelScope.launch {
                 try {
-                    updateStream(channelId, channelLogin, networkLibrary, kickPublicApiHeaders, kickWebHeaders, enableIntegrity)
+                    updateStream(channelLogin)
                 } catch (e: Exception) {
                     if (e.message == "failed integrity check" && integrity.value == null) {
                         integrity.value = "stream"
@@ -308,9 +325,21 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private suspend fun updateStream(channelId: String?, channelLogin: String?, networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    private suspend fun updateStream(channelLogin: String?) {
         stream.value = channelLogin?.let { login ->
-            kickRepository.getChannel(login).let { kickRepository.toStream(it) }
+            val channel = kickRepository.getChannel(login)
+            val livestream = if (channel.livestream?.category?.name.isNullOrBlank()) {
+                try {
+                    kickRepository.getChannelLivestream(login, forceRefresh = true)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    null
+                }
+            } else {
+                null
+            }
+            kickRepository.toStream(channel, livestream)
         }
     }
 

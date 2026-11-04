@@ -332,7 +332,6 @@ class KickChannelMetadataTest {
                 repository,
                 KickPublicApiRepository(null, null, executor, client, json),
                 LocalFollowGameRepository(database.localFollowsGame()),
-                null, null, executor, client,
                 SavedStateHandle(mapOf("gameSlug" to "test-game", "gameName" to "Test game")),
             )
             store.put("game", viewModel)

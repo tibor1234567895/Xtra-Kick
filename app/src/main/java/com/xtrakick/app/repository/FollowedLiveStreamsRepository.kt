@@ -130,6 +130,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
         if (!forceRefresh && (!allowPerChannelFallback || lastLoadAllowedFallback)) {
             freshCache()?.let {
                 publish(it)
+                prefetchTopStreams(it)
                 return LoadResult(it, true)
             }
         }
@@ -140,6 +141,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
             ) {
                 freshCache()?.let {
                     publish(it)
+                    prefetchTopStreams(it)
                     return@withLock LoadResult(it, true)
                 }
             }
@@ -310,7 +312,14 @@ class FollowedLiveStreamsRepository @Inject constructor(
         val finalItems = resolved.values.toList().sortedByViewersDesc()
         persistCache(finalItems, account)
         onPartial(finalItems)
+        prefetchTopStreams(finalItems)
         return LoadResult(items = finalItems, fromCache = false)
+    }
+
+    private fun prefetchTopStreams(items: List<Stream>) {
+        items.take(2).forEach { stream ->
+            stream.channelLogin?.let { kickRepository.prefetchPlaybackUrl(it) }
+        }
     }
 
     fun peekCache(maxAgeMs: Long = CACHE_TTL_MS): List<Stream> = freshCache(maxAgeMs).orEmpty()

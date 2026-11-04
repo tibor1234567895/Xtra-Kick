@@ -3,25 +3,143 @@ package com.xtrakick.app.ui.player
 import android.app.Application
 import android.content.ContextWrapper
 import android.content.res.Configuration
+import android.media.MediaMetadata
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.SurfaceHolder
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentHostCallback
+import com.amazonaws.ivs.player.Player
+import com.amazonaws.ivs.player.Quality
 import com.xtrakick.app.ui.main.MainActivity
+import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.prefs
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadow.api.Shadow
+import org.robolectric.shadows.ShadowMediaSession
+import org.robolectric.util.ReflectionHelpers
+import java.lang.reflect.Proxy
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.TimeUnit
 
 @Config(application = Application::class)
 @RunWith(RobolectricTestRunner::class)
 class IvsPlayerFragmentTest {
+
+    @Test
+    @Config(shadows = [RecordingMediaSession::class])
+    fun lateStartTimeReplacesFiniteSdkDurationWithoutAdvertisingLiveSeeking() {
+        val context = RuntimeEnvironment.getApplication()
+        val service = Robolectric.buildService(IvsPlayerService::class.java).get()
+        val session = MediaSession(context, "live-timing-test")
+        val published = Shadow.extract<RecordingMediaSession>(session)
+        val player = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, _ ->
+            when (method.name) {
+                "getDuration" -> 240_000L
+                "getPosition" -> 0L
+                "getState" -> Player.State.PLAYING
+                "getPlaybackRate" -> 1f
+                else -> null
+            }
+        } as Player
+        ReflectionHelpers.setField(service, "player", player)
+        ReflectionHelpers.setField(service, "session", session)
+        ReflectionHelpers.setField(service, "currentUrl", "https://example.com/live.m3u8")
+        val start = System.currentTimeMillis() - 44 * 60_000L
+
+        try {
+            service.updateStreamStartedAt(start)
+            val metadata = requireNotNull(published.metadata)
+            val state = requireNotNull(published.state)
+            assertTrue(metadata.getLong(MediaMetadata.METADATA_KEY_DURATION) >= 44 * 60_000L)
+            assertTrue(state.position >= 44 * 60_000L)
+            val seekActions = PlaybackState.ACTION_SEEK_TO or
+                PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS
+            assertEquals(0L, state.actions and seekActions)
+
+            context.prefs().edit().putBoolean(AppConstants.PLAYER_SHOW_STREAM_NOTIFICATION_SEEKBAR, false).commit()
+            service.updateStreamStartedAt(start - 1)
+            assertEquals(-1L, requireNotNull(published.metadata).getLong(MediaMetadata.METADATA_KEY_DURATION))
+        } finally {
+            session.release()
+            ReflectionHelpers.getField<ExecutorService>(service, "playerExecutor").shutdownNow()
+        }
+    }
+
+    @Implements(MediaSession::class)
+    class RecordingMediaSession : ShadowMediaSession() {
+        var metadata: MediaMetadata? = null
+            private set
+        var state: PlaybackState? = null
+            private set
+
+        @Implementation
+        fun setMetadata(value: MediaMetadata?) {
+            metadata = value
+        }
+
+        @Implementation
+        fun setPlaybackState(value: PlaybackState?) {
+            state = value
+        }
+    }
+
+    @Test
+    fun qualityRecoverySwitchPreservesTheBufferedVideo() {
+        val quality = Quality::class.java.declaredConstructors.single().apply {
+            isAccessible = true
+        }.newInstance(
+            "1080p60", "avc1", "source", "source", "source", emptyArray<String>(),
+            9_000_000, 1920, 1080, 60f, false
+        ) as Quality
+        val qualityArguments = CompletableFuture<List<Any?>>()
+        val player = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, args ->
+            if (method.name == "setQuality") qualityArguments.complete(args.orEmpty().toList())
+            null
+        } as Player
+        val service = IvsPlayerService()
+        IvsPlayerService::class.java.getDeclaredField("player").apply {
+            isAccessible = true
+            set(service, player)
+        }
+        val fragment = IvsPlayerFragment()
+        PlayerFragment::class.java.getDeclaredField("prefs").apply {
+            isAccessible = true
+            set(fragment, RuntimeEnvironment.getApplication().prefs())
+        }
+        IvsPlayerFragment::class.java.getDeclaredField("playbackService").apply {
+            isAccessible = true
+            set(fragment, service)
+        }
+
+        try {
+            IvsPlayerFragment::class.java.getDeclaredMethod("nudgeQualityToTarget", Quality::class.java).apply {
+                isAccessible = true
+            }.invoke(fragment, quality)
+
+            assertEquals(listOf(quality, true), qualityArguments.get(5, TimeUnit.SECONDS))
+        } finally {
+            val executor = IvsPlayerService::class.java.getDeclaredField("playerExecutor").apply {
+                isAccessible = true
+            }.get(service) as ExecutorService
+            executor.shutdownNow()
+        }
+    }
 
     @Test
     fun activityPipExitDoesNotDiscardStateNeededByThePlayersStopHandler() {

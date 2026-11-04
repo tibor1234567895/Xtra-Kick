@@ -64,7 +64,11 @@ android {
         "KICK_VIEWER_CLIENT_TOKEN",
         "f3a7c8b1e5d9246aa8f6b37d5c8e9a2fd4e1c0abf79d3826b4c5e7a9d8f2b6c3",
     ).replace("\"", "\\\"")
-    val targetAbi = (project.findProperty("TARGET_ABI") as String?)?.trim()?.takeIf { it.isNotBlank() }
+    val targetAbis = (project.findProperty("TARGET_ABI") as String?)
+        ?.split(',')
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.takeIf { it.isNotEmpty() }
     val localDebugKeystorePath = projectPropertyOrDefault("LOCAL_DEBUG_KEYSTORE_FILE", "${project.projectDir}/debug-keystore.jks")
     val localDebugStorePassword = projectPropertyOrDefault("LOCAL_DEBUG_STORE_PASSWORD")
     val localDebugKeyAlias = projectPropertyOrDefault("LOCAL_DEBUG_KEY_ALIAS")
@@ -124,15 +128,13 @@ android {
         targetSdk = 36
         versionCode = 121
         versionName = "2.54.0"
-        if (targetAbi != null) {
-            ndk {
-                abiFilters += targetAbi
-            }
-        }
     }
 
     buildTypes {
         debug {
+            ndk {
+                abiFilters += targetAbis ?: listOf("arm64-v8a")
+            }
             if (!normalDebugPackage) {
                 applicationIdSuffix = ".test"
                 versionNameSuffix = "-TEST"
@@ -144,6 +146,9 @@ android {
             buildConfigField("String", "KICK_VIEWER_CLIENT_TOKEN", "\"$kickViewerClientToken\"")
         }
         release {
+            ndk {
+                abiFilters += targetAbis ?: listOf("arm64-v8a", "armeabi-v7a")
+            }
             isShrinkResources = true
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

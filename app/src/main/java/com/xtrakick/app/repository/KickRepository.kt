@@ -21,7 +21,6 @@ import com.xtrakick.app.model.chat.KicksDonation
 import com.xtrakick.app.model.chat.PinnedGift
 import com.xtrakick.app.model.chat.Poll
 import com.xtrakick.app.model.chat.Prediction
-import com.xtrakick.app.model.chat.Raid
 import com.xtrakick.app.model.chat.Reply
 import com.xtrakick.app.model.chat.RoomState
 import com.xtrakick.app.model.kick.KickCategory
@@ -292,6 +291,7 @@ class KickRepository @Inject constructor(
     private val kickBadgeCatalogRefreshAt = ConcurrentHashMap<String, Long>()
     private val kickBadgeCatalogRefreshInProgress = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
     private val channelPointRewardsCache = boundedCache<Pair<Long, ChannelPointRewardsResult>>()
+    private val playbackUrlCache = boundedCache<Pair<Long, String>>()
     private val kickBadgeSourceStats = ConcurrentHashMap<KickBadgeSource, Int>()
     private val kickChunkBodyCache = ConcurrentHashMap<String, String>()
     private val clipDownloadUrlCache = ConcurrentHashMap<String, String>()
@@ -307,6 +307,19 @@ class KickRepository @Inject constructor(
         "og",
     )
     private val kickChannelSpecificBadgeTypes = setOf("subscriber", "founder", "sub_gifter")
+    private val moderationTargetIdKeys = listOf(
+        "target_message_id",
+        "message_id",
+        "target_id",
+        "messageId",
+        "targetId",
+        "deleted_message_id",
+        "deletedMessageId",
+        "deleted_id"
+    )
+    private val moderationNestedObjectKeys = listOf(
+        "message", "target_message", "deleted_message", "target", "data", "payload", "metadata"
+    )
     @Volatile
     private var activeKickChatScopeId: String? = null
     private val channelRequestLock = Any()
@@ -5089,15 +5102,66 @@ class KickRepository @Inject constructor(
         return resolveKickModerationType(message, eventName) == KickModerationType.DELETE_MESSAGE
     }
 
-    fun getKickModerationTargetMessageId(message: KickMessage): String? {
+    fun extractTargetMessageIdFromRawJson(rawPayload: String): String? {
+        val root = runCatching { JSONObject(rawPayload) }.getOrNull() ?: return null
+        fun findIdInObject(obj: JSONObject?): String? {
+            if (obj == null) return null
+            for (key in moderationTargetIdKeys) {
+                val candidate = obj.optString(key).takeIf { it.isNotBlank() }
+                if (candidate != null) return candidate
+            }
+            return null
+        }
+
+        findIdInObject(root)?.let { return it }
+
+        for (key in moderationNestedObjectKeys) {
+            val nested = root.optJSONObject(key)
+            if (nested != null) {
+                findIdInObject(nested)?.let { return it }
+                if (key in setOf("message", "target_message", "deleted_message")) {
+                    val id = nested.optString("id").takeIf { it.isNotBlank() }
+                        ?: nested.optString("uuid").takeIf { it.isNotBlank() }
+                    if (id != null) return id
+                }
+            }
+        }
+
+        val dataStr = root.optString("data").takeIf { it.isNotBlank() }
+        if (dataStr != null && dataStr.startsWith("{")) {
+            val dataObj = runCatching { JSONObject(dataStr) }.getOrNull()
+            if (dataObj != null) {
+                findIdInObject(dataObj)?.let { return it }
+                for (key in listOf("message", "target_message", "deleted_message")) {
+                    val nested = dataObj.optJSONObject(key)
+                    if (nested != null) {
+                        findIdInObject(nested)?.let { return it }
+                        val id = nested.optString("id").takeIf { it.isNotBlank() }
+                            ?: nested.optString("uuid").takeIf { it.isNotBlank() }
+                        if (id != null) return id
+                    }
+                }
+            }
+        }
+
+        return null
+    }
+
+    fun getKickModerationTargetMessageId(message: KickMessage, rawPayload: String? = null): String? {
         val metadata = message.metadata.asJsonObjectOrNull()
         val deletedMessage = message.deletedMessage.asJsonObjectOrNull()
+        val rawTargetId = rawPayload?.let(::extractTargetMessageIdFromRawJson)
         return firstNonBlank(
+            rawTargetId,
             message.targetMessageId,
-            deletedMessage?.firstPrimitiveOrNull("id", "message_id", "target_message_id", "uuid"),
-            metadata?.firstPrimitiveOrNull("target_message_id", "message_id", "deleted_message_id"),
-            metadata?.firstObjectOrNull("target_message")?.firstPrimitiveOrNull("id", "message_id", "uuid"),
-            metadata?.firstObjectOrNull("deleted_message")?.firstPrimitiveOrNull("id", "message_id", "uuid"),
+            message.messageId,
+            message.targetId,
+            message.deletedMessageId,
+            deletedMessage?.firstPrimitiveOrNull("id", "message_id", "target_message_id", "uuid", "target_id"),
+            metadata?.firstPrimitiveOrNull("target_message_id", "message_id", "deleted_message_id", "target_id"),
+            metadata?.firstObjectOrNull("target_message")?.firstPrimitiveOrNull("id", "message_id", "uuid", "target_id"),
+            metadata?.firstObjectOrNull("deleted_message")?.firstPrimitiveOrNull("id", "message_id", "uuid", "target_id"),
+            metadata?.firstObjectOrNull("message")?.firstPrimitiveOrNull("id", "message_id", "uuid", "target_id"),
             // Kick MessageDeletedEvent can place the deleted chat message id directly on the event object itself.
             message.id
         )
@@ -5455,32 +5519,96 @@ class KickRepository @Inject constructor(
         return context.prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true)
     }
 
-    suspend fun getPlaybackUrl(channelSlug: String, forceRefresh: Boolean = false): String? {
-        val normalizedSlug = channelSlug.trim().lowercase(Locale.ROOT)
-        if (normalizedSlug.isBlank()) return null
-        val livestreamResult = runCatching {
-            getChannelLivestream(normalizedSlug, forceRefresh = forceRefresh)
+    private fun playbackCacheKey(channelSlug: String): String =
+        accountCacheKey() + "|" + channelSlug.trim().lowercase(Locale.ROOT)
+
+    fun getCachedPlaybackUrl(channelSlug: String): String? {
+        if (channelSlug.isBlank()) return null
+        val key = playbackCacheKey(channelSlug)
+        val cached = playbackUrlCache[key] ?: return null
+        if (System.currentTimeMillis() - cached.first < PLAYBACK_URL_CACHE_TTL_MS) {
+            return cached.second
         }
+        playbackUrlCache.remove(key)
+        return null
+    }
+
+    fun cachePlaybackUrl(channelSlug: String, url: String) {
+        if (channelSlug.isBlank() || url.isBlank()) return
+        val key = playbackCacheKey(channelSlug)
+        playbackUrlCache[key] = System.currentTimeMillis() to url
+    }
+
+    fun evictPlaybackUrl(channelSlug: String) {
+        if (channelSlug.isBlank()) return
+        val key = playbackCacheKey(channelSlug)
+        playbackUrlCache.remove(key)
+    }
+
+    fun prefetchPlaybackUrl(channelSlug: String) {
+        val normalizedSlug = channelSlug.trim().lowercase(Locale.ROOT)
+        if (normalizedSlug.isBlank() || getCachedPlaybackUrl(normalizedSlug) != null) return
+        badgeCacheScope.launch {
+            runCatching {
+                getPlaybackUrl(normalizedSlug, forceRefresh = false)
+            }
+        }
+    }
+
+    suspend fun getPlaybackUrl(channelSlug: String, forceRefresh: Boolean = false): String? = coroutineScope {
+        val normalizedSlug = channelSlug.trim().lowercase(Locale.ROOT)
+        if (normalizedSlug.isBlank()) return@coroutineScope null
+
+        if (!forceRefresh) {
+            getCachedPlaybackUrl(normalizedSlug)?.let { return@coroutineScope it }
+        }
+
+        val isRewardsEligible = isDailyRewardsEnabled() && hasUsableKickWebsiteSession()
+
+        val authenticatedUrlDeferred = if (isRewardsEligible) {
+            async {
+                runCatching { getChannelPlaybackUrl(normalizedSlug) }.getOrNull()
+            }
+        } else null
+
+        val livestreamDeferred = async {
+            runCatching { getChannelLivestream(normalizedSlug, forceRefresh = forceRefresh) }
+        }
+
+        val livestreamResult = livestreamDeferred.await()
         val livestream = livestreamResult.getOrNull()
+
         if (livestream != null) {
-            if (isDailyRewardsEnabled() && hasUsableKickWebsiteSession()) {
-                val authenticatedUrl = runCatching {
-                    getChannelPlaybackUrl(normalizedSlug)
-                }.getOrNull()
+            if (authenticatedUrlDeferred != null) {
+                val authenticatedUrl = authenticatedUrlDeferred.await()
                 if (!authenticatedUrl.isNullOrBlank()) {
-                    return authenticatedUrl
+                    cachePlaybackUrl(normalizedSlug, authenticatedUrl)
+                    return@coroutineScope authenticatedUrl
                 }
             }
-            return livestream.playbackUrl?.takeIf { it.isNotBlank() }
+            val fallbackUrl = livestream.playbackUrl?.takeIf { it.isNotBlank() }
+            if (fallbackUrl != null) {
+                cachePlaybackUrl(normalizedSlug, fallbackUrl)
+            }
+            return@coroutineScope fallbackUrl
         }
+
+        authenticatedUrlDeferred?.cancel()
+
         if (livestreamResult.isSuccess) {
             // Kick answered with no active stream — the channel is offline.
             // The channel-level playback_url is a stale token that 403/404s forever.
-            return null
+            evictPlaybackUrl(normalizedSlug)
+            return@coroutineScope null
         }
+
         // Livestream request itself failed — fall back to the channel endpoint.
         val channel = runCatching { getChannel(normalizedSlug, forceRefresh = forceRefresh) }.getOrNull()
-        return channel?.let { getPlayableUrl(it) }
+        val playableUrl = channel?.let { getPlayableUrl(it) }
+        if (playableUrl != null) {
+            cachePlaybackUrl(normalizedSlug, playableUrl)
+        }
+        return@coroutineScope playableUrl
     }
 
     suspend fun pingCurrentViewers(livestreamId: String): String? {
@@ -5497,6 +5625,8 @@ class KickRepository @Inject constructor(
     }
 
     companion object {
+        private const val PLAYBACK_URL_CACHE_TTL_MS = 120_000L
+
         /** Fixed client token the official app sends as X-CLIENT-TOKEN on the viewer socket token fetch. */
         private val KICK_VIEWER_CLIENT_TOKEN = BuildConfig.KICK_VIEWER_CLIENT_TOKEN
 

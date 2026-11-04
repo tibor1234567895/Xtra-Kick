@@ -6,7 +6,6 @@ import android.os.ext.SdkExtensions
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.xtrakick.app.model.NotificationUser
 import com.xtrakick.app.model.ShownNotification
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.model.ui.Stream

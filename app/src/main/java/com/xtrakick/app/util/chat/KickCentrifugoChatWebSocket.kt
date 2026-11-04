@@ -6,6 +6,7 @@ import com.xtrakick.app.util.WebSocket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -112,7 +113,11 @@ class KickCentrifugoChatWebSocket(
 
     private inner class WebSocketListener : WebSocket.Listener {
         override suspend fun onConnect(webSocket: WebSocket) {
-            val token = runCatching { fetchAuthToken() }.getOrNull()
+            var token = runCatching { fetchAuthToken() }.getOrNull()
+            if (token.isNullOrBlank()) {
+                delay(500L)
+                token = runCatching { fetchAuthToken() }.getOrNull()
+            }
             if (token.isNullOrBlank()) {
                 DiagnosticLogger.wIfForeground(tag, "failed to obtain fresh centrifugo token on connect")
                 webSocket.disconnect()

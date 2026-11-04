@@ -7,7 +7,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xtrakick.app.model.ui.Bookmark
 import com.xtrakick.app.model.ui.SortChannel
-import com.xtrakick.app.model.ui.User
 import com.xtrakick.app.model.ui.Video
 import com.xtrakick.app.model.ui.VodBookmarkIgnoredUser
 import com.xtrakick.app.repository.BookmarksRepository
@@ -15,7 +14,6 @@ import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.PlayerRepository
 import com.xtrakick.app.repository.SortChannelRepository
 import com.xtrakick.app.repository.VodBookmarkIgnoredUsersRepository
-import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import dagger.Lazy

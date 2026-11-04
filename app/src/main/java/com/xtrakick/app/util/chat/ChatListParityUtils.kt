@@ -1,5 +1,16 @@
 package com.xtrakick.app.util.chat
 
+import android.content.Context
+import androidx.core.content.ContextCompat
+import com.xtrakick.app.R
+import android.text.Spannable
+import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import androidx.core.text.getSpans
+import androidx.core.view.isVisible
+import com.xtrakick.app.ui.view.NamePaintImageSpan
 import com.xtrakick.app.model.chat.ChatMessage
 
 object ChatListParityUtils {
@@ -171,6 +182,123 @@ object ChatListParityUtils {
             replyPreview.timestamp != null && replyMessage.timestamp != null -> replyPreview.timestamp == replyMessage.timestamp
             !replyPreview.fullMsg.isNullOrBlank() && !replyMessage.fullMsg.isNullOrBlank() -> replyPreview.fullMsg == replyMessage.fullMsg
             else -> true
+        }
+    }
+
+    fun resolveCurrentMessagePosition(
+        messages: List<ChatMessage>,
+        chatMessage: ChatMessage,
+        adapterPosition: Int,
+        fallbackPosition: Int,
+    ): Int {
+        synchronized(messages) {
+            if (adapterPosition in messages.indices && messages[adapterPosition] == chatMessage) {
+                return adapterPosition
+            }
+            val currentPosition = messages.indexOf(chatMessage)
+            if (currentPosition >= 0) {
+                return currentPosition
+            }
+        }
+        return fallbackPosition
+    }
+
+    fun resolveMessageBackgroundColor(
+        messages: List<ChatMessage>,
+        context: Context,
+        position: Int,
+        surfaceColor: Int,
+        backgroundRes: Int,
+        enableAlternatingLineShadows: Boolean,
+        alternatingLineShadowStrength: Int,
+    ): Int {
+        val overlayColor = backgroundRes.takeIf { it != 0 }?.let { ContextCompat.getColor(context, it) }
+        val visualParityPosition = synchronized(messages) {
+            resolveVisualParityPosition(messages, position)
+        }
+        return ChatBackgroundUtils.resolveMessageBackgroundColor(
+            surfaceColor = surfaceColor,
+            overlayColor = overlayColor,
+            alternatingLineShadowEnabled = enableAlternatingLineShadows,
+            alternatingLineShadowStrength = alternatingLineShadowStrength,
+            position = visualParityPosition,
+        )
+    }
+
+    fun resolveDividerColor(
+        messages: List<ChatMessage>,
+        position: Int,
+        surfaceColor: Int,
+        enableAlternatingLineShadows: Boolean,
+        alternatingLineShadowStrength: Int,
+    ): ChatBackgroundUtils.DividerColors? {
+        val shouldDrawDivider = synchronized(messages) {
+            shouldDrawDividerAbove(messages, position)
+        }
+        if (!enableAlternatingLineShadows || !shouldDrawDivider) {
+            return null
+        }
+        return ChatBackgroundUtils.resolveDividerColors(
+            surfaceColor = surfaceColor,
+            dividerStrength = alternatingLineShadowStrength,
+        )
+    }
+
+    fun resolveSelectedBackgroundColor(
+        context: Context,
+        surfaceColor: Int,
+    ): Int {
+        return ChatBackgroundUtils.resolveMessageBackgroundColor(
+            surfaceColor = surfaceColor,
+            overlayColor = ContextCompat.getColor(context, R.color.chatMessageSelected),
+            alternatingLineShadowEnabled = false,
+            alternatingLineShadowStrength = 0,
+            position = 0,
+        )
+    }
+
+    fun resolveMessageBackgroundRes(
+        chatMessage: ChatMessage,
+        firstMsgVisibility: Int,
+        loggedInUser: String?,
+        messageText: CharSequence?,
+    ): Int {
+        if (chatMessage.message.isNullOrBlank()) {
+            return 0
+        }
+        return when {
+            chatMessage.isFirst && firstMsgVisibility < 2 -> R.color.chatMessageFirst
+            chatMessage.reward?.id != null && firstMsgVisibility < 2 -> R.color.chatMessageReward
+            chatMessage.systemMsg != null || (chatMessage.msgId != null && chatMessage.msgId != "kick_moderation") -> R.color.chatMessageNotice
+            ChatAdapterUtils.isMessageHighlightedForLoggedInUser(chatMessage, loggedInUser, messageText) -> R.color.chatMessageMention
+            else -> 0
+        }
+    }
+
+    fun updateMessageRowBackground(
+        messages: List<ChatMessage>,
+        chatMessage: ChatMessage,
+        item: TextView,
+        backgroundRes: Int,
+        resolveBackgroundColor: (Context, Int, Int) -> Int,
+        resolveDividerColors: (Int, Int) -> ChatBackgroundUtils.DividerColors?,
+    ) {
+        val position = synchronized(messages) { messages.indexOf(chatMessage) }.coerceAtLeast(0)
+        val resolvedBackgroundColor = resolveBackgroundColor(item.context, position, backgroundRes)
+        item.setBackgroundColor(resolvedBackgroundColor)
+        (item.parent as? ViewGroup)?.findViewById<View>(R.id.chatLineDivider)?.apply {
+            val dividerColors = resolveDividerColors(position, resolvedBackgroundColor)
+            isVisible = dividerColors != null
+            dividerColors?.let {
+                findViewById<View>(R.id.chatLineDividerHighlight).setBackgroundColor(it.highlightColor)
+                findViewById<View>(R.id.chatLineDividerShadow).setBackgroundColor(it.shadowColor)
+            }
+        }
+        (item.text as? Spannable)?.let { view ->
+            view.getSpans<NamePaintImageSpan>().forEach {
+                it.backgroundColor = resolvedBackgroundColor
+                view.setSpan(it, view.getSpanStart(it), view.getSpanEnd(it), SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
         }
     }
 }

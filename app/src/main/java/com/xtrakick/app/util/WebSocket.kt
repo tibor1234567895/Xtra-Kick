@@ -19,7 +19,6 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.net.Socket
-import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.Timer

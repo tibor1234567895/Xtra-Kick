@@ -56,7 +56,6 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
-import androidx.activity.trackPipAnimationHintView
 import androidx.annotation.OptIn
 import androidx.appcompat.widget.TooltipCompat
 import androidx.core.content.ContextCompat
@@ -414,6 +413,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     open fun setPlaybackSpeed(speed: Float) {}
     open fun updateChannelLogo(logo: String?) {}
 
+    open fun updateStreamStartedAt(startedAt: String) {}
+
     /** Hold-for-2x is only meaningful where speed does not fight the live edge. */
     open fun isHoldToSpeedAvailable(): Boolean =
         videoType == VIDEO || videoType == CLIP || videoType == OFFLINE_VIDEO || viewModel.isLiveRewound
@@ -624,6 +625,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     @SuppressLint("ClickableViewAccessibility")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        eagerLoadStream()
         with(binding) {
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -1689,6 +1691,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                         requireArguments().putString(KEY_CHANNEL_NAME, stream.channelName)
                                     }
                                     updateChannelName(stream.channelLogin, stream.channelName)
+                                    stream.startedAt?.takeIf { it.isNotBlank() }?.let { startedAt ->
+                                        if (requireArguments().getString(KEY_STARTED_AT) != startedAt) {
+                                            requireArguments().putString(KEY_STARTED_AT, startedAt)
+                                            updateStreamStartedAt(startedAt)
+                                        }
+                                    }
                                     updateViewerCount(stream.viewerCount)
                                     if (prefs.getBoolean(AppConstants.CHAT_DISABLE, false) ||
                                         !prefs.getBoolean(AppConstants.CHAT_PUBSUB_ENABLED, true) ||
@@ -2898,9 +2906,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     stream = getCurrentStream(),
                     resolvedUrl = requireArguments().getString(KEY_RESOLVED_STREAM_URL),
                     forceStandardLiveEngine = false
-                ) ?: loadStream()
+                ) ?: loadStream(forceRefresh = true)
             } else {
-                loadStream()
+                loadStream(forceRefresh = true)
             }
         }
     }
@@ -3808,6 +3816,28 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
             }
         }
+    }
+
+    protected fun eagerLoadStream() {
+        if (videoType != STREAM) return
+        val channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN) ?: return
+        if (!requireArguments().getString(KEY_RESOLVED_STREAM_URL).isNullOrBlank()) return
+
+        val useCustomProxy = prefs.getBoolean(AppConstants.PLAYER_STREAM_PROXY, false)
+        val proxyUrl = prefs.getString(AppConstants.PLAYER_PROXY_URL, "")
+        if (useCustomProxy && !proxyUrl.isNullOrBlank()) {
+            val proxyResolved = proxyUrl.replace("\$channel", channelLogin)
+            requireArguments().putString(KEY_RESOLVED_STREAM_URL, proxyResolved)
+            return
+        }
+
+        viewModel.loadStreamResult(
+            networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+            kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_STREAM, true)),
+            channelLogin = channelLogin,
+            enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
+            forceRefresh = false
+        )
     }
 
     private fun loadStream(forceRefresh: Boolean = false, stalePlaybackUrl: String? = null) {

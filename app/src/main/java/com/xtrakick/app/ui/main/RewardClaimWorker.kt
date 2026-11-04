@@ -7,7 +7,6 @@ import androidx.core.content.edit
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.xtrakick.app.R
 import com.xtrakick.app.model.kick.KickDailyChallenge
 import com.xtrakick.app.repository.KickRewardsPolicy
 import com.xtrakick.app.repository.KickRewardsRepository

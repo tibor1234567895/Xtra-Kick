@@ -64,8 +64,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -266,7 +264,7 @@ class MainViewModel @Inject constructor(
             viewModelScope.launch {
                 val id = clipId?.takeIf { it.isNotBlank() }
                 clipLoadFailed.value = false
-                clip.value = if (id == null) {
+                val loadedClip = if (id == null) {
                     null
                 } else {
                     runCatching { kickRepository.getClip(id) }.getOrNull()
@@ -296,7 +294,8 @@ class MainViewModel @Inject constructor(
                             }
                         }.getOrNull()
                 }
-                clipLoadFailed.value = clip.value == null
+                clip.value = loadedClip
+                clipLoadFailed.value = loadedClip == null
             }
         }
     }

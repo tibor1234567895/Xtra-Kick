@@ -6,7 +6,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
-import com.xtrakick.app.model.kick.Language
 import com.xtrakick.app.model.ui.SavedFilter
 import com.xtrakick.app.model.ui.SortGame
 import com.xtrakick.app.repository.KickRepository

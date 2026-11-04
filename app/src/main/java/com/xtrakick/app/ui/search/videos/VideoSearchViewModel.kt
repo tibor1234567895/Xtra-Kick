@@ -20,7 +20,6 @@ import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.PlayerRepository
 import com.xtrakick.app.repository.RecentSearchRepository
 import com.xtrakick.app.repository.datasource.SearchVideosDataSource
-import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import dagger.Lazy

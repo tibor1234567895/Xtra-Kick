@@ -32,7 +32,6 @@ import androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist
 import androidx.media3.exoplayer.hls.playlist.HlsMultivariantPlaylist
 import androidx.media3.exoplayer.hls.playlist.HlsPlaylist
 import androidx.media3.exoplayer.hls.playlist.HlsPlaylistParserFactory
-import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
@@ -61,7 +60,6 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import dagger.Lazy
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -212,33 +210,11 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun saveActiveLiveChannel(channelId: String?, channelLogin: String?) {
-        try {
-            prefs().edit {
-                putString(AppConstants.ACTIVE_LIVE_CHANNEL_ID, channelId)
-                putString(AppConstants.ACTIVE_LIVE_CHANNEL_LOGIN, channelLogin)
-                putLong(AppConstants.ACTIVE_LIVE_UPDATED_MS, System.currentTimeMillis())
-            }
-        } catch (_: Exception) {
-        }
-        ioScope.launch {
-            runCatching {
-                shownNotificationsRepository.markStreamSessionShown(
-                    channelId = channelId,
-                    channelLogin = channelLogin,
-                )
-            }
-        }
+        PlaybackTrackingUtils.saveActiveLiveChannel(prefs(), shownNotificationsRepository, ioScope, channelId, channelLogin)
     }
 
     private fun clearActiveLiveChannel() {
-        try {
-            prefs().edit {
-                remove(AppConstants.ACTIVE_LIVE_CHANNEL_ID)
-                remove(AppConstants.ACTIVE_LIVE_CHANNEL_LOGIN)
-                remove(AppConstants.ACTIVE_LIVE_UPDATED_MS)
-            }
-        } catch (_: Exception) {
-        }
+        PlaybackTrackingUtils.clearActiveLiveChannel(prefs())
     }
 
     private fun isBufferDebugEnabled(): Boolean {
@@ -253,6 +229,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         prefs().registerOnSharedPreferenceChangeListener(rewardsPreferenceChangeListener)
         activeLatencyConfig = LiveLatencySettings.resolve(prefs())
         val player = ExoPlayer.Builder(this).apply {
@@ -314,7 +291,7 @@ class PlaybackService : MediaSessionService() {
 
                 override fun onPlayerError(error: PlaybackException) {
                     logPlayerError(error)
-                    val httpCode = httpResponseCode(error)
+                    val httpCode = Media3ErrorUtils.httpResponseCode(error)
                     if (httpCode == 404 && videoId == null && offlineVideoId == null) {
                         DiagnosticLogger.w(TAG, "stream 404 terminal error in service, stopping playback")
                         player.clearMediaItems()
@@ -327,7 +304,7 @@ class PlaybackService : MediaSessionService() {
                         }
                         return
                     }
-                    if (!background && videoId == null && offlineVideoId == null && !isBehindLiveWindowError(error)) {
+                    if (!background && videoId == null && offlineVideoId == null && !Media3ErrorUtils.isBehindLiveWindowError(error)) {
                         // Foreground live-stream error: the fragment owns recovery (restart,
                         // fresh-URL retry, offline overlay, network-restored restart) via
                         // its still-bound MediaController. But playWhenReady stays true on
@@ -340,7 +317,7 @@ class PlaybackService : MediaSessionService() {
                         return
                     }
                     if (background) {
-                        if (isBehindLiveWindowError(error)) {
+                        if (Media3ErrorUtils.isBehindLiveWindowError(error)) {
                             DiagnosticLogger.w(
                                 TAG,
                                 "behindLiveWindow recovery start background=$background " +
@@ -404,7 +381,9 @@ class PlaybackService : MediaSessionService() {
         )
         mediaSession = MediaSession.Builder(
             this,
-            player
+            MediaNotificationPlayer(player) {
+                prefs().getBoolean(AppConstants.PLAYER_SHOW_STREAM_NOTIFICATION_SEEKBAR, true)
+            }
         ).apply {
             setSessionActivity(
                 PendingIntent.getActivity(
@@ -880,7 +859,7 @@ class PlaybackService : MediaSessionService() {
                                 // of refreshing it on 403 or reporting stream-end on 404. The
                                 // chain walker below was already present, used only for logging.
                                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, bundleOf(
-                                    RESULT to session.player.playerError?.let { httpResponseCode(it) },
+                                    RESULT to session.player.playerError?.let { Media3ErrorUtils.httpResponseCode(it) },
                                 )))
                             }
                             GET_MEDIA_PLAYLIST -> {
@@ -991,6 +970,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        isRunning = false
         watchOwner.release()
         clearActiveLiveChannel()
         ioScope.cancel()
@@ -1012,27 +992,17 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun logPlayerError(error: PlaybackException) {
-        val responseCode = httpResponseCode(error)
+        val responseCode = Media3ErrorUtils.httpResponseCode(error)
         val message = "playerError code=${error.errorCode} name=${error.errorCodeName} " +
             "http=$responseCode background=$background " +
             "message=${error.message}"
-        if (responseCode == 403 || responseCode == 404 || isBehindLiveWindowError(error)) {
+        if (responseCode == 403 || responseCode == 404 || Media3ErrorUtils.isBehindLiveWindowError(error)) {
             DiagnosticLogger.w(TAG, message)
         } else {
             DiagnosticLogger.e(TAG, message, error)
         }
     }
 
-    private fun httpResponseCode(error: Throwable): Int? {
-        var cause: Throwable? = error
-        while (cause != null) {
-            if (cause is HttpDataSource.InvalidResponseCodeException) {
-                return cause.responseCode
-            }
-            cause = cause.cause
-        }
-        return null
-    }
 
     private fun summarizePlaybackUri(uri: String?): String {
         if (uri.isNullOrBlank()) {
@@ -1054,16 +1024,6 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    private fun isBehindLiveWindowError(error: PlaybackException): Boolean {
-        var cause: Throwable? = error
-        while (cause != null) {
-            if (cause is BehindLiveWindowException) {
-                return true
-            }
-            cause = cause.cause
-        }
-        return false
-    }
 
     class CustomHlsPlaylistParserFactory(): HlsPlaylistParserFactory {
         override fun createPlaylistParser(): ParsingLoadable.Parser<HlsPlaylist> {
@@ -1092,7 +1052,12 @@ class PlaybackService : MediaSessionService() {
         const val UPDATE_CHANNEL_LOGO = "updateChannelLogo"
         const val ACTION_STOP_PLAYBACK = "com.xtrakick.app.ACTION_STOP_PLAYBACK"
 
+        @Volatile
+        var isRunning: Boolean = false
+            private set
+
         fun stopService(context: Context) {
+            if (!isRunning) return
             try {
                 val intent = Intent(context, PlaybackService::class.java).apply {
                     action = ACTION_STOP_PLAYBACK

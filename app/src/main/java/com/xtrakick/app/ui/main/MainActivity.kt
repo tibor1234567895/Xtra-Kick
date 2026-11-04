@@ -66,7 +66,6 @@ import com.xtrakick.app.KickApp
 import com.xtrakick.app.util.AppUpdateDialogHelper
 import com.xtrakick.app.databinding.ActivityMainBinding
 import com.xtrakick.app.databinding.DialogUpdateDownloadBinding
-import com.xtrakick.app.model.AppUpdateInfo
 import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.model.ui.Stream
@@ -935,6 +934,12 @@ class MainActivity : AppCompatActivity() {
                                 }
                             }
                             if (livestream != null) {
+                                stream.startedAt = livestream.createdAt?.takeIf { it.isNotBlank() } ?: stream.startedAt
+                                livestream.category?.let { category ->
+                                    stream.gameId = category.id?.toString() ?: stream.gameId
+                                    stream.gameSlug = category.slug?.takeIf { it.isNotBlank() } ?: stream.gameSlug
+                                    stream.gameName = category.name?.takeIf { it.isNotBlank() } ?: stream.gameName
+                                }
                                 val isAudioOnly = intent.getBooleanExtra(KEY_AUDIO_ONLY, false)
                                 startStream(stream)
                                 if (isAudioOnly) {
@@ -1021,7 +1026,7 @@ class MainActivity : AppCompatActivity() {
         closeMultiPovInternal()
         val effectiveResolvedUrl = when {
             !resolvedUrl.isNullOrBlank() -> resolvedUrl
-            stream.source == AppConstants.KICK -> null
+            stream.source == AppConstants.KICK -> stream.channelLogin?.let { kickRepository.getCachedPlaybackUrl(it) }
             else -> stream.playbackUrl
         }
         startPlayer(createStreamFragment(stream, effectiveResolvedUrl, forceStandardLiveEngine))

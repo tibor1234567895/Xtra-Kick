@@ -13,15 +13,11 @@ import android.os.CountDownTimer
 import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
-import android.text.TextPaint
 import android.text.TextUtils
-import android.text.style.BackgroundColorSpan
-import android.text.style.ClickableSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.text.method.LinkMovementMethod
 import android.text.format.DateUtils
-import android.text.util.Linkify
 import android.util.Log
 import android.util.TypedValue
 import android.view.KeyEvent
@@ -48,14 +44,11 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isGone
-import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.core.view.setPadding
 import androidx.core.view.updateLayoutParams
-import androidx.core.text.util.LinkifyCompat
 import androidx.core.widget.addTextChangedListener
 import androidx.core.view.doOnLayout
-import androidx.core.view.doOnNextLayout
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -79,16 +72,9 @@ import com.xtrakick.app.model.chat.ChatMessage
 import com.xtrakick.app.model.chat.Chatter
 import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.model.chat.KickGiftTrain
-import com.xtrakick.app.model.chat.PinnedGift
-import com.xtrakick.app.model.chat.Poll
 import com.xtrakick.app.model.chat.Prediction
 import com.xtrakick.app.model.chat.RecentEmote
 import com.xtrakick.app.model.chat.RoomState
-import com.xtrakick.app.model.kick.KickOfficialReward
-import com.xtrakick.app.model.kick.KickOfficialRewardCreateRequest
-import com.xtrakick.app.model.kick.KickOfficialRewardUpdateRequest
-import com.xtrakick.app.model.kick.KickRewardRedemption
-import com.xtrakick.app.model.kick.KickRewardRedemptionsPage
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.ui.channel.ChannelPagerFragmentDirections
@@ -104,7 +90,6 @@ import com.xtrakick.app.ui.view.SlashCommand
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.KickApiHelper
-import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.chat.ChatAdapterUtils
 import com.xtrakick.app.util.chat.ChatBackgroundUtils
 import com.xtrakick.app.util.chat.ChatListParityUtils
@@ -113,25 +98,18 @@ import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.color.MaterialColors
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.text.NumberFormat
 import java.util.Date
 import java.util.Locale
-import java.util.Random
 import kotlin.math.max
 import kotlin.math.roundToInt
 import javax.inject.Inject
 
 @AndroidEntryPoint
 class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickListener, ReplyClickedDialog.OnButtonClickListener {
-    private data class PinnedGiftUiState(
-        val contentKey: String? = null,
-        val titleExpandable: Boolean = false,
-    )
-
     private var _binding: FragmentChatBinding? = null
     private val binding get() = _binding!!
     private val viewModel: ChatViewModel by viewModels()
@@ -139,6 +117,46 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     @Inject
     lateinit var kickRepository: KickRepository
+
+    private val rewardsUiHelper by lazy {
+        KickRewardsUiHelper(
+            fragment = this,
+            kickRepository = kickRepository,
+            getNetworkLibrary = ::currentNetworkLibrary,
+            getChannelLogin = ::currentChannelLogin,
+            onRewardStateChanged = ::refreshKickRewardState,
+        )
+    }
+
+    private val pollPredictionUiHelper by lazy {
+        KickPollPredictionUiHelper(
+            fragment = this,
+            kickRepository = kickRepository,
+            viewModel = viewModel,
+            getChannelLogin = ::currentChannelLogin,
+            onRewardStateChanged = ::refreshKickRewardState,
+        )
+    }
+
+    private val pinnedGiftUiHelper by lazy {
+        ChatPinnedGiftUiHelper(
+            fragment = this,
+            viewModel = viewModel,
+            getBinding = { _binding },
+            getChatUrl = { requireArguments().getString(KEY_CHAT_URL) },
+            onHeaderBadgesLayoutNeeded = ::updateHeaderBadgeLayout,
+            onOpenPinnedHistory = { seed ->
+                pinnedMessageDialogSeed = seed
+                val isContentLive = requireArguments().getBoolean(KEY_IS_LIVE, false) && !isLiveRewound
+                MessageClickedDialog.newInstance(
+                    messagingEnabled,
+                    requireArguments().getString(KEY_CHANNEL_ID),
+                    requireArguments().getString(KEY_CHANNEL_LOGIN),
+                    isLive = isContentLive,
+                ).show(childFragmentManager, "messageDialog")
+            },
+        )
+    }
 
     private var isChatTouched = false
     private var showChatStatus = false
@@ -165,9 +183,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     var isLiveRewound = false
     private var pinnedMessageDialogSeed: ChatMessage? = null
     private var tappedMessageDialogSeed: ChatMessage? = null
-    private var pinnedGiftUiState = PinnedGiftUiState()
-    private var cachedPinnedGiftMessageKey: String? = null
-    private var cachedPinnedGiftMessageResult: ChatAdapterUtils.MessageResult? = null
     private var channelPointsDialog: AlertDialog? = null
     private var rebuildingChannelPointsDialog = false
     private var scrollToBottomQueued = false
@@ -481,443 +496,8 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
     }
 
-    private fun formatDisplayName(userLogin: String?, userName: String?): String {
-        return if (userLogin != null && userName != null && !userLogin.equals(userName, true)) {
-            when (requireContext().prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
-                "0" -> "$userName($userLogin)"
-                "1" -> userName
-                else -> userLogin
-            }
-        } else {
-            userName ?: userLogin ?: ""
-        }
-    }
-
-    private fun resolvePinnedNameColor(color: String?, fallback: Int): Int {
-        if (color.isNullOrBlank()) return fallback
-        return runCatching {
-            val normalized = if (color.startsWith("#")) color else "#$color"
-            Color.parseColor(normalized)
-        }.getOrDefault(fallback)
-    }
-
-    private fun openPinnedHistory(id: String?, login: String?, name: String?, color: String?) {
-        if (id.isNullOrBlank() && login.isNullOrBlank() && name.isNullOrBlank()) return
-        pinnedMessageDialogSeed = ChatMessage(
-            userId = id,
-            userLogin = login,
-            userName = name,
-            color = color,
-        )
-        val isContentLive = requireArguments().getBoolean(KEY_IS_LIVE, false) && !isLiveRewound
-        MessageClickedDialog.newInstance(
-            messagingEnabled,
-            requireArguments().getString(KEY_CHANNEL_ID),
-            requireArguments().getString(KEY_CHANNEL_LOGIN),
-            isLive = isContentLive,
-        ).show(childFragmentManager, "messageDialog")
-    }
-
-    private fun buildPinnedNameSpan(
-        label: String,
-        displayName: String,
-        color: Int,
-        userId: String?,
-        userLogin: String?,
-        userName: String?,
-        userColor: String?,
-    ): SpannableStringBuilder {
-        return SpannableStringBuilder().apply {
-            append(label.trimEnd())
-            append(' ')
-            val start = length
-            append(displayName)
-            setSpan(ForegroundColorSpan(color), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            setSpan(object : ClickableSpan() {
-                override fun onClick(widget: View) {
-                    openPinnedHistory(userId, userLogin, userName, userColor)
-                }
-
-                override fun updateDrawState(ds: TextPaint) {
-                    ds.color = color
-                    ds.isUnderlineText = false
-                }
-            }, start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        }
-    }
-
-    private fun buildPinnedMessageResult(pinnedGift: PinnedGift): ChatAdapterUtils.MessageResult {
-        val (message, pinnedEmotes) = normalizePinnedGiftMessage(pinnedGift.message)
-        val thirdPartyEmotes = buildList {
-            synchronized(viewModel.thirdPartyEmotes) {
-                addAll(viewModel.thirdPartyEmotes)
-            }
-            addAll(pinnedEmotes)
-        }.distinctBy { it.name }
-        val result = if (message != null) {
-            ChatAdapterUtils.prepareChatMessage(
-                ChatMessage(
-                    id = pinnedGift.id,
-                    userId = pinnedGift.userId,
-                    message = message,
-                ),
-                buildPinnedGiftContentKey(pinnedGift).hashCode().toLong(),
-                enableTimestamps = false,
-
-                timestampFormat = null,
-                firstMsgVisibility = 2,
-                firstChatMsg = "",
-                redeemedChatMsg = "",
-                redeemedNoMsg = "",
-                rewardChatMsg = "",
-                replyMessage = "",
-                imageClick = null,
-                useRandomColors = false,
-                random = Random(),
-                useReadableColors = false,
-                isLightTheme = false,
-                nameDisplay = null,
-                useBoldNames = false,
-                showNamePaints = false,
-                namePaints = emptyList(),
-                showStvBadges = false,
-                showKickBadges = false,
-                stvBadges = emptyList(),
-                showPersonalEmotes = true,
-                personalEmoteSets = viewModel.personalEmoteSets,
-                stvUsers = viewModel.stvUsers,
-                enableOverlayEmotes = requireContext().prefs().getBoolean(AppConstants.CHAT_ZEROWIDTH, true),
-                showSystemMessageEmotes = false,
-                loggedInUser = null,
-                chatUrl = requireArguments().getString(KEY_CHAT_URL),
-                getEmoteBytes = viewModel::getEmoteBytes,
-                userColors = hashMapOf(),
-                savedColors = hashMapOf(),
-                localChatEmotes = viewModel.localChatEmotes,
-                thirdPartyEmotes = thirdPartyEmotes,
-                globalBadges = viewModel.globalBadges,
-                channelBadges = viewModel.channelBadges,
-                cheerEmotes = viewModel.cheerEmotes,
-                savedLocalChatEmotes = mutableMapOf(),
-                savedLocalBadges = mutableMapOf(),
-                savedLocalCheerEmotes = mutableMapOf(),
-                savedLocalEmotes = mutableMapOf(),
-            )
-        } else {
-            ChatAdapterUtils.MessageResult(SpannableStringBuilder(), arrayListOf(), null, null, null, 0)
-        }
-        pinnedGift.giftValue?.let { giftValue ->
-            if (result.builder.isNotEmpty()) result.builder.append(" • ")
-            result.builder.append(getString(R.string.pinned_gift_value))
-            result.builder.append(": ")
-            result.builder.append(NumberFormat.getInstance().format(giftValue))
-        }
-        if (result.builder.isEmpty()) {
-            result.builder.append(getString(R.string.pinned_gift_message_fallback))
-        }
-        LinkifyCompat.addLinks(result.builder, Linkify.WEB_URLS)
-        return result
-    }
-
-    private fun normalizePinnedGiftMessage(message: String?): Pair<String?, List<Emote>> {
-        if (message.isNullOrBlank()) {
-            return null to emptyList()
-        }
-        val builder = StringBuilder(message.length)
-        val emotes = mutableListOf<Emote>()
-        var consumedIndex = 0
-        pinnedInlineEmoteRegex.findAll(message).forEach { match ->
-            appendPinnedGiftSegment(builder, message.substring(consumedIndex, match.range.first))
-            val emoteId = match.groupValues.getOrNull(1)?.trim()
-            val emoteName = match.groupValues.getOrNull(2)?.trim()
-            if (!emoteId.isNullOrBlank() && !emoteName.isNullOrBlank()) {
-                if (builder.isNotEmpty() && builder.last().isPinnedGiftWordChar() && emoteName.firstOrNull()?.isPinnedGiftWordChar() == true) {
-                    builder.append(' ')
-                }
-                builder.append(emoteName)
-                emotes.add(
-                    Emote(
-                        name = emoteName,
-                        url1x = "https://files.kick.com/emotes/$emoteId/fullsize",
-                        url2x = "https://files.kick.com/emotes/$emoteId/fullsize",
-                        url3x = "https://files.kick.com/emotes/$emoteId/fullsize",
-                        url4x = "https://files.kick.com/emotes/$emoteId/fullsize",
-                        format = "gif",
-                        isAnimated = true,
-                        source = Emote.GLOBAL_STV,
-                    )
-                )
-            }
-            consumedIndex = match.range.last + 1
-        }
-        appendPinnedGiftSegment(builder, message.substring(consumedIndex))
-        return builder.toString().trim().takeIf { it.isNotBlank() } to emotes
-    }
-
-    private fun appendPinnedGiftSegment(builder: StringBuilder, segment: String) {
-        if (segment.isBlank()) return
-        if (builder.isNotEmpty() && builder.last().isPinnedGiftWordChar() && segment.first().isPinnedGiftWordChar()) {
-            builder.append(' ')
-        }
-        builder.append(segment)
-    }
-
-    private fun Char.isPinnedGiftWordChar(): Boolean {
-        return isLetterOrDigit() || this == '_' || this == '-'
-    }
-
-    private fun buildPinnedMetadataText(pinnedGift: PinnedGift): SpannableStringBuilder {
-        val builder = SpannableStringBuilder()
-        val baseTextColor = binding.pinnedGiftText.currentTextColor
-        val senderColor = resolvePinnedNameColor(pinnedGift.userColor, baseTextColor)
-        val senderName = formatDisplayName(pinnedGift.userLogin, pinnedGift.userName)
-        val pinnedByColor = resolvePinnedNameColor(pinnedGift.pinnedByUserColor, baseTextColor)
-        val pinnedBy = formatDisplayName(pinnedGift.pinnedByUserLogin, pinnedGift.pinnedByUserName)
-        if (senderName.isNotBlank()) {
-            builder.append(
-                buildPinnedNameSpan(
-                    label = getString(R.string.pinned_gift_title_prefix),
-                    displayName = senderName,
-                    color = senderColor,
-                    userId = pinnedGift.userId,
-                    userLogin = pinnedGift.userLogin,
-                    userName = pinnedGift.userName,
-                    userColor = pinnedGift.userColor,
-                )
-            )
-        }
-        if (pinnedBy.isNotBlank()) {
-            if (builder.isNotEmpty()) builder.append(" • ")
-            builder.append(
-                buildPinnedNameSpan(
-                    label = getString(R.string.pinned_gift_pinned_by_prefix),
-                    displayName = pinnedBy,
-                    color = pinnedByColor,
-                    userId = pinnedGift.pinnedByUserId,
-                    userLogin = pinnedGift.pinnedByUserLogin,
-                    userName = pinnedGift.pinnedByUserName,
-                    userColor = pinnedGift.pinnedByUserColor,
-                )
-            )
-            pinnedGift.pinnedSeconds?.takeIf { it > 0 }?.let {
-                builder.append(" ")
-                builder.append(getString(R.string.pinned_gift_pinned_by_suffix_with_seconds, it).trimStart())
-            }
-        }
-        if (builder.isEmpty()) {
-            builder.append(getString(R.string.pinned_gift_unknown_user))
-        }
-        return builder
-    }
-
-    private fun resetPinnedGiftUiState() {
-        pinnedGiftUiState = PinnedGiftUiState()
-        cachedPinnedGiftMessageKey = null
-        cachedPinnedGiftMessageResult = null
-    }
-
-    private fun buildPinnedGiftContentKey(pinnedGift: PinnedGift): String {
-        return listOf(
-            pinnedGift.id,
-            pinnedGift.message,
-            pinnedGift.giftValue?.toString(),
-            pinnedGift.userId,
-            pinnedGift.userLogin
-        ).joinToString("|")
-    }
-
-    private fun getPinnedGiftMessageResult(pinnedGift: PinnedGift): ChatAdapterUtils.MessageResult {
-        val key = listOf(
-            buildPinnedGiftContentKey(pinnedGift),
-            viewModel.thirdPartyEmotes.size,
-            viewModel.personalEmoteSets.size,
-            viewModel.stvUsers.size,
-            requireArguments().getString(KEY_CHAT_URL),
-        ).joinToString("|")
-        if (cachedPinnedGiftMessageKey == key) {
-            cachedPinnedGiftMessageResult?.let { return it.copyForBind() }
-        }
-        val result = buildPinnedMessageResult(pinnedGift)
-        cachedPinnedGiftMessageKey = key
-        cachedPinnedGiftMessageResult = result
-        return result.copyForBind()
-    }
-
-    private fun syncPinnedGiftUiState(pinnedGift: PinnedGift) {
-        val contentKey = buildPinnedGiftContentKey(pinnedGift)
-        if (pinnedGiftUiState.contentKey != contentKey) {
-            pinnedGiftUiState = PinnedGiftUiState(contentKey = contentKey)
-        }
-    }
-
-    private fun applyPinnedGiftExpandability(isExpandable: Boolean, expanded: Boolean) {
-        if (pinnedGiftUiState.titleExpandable != isExpandable) {
-            pinnedGiftUiState = pinnedGiftUiState.copy(titleExpandable = isExpandable)
-        }
-        updatePinnedGiftExpandUi(showExpand = isExpandable, expanded = expanded)
-    }
-
-    private fun renderPinnedGift() {
-        val binding = _binding ?: return
-        val pinnedGift = viewModel.pinnedGift.value
-        val dismissed = viewModel.pinnedGiftDismissed.value
-        binding.pinnedGiftRestore.isVisible = pinnedGift != null && dismissed
-        updateHeaderBadgeLayout()
-        if (pinnedGift == null) {
-            resetPinnedGiftUiState()
-            binding.pinnedGiftLayout.isGone = true
-            return
-        }
-        if (dismissed) {
-            binding.pinnedGiftLayout.isGone = true
-            return
-        }
-        syncPinnedGiftUiState(pinnedGift)
-        val expanded = viewModel.pinnedGiftExpanded.value
-        val pinnedGiftMessageResult = getPinnedGiftMessageResult(pinnedGift)
-        binding.pinnedGiftLayout.isVisible = true
-        binding.pinnedGiftTitle.text = pinnedGiftMessageResult.builder
-        binding.pinnedGiftText.text = buildPinnedMetadataText(pinnedGift)
-        binding.pinnedGiftTitle.maxLines = if (expanded) Int.MAX_VALUE else PINNED_GIFT_COLLAPSED_MAX_LINES
-        binding.pinnedGiftTitle.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
-        updatePinnedGiftExpandUi(showExpand = pinnedGiftUiState.titleExpandable, expanded = expanded)
-        if (!expanded) {
-            binding.pinnedGiftTitle.doOnNextLayout {
-                val titleIsTruncated = isPinnedGiftTitleTruncated(binding.pinnedGiftTitle)
-                applyPinnedGiftExpandability(isExpandable = titleIsTruncated, expanded = false)
-            }
-        }
-        if (pinnedGiftMessageResult.images.isNotEmpty() || pinnedGiftMessageResult.imagePaint != null) {
-            ChatAdapterUtils.loadImages(
-                this,
-                binding.pinnedGiftTitle,
-                { updatedBuilder ->
-                    binding.pinnedGiftTitle.text = updatedBuilder
-                    if (!expanded) {
-                        binding.pinnedGiftTitle.doOnNextLayout {
-                            val titleIsTruncated = isPinnedGiftTitleTruncated(binding.pinnedGiftTitle)
-                            applyPinnedGiftExpandability(isExpandable = titleIsTruncated, expanded = false)
-                        }
-                    }
-                },
-                pinnedGiftMessageResult.images,
-                pinnedGiftMessageResult.imagePaint,
-                pinnedGiftMessageResult.userName,
-                pinnedGiftMessageResult.userNameStartIndex,
-                binding.pinnedGiftTitle.currentTextColor,
-                requireContext().prefs().getString(AppConstants.CHAT_IMAGE_LIBRARY, "0"),
-                pinnedGiftMessageResult.builder,
-                TypedValue.applyDimension(
-                    TypedValue.COMPLEX_UNIT_DIP,
-                    (requireContext().prefs().getString(AppConstants.CHAT_EMOTE_SIZE, "29.5")?.toFloatOrNull() ?: 29.5f) * (requireContext().prefs().getInt(AppConstants.CHAT_SIZE_MODIFIER, 100).toFloat() / 100f),
-                    resources.displayMetrics,
-                ).toInt(),
-                TypedValue.applyDimension(
-                    TypedValue.COMPLEX_UNIT_DIP,
-                    (requireContext().prefs().getString(AppConstants.CHAT_BADGE_SIZE, "18.5")?.toFloatOrNull() ?: 18.5f) * (requireContext().prefs().getInt(AppConstants.CHAT_SIZE_MODIFIER, 100).toFloat() / 100f),
-                    resources.displayMetrics,
-                ).toInt(),
-                requireContext().prefs().getString(AppConstants.CHAT_IMAGE_QUALITY, "4") ?: "4",
-                requireContext().prefs().getBoolean(AppConstants.ANIMATED_EMOTES, true),
-                requireContext().prefs().getBoolean(AppConstants.CHAT_ZEROWIDTH, true),
-            )
-        }
-        binding.pinnedGiftLayout.isClickable = true
-        binding.pinnedGiftLayout.isFocusable = true
-        binding.pinnedGiftLayout.setOnClickListener { }
-        binding.pinnedGiftTitle.setOnClickListener { }
-        binding.pinnedGiftText.setOnClickListener { }
-        binding.pinnedGiftTitle.movementMethod = LinkMovementMethod.getInstance()
-        binding.pinnedGiftText.movementMethod = LinkMovementMethod.getInstance()
-        binding.pinnedGiftText.linksClickable = true
-        val avatarUrl = pinnedGift.avatarUrl
-        if (!avatarUrl.isNullOrBlank()) {
-            binding.pinnedGiftAvatar.isVisible = true
-            requireContext().imageLoader.enqueue(
-                ImageRequest.Builder(requireContext())
-                    .data(avatarUrl)
-                    .crossfade(true)
-                    .transformations(CircleCropTransformation())
-                    .target(binding.pinnedGiftAvatar)
-                    .build()
-            )
-        } else {
-            binding.pinnedGiftAvatar.isGone = true
-        }
-    }
-
-    private fun isPinnedGiftTitleTruncated(textView: TextView): Boolean {
-        val layout = textView.layout ?: return false
-        val maxVisibleLines = textView.maxLines.takeIf { it > 0 } ?: return false
-        val visibleLineCount = minOf(layout.lineCount, maxVisibleLines)
-        if (visibleLineCount <= 0) {
-            return false
-        }
-        if ((0 until visibleLineCount).any { lineIndex -> layout.getEllipsisCount(lineIndex) > 0 }) {
-            return true
-        }
-        if (layout.lineCount > maxVisibleLines) {
-            return true
-        }
-        val lastVisibleLine = visibleLineCount - 1
-        val visibleTextEnd = layout.getLineVisibleEnd(lastVisibleLine)
-        return visibleTextEnd < textView.text.length
-    }
-
-    private fun updatePinnedGiftExpandUi(showExpand: Boolean, expanded: Boolean) {
-        val binding = _binding ?: return
-        binding.pinnedGiftExpand.isInvisible = !showExpand
-        binding.pinnedGiftExpand.isEnabled = showExpand
-        binding.pinnedGiftExpand.rotation = if (expanded) 180f else 0f
-        binding.pinnedGiftExpand.contentDescription = getString(
-            if (expanded) R.string.pinned_message_collapse else R.string.pinned_message_expand
-        )
-    }
-
-    private fun currentKickScopes(): String? {
-        return requireContext().prefs().getString(AppConstants.KICK_SCOPES, null)
-    }
-
     private fun currentChannelLogin(): String? {
         return requireArguments().getString(KEY_CHANNEL_LOGIN)
-    }
-
-    private fun isKickRewardsOwnerChannel(): Boolean {
-        val accountLogin = requireContext().tokenPrefs().getString(AppConstants.KICK_USER_LOGIN, null)
-        return !accountLogin.isNullOrBlank() &&
-            !currentChannelLogin().isNullOrBlank() &&
-            accountLogin.equals(currentChannelLogin(), ignoreCase = true)
-    }
-
-    private fun hasKickScopes(vararg scopes: String): Boolean {
-        return KickOAuthConfig.hasScopes(currentKickScopes(), scopes.toSet())
-    }
-
-    private fun hasAnyKickScope(vararg scopes: String): Boolean {
-        val configured = currentKickScopes()
-        return scopes.any { scope -> KickOAuthConfig.hasScopes(configured, setOf(scope)) }
-    }
-
-    private fun requireKickRewardScopes(vararg scopes: String): Boolean {
-        if (!AuthStateHelper.isKickLoggedIn(requireContext())) {
-            requireContext().getAlertDialogBuilder()
-                .setMessage(getString(R.string.log_in))
-                .setPositiveButton(getString(R.string.close), null)
-                .show()
-            return false
-        }
-        if (!hasKickScopes(*scopes)) {
-            Toast.makeText(
-                requireContext(),
-                getString(
-                    if (scopes.size > 1) R.string.kick_scope_required_multiple else R.string.kick_scope_required,
-                    scopes.joinToString(" ")
-                ),
-                Toast.LENGTH_LONG
-            ).show()
-            return false
-        }
-        return true
     }
 
     private fun refreshKickRewardState() {
@@ -971,10 +551,10 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
         binding.channelPointsInputButton.setOnLongClickListener {
             if (currentChatSource().equals(AppConstants.KICK, true) &&
-                isKickRewardsOwnerChannel() &&
-                hasAnyKickScope("channel:rewards:read", "channel:rewards:write")
+                rewardsUiHelper.isKickRewardsOwnerChannel() &&
+                rewardsUiHelper.hasAnyKickScope("channel:rewards:read", "channel:rewards:write")
             ) {
-                showKickChannelPointActionsDialog()
+                rewardsUiHelper.showKickChannelPointActionsDialog()
                 true
             } else {
                 false
@@ -1092,24 +672,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 setPadding(2.dp(), 6.dp(), 2.dp(), 0)
             })
         }
-    }
-
-    private fun showKickChannelPointActionsDialog() {
-        requireContext().getAlertDialogBuilder()
-            .setTitle(getString(R.string.channel_points_rewards_title))
-            .setItems(
-                arrayOf(
-                    getString(R.string.kick_manage_rewards),
-                    getString(R.string.kick_manage_redemptions),
-                )
-            ) { _, which ->
-                when (which) {
-                    0 -> openKickRewardsManager()
-                    1 -> openKickRedemptionsManager()
-                }
-            }
-            .setNegativeButton(getString(R.string.close), null)
-            .show()
     }
 
     private fun getChannelPointsDialogPrediction(): Prediction? {
@@ -1508,15 +1070,15 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             })
         }
         if (currentChatSource().equals(AppConstants.KICK, true) &&
-            isKickRewardsOwnerChannel() &&
-            hasAnyKickScope("channel:rewards:read", "channel:rewards:write")
+            rewardsUiHelper.isKickRewardsOwnerChannel() &&
+            rewardsUiHelper.hasAnyKickScope("channel:rewards:read", "channel:rewards:write")
         ) {
             builder
                 .setPositiveButton(getString(R.string.kick_manage_rewards)) { _, _ ->
-                    openKickRewardsManager()
+                    rewardsUiHelper.openRewardsManager()
                 }
                 .setNeutralButton(getString(R.string.kick_manage_redemptions)) { _, _ ->
-                    openKickRedemptionsManager()
+                    rewardsUiHelper.openRedemptionsManager()
                 }
         }
         val dialog = builder.show()
@@ -1612,245 +1174,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             }.onSuccess {
                 Toast.makeText(requireContext(), getString(R.string.kick_reward_redeemed, rewardTitle), Toast.LENGTH_SHORT).show()
                 refreshKickRewardState()
-            }.onFailure(::showKickApiError)
-        }
-    }
-
-    private fun buildKickPollChoicesText(poll: Poll, clickable: Boolean): CharSequence {
-        val channelLogin = currentChannelLogin()
-        val primaryColor = MaterialColors.getColor(requireContext(), androidx.appcompat.R.attr.colorPrimary, Color.BLUE)
-        val neutralBackground = ColorUtils.setAlphaComponent(primaryColor, 28)
-        val selectedBackground = ColorUtils.setAlphaComponent(primaryColor, 72)
-        val selectedTextColor = Color.WHITE
-        val maxVotes = poll.choices.orEmpty().maxOfOrNull { it.totalVotes ?: 0 } ?: 0
-        val winnerCount = poll.choices.orEmpty().count { (it.totalVotes ?: 0) == maxVotes && maxVotes > 0 }
-        val builder = SpannableStringBuilder()
-        poll.choices.orEmpty().forEachIndexed { index, choice ->
-            if (index > 0) {
-                builder.append('\n')
-            }
-            val isSelected = poll.votedChoiceId != null && choice.id == poll.votedChoiceId
-            val isUniqueWinner = poll.status != "ACTIVE" && winnerCount == 1 && maxVotes > 0 && (choice.totalVotes ?: 0) == maxVotes
-            val line = getString(
-                if (isUniqueWinner) R.string.poll_choice_winner else R.string.poll_choice,
-                (((choice.totalVotes ?: 0).toLong() * 100.0) / max((poll.totalVotes ?: 0), 1)).roundToInt(),
-                choice.totalVotes?.let { NumberFormat.getInstance().format(it) },
-                choice.title
-            )
-            val start = builder.length
-            builder.append(line)
-            val end = builder.length
-            when {
-                poll.status == "ACTIVE" && poll.hasVoted == true && isSelected -> {
-                    builder.setSpan(BackgroundColorSpan(selectedBackground), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    builder.setSpan(ForegroundColorSpan(selectedTextColor), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                poll.status == "ACTIVE" && poll.hasVoted != true && choice.id != null -> {
-                    builder.setSpan(BackgroundColorSpan(neutralBackground), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                isUniqueWinner -> {
-                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-            }
-            if (clickable &&
-                channelLogin != null &&
-                poll.status == "ACTIVE" &&
-                poll.hasVoted != true &&
-                choice.id != null
-            ) {
-                builder.setSpan(
-                    object : ClickableSpan() {
-                        override fun onClick(widget: View) {
-                            submitKickPollVote(channelLogin, choice.id)
-                        }
-
-                        override fun updateDrawState(ds: TextPaint) {
-                            ds.isUnderlineText = false
-                            ds.color = ds.linkColor
-                        }
-                    },
-                    start,
-                    end,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
-            }
-        }
-        return builder
-    }
-
-    private fun submitKickPollVote(channelLogin: String, choiceId: Int) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            runCatching {
-                kickRepository.voteKickWebPoll(channelLogin, choiceId)
-            }.onSuccess { updatedPoll ->
-                updatedPoll?.let(viewModel::applyLocalPollUpdate)
-                Toast.makeText(requireContext(), getString(R.string.kick_poll_vote_submitted), Toast.LENGTH_SHORT).show()
-            }.onFailure(::showKickApiError)
-        }
-    }
-
-    private fun buildKickPredictionOutcomesText(prediction: Prediction, clickable: Boolean): CharSequence {
-        val channelLogin = currentChannelLogin()
-        val primaryColor = MaterialColors.getColor(requireContext(), androidx.appcompat.R.attr.colorPrimary, Color.BLUE)
-        val neutralBackground = ColorUtils.setAlphaComponent(primaryColor, 28)
-        val selectedBackground = ColorUtils.setAlphaComponent(primaryColor, 72)
-        val selectedTextColor = Color.WHITE
-        val totalPoints = prediction.outcomes?.sumOf { it.totalPoints?.toLong() ?: 0 } ?: 0
-        val selectedOutcomeId = prediction.userVote?.outcomeId
-        val resolved = prediction.status == "RESOLVED" || prediction.status == "RESOLVE_PENDING"
-        val builder = SpannableStringBuilder()
-        prediction.outcomes.orEmpty().forEachIndexed { index, outcome ->
-            if (index > 0) {
-                builder.append('\n')
-            }
-            val isSelected = selectedOutcomeId != null && outcome.id == selectedOutcomeId
-            val isWinner = resolved && prediction.winningOutcomeId != null && prediction.winningOutcomeId == outcome.id
-            val line = getString(
-                if (isWinner) R.string.prediction_outcome_compact_winner else R.string.prediction_outcome_compact,
-                (((outcome.totalPoints ?: 0).toLong() * 100.0) / max(totalPoints, 1)).roundToInt(),
-                outcome.title
-            )
-            val start = builder.length
-            builder.append(line)
-            val end = builder.length
-            when {
-                isSelected -> {
-                    builder.setSpan(BackgroundColorSpan(selectedBackground), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    builder.setSpan(ForegroundColorSpan(selectedTextColor), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                prediction.status == "ACTIVE" && selectedOutcomeId == null && outcome.id != null -> {
-                    builder.setSpan(BackgroundColorSpan(neutralBackground), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                isWinner -> {
-                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-            }
-            if (clickable &&
-                channelLogin != null &&
-                prediction.status == "ACTIVE" &&
-                outcome.id != null &&
-                (selectedOutcomeId == null || selectedOutcomeId == outcome.id)
-            ) {
-                builder.setSpan(
-                    object : ClickableSpan() {
-                        override fun onClick(widget: View) {
-                            showKickPredictionVoteDialog(prediction, outcome)
-                        }
-
-                        override fun updateDrawState(ds: TextPaint) {
-                            ds.isUnderlineText = false
-                            ds.color = ds.linkColor
-                        }
-                    },
-                    start,
-                    end,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
-            }
-        }
-        return builder
-    }
-
-    private fun showKickPredictionVoteDialog(
-        prediction: Prediction,
-        outcome: Prediction.PredictionOutcome,
-    ) {
-        val context = requireContext()
-        val channelLogin = currentChannelLogin() ?: return
-        val outcomeId = outcome.id ?: return
-        val selectedOutcomeId = prediction.userVote?.outcomeId
-        if (selectedOutcomeId != null && selectedOutcomeId != outcomeId) {
-            Toast.makeText(context, getString(R.string.kick_prediction_vote_only_selected), Toast.LENGTH_SHORT).show()
-            return
-        }
-        var currentBalance = viewModel.channelPointsBalance.value
-        val currentStake = prediction.userVote?.takeIf { it.outcomeId == outcomeId }?.totalVoteAmount
-        val minAmount = 10
-        val content = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        val balanceText = TextView(context).apply {
-            text = buildString {
-                append(getString(R.string.channel_points_balance, currentBalance?.let { NumberFormat.getInstance().format(it) } ?: getString(R.string.channel_points_loading)))
-                append('\n')
-                append(getString(R.string.kick_prediction_vote_minimum, NumberFormat.getInstance().format(minAmount)))
-                if (currentStake != null) {
-                    append('\n')
-                    append(getString(R.string.kick_prediction_vote_current_stake, NumberFormat.getInstance().format(currentStake)))
-                }
-            }
-            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
-            setPadding(0, 0, 0, 12.dp())
-        }
-        content.addView(balanceText)
-        val input = EditText(context).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            hint = getString(R.string.kick_prediction_vote_amount_hint)
-        }
-        content.addView(input)
-        val dialog = context.getAlertDialogBuilder()
-            .setTitle(outcome.title)
-            .setView(content)
-            .setPositiveButton(getString(R.string.kick_prediction_vote_submit), null)
-            .setNegativeButton(getString(R.string.close), null)
-            .show()
-        val positiveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-        val updateButtonState = {
-            val amount = input.text?.toString()?.toIntOrNull()
-            val balance = currentBalance
-            positiveButton.isEnabled = balance != null && amount != null && amount >= minAmount && amount <= balance
-        }
-        val updateBalanceText = {
-            balanceText.text = buildString {
-                append(getString(R.string.channel_points_balance, currentBalance?.let { NumberFormat.getInstance().format(it) } ?: getString(R.string.channel_points_loading)))
-                append('\n')
-                append(getString(R.string.kick_prediction_vote_minimum, NumberFormat.getInstance().format(minAmount)))
-                if (currentStake != null) {
-                    append('\n')
-                    append(getString(R.string.kick_prediction_vote_current_stake, NumberFormat.getInstance().format(currentStake)))
-                }
-            }
-        }
-        positiveButton.isEnabled = false
-        input.addTextChangedListener(onTextChanged = { _, _, _, _ ->
-            updateButtonState()
-        })
-        updateButtonState()
-        var balanceJob: Job? = viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.channelPointsBalance.collectLatest { balance ->
-                currentBalance = balance
-                updateBalanceText()
-                updateButtonState()
-            }
-        }
-        dialog.setOnDismissListener {
-            balanceJob?.cancel()
-            balanceJob = null
-        }
-        if (currentBalance == null) {
-            refreshKickRewardState()
-        }
-        positiveButton.setOnClickListener {
-            val amount = input.text?.toString()?.toIntOrNull() ?: return@setOnClickListener
-            submitKickPredictionVote(channelLogin, outcomeId, amount)
-            dialog.dismiss()
-        }
-    }
-
-    private fun submitKickPredictionVote(
-        channelLogin: String,
-        outcomeId: String,
-        amount: Int,
-    ) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            runCatching {
-                kickRepository.voteKickWebPrediction(channelLogin, outcomeId, amount)
-            }.onSuccess { updatedPrediction ->
-                updatedPrediction?.let(viewModel::applyLocalPredictionUpdate)
-                refreshKickRewardState()
-                Toast.makeText(requireContext(), getString(R.string.kick_prediction_vote_submitted), Toast.LENGTH_SHORT).show()
             }.onFailure(::showKickApiError)
         }
     }
@@ -1968,375 +1291,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     private fun showKickApiError(error: Throwable) {
         Toast.makeText(requireContext(), error.message ?: getString(R.string.connection_error), Toast.LENGTH_LONG).show()
-    }
-
-    private fun openKickRewardsManager() {
-        if (!isKickRewardsOwnerChannel() || !hasAnyKickScope("channel:rewards:read", "channel:rewards:write")) {
-            requireKickRewardScopes("channel:rewards:read")
-            return
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            runCatching {
-                kickRepository.getOfficialChannelRewards(currentNetworkLibrary())
-            }.onSuccess(::showKickRewardsManagerDialog)
-                .onFailure(::showKickApiError)
-        }
-    }
-
-    private fun showKickRewardsManagerDialog(rewards: List<KickOfficialReward>) {
-        val labels = rewards.map(::formatKickRewardLabel).toTypedArray()
-        val builder = requireContext().getAlertDialogBuilder()
-            .setTitle(getString(R.string.kick_manage_rewards))
-            .setNegativeButton(getString(R.string.close), null)
-            .setPositiveButton(getString(R.string.kick_reward_create)) { _, _ ->
-                showKickRewardEditor()
-            }
-            .setNeutralButton(getString(R.string.refresh)) { _, _ ->
-                refreshKickRewardState()
-                openKickRewardsManager()
-            }
-        if (labels.isNotEmpty()) {
-            builder.setItems(labels) { _, which ->
-                rewards.getOrNull(which)?.let(::showKickRewardActionsDialog)
-            }
-        } else {
-            builder.setMessage(getString(R.string.kick_reward_empty))
-        }
-        builder.show()
-    }
-
-    private fun formatKickRewardLabel(reward: KickOfficialReward): String {
-        val title = reward.title ?: reward.id ?: getString(R.string.kick_manage_rewards)
-        val cost = reward.cost?.toString() ?: "?"
-        val extras = buildList {
-            if (reward.isEnabled == false) add("disabled")
-            if (reward.isPaused == true) add("paused")
-        }
-        return if (extras.isEmpty()) {
-            "$title ($cost)"
-        } else {
-            "$title ($cost, ${extras.joinToString(", ")})"
-        }
-    }
-
-    private fun showKickRewardActionsDialog(reward: KickOfficialReward) {
-        requireContext().getAlertDialogBuilder()
-            .setTitle(reward.title ?: reward.id ?: getString(R.string.kick_manage_rewards))
-            .setMessage(
-                buildString {
-                    appendLine(getString(R.string.kick_reward_cost) + ": " + (reward.cost ?: "?"))
-                    reward.description?.takeIf { it.isNotBlank() }?.let {
-                        appendLine(getString(R.string.kick_reward_description) + ": $it")
-                    }
-                    reward.backgroundColor?.takeIf { it.isNotBlank() }?.let {
-                        appendLine(getString(R.string.kick_reward_background_color) + ": $it")
-                    }
-                    appendLine(getString(R.string.kick_reward_enabled) + ": " + (reward.isEnabled ?: false))
-                    appendLine(getString(R.string.kick_reward_paused) + ": " + (reward.isPaused ?: false))
-                    append(getString(R.string.kick_reward_requires_input) + ": " + (reward.isUserInputRequired ?: false))
-                }
-            )
-            .setPositiveButton(getString(R.string.kick_reward_edit)) { _, _ ->
-                showKickRewardEditor(reward)
-            }
-            .setNeutralButton(getString(R.string.kick_reward_delete)) { _, _ ->
-                confirmKickRewardDelete(reward)
-            }
-            .setNegativeButton(getString(R.string.close), null)
-            .show()
-    }
-
-    private data class RewardEditorView(
-        val view: View,
-        val title: EditText,
-        val description: EditText,
-        val cost: EditText,
-        val backgroundColor: EditText,
-        val enabled: androidx.appcompat.widget.SwitchCompat,
-        val paused: androidx.appcompat.widget.SwitchCompat?,
-        val requiresInput: androidx.appcompat.widget.SwitchCompat,
-        val skipQueue: androidx.appcompat.widget.SwitchCompat,
-    )
-
-    private fun showKickRewardEditor(existing: KickOfficialReward? = null) {
-        if (!requireKickRewardScopes("channel:rewards:write")) return
-        val editor = createRewardEditorView(existing)
-        requireContext().getAlertDialogBuilder()
-            .setTitle(if (existing == null) getString(R.string.kick_reward_create) else getString(R.string.kick_reward_edit))
-            .setView(editor.view)
-            .setPositiveButton(getString(R.string.save)) { _, _ ->
-                val title = editor.title.text.toString().trim()
-                val description = editor.description.text.toString().trim().takeIf { it.isNotBlank() }
-                val cost = editor.cost.text.toString().trim().toIntOrNull()
-                val backgroundColor = editor.backgroundColor.text.toString().trim().takeIf { it.isNotBlank() }
-                viewLifecycleOwner.lifecycleScope.launch {
-                    runCatching {
-                        if (existing == null) {
-                            kickRepository.createOfficialChannelReward(
-                                currentNetworkLibrary(),
-                                KickOfficialRewardCreateRequest(
-                                    title = title,
-                                    cost = cost ?: 0,
-                                    description = description,
-                                    backgroundColor = backgroundColor,
-                                    isEnabled = editor.enabled.isChecked,
-                                    isUserInputRequired = editor.requiresInput.isChecked,
-                                    shouldRedemptionsSkipRequestQueue = editor.skipQueue.isChecked,
-                                )
-                            )
-                        } else {
-                            kickRepository.updateOfficialChannelReward(
-                                currentNetworkLibrary(),
-                                rewardId = existing.id ?: error("Missing reward id"),
-                                input = KickOfficialRewardUpdateRequest(
-                                    title = title,
-                                    cost = cost,
-                                    description = description,
-                                    backgroundColor = backgroundColor,
-                                    isEnabled = editor.enabled.isChecked,
-                                    isPaused = editor.paused?.isChecked,
-                                    isUserInputRequired = editor.requiresInput.isChecked,
-                                    shouldRedemptionsSkipRequestQueue = editor.skipQueue.isChecked,
-                                )
-                            )
-                        }
-                    }.onSuccess {
-                        Toast.makeText(requireContext(), R.string.kick_rewards_saved, Toast.LENGTH_SHORT).show()
-                        refreshKickRewardState()
-                        openKickRewardsManager()
-                    }.onFailure(::showKickApiError)
-                }
-            }
-            .setNegativeButton(getString(R.string.close), null)
-            .show()
-    }
-
-    private fun createRewardEditorView(existing: KickOfficialReward?): RewardEditorView {
-        val context = requireContext()
-        val container = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(32, 16, 32, 16)
-        }
-        fun addField(hintRes: Int, value: String? = null, inputType: Int = InputType.TYPE_CLASS_TEXT): EditText {
-            return EditText(context).apply {
-                hint = getString(hintRes)
-                setText(value.orEmpty())
-                this.inputType = inputType
-                container.addView(this)
-            }
-        }
-        fun addSwitch(labelRes: Int, checked: Boolean): androidx.appcompat.widget.SwitchCompat {
-            return androidx.appcompat.widget.SwitchCompat(context).apply {
-                text = getString(labelRes)
-                isChecked = checked
-                container.addView(this)
-            }
-        }
-        val title = addField(R.string.kick_reward_title, existing?.title)
-        val description = addField(R.string.kick_reward_description, existing?.description)
-        val cost = addField(R.string.kick_reward_cost, existing?.cost?.toString(), InputType.TYPE_CLASS_NUMBER)
-        val backgroundColor = addField(R.string.kick_reward_background_color, existing?.backgroundColor)
-        val enabled = addSwitch(R.string.kick_reward_enabled, existing?.isEnabled != false)
-        val paused = existing?.let { addSwitch(R.string.kick_reward_paused, it.isPaused == true) }
-        val requiresInput = addSwitch(R.string.kick_reward_requires_input, existing?.isUserInputRequired == true)
-        val skipQueue = addSwitch(R.string.kick_reward_skip_queue, existing?.shouldRedemptionsSkipRequestQueue == true)
-        return RewardEditorView(
-            view = ScrollView(context).apply { addView(container) },
-            title = title,
-            description = description,
-            cost = cost,
-            backgroundColor = backgroundColor,
-            enabled = enabled,
-            paused = paused,
-            requiresInput = requiresInput,
-            skipQueue = skipQueue,
-        )
-    }
-
-    private fun confirmKickRewardDelete(reward: KickOfficialReward) {
-        if (!requireKickRewardScopes("channel:rewards:write")) return
-        val rewardId = reward.id ?: return
-        requireContext().getAlertDialogBuilder()
-            .setTitle(getString(R.string.kick_reward_delete))
-            .setMessage(reward.title ?: rewardId)
-            .setPositiveButton(getString(R.string.yes)) { _, _ ->
-                viewLifecycleOwner.lifecycleScope.launch {
-                    runCatching {
-                        kickRepository.deleteOfficialChannelReward(currentNetworkLibrary(), rewardId)
-                    }.onSuccess {
-                        Toast.makeText(requireContext(), R.string.kick_reward_deleted, Toast.LENGTH_SHORT).show()
-                        refreshKickRewardState()
-                        openKickRewardsManager()
-                    }.onFailure(::showKickApiError)
-                }
-            }
-            .setNegativeButton(getString(R.string.no), null)
-            .show()
-    }
-
-    private fun openKickRedemptionsManager(status: String? = "pending", rewardId: String? = null, cursor: String? = null) {
-        if (!isKickRewardsOwnerChannel() || !hasAnyKickScope("channel:rewards:read", "channel:rewards:write")) {
-            requireKickRewardScopes("channel:rewards:read")
-            return
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            runCatching {
-                kickRepository.getOfficialRewardRedemptions(
-                    networkLibrary = currentNetworkLibrary(),
-                    rewardId = rewardId,
-                    status = status,
-                    cursor = cursor,
-                )
-            }.onSuccess { page ->
-                showKickRedemptionsDialog(page, status, rewardId)
-            }.onFailure(::showKickApiError)
-        }
-    }
-
-    private fun showKickRedemptionsDialog(page: KickRewardRedemptionsPage, status: String?, rewardId: String?) {
-        val visible = page.groups.flatMap { group ->
-            group.redemptions.map { redemption -> (group.reward?.title ?: getString(R.string.kick_manage_redemptions)) to redemption }
-        }
-        val message = if (visible.isEmpty()) {
-            getString(R.string.kick_redemptions_empty)
-        } else {
-            visible.joinToString("\n\n") { (title, redemption) -> formatKickRedemptionLabel(title, redemption) }
-        }
-        requireContext().getAlertDialogBuilder()
-            .setTitle(getString(R.string.kick_manage_redemptions))
-            .setMessage(message)
-            .setPositiveButton(if (visible.isNotEmpty()) getString(R.string.kick_redemption_accept) else getString(R.string.close)) { _, _ ->
-                if (visible.isNotEmpty()) {
-                    showKickRedemptionSelectionDialog(visible, status, rewardId)
-                }
-            }
-            .setNeutralButton(getString(R.string.kick_redemption_filters)) { _, _ ->
-                showKickRedemptionFilterDialog(status, rewardId, page.nextCursor)
-            }
-            .setNegativeButton(getString(R.string.close), null)
-            .show()
-    }
-
-    private fun formatKickRedemptionLabel(rewardTitle: String, redemption: KickRewardRedemption): String {
-        return buildString {
-            append(rewardTitle)
-            append(" • ")
-            append(redemption.redeemer?.username ?: redemption.redeemer?.userId ?: redemption.id ?: "?")
-            append(" • ")
-            append(redemption.status ?: "?")
-            redemption.userInput?.takeIf { it.isNotBlank() }?.let {
-                append("\n")
-                append(it)
-            }
-        }
-    }
-
-    private fun showKickRedemptionSelectionDialog(
-        visible: List<Pair<String, KickRewardRedemption>>,
-        status: String?,
-        rewardId: String?,
-    ) {
-        if (!requireKickRewardScopes("channel:rewards:write")) return
-        val labels = visible.map { (title, redemption) -> formatKickRedemptionLabel(title, redemption) }.toTypedArray()
-        val checked = BooleanArray(labels.size)
-        requireContext().getAlertDialogBuilder()
-            .setTitle(getString(R.string.kick_manage_redemptions))
-            .setMultiChoiceItems(labels, checked) { _, which, isChecked ->
-                checked[which] = isChecked
-            }
-            .setPositiveButton(getString(R.string.kick_redemption_accept)) { _, _ ->
-                updateKickSelectedRedemptions(visible, checked, true, status, rewardId)
-            }
-            .setNeutralButton(getString(R.string.kick_redemption_reject)) { _, _ ->
-                updateKickSelectedRedemptions(visible, checked, false, status, rewardId)
-            }
-            .setNegativeButton(getString(R.string.close), null)
-            .show()
-    }
-
-    private fun updateKickSelectedRedemptions(
-        visible: List<Pair<String, KickRewardRedemption>>,
-        checked: BooleanArray,
-        accept: Boolean,
-        status: String?,
-        rewardId: String?,
-    ) {
-        val ids = checked.indices.mapNotNull { index ->
-            visible.getOrNull(index)?.second?.id?.takeIf { checked[index] }
-        }
-        if (ids.isEmpty()) {
-            Toast.makeText(requireContext(), R.string.kick_no_selection, Toast.LENGTH_SHORT).show()
-            return
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            runCatching {
-                if (accept) {
-                    kickRepository.acceptOfficialRewardRedemptions(currentNetworkLibrary(), ids)
-                } else {
-                    kickRepository.rejectOfficialRewardRedemptions(currentNetworkLibrary(), ids)
-                }
-            }.onSuccess { failures ->
-                if (failures.isNotEmpty()) {
-                    Toast.makeText(
-                        requireContext(),
-                        failures.joinToString("\n") { "${it.id ?: "?"}: ${it.reason ?: "UNKNOWN"}" },
-                        Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    Toast.makeText(requireContext(), R.string.kick_redemptions_updated, Toast.LENGTH_SHORT).show()
-                }
-                refreshKickRewardState()
-                openKickRedemptionsManager(status = status, rewardId = rewardId)
-            }.onFailure(::showKickApiError)
-        }
-    }
-
-    private fun showKickRedemptionFilterDialog(currentStatus: String?, rewardId: String?, nextCursor: String?) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            val rewards = runCatching {
-                kickRepository.getOfficialChannelRewards(currentNetworkLibrary())
-            }.getOrDefault(emptyList())
-            val options = buildList {
-                nextCursor?.let { add(getString(R.string.kick_load_more)) }
-                add(getString(R.string.kick_all_rewards))
-                addAll(rewards.map { it.title ?: it.id ?: getString(R.string.kick_manage_rewards) })
-            }
-            requireContext().getAlertDialogBuilder()
-                .setTitle(getString(R.string.kick_select_reward))
-                .setItems(options.toTypedArray()) { _, which ->
-                    if (nextCursor != null && which == 0) {
-                        openKickRedemptionsManager(status = currentStatus, rewardId = rewardId, cursor = nextCursor)
-                        return@setItems
-                    }
-                    val baseIndex = if (nextCursor != null) 1 else 0
-                    val selectedRewardId = if (which == baseIndex) null else rewards.getOrNull(which - baseIndex - 1)?.id
-                    showKickRedemptionStatusDialog(selectedRewardId)
-                }
-                .setNegativeButton(getString(R.string.close), null)
-                .show()
-        }
-    }
-
-    private fun showKickRedemptionStatusDialog(selectedRewardId: String?) {
-        val options = arrayOf(
-            getString(R.string.kick_redemption_status_all),
-            getString(R.string.kick_redemption_status_pending),
-            getString(R.string.kick_redemption_status_accepted),
-            getString(R.string.kick_redemption_status_rejected),
-        )
-        requireContext().getAlertDialogBuilder()
-            .setTitle(getString(R.string.kick_redemption_filters))
-            .setItems(options) { _, which ->
-                val selectedStatus = when (which) {
-                    1 -> "pending"
-                    2 -> "accepted"
-                    3 -> "rejected"
-                    else -> null
-                }
-                openKickRedemptionsManager(status = selectedStatus, rewardId = selectedRewardId)
-            }
-            .setNegativeButton(getString(R.string.close), null)
-            .show()
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -2487,7 +1441,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         })
                     }
                     renderBufferedMessages()
-                    renderPinnedGift()
+                    pinnedGiftUiHelper.renderPinnedGift()
                     renderChannelPointsButton()
                     giftTrainAdapter = GiftTrainCardsAdapter()
                     binding.giftTrainCards.apply {
@@ -2738,21 +1692,21 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.pinnedGift.collectLatest {
-                                renderPinnedGift()
+                                pinnedGiftUiHelper.renderPinnedGift()
                             }
                         }
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.pinnedGiftDismissed.collectLatest {
-                                renderPinnedGift()
+                                pinnedGiftUiHelper.renderPinnedGift()
                             }
                         }
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.pinnedGiftExpanded.collectLatest {
-                                renderPinnedGift()
+                                pinnedGiftUiHelper.renderPinnedGift()
                             }
                         }
                     }
@@ -2856,14 +1810,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                                 "ACTIVE" -> {
                                                     pollLayout.visibility = View.VISIBLE
                                                     pollTitle.text = getString(R.string.poll_title, poll.title)
-                                                    pollChoices.text = buildKickPollChoicesText(poll, clickable = true)
+                                                    pollChoices.text = pollPredictionUiHelper.buildKickPollChoicesText(poll, clickable = true)
                                                 pollChoices.movementMethod = LinkMovementMethod.getInstance()
                                                 pollStatus.visibility = View.VISIBLE
                                                 }
                                                 "COMPLETED", "TERMINATED" -> {
                                                     pollLayout.visibility = View.VISIBLE
                                                     pollTitle.text = getString(R.string.poll_title, poll.title)
-                                                    pollChoices.text = buildKickPollChoicesText(poll, clickable = false)
+                                                    pollChoices.text = pollPredictionUiHelper.buildKickPollChoicesText(poll, clickable = false)
                                                 pollChoices.movementMethod = null
                                                 pollStatus.visibility = View.GONE
                                                 viewModel.pollSecondsLeft.value = null
@@ -2929,14 +1883,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                             "ACTIVE" -> {
                                                 predictionLayout.visibility = View.VISIBLE
                                                 predictionTitle.text = getString(R.string.prediction_title, prediction.title)
-                                                predictionOutcomes.text = buildKickPredictionOutcomesText(prediction, clickable = true)
+                                                predictionOutcomes.text = pollPredictionUiHelper.buildKickPredictionOutcomesText(prediction, clickable = true)
                                                 predictionOutcomes.movementMethod = LinkMovementMethod.getInstance()
                                                 predictionStatus.visibility = View.VISIBLE
                                             }
                                             "LOCKED" -> {
                                                 predictionLayout.visibility = View.VISIBLE
                                                 predictionTitle.text = getString(R.string.prediction_title, prediction.title)
-                                                predictionOutcomes.text = buildKickPredictionOutcomesText(prediction, clickable = false)
+                                                predictionOutcomes.text = pollPredictionUiHelper.buildKickPredictionOutcomesText(prediction, clickable = false)
                                                 predictionOutcomes.movementMethod = null
                                                 viewModel.predictionSecondsLeft.value = null
                                                 viewModel.predictionTimer?.cancel()
@@ -2947,7 +1901,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                             "CANCELED", "CANCEL_PENDING", "RESOLVED", "RESOLVE_PENDING" -> {
                                                 predictionLayout.visibility = View.VISIBLE
                                                 predictionTitle.text = getString(R.string.prediction_title, prediction.title)
-                                                predictionOutcomes.text = buildKickPredictionOutcomesText(prediction, clickable = false)
+                                                predictionOutcomes.text = pollPredictionUiHelper.buildKickPredictionOutcomesText(prediction, clickable = false)
                                                 predictionOutcomes.movementMethod = null
                                                 viewModel.predictionSecondsLeft.value = null
                                                 viewModel.predictionTimer?.cancel()
@@ -3734,9 +2688,10 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         emoteSectionAdapter = null
         _binding?.recyclerView?.adapter = null
         adapter = null
+        ChatAdapterUtils.clearMasterEmotes()
         _binding?.autoCompleteRecyclerView?.adapter = null
         autoCompleteAdapter = null
-        resetPinnedGiftUiState()
+        pinnedGiftUiHelper.resetPinnedGiftUiState()
         _binding = null
     }
 
@@ -3831,7 +2786,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     companion object {
         private const val FEATURE_LOG_TAG = "KickChatUi"
-        private const val PINNED_GIFT_COLLAPSED_MAX_LINES = 3
         private const val HEADER_BADGE_FLASH_DURATION_MS = 6500L
         private const val HEADER_BADGE_HORIZONTAL_MARGIN_DP = 8
         private const val HEADER_BADGE_MIN_WIDTH_DP = 96
@@ -3850,7 +2804,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         private const val KEY_KICK_REPLAY_URL = "kickReplayUrl"
         private const val KEY_IS_CLIP_REPLAY = "isClipReplay"
         private const val KEY_SOURCE = "source"
-        private val pinnedInlineEmoteRegex = Regex("\\[emote:(\\d+):([^\\]]+)]")
         private val LIVE_CHAT_RENDER_SETTING_KEYS = setOf(
             AppConstants.CHAT_TIMESTAMPS,
             AppConstants.CHAT_TIMESTAMP_FORMAT,

@@ -17,7 +17,6 @@ import com.xtrakick.app.model.chat.ChatEmote
 import com.xtrakick.app.model.misc.StvChannelResponse
 import com.xtrakick.app.model.misc.StvGlobalResponse
 import com.xtrakick.app.model.misc.StvResponse
-import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.NetworkUtils
 import com.xtrakick.app.util.NetworkUtils.useCancellable
@@ -51,7 +50,6 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.io.OutputStream
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap

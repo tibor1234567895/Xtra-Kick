@@ -1,6 +1,5 @@
 package com.xtrakick.app.ui.chat
 
-import com.xtrakick.app.model.chat.Badge
 import com.xtrakick.app.model.chat.ChatMessage
 import com.xtrakick.app.model.chat.VideoChatMessage
 import com.xtrakick.app.util.chat.ChatReplayPacing

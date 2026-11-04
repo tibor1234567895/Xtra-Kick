@@ -15,7 +15,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.IOException
 import javax.net.ssl.X509TrustManager
 import kotlin.coroutines.cancellation.CancellationException
 

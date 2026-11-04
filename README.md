@@ -4,6 +4,12 @@ An unofficial Android app for browsing and watching Kick streams. Forked from Xt
 
 This is a small personal project maintained by one developer in occasional spare time, primarily for personal use. It is alpha software: it may be unstable, break at any time, or stop working entirely if Kick changes their service. You are welcome to use it, but please keep in mind there are no plans for scheduled updates or new features. Use it at your own risk. The maintainer is not responsible for damage, data loss, account issues, or any other problems caused by using this app.
 
+## Compatibility
+
+- Android 8.0 or newer is required.
+- Release APKs include both 64-bit ARM (`arm64-v8a`) and 32-bit ARM (`armeabi-v7a`) libraries in one download.
+- Debug builds default to ARM64. For architecture testing, override with `-PTARGET_ABI=armeabi-v7a` or `-PTARGET_ABI=arm64-v8a,armeabi-v7a`.
+
 ## What it can do
 
 ### Playback

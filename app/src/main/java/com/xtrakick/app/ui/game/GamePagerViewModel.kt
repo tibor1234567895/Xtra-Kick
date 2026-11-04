@@ -1,8 +1,5 @@
 package com.xtrakick.app.ui.game
 
-import android.net.http.HttpEngine
-import android.os.Build
-import android.os.ext.SdkExtensions
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -11,36 +8,19 @@ import com.xtrakick.app.model.ui.LocalFollowGame
 import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowGameRepository
-import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.KickApiHelper
-import com.xtrakick.app.util.getByteArrayCronetCallback
-import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.chromium.net.CronetEngine
-import org.chromium.net.apihelpers.RedirectHandlers
-import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.io.File
-import java.io.FileOutputStream
-import java.util.concurrent.ExecutorService
 import javax.inject.Inject
-import kotlin.coroutines.suspendCoroutine
 
 @HiltViewModel
 class GamePagerViewModel @Inject constructor(
     private val kickRepository: KickRepository,
     private val kickPublicApiRepository: KickPublicApiRepository,
     private val localFollowsGame: LocalFollowGameRepository,
-    private val httpEngine: Lazy<HttpEngine>?,
-    private val cronetEngine: Lazy<CronetEngine>?,
-    private val cronetExecutor: ExecutorService,
-    private val okHttpClient: OkHttpClient,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
     private val args = GamePagerFragmentArgs.fromSavedStateHandle(savedStateHandle)
@@ -84,6 +64,7 @@ class GamePagerViewModel @Inject constructor(
                         broadcastersCount = fetchedGame.broadcastersCount,
                         tags = fetchedGame.tags,
                     )
+                    syncFollowedGame(fetchedGame, slug)
                     return@launch
                 }
             }
@@ -109,11 +90,38 @@ class GamePagerViewModel @Inject constructor(
         }
     }
 
+    private suspend fun syncFollowedGame(game: Game, slug: String) {
+        val targetId = game.gameId ?: args.gameId
+        val existingFollow = localFollowsGame.getFollowByIdOrSlug(targetId, slug) ?: return
+        var followChanged = false
+        val freshBoxArt = game.boxArtUrl
+        if (!freshBoxArt.isNullOrBlank() && existingFollow.boxArt != freshBoxArt) {
+            existingFollow.boxArt?.takeIf { it.startsWith("/") }?.let { File(it).delete() }
+            existingFollow.boxArt = freshBoxArt
+            followChanged = true
+        }
+        if (!game.gameName.isNullOrBlank() && existingFollow.gameName != game.gameName) {
+            existingFollow.gameName = game.gameName
+            followChanged = true
+        }
+        if (existingFollow.gameSlug.isNullOrBlank() && !slug.isNullOrBlank()) {
+            existingFollow.gameSlug = slug
+            followChanged = true
+        }
+        if (existingFollow.gameId.isNullOrBlank() && !targetId.isNullOrBlank()) {
+            existingFollow.gameId = targetId
+            followChanged = true
+        }
+        if (followChanged) {
+            localFollowsGame.updateFollow(existingFollow)
+        }
+    }
+
     fun isFollowingGame(gameId: String?, gameSlug: String?, gameName: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>) {
         if (_isFollowing.value == null) {
             viewModelScope.launch {
                 try {
-                    _isFollowing.value = gameId?.let { localFollowsGame.getFollowByGameId(it) } != null
+                    _isFollowing.value = localFollowsGame.getFollowByIdOrSlug(gameId, gameSlug) != null
                 } catch (e: Exception) {
 
                 }
@@ -124,79 +132,19 @@ class GamePagerViewModel @Inject constructor(
     fun saveFollowGame(gameId: String?, gameSlug: String?, gameName: String?, gameBoxArt: String?, setting: Int, filesDir: String, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                if (!gameId.isNullOrBlank()) {
-                    File(filesDir, "box_art").mkdir()
-                    val path = filesDir + File.separator + "box_art" + File.separator + gameId
-                    val remoteBoxArt = gameBoxArt?.takeIf { it.isNotBlank() } ?: try {
-                        if (kickPublicApiHeaders.isNotEmpty()) {
-                            kickPublicApiRepository.getGames(
-                                networkLibrary = networkLibrary,
-                                headers = kickPublicApiHeaders,
-                                ids = listOf(gameId)
-                            ).data.firstOrNull()?.boxArtUrl
-                        } else null
-                    } catch (_: Exception) {
-                        null
-                    }?.takeIf { !it.isNullOrBlank() }?.let { KickApiHelper.getTemplateUrl(it, "game") }
-                    viewModelScope.launch(Dispatchers.IO) {
-                        try {
-                            remoteBoxArt?.let {
-                                when {
-                                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                        val response = suspendCoroutine { continuation ->
-                                            httpEngine.get().newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                        }
-                                        if (response.first.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.second)
-                                            }
-                                        }
-                                    }
-                                    networkLibrary == "Cronet" && cronetEngine != null -> {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                            val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                            cronetEngine.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                            val response = request.future.get()
-                                            if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                                FileOutputStream(path).use {
-                                                    it.write(response.responseBody as ByteArray)
-                                                }
-                                            }
-                                        } else {
-                                            val response = suspendCoroutine { continuation ->
-                                                cronetEngine.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                            }
-                                            if (response.first.httpStatusCode in 200..299) {
-                                                FileOutputStream(path).use {
-                                                    it.write(response.second)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    else -> {
-                                        okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                            if (response.isSuccessful) {
-                                                FileOutputStream(path).use { outputStream ->
-                                                    response.body.byteStream().use { inputStream ->
-                                                        inputStream.copyTo(outputStream)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
+                val effectiveSlug = gameSlug?.takeIf { it.isNotBlank() } ?: KickApiHelper.toCategorySlug(gameName)
+                val effectiveId = gameId ?: _game.value?.gameId
+                val effectiveName = gameName ?: _game.value?.gameName
+                val effectiveBoxArt = gameBoxArt?.takeIf { it.isNotBlank() }
+                    ?: _game.value?.boxArtUrl
 
-                        }
-                    }
-                    val effectiveGameSlug = gameSlug?.takeIf { it.isNotBlank() } ?: KickApiHelper.toCategorySlug(gameName)
+                if (!effectiveId.isNullOrBlank() || !effectiveSlug.isNullOrBlank()) {
                     localFollowsGame.saveFollow(
                         LocalFollowGame(
-                            gameId,
-                            effectiveGameSlug,
-                            gameName,
-                            path.takeIf { File(it).exists() } ?: remoteBoxArt
+                            gameId = effectiveId,
+                            gameSlug = effectiveSlug,
+                            gameName = effectiveName,
+                            boxArt = effectiveBoxArt
                         )
                     )
                     _isFollowing.value = true
@@ -211,8 +159,9 @@ class GamePagerViewModel @Inject constructor(
     fun deleteFollowGame(gameId: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                if (gameId != null) {
-                    localFollowsGame.getFollowByGameId(gameId)?.let { localFollowsGame.deleteFollow(it) }
+                val followItem = localFollowsGame.getFollowByIdOrSlug(gameId, args.gameSlug)
+                if (followItem != null) {
+                    localFollowsGame.deleteFollow(followItem)
                     _isFollowing.value = false
                     follow.value = Pair(false, null)
                 }
@@ -225,81 +174,19 @@ class GamePagerViewModel @Inject constructor(
     fun updateLocalGame(filesDir: String, gameId: String?, gameName: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         if (!updatedLocalGame) {
             updatedLocalGame = true
-            if (!args.gameSlug.isNullOrBlank()) {
-                return
-            }
-            if (!gameId.isNullOrBlank()) {
-                viewModelScope.launch {
-                    File(filesDir, "box_art").mkdir()
-                    val path = filesDir + File.separator + "box_art" + File.separator + gameId
-                    val remoteBoxArt = try {
-                        if (kickPublicApiHeaders.isNotEmpty()) {
-                            kickPublicApiRepository.getGames(
-                                networkLibrary = networkLibrary,
-                                headers = kickPublicApiHeaders,
-                                ids = listOf(gameId)
-                            ).data.firstOrNull()?.boxArtUrl
-                        } else null
-                    } catch (_: Exception) {
-                        null
-                    }?.takeIf { !it.isNullOrBlank() }?.let { KickApiHelper.getTemplateUrl(it, "game") }
-                    viewModelScope.launch(Dispatchers.IO) {
-                        try {
-                            remoteBoxArt?.let {
-                                when {
-                                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                        val response = suspendCoroutine { continuation ->
-                                            httpEngine.get().newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                        }
-                                        if (response.first.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.second)
-                                            }
-                                        }
-                                    }
-                                    networkLibrary == "Cronet" && cronetEngine != null -> {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                            val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                            cronetEngine.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                            val response = request.future.get()
-                                            if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                                FileOutputStream(path).use {
-                                                    it.write(response.responseBody as ByteArray)
-                                                }
-                                            }
-                                        } else {
-                                            val response = suspendCoroutine { continuation ->
-                                                cronetEngine.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                            }
-                                            if (response.first.httpStatusCode in 200..299) {
-                                                FileOutputStream(path).use {
-                                                    it.write(response.second)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    else -> {
-                                        okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                            if (response.isSuccessful) {
-                                                FileOutputStream(path).use { outputStream ->
-                                                    response.body.byteStream().use { inputStream ->
-                                                        inputStream.copyTo(outputStream)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
+            val slug = args.gameSlug?.takeIf { it.isNotBlank() }
+                ?: KickApiHelper.toCategorySlug(gameName)
+            if (slug.isNullOrBlank() && gameId.isNullOrBlank()) return
 
-                        }
-                    }
-                    localFollowsGame.getFollowByGameId(gameId)?.let {
-                        localFollowsGame.updateFollow(it.apply {
-                            this.gameName = gameName
-                            boxArt = path.takeIf { File(it).exists() } ?: remoteBoxArt ?: boxArt
-                        })
+            viewModelScope.launch {
+                val follow = localFollowsGame.getFollowByIdOrSlug(gameId, slug) ?: return@launch
+                val currentLoadedGame = _game.value
+                if (currentLoadedGame?.boxArtUrl != null && !slug.isNullOrBlank()) {
+                    syncFollowedGame(currentLoadedGame, slug)
+                } else if (!slug.isNullOrBlank()) {
+                    val sub = runCatching { kickRepository.getSubcategory(slug) }.getOrNull()
+                    if (sub != null) {
+                        syncFollowedGame(kickRepository.toGame(sub), slug)
                     }
                 }
             }

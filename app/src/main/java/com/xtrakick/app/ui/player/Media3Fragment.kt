@@ -30,8 +30,6 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
-import androidx.media3.datasource.HttpDataSource
-import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
@@ -121,7 +119,7 @@ class Media3Fragment : PlayerFragment() {
     }
 
     private fun logPlayerError(error: PlaybackException) {
-        val responseCode = httpResponseCode(error)
+        val responseCode = Media3ErrorUtils.httpResponseCode(error)
         val message = "Player error code=${error.errorCode} name=${error.errorCodeName} " +
             "http=$responseCode type=$videoType message=${error.message}"
         if (responseCode == 403 || responseCode == 404) {
@@ -131,16 +129,6 @@ class Media3Fragment : PlayerFragment() {
         }
     }
 
-    private fun httpResponseCode(error: Throwable): Int? {
-        var cause: Throwable? = error
-        while (cause != null) {
-            if (cause is HttpDataSource.InvalidResponseCodeException) {
-                return cause.responseCode
-            }
-            cause = cause.cause
-        }
-        return null
-    }
 
     private fun updatePlayPauseButton(player: Player? = this.player): Boolean {
         if (view == null) return true
@@ -401,7 +389,7 @@ class Media3Fragment : PlayerFragment() {
                     logPlayerError(error)
                     when (videoType) {
                         STREAM -> {
-                            if (isBehindLiveWindowError(error)) {
+                            if (Media3ErrorUtils.isBehindLiveWindowError(error)) {
                                 viewLifecycleOwner.lifecycleScope.launch {
                                     runCatching {
                                         val wasPlaying = player?.playWhenReady == true
@@ -1460,16 +1448,6 @@ class Media3Fragment : PlayerFragment() {
         }
     }
 
-    private fun isBehindLiveWindowError(error: PlaybackException): Boolean {
-        var cause: Throwable? = error
-        while (cause != null) {
-            if (cause is BehindLiveWindowException) {
-                return true
-            }
-            cause = cause.cause
-        }
-        return false
-    }
 
     companion object {
         private const val TAG = "Media3Fragment"

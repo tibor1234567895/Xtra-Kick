@@ -15,7 +15,6 @@ import androidx.paging.PagingDataAdapter
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import coil3.imageLoader
-import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.request.target
@@ -28,6 +27,7 @@ import com.xtrakick.app.ui.game.GamePagerFragmentDirections
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
+import java.util.Objects
 
 class FollowedGamesAdapter(
     private val fragment: Fragment,
@@ -35,10 +35,15 @@ class FollowedGamesAdapter(
 ) : PagingDataAdapter<Game, FollowedGamesAdapter.PagingViewHolder>(
     object : DiffUtil.ItemCallback<Game>() {
         override fun areItemsTheSame(oldItem: Game, newItem: Game): Boolean =
-            oldItem.gameId == newItem.gameId
+            oldItem.gameId == newItem.gameId || (oldItem.gameSlug != null && oldItem.gameSlug == newItem.gameSlug)
 
         override fun areContentsTheSame(oldItem: Game, newItem: Game): Boolean =
-            oldItem.viewersCount == newItem.viewersCount
+            oldItem.boxArt == newItem.boxArt &&
+                oldItem.gameName == newItem.gameName &&
+                oldItem.viewersCount == newItem.viewersCount &&
+                oldItem.broadcastersCount == newItem.broadcastersCount &&
+                Objects.equals(oldItem.tags, newItem.tags) &&
+                oldItem.followLocal == newItem.followLocal
     }) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PagingViewHolder {
@@ -65,6 +70,7 @@ class FollowedGamesAdapter(
                                     gameId = item.gameId,
                                     gameSlug = item.gameSlug,
                                     gameName = item.gameName,
+                                    boxArt = item.boxArt,
                                     updateLocal = item.followLocal
                                 )
                             } else {
@@ -72,6 +78,7 @@ class FollowedGamesAdapter(
                                     gameId = item.gameId,
                                     gameSlug = item.gameSlug,
                                     gameName = item.gameName,
+                                    boxArt = item.boxArt,
                                     updateLocal = item.followLocal
                                 )
                             }
@@ -82,7 +89,6 @@ class FollowedGamesAdapter(
                         fragment.requireContext().imageLoader.enqueue(
                             ImageRequest.Builder(fragment.requireContext()).apply {
                                 data(item.boxArt)
-                                diskCachePolicy(CachePolicy.DISABLED)
                                 crossfade(true)
                                 target(gameImage)
                             }.build()

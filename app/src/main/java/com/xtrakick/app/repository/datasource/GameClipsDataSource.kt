@@ -6,7 +6,6 @@ import com.xtrakick.app.model.kick.ClipsPeriod
 import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.util.KickApiHelper
-import kotlin.math.max
 
 class GameClipsDataSource(
     private val gameId: String?,

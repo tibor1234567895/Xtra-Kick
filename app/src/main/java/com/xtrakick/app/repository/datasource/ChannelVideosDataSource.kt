@@ -2,7 +2,6 @@ package com.xtrakick.app.repository.datasource
 
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
-import com.xtrakick.app.model.kick.BroadcastType
 import com.xtrakick.app.model.ui.Video
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.util.KickApiHelper

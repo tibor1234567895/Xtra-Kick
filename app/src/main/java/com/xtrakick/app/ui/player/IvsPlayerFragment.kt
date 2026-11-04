@@ -151,6 +151,9 @@ class IvsPlayerFragment : PlayerFragment() {
         if (resumeOnStart && player?.state != Player.State.PLAYING) {
             playbackService?.let { resumePlaybackOrReload(it, "onResume") }
         }
+        if (serviceConnection != null) {
+            startIvsService(Intent(requireContext(), IvsPlayerService::class.java))
+        }
     }
 
     override fun onStart() {
@@ -267,7 +270,6 @@ class IvsPlayerFragment : PlayerFragment() {
                         }
                         if (state == Player.State.BUFFERING) {
                             downscaleRecoveryTicks = 0
-                            cancelQualityNudge()
                             val bufferingPlayer = player
                             if (bufferingPlayer != null) {
                                 playerDebugLog(
@@ -367,7 +369,9 @@ class IvsPlayerFragment : PlayerFragment() {
                 } else if (player?.state == Player.State.PLAYING) {
                     clearFreezeFrame()
                 }
-                recoverEmptyIvsServiceIfNeeded()
+                if (!recoveryInProgress) {
+                    recoverEmptyIvsServiceIfNeeded()
+                }
                 if (player?.state == Player.State.READY || player?.state == Player.State.PLAYING || player?.state == Player.State.BUFFERING) {
                     if (!viewModel.loaded.value) {
                         viewModel.loaded.value = true
@@ -386,13 +390,7 @@ class IvsPlayerFragment : PlayerFragment() {
         }
         serviceConnection = connection
         val intent = Intent(requireContext(), IvsPlayerService::class.java)
-        if (!startIvsService(intent)) {
-            serviceConnection = null
-            surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
-            surfaceHolderCallback = null
-            fallbackToStandardPlayerAfterServiceStartDenied()
-            return
-        }
+        startIvsService(intent)
         requireContext().bindService(intent, connection, Context.BIND_AUTO_CREATE)
     }
 
@@ -400,13 +398,14 @@ class IvsPlayerFragment : PlayerFragment() {
         return try {
             requireContext().startService(intent)
             true
-        } catch (e: RuntimeException) {
+        } catch (e: Exception) {
             if (!isBackgroundServiceStartDenied(e)) {
-                throw e
+                DiagnosticLogger.w(TAG, "Failed to start IvsPlayerService", e)
+                return false
             }
             DiagnosticLogger.w(
                 TAG,
-                "IVS service start denied; falling back to standard player " +
+                "IVS service start denied (proceeding with bindService) " +
                     "foreground=${lifecycle.currentState} urlPresent=${!requireArguments().getString(KEY_RESOLVED_STREAM_URL).isNullOrBlank()}",
                 e
             )
@@ -414,23 +413,10 @@ class IvsPlayerFragment : PlayerFragment() {
         }
     }
 
-    private fun isBackgroundServiceStartDenied(error: RuntimeException): Boolean {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            error.javaClass.name == "android.app.BackgroundServiceStartNotAllowedException"
-    }
-
-    private fun fallbackToStandardPlayerAfterServiceStartDenied() {
-        val resolvedUrl = currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL)
-        if (!isAdded || resolvedUrl.isNullOrBlank()) {
-            return
-        }
-        Toast.makeText(requireContext(), R.string.ivs_fallback_to_standard_player, Toast.LENGTH_SHORT).show()
-        requireArguments().putBoolean(KEY_FORCE_STANDARD_LIVE_ENGINE, true)
-        (activity as? MainActivity)?.startStream(
-            stream = getCurrentStream(),
-            resolvedUrl = resolvedUrl,
-            forceStandardLiveEngine = true
-        )
+    private fun isBackgroundServiceStartDenied(error: Throwable): Boolean {
+        return (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            error.javaClass.name == "android.app.BackgroundServiceStartNotAllowedException") ||
+            (error is IllegalStateException && error.message?.contains("Not allowed to start service", ignoreCase = true) == true)
     }
 
     override fun initialize() {
@@ -578,6 +564,10 @@ class IvsPlayerFragment : PlayerFragment() {
         playbackService?.updateChannelLogo(clean)
     }
 
+    override fun updateStreamStartedAt(startedAt: String) {
+        KickApiHelper.parseIso8601DateUTC(startedAt)?.let { playbackService?.updateStreamStartedAt(it) }
+    }
+
     override fun getCurrentPosition(): Long? = player?.position
 
     override fun pausePlaybackForOverlay() {
@@ -611,7 +601,14 @@ class IvsPlayerFragment : PlayerFragment() {
                     currentUrl?.let { startStream(it) } ?: playbackService?.play()
                 }
             }
-            else -> Unit
+            else -> {
+                val url = currentUrl ?: resolveStreamUrl()
+                if (!url.isNullOrBlank()) {
+                    if (!reloadIvsLiveStreamWithFreshUrl("unresponsive play")) {
+                        startStream(url)
+                    }
+                }
+            }
         }
         updatePlayingState()
     }
@@ -939,7 +936,7 @@ class IvsPlayerFragment : PlayerFragment() {
                     val activeQuality = player?.quality
                     val isDifferent = activeQuality == null || activeQuality.name != targetQuality.name
 
-                    if (isDifferent && !wasAudioOnly) {
+                    if (isDifferent && !wasAudioOnly && player?.state == Player.State.PLAYING) {
                         // Smooth adaptive transition: switches at buffer boundary without flushing,
                         // immediately sets ceiling, and re-arms ABR when target is reached.
                         nudgeQualityToTarget(targetQuality)
@@ -1375,7 +1372,7 @@ class IvsPlayerFragment : PlayerFragment() {
         playerDebugLog(
             "retryIvsPlayback showMessage=$showMessage stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)} resolvedUrlPresent=true"
         )
-        if (reloadIvsLiveStreamWithFreshUrl("IVS error")) {
+        if (reloadIvsLiveStreamWithFreshUrl("playback error")) {
             DiagnosticLogger.i(
                 TAG,
                 "IVS playback error recovery: retrying IVS with fresh Kick URL stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)}"
@@ -1391,20 +1388,11 @@ class IvsPlayerFragment : PlayerFragment() {
             startStream(resolvedUrl)
             return
         }
-        if (showMessage) {
-            Toast.makeText(requireContext(), R.string.ivs_fallback_to_standard_player, Toast.LENGTH_SHORT).show()
-        }
-        DiagnosticLogger.w(
-            TAG,
-            "IVS playback error recovery: falling back to standard player stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)}"
-        )
+        recoveryInProgress = false
+        sameUrlRetryAttempted = false
         playbackService?.stopPlayback()
-        requireArguments().putBoolean(KEY_FORCE_STANDARD_LIVE_ENGINE, true)
-        (activity as? MainActivity)?.startStream(
-            stream = getCurrentStream(),
-            resolvedUrl = null,
-            forceStandardLiveEngine = true
-        )
+        val isOffline = networkMonitor.networkType.value == NetworkMonitor.NetworkType.NONE
+        showOfflineOverlay(if (isOffline) R.string.no_connection else R.string.stream_ended)
     }
 
     private fun resolveStreamUrl(): String? =
@@ -1430,11 +1418,11 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     private fun recoverEmptyIvsServiceIfNeeded() {
-        if (!viewModel.started || player?.state != Player.State.IDLE) {
+        if (!viewModel.started || player?.state != Player.State.IDLE || recoveryInProgress) {
             return
         }
         val url = resolveStreamUrl()
-        DiagnosticLogger.w(
+        DiagnosticLogger.i(
             TAG,
             "IVS resumed with empty service stream=${requireArguments().getString(KEY_CHANNEL_LOGIN)} " +
                 "urlPresent=${!url.isNullOrBlank()}"
@@ -1504,10 +1492,9 @@ class IvsPlayerFragment : PlayerFragment() {
         pendingQualityNudge = targetQuality
         playerDebugLog("IVS quality nudge: stepping up to ${targetQuality.name} (${targetQuality.bitrate} bps)")
         runIvsOp("quality-nudge") {
-            // Adaptive rendition transition: switches at the end of the buffer
-            // instead of clearing it, so changing rendition never rebuffers or stalls.
+            // Keep queued video while the new rendition is fetched.
             it.setAutoMaxQuality(targetQuality)
-            it.setQuality(targetQuality)
+            it.setQuality(targetQuality, true)
         }
         val runnable = Runnable {
             qualityNudgeSafetyRunnable = null

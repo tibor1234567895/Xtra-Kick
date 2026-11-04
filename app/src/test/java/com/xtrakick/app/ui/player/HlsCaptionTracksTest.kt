@@ -4,7 +4,8 @@ import android.app.Application
 import android.net.Uri
 import androidx.media3.exoplayer.hls.playlist.HlsMultivariantPlaylist
 import com.xtrakick.app.player.lowlatency.HlsPlaylistParser
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner

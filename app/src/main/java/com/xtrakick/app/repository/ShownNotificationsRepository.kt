@@ -1,12 +1,14 @@
 package com.xtrakick.app.repository
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -26,6 +28,7 @@ import com.xtrakick.app.util.prefs
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Semaphore
@@ -45,6 +48,7 @@ class ShownNotificationsRepository @Inject constructor(
     private val notificationUsersRepository: NotificationUsersRepository,
     private val localFollowChannelRepository: LocalFollowChannelRepository,
 ) {
+    private val liveNotificationLock = Any()
 
     suspend fun getNewKickStreams(
         notificationUsersRepository: NotificationUsersRepository,
@@ -317,7 +321,7 @@ class ShownNotificationsRepository @Inject constructor(
         }.getOrNull() ?: 128
         val uiNameDisplay = context.prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")
 
-        streams.forEach { stream ->
+        val notifications = streams.map { stream ->
             val notificationId = notificationIdFor(stream)
 
             val channelDisplayName = if (stream.channelLogin != null && !stream.channelLogin.equals(stream.channelName, true)) {
@@ -334,29 +338,13 @@ class ShownNotificationsRepository @Inject constructor(
                 ContextCompat.getString(context, R.string.live_notification_category).format(channelDisplayName, category)
             } ?: ContextCompat.getString(context, R.string.live_notification).format(channelDisplayName)
 
-            val avatarUrl = stream.channelLogo ?: stream.profileImageUrl
-            val avatarBitmap = if (!avatarUrl.isNullOrBlank()) {
-                runCatching {
-                    Glide.with(context)
-                        .asBitmap()
-                        .load(avatarUrl)
-                        .transform(CircleCrop())
-                        .submit(iconSize, iconSize)
-                        .get(3, TimeUnit.SECONDS)
-                }.getOrNull()
-            } else null
-
             val notification = NotificationCompat.Builder(context, channelId).apply {
-                setGroup(GROUP_KEY)
                 setContentTitle(titleText)
                 if (!stream.title.isNullOrBlank()) {
                     setContentText(stream.title)
                     setStyle(NotificationCompat.BigTextStyle().bigText(stream.title))
                 }
                 setSmallIcon(R.drawable.notification_icon)
-                if (avatarBitmap != null) {
-                    setLargeIcon(avatarBitmap)
-                }
                 setAutoCancel(true)
                 setContentIntent(
                     PendingIntent.getActivity(
@@ -371,19 +359,48 @@ class ShownNotificationsRepository @Inject constructor(
                     )
                 )
             }.build()
-            notificationManager.notify(notificationId, notification)
+            stream to notification
+        }
+        synchronized(liveNotificationLock) {
+            val posted = notifications.associate { (stream, notification) ->
+                notificationIdFor(stream) to notification
+            }
+            posted.forEach { (id, notification) -> notificationManager.notify(id, notification) }
+            updateLiveNotificationGroup(context, notificationManager, channelId, posted)
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            val summaryNotification = NotificationCompat.Builder(context, channelId).apply {
-                setContentTitle(ContextCompat.getString(context, R.string.app_name))
-                setContentText(ContextCompat.getString(context, R.string.live_notification_channels))
-                setGroup(GROUP_KEY)
-                setSmallIcon(R.drawable.notification_icon)
-                setGroupSummary(true)
-                setAutoCancel(true)
-            }.build()
-            notificationManager.notify(SUMMARY_NOTIFICATION_ID, summaryNotification)
+        val artworkSlots = Semaphore(4)
+        coroutineScope {
+            notifications.map { (stream, notification) ->
+                async {
+                    val avatarUrl = stream.channelLogo ?: stream.profileImageUrl
+                    if (avatarUrl.isNullOrBlank()) return@async
+                    val notificationId = notificationIdFor(stream)
+                    artworkSlots.withPermit {
+                        val request = Glide.with(context).asBitmap().load(avatarUrl)
+                            .transform(CircleCrop()).timeout(10_000).submit(iconSize, iconSize)
+                        try {
+                            val bitmap: Bitmap = request.get(15, TimeUnit.SECONDS)
+                            ensureActive()
+                            synchronized(liveNotificationLock) {
+                                val active = notificationManager.activeNotifications.firstOrNull {
+                                    it.id == notificationId && it.notification.`when` == notification.`when`
+                                }
+                                if (active != null) {
+                                    notificationManager.notify(notificationId,
+                                        NotificationCompat.Builder(context, active.notification)
+                                            .setLargeIcon(bitmap).setOnlyAlertOnce(true).build())
+                                }
+                            }
+                        } catch (error: Exception) {
+                            if (error is CancellationException) throw error
+                            Log.w(TAG, "Live notification avatar failed for ${stream.channelLogin}", error)
+                        } finally {
+                            Glide.with(context).clear(request)
+                        }
+                    }
+                }
+            }.awaitAll()
         }
     }
 
@@ -512,6 +529,7 @@ class ShownNotificationsRepository @Inject constructor(
             gameId = categoryId,
             gameSlug = categorySlug,
             gameName = categoryName,
+            startedAt = liveStartedAt?.let { java.time.Instant.ofEpochMilli(it).toString() },
             profileImageUrl = effectiveAvatar,
         )
         val sessionTime = liveStartedAt ?: nowMs
@@ -521,6 +539,44 @@ class ShownNotificationsRepository @Inject constructor(
     }
 
     companion object {
+        internal fun updateLiveNotificationGroup(
+            context: Context,
+            manager: NotificationManager,
+            channelId: String,
+            posted: Map<Int, Notification> = emptyMap(),
+        ) {
+            val children = manager.activeNotifications
+                .filter { it.notification.channelId == channelId && it.id != SUMMARY_NOTIFICATION_ID }
+                .associate { it.id to it.notification }
+                .toMutableMap()
+            // notify() enqueues asynchronously; include this batch even before it appears in the active list.
+            children.putAll(posted)
+            val group = GROUP_KEY.takeIf { children.size > 1 }
+            children.forEach { (id, notification) ->
+                if (notification.group != group) {
+                    manager.notify(id, NotificationCompat.Builder(context, notification)
+                        .setGroup(group).setOnlyAlertOnce(true).build())
+                }
+            }
+            if (group == null) {
+                manager.cancel(SUMMARY_NOTIFICATION_ID)
+            } else {
+                val summaryNotification = NotificationCompat.Builder(context, channelId).apply {
+                    setContentTitle(ContextCompat.getString(context, R.string.app_name))
+                    setContentText(ContextCompat.getString(context, R.string.live_notification_channels))
+                    setGroup(GROUP_KEY)
+                    setSmallIcon(R.drawable.notification_icon)
+                    setGroupSummary(true)
+                    setAutoCancel(true)
+                    setOnlyAlertOnce(true)
+                    setStyle(NotificationCompat.InboxStyle().also { style ->
+                        children.values.forEach { style.addLine(it.extras.getCharSequence(Notification.EXTRA_TITLE)) }
+                    })
+                }.build()
+                manager.notify(SUMMARY_NOTIFICATION_ID, summaryNotification)
+            }
+        }
+
         internal fun notificationFallbackSlugs(
             slugs: Set<String>,
             broadcasterIdsBySlug: Map<String, String>,

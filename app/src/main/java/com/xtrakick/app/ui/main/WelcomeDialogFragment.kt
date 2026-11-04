@@ -1,6 +1,5 @@
 package com.xtrakick.app.ui.main
 
-import android.content.Context
 import android.content.DialogInterface
 import android.os.Bundle
 import android.view.LayoutInflater

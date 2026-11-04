@@ -1,20 +1,16 @@
 package com.xtrakick.app.ui.chat
 
 import android.content.Context
-import android.graphics.drawable.Animatable
-import android.graphics.drawable.LayerDrawable
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
 import android.text.TextUtils
 import android.text.method.LinkMovementMethod
-import android.text.style.ImageSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.appcompat.widget.TooltipCompat
-import androidx.core.content.ContextCompat
 import androidx.core.text.getSpans
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
@@ -217,23 +213,14 @@ class MessageClickedChatAdapter(
 
     fun updateBackground(chatMessage: ChatMessage, item: TextView) {
         val backgroundRes = getBackgroundRes(chatMessage, item)
-        val position = synchronized(messages) { messages.indexOf(chatMessage) }.coerceAtLeast(0)
-        val resolvedBackgroundColor = resolveMessageBackgroundColor(item.context, position, backgroundRes)
-        item.setBackgroundColor(resolvedBackgroundColor)
-        (item.parent as? ViewGroup)?.findViewById<View>(R.id.chatLineDivider)?.apply {
-            val dividerColors = resolveDividerColor(position, resolvedBackgroundColor)
-            isVisible = dividerColors != null
-            dividerColors?.let {
-                findViewById<View>(R.id.chatLineDividerHighlight).setBackgroundColor(it.highlightColor)
-                findViewById<View>(R.id.chatLineDividerShadow).setBackgroundColor(it.shadowColor)
-            }
-        }
-        (item.text as? Spannable)?.let { view ->
-            view.getSpans<NamePaintImageSpan>().forEach {
-                it.backgroundColor = resolvedBackgroundColor
-                view.setSpan(it, view.getSpanStart(it), view.getSpanEnd(it), SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-        }
+        ChatListParityUtils.updateMessageRowBackground(
+            messages = messages,
+            chatMessage = chatMessage,
+            item = item,
+            backgroundRes = backgroundRes,
+            resolveBackgroundColor = ::resolveMessageBackgroundColor,
+            resolveDividerColors = ::resolveDividerColor,
+        )
     }
 
     override fun getItemCount(): Int = synchronized(messages) {
@@ -259,133 +246,54 @@ class MessageClickedChatAdapter(
         notifyDataSetChanged()
     }
 
-    private fun getBackgroundRes(chatMessage: ChatMessage, item: TextView): Int {
-        if (chatMessage.message.isNullOrBlank()) {
-            return 0
-        }
-        return when {
-            chatMessage.isFirst && firstMsgVisibility < 2 -> R.color.chatMessageFirst
-            chatMessage.reward?.id != null && firstMsgVisibility < 2 -> R.color.chatMessageReward
-            chatMessage.systemMsg != null || (chatMessage.msgId != null && chatMessage.msgId != "kick_moderation") -> R.color.chatMessageNotice
-            ChatAdapterUtils.isMessageHighlightedForLoggedInUser(chatMessage, loggedInUser, item.text) -> R.color.chatMessageMention
-            else -> 0
-        }
-    }
+    private fun getBackgroundRes(chatMessage: ChatMessage, item: TextView): Int =
+        ChatListParityUtils.resolveMessageBackgroundRes(chatMessage, firstMsgVisibility, loggedInUser, item.text)
 
-    private fun resolveMessageBackgroundColor(context: Context, position: Int, backgroundRes: Int): Int {
-        val overlayColor = backgroundRes.takeIf { it != 0 }?.let { ContextCompat.getColor(context, it) }
-        val visualParityPosition = synchronized(messages) {
-            ChatListParityUtils.resolveVisualParityPosition(messages, position)
-        }
-        return ChatBackgroundUtils.resolveMessageBackgroundColor(
+    private fun resolveMessageBackgroundColor(context: Context, position: Int, backgroundRes: Int): Int =
+        ChatListParityUtils.resolveMessageBackgroundColor(
+            messages = messages,
+            context = context,
+            position = position,
             surfaceColor = backgroundColor,
-            overlayColor = overlayColor,
-            alternatingLineShadowEnabled = enableAlternatingLineShadows,
+            backgroundRes = backgroundRes,
+            enableAlternatingLineShadows = enableAlternatingLineShadows,
             alternatingLineShadowStrength = alternatingLineShadowStrength,
-            position = visualParityPosition,
         )
-    }
 
-    private fun resolveCurrentMessagePosition(chatMessage: ChatMessage, adapterPosition: Int, fallbackPosition: Int): Int {
-        synchronized(messages) {
-            if (adapterPosition in messages.indices && messages[adapterPosition] == chatMessage) {
-                return adapterPosition
-            }
-            val currentPosition = messages.indexOf(chatMessage)
-            if (currentPosition >= 0) {
-                return currentPosition
-            }
-        }
-        return fallbackPosition
-    }
+    private fun resolveCurrentMessagePosition(chatMessage: ChatMessage, adapterPosition: Int, fallbackPosition: Int): Int =
+        ChatListParityUtils.resolveCurrentMessagePosition(messages, chatMessage, adapterPosition, fallbackPosition)
 
-    private fun resolveSelectedBackgroundColor(context: Context): Int {
-        return ChatBackgroundUtils.resolveMessageBackgroundColor(
+    private fun resolveSelectedBackgroundColor(context: Context): Int =
+        ChatListParityUtils.resolveSelectedBackgroundColor(context, backgroundColor)
+
+    private fun resolveDividerColor(position: Int, backgroundColor: Int): ChatBackgroundUtils.DividerColors? =
+        ChatListParityUtils.resolveDividerColor(
+            messages = messages,
+            position = position,
             surfaceColor = backgroundColor,
-            overlayColor = ContextCompat.getColor(context, R.color.chatMessageSelected),
-            alternatingLineShadowEnabled = false,
-            alternatingLineShadowStrength = 0,
-            position = 0,
+            enableAlternatingLineShadows = enableAlternatingLineShadows,
+            alternatingLineShadowStrength = alternatingLineShadowStrength,
         )
-    }
-
-    private fun resolveDividerColor(position: Int, backgroundColor: Int): ChatBackgroundUtils.DividerColors? {
-        val shouldDrawDivider = synchronized(messages) {
-            ChatListParityUtils.shouldDrawDividerAbove(messages, position)
-        }
-        if (!enableAlternatingLineShadows || !shouldDrawDivider) {
-            return null
-        }
-        return ChatBackgroundUtils.resolveDividerColors(
-            surfaceColor = backgroundColor,
-            dividerStrength = alternatingLineShadowStrength,
-        )
-    }
 
     override fun onViewAttachedToWindow(holder: ViewHolder) {
         super.onViewAttachedToWindow(holder)
         if (animateGifs) {
-            (holder.textView.text as? Spannable)?.let { view ->
-                view.getSpans<ImageSpan>().forEach {
-                    (it.drawable as? Animatable)?.start() ?:
-                    (it.drawable as? LayerDrawable)?.let {
-                        val lastIndex = it.numberOfLayers - 1
-                        if (lastIndex > -1) {
-                            for (i in 0..lastIndex) {
-                                (it.getDrawable(i) as? Animatable)?.start()
-                            }
-                        }
-                    }
-                }
-                view.getSpans<NamePaintImageSpan>().forEach {
-                    (it.drawable as? Animatable)?.start()
-                }
-            }
+            ChatAdapterUtils.startSpanAnimations(holder.textView.text)
         }
     }
 
     override fun onViewDetachedFromWindow(holder: ViewHolder) {
         super.onViewDetachedFromWindow(holder)
         if (animateGifs) {
-            (holder.textView.text as? Spannable)?.let { view ->
-                view.getSpans<ImageSpan>().forEach {
-                    (it.drawable as? Animatable)?.stop() ?:
-                    (it.drawable as? LayerDrawable)?.let {
-                        val lastIndex = it.numberOfLayers - 1
-                        if (lastIndex > -1) {
-                            for (i in 0..lastIndex) {
-                                (it.getDrawable(i) as? Animatable)?.stop()
-                            }
-                        }
-                    }
-                }
-                view.getSpans<NamePaintImageSpan>().forEach {
-                    (it.drawable as? Animatable)?.stop()
-                }
-            }
+            ChatAdapterUtils.stopSpanAnimations(holder.textView.text)
         }
     }
 
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
-        val childCount = recyclerView.childCount
         if (animateGifs) {
-            for (i in 0 until childCount) {
-                ((recyclerView.getChildAt(i) as TextView).text as? Spannable)?.let { view ->
-                    view.getSpans<ImageSpan>().forEach {
-                        (it.drawable as? Animatable)?.stop() ?:
-                        (it.drawable as? LayerDrawable)?.let {
-                            val lastIndex = it.numberOfLayers - 1
-                            if (lastIndex > -1) {
-                                for (i in 0..lastIndex) {
-                                    (it.getDrawable(i) as? Animatable)?.stop()
-                                }
-                            }
-                        }
-                    }
-                    view.getSpans<NamePaintImageSpan>().forEach {
-                        (it.drawable as? Animatable)?.stop()
-                    }
-                }
+            for (i in 0 until recyclerView.childCount) {
+                val text = recyclerView.getChildAt(i).findViewById<TextView>(R.id.chatMessageText)?.text
+                ChatAdapterUtils.stopSpanAnimations(text)
             }
         }
         super.onDetachedFromRecyclerView(recyclerView)

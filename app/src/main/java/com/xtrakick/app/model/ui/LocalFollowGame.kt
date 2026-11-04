@@ -5,8 +5,8 @@ import androidx.room.PrimaryKey
 
 @Entity(tableName = "local_follows_games")
 class LocalFollowGame(
-    val gameId: String? = null,
-    val gameSlug: String? = null,
+    var gameId: String? = null,
+    var gameSlug: String? = null,
     var gameName: String? = null,
     var boxArt: String? = null,
 ) {

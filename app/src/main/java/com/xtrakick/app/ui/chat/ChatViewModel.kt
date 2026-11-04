@@ -86,16 +86,16 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.text.SimpleDateFormat
+import java.util.Collections
 import java.util.Date
+import java.util.LinkedHashSet
 import java.util.Locale
 import java.util.PriorityQueue
-import java.util.Timer
 import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.net.ssl.X509TrustManager
-import kotlin.concurrent.scheduleAtFixedRate
 import kotlin.math.abs
 
 
@@ -227,6 +227,45 @@ class ChatViewModel @Inject constructor(
     private var predictionTimeoutJob: Job? = null
     private var kickChatJob: Job? = null
     private val kickMessageIds = LinkedHashSet<String>()
+    private val recentDeletedMessageIds = Collections.synchronizedSet(LinkedHashSet<String>())
+
+    private fun recordDeletedMessageId(id: String?) {
+        if (id.isNullOrBlank()) return
+        val normalized = id.trim().lowercase(Locale.ROOT)
+        synchronized(recentDeletedMessageIds) {
+            recentDeletedMessageIds.add(id)
+            recentDeletedMessageIds.add(normalized)
+            while (recentDeletedMessageIds.size > 500) {
+                val it = recentDeletedMessageIds.iterator()
+                if (it.hasNext()) {
+                    it.next()
+                    it.remove()
+                } else break
+            }
+        }
+    }
+
+    private fun isMessageIdDeleted(id: String?): Boolean {
+        if (id.isNullOrBlank()) return false
+        val normalized = id.trim().lowercase(Locale.ROOT)
+        synchronized(recentDeletedMessageIds) {
+            if (recentDeletedMessageIds.contains(id) || recentDeletedMessageIds.contains(normalized)) {
+                return true
+            }
+            return recentDeletedMessageIds.any { matchesTargetMessageId(id, it) }
+        }
+    }
+
+    private fun matchesTargetMessageId(messageId: String?, targetId: String?): Boolean {
+        if (messageId.isNullOrBlank() || targetId.isNullOrBlank()) return false
+        if (messageId.equals(targetId, ignoreCase = true)) return true
+        if (messageId.length >= 8 && targetId.length >= 8) {
+            if (messageId.endsWith(":$targetId", ignoreCase = true) || targetId.endsWith(":$messageId", ignoreCase = true)) {
+                return true
+            }
+        }
+        return false
+    }
     private val kickBroadcasterUserIds = ConcurrentHashMap<String, Long>()
     private var kickReplayFallbackEnabled = false
     private var kickReplayIsClip = false
@@ -1121,158 +1160,26 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun getEmoteLookupMap(): Map<String, Emote> {
-        val lookup = LinkedHashMap<String, Emote>()
-        synchronized(userEmotes) {
-            userEmotes.forEach { emote ->
-                val name = emote.name ?: return@forEach
-                lookup.putIfAbsent(name, emote)
-            }
-        }
-        kickEmoteGroups.value
-            .flatMap { it.emotes }
-            .forEach { emote ->
-                val name = emote.name ?: return@forEach
-                lookup.putIfAbsent(name, emote)
-            }
-        getSevenTvEmotes().forEach { emote ->
-            val name = emote.name ?: return@forEach
-            lookup.putIfAbsent(name, emote)
-        }
-        return lookup
+        val userEmotesCopy = synchronized(userEmotes) { userEmotes.toList() }
+        return ChatEmotePickerUtils.buildEmoteLookupMap(
+            userEmotes = userEmotesCopy,
+            kickEmoteGroups = kickEmoteGroups.value,
+            sevenTvEmotes = getSevenTvEmotes(),
+        )
     }
 
-    fun getResolvedRecentEmotes(recentEmotes: List<RecentEmote>): List<Emote> {
-        val emoteLookup = getEmoteLookupMap()
-        return recentEmotes
-            .sortedByDescending { it.usedAt }
-            .mapNotNull { recentEmote -> emoteLookup[recentEmote.name] }
-            .distinctBy { it.name }
-    }
+    fun getResolvedRecentEmotes(recentEmotes: List<RecentEmote>): List<Emote> =
+        ChatEmotePickerUtils.resolveRecentEmotes(recentEmotes, getEmoteLookupMap())
 
-    fun getEmotePickerSections(recentEmotes: List<RecentEmote>, query: String): List<EmotePickerSection> {
-        val normalizedQuery = query.trim()
-        val hasQuery = normalizedQuery.isNotEmpty()
-        val currentKickGroup = getCurrentKickEmoteGroup()
-
-        fun List<Emote>.filterForQuery(): List<Emote> {
-            return if (hasQuery) {
-                filter { it.name?.contains(normalizedQuery, ignoreCase = true) == true }
-            } else {
-                this
-            }.distinctBy { it.name }
-        }
-
-        return buildList {
-            if (!hasQuery) {
-                getResolvedRecentEmotes(recentEmotes)
-                    .takeIf { it.isNotEmpty() }
-                    ?.let { emotes ->
-                        add(
-                            EmotePickerSection(
-                                key = "recent",
-                                title = applicationContext.getString(R.string.emote_section_recent),
-                                emotes = emotes,
-                                expandedByDefault = true,
-                            )
-                        )
-                    }
-            }
-
-            var collectiblesKickGroup: KickRepository.KickEmoteGroup? = null
-            val otherKickGroups = ArrayList<KickRepository.KickEmoteGroup>()
-            val currentId = currentKickGroup?.id
-            kickEmoteGroups.value.forEach { group ->
-                when {
-                    currentId != null && group.id.equals(currentId, ignoreCase = true) -> Unit
-                    group.id.equals("Collectibles", ignoreCase = true) || group.title.equals("Collectibles", ignoreCase = true) -> {
-                        collectiblesKickGroup = group
-                    }
-                    else -> otherKickGroups.add(group)
-                }
-            }
-
-            collectiblesKickGroup?.emotes
-                ?.filterForQuery()
-                ?.takeIf { it.isNotEmpty() }
-                ?.let { emotes ->
-                    add(
-                        EmotePickerSection(
-                            key = "kick-collectibles",
-                            title = applicationContext.getString(R.string.emote_section_collectibles),
-                            emotes = emotes,
-                            expandedByDefault = true,
-                        )
-                    )
-                }
-
-            currentKickGroup?.emotes
-                ?.filterForQuery()
-                ?.takeIf { it.isNotEmpty() }
-                ?.let { emotes ->
-                    add(
-                        EmotePickerSection(
-                            key = "kick-current",
-                            title = currentKickGroup.title,
-                            emotes = emotes,
-                            expandedByDefault = true,
-                        )
-                    )
-                }
-            val globalKickEmotes = LinkedHashMap<String, Emote>()
-            otherKickGroups.forEach { group ->
-                val isGlobalLike = group.title.equals("Global", ignoreCase = true) ||
-                    group.title.equals("Emojis", ignoreCase = true) ||
-                    group.id.equals("Emoji", ignoreCase = true)
-                if (isGlobalLike) {
-                    group.emotes.forEach { emote ->
-                        val name = emote.name ?: return@forEach
-                        globalKickEmotes.putIfAbsent(name, emote)
-                    }
-                } else {
-                    val emotes = group.emotes.filterForQuery()
-                    if (emotes.isEmpty()) {
-                        return@forEach
-                    }
-                    add(
-                        EmotePickerSection(
-                            key = "kick-${group.id}",
-                            title = group.title,
-                            emotes = emotes,
-                            expandedByDefault = hasQuery,
-                        )
-                    )
-                }
-            }
-            globalKickEmotes.values
-                .toList()
-                .filterForQuery()
-                .takeIf { it.isNotEmpty() }
-                ?.let { emotes ->
-                    add(
-                        EmotePickerSection(
-                            key = "kick-global",
-                            title = applicationContext.getString(R.string.emote_section_global),
-                            emotes = emotes,
-                            expandedByDefault = hasQuery,
-                        )
-                    )
-                }
-
-            getSevenTvEmotes()
-                .filterForQuery()
-                .takeIf { it.isNotEmpty() }
-                ?.let { emotes ->
-                    add(
-                        EmotePickerSection(
-                            key = "7tv",
-                            title = "7TV",
-                            emotes = emotes,
-                            expandedByDefault = hasQuery,
-                        )
-                    )
-                }
-        }
-    }
+    fun getEmotePickerSections(recentEmotes: List<RecentEmote>, query: String): List<EmotePickerSection> =
+        ChatEmotePickerUtils.buildEmotePickerSections(
+            context = applicationContext,
+            resolvedRecentEmotes = if (query.isBlank()) getResolvedRecentEmotes(recentEmotes) else emptyList(),
+            kickEmoteGroups = kickEmoteGroups.value,
+            currentKickGroup = getCurrentKickEmoteGroup(),
+            sevenTvEmotes = getSevenTvEmotes(),
+            query = query,
+        )
 
     /**
      * Kick has no per-user emote set endpoint, so this only clears whatever a previous
@@ -1929,21 +1836,24 @@ class ChatViewModel @Inject constructor(
                         return@forEach
                     }
                     val targetId = kickRepository.getKickModerationTargetMessageId(rawMessage)
-                    val deletedMessageIndex = targetId?.let { id -> mappedMessages.indexOfLast { it.id == id } } ?: -1
+                    val deletedMessageIndex = targetId?.let { id -> mappedMessages.indexOfLast { matchesTargetMessageId(it.id, id) } } ?: -1
                     val deletedMessage = when {
                         deletedMessageIndex != -1 -> createDeletedMessage(mappedMessages[deletedMessageIndex]).also { mappedMessages[deletedMessageIndex] = it }
                         else -> targetId?.let { id ->
                             synchronized(chatMessages) {
-                                chatMessages.findLast { it.id == id }
+                                chatMessages.findLast { matchesTargetMessageId(it.id, id) }
                             }
                         }
                     }
                     if (deletedMessageIndex != -1) {
                         return@forEach
                     }
+                    val hasUserOrContent = !chatMessage.userName.isNullOrBlank() ||
+                        !chatMessage.userLogin.isNullOrBlank() ||
+                        !chatMessage.message.isNullOrBlank()
                     if (deletedMessage != null) {
                         mappedMessages += getClearMessage(chatMessage, deletedMessage, nameDisplay)
-                    } else {
+                    } else if (hasUserOrContent) {
                         mappedMessages += getClearMessage(chatMessage, null, nameDisplay)
                     }
                 }
@@ -2304,16 +2214,21 @@ class ChatViewModel @Inject constructor(
                 } else {
                     message
                 }
+                val effectiveMessage = if (!displayMessage.isDeleted && isMessageIdDeleted(displayMessage.id)) {
+                    createDeletedMessage(displayMessage)
+                } else {
+                    displayMessage
+                }
                 if (bulk != null) {
-                    buildReplyPreviewMessage(displayMessage)?.let { bulk += it }
-                    bulk += displayMessage
+                    buildReplyPreviewMessage(effectiveMessage)?.let { bulk += it }
+                    bulk += effectiveMessage
                 } else {
                     if (replayStartTimeMs != null) ChatReplayPacing.awaitPlayback(kickReplayIsPlaying)
-                    buildReplyPreviewMessage(displayMessage)?.let { onMessage(it, replayGeneration) }
+                    buildReplyPreviewMessage(effectiveMessage)?.let { onMessage(it, replayGeneration) }
                     if (replayStartTimeMs != null) ChatReplayPacing.awaitPlayback(kickReplayIsPlaying)
-                    onMessage(displayMessage, replayGeneration)
+                    onMessage(effectiveMessage, replayGeneration)
                 }
-                addChatter(displayMessage.userName)
+                addChatter(effectiveMessage.userName)
                 emitted += 1
             } else {
                 deduped += 1
@@ -2799,6 +2714,9 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun markMessageDeleted(targetId: String?, fallbackMessage: ChatMessage? = null): ChatMessage? {
+        if (!targetId.isNullOrBlank()) {
+            recordDeletedMessageId(targetId)
+        }
         synchronized(rawChatMessages) {
             fun sameRawUser(candidate: ChatMessage): Boolean {
                 return fallbackMessage != null && (
@@ -2809,7 +2727,7 @@ class ChatViewModel @Inject constructor(
             }
 
             val rawIndex = when {
-                !targetId.isNullOrBlank() -> rawChatMessages.indexOfLast { it.id == targetId }
+                !targetId.isNullOrBlank() -> rawChatMessages.indexOfLast { matchesTargetMessageId(it.id, targetId) }
                 fallbackMessage != null -> rawChatMessages.indexOfLast { candidate ->
                     !candidate.isDeleted &&
                         candidate.message == fallbackMessage.message &&
@@ -2839,7 +2757,7 @@ class ChatViewModel @Inject constructor(
             }
 
             val index = when {
-                !targetId.isNullOrBlank() -> chatMessages.indexOfLast { it.id == targetId }
+                !targetId.isNullOrBlank() -> chatMessages.indexOfLast { matchesTargetMessageId(it.id, targetId) }
                 fallbackMessage != null -> chatMessages.indexOfLast { candidate ->
                     !candidate.isDeleted &&
                         candidate.message == fallbackMessage.message &&
@@ -2917,8 +2835,13 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun processMessage(message: ChatMessage) {
+        val effectiveMessage = if (!message.isDeleted && isMessageIdDeleted(message.id)) {
+            createDeletedMessage(message)
+        } else {
+            message
+        }
         synchronized(rawChatMessages) {
-            rawChatMessages.add(message)
+            rawChatMessages.add(effectiveMessage)
             var removeCount = 0
             while (rawChatMessages.size > messageLimit) {
                 val removed = rawChatMessages.removeFirst()
@@ -2930,7 +2853,7 @@ class ChatViewModel @Inject constructor(
                 repeat(removeCount.coerceAtMost(chatMessages.size)) {
                     chatMessages.removeFirst()
                 }
-                val visibleMessage = message.takeUnless(::isMutedMessage)
+                val visibleMessage = effectiveMessage.takeUnless(::isMutedMessage)
                 if (visibleMessage != null) {
                     chatMessages.add(visibleMessage)
                     // Assign the row's alternating-shadow slot here, while we know it is the one
@@ -3281,6 +3204,9 @@ class ChatViewModel @Inject constructor(
         synchronized(kickMessageIds) {
             kickMessageIds.clear()
         }
+        synchronized(recentDeletedMessageIds) {
+            recentDeletedMessageIds.clear()
+        }
         val centrifugoSocket = kickCentrifugoChatWebSocket
         if (centrifugoSocket != null) {
             MainScope().launch(Dispatchers.IO) {
@@ -3528,15 +3454,20 @@ class ChatViewModel @Inject constructor(
                 if (!showClearMsg) {
                     return
                 }
-                val targetId = kickRepository.getKickModerationTargetMessageId(kickMessage)
+                val targetId = kickRepository.getKickModerationTargetMessageId(kickMessage, messageJson)
                 val deletedMessage = markMessageDeleted(targetId, chatMessage)
                 if (deletedMessage == null) {
-                    val deletedBy = if (realtimeMessage.aiModerated) {
-                        ContextCompat.getString(applicationContext, R.string.kick_automod)
-                    } else {
-                        null
+                    val hasUserOrContent = !chatMessage.userName.isNullOrBlank() ||
+                        !chatMessage.userLogin.isNullOrBlank() ||
+                        !chatMessage.message.isNullOrBlank()
+                    if (hasUserOrContent) {
+                        val deletedBy = if (realtimeMessage.aiModerated) {
+                            ContextCompat.getString(applicationContext, R.string.kick_automod)
+                        } else {
+                            null
+                        }
+                        onMessage(getClearMessage(chatMessage, null, nameDisplay, deletedBy))
                     }
-                    onMessage(getClearMessage(chatMessage, null, nameDisplay, deletedBy))
                 }
                 return
             }

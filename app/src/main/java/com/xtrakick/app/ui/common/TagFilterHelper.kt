@@ -77,4 +77,46 @@ object TagFilterHelper {
             }))
         }
     }
+
+    fun toggleTag(currentTags: Collection<String>, tagToToggle: String): Array<String> {
+        val normalized = tagToToggle.trim()
+        val isCurrentlyActive = isTagActive(normalized, currentTags)
+        val newTags = if (isCurrentlyActive) {
+            currentTags.filterNot { isTagActive(it, listOf(normalized)) }
+        } else {
+            currentTags + normalized
+        }
+        return newTags.distinct().sorted().toTypedArray()
+    }
+
+    fun formatFiltersText(
+        resources: android.content.res.Resources,
+        tags: Collection<String>,
+        languages: Collection<String>,
+    ): String? {
+        if (tags.isEmpty() && languages.isEmpty()) return null
+        return buildString {
+            if (tags.isNotEmpty()) {
+                append(
+                    resources.getQuantityString(
+                        R.plurals.tags,
+                        tags.size,
+                        tags.joinToString()
+                    )
+                )
+            }
+            if (languages.isNotEmpty()) {
+                if (isNotEmpty()) {
+                    append(". ")
+                }
+                append(
+                    resources.getQuantityString(
+                        R.plurals.languages,
+                        languages.size,
+                        languages.joinToString()
+                    )
+                )
+            }
+        }
+    }
 }

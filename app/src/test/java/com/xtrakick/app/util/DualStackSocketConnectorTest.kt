@@ -1,6 +1,5 @@
 package com.xtrakick.app.util
 
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -15,9 +14,6 @@ import java.net.InetAddress
 import java.net.Socket
 import java.net.SocketAddress
 import java.net.SocketException
-import java.net.SocketTimeoutException
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 
 class DualStackSocketConnectorTest {
 

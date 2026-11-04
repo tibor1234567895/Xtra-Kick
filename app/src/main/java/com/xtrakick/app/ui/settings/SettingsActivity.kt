@@ -7,7 +7,6 @@ import android.app.admin.DeviceAdminReceiver
 import android.app.admin.DevicePolicyManager
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
 import com.xtrakick.app.ui.login.LoginActivity
 import android.content.pm.PackageManager
@@ -33,7 +32,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
-import com.xtrakick.app.model.AppUpdateInfo
 import androidx.core.app.ActivityCompat
 import androidx.core.content.edit
 import androidx.core.content.FileProvider
@@ -68,12 +66,6 @@ import androidx.preference.forEach
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.SettingsNavGraphDirections
@@ -91,9 +83,7 @@ import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.main.RewardClaimScheduler
 import com.xtrakick.app.ui.common.CompactDialogs.constrainSheets
 import com.xtrakick.app.ui.following.KickFollowImportDialog
-import com.xtrakick.app.ui.player.IvsPlayerService
 import com.xtrakick.app.ui.player.LiveLatencySettings
-import com.xtrakick.app.ui.player.PlaybackService
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.AppConstants
 import kotlin.math.max

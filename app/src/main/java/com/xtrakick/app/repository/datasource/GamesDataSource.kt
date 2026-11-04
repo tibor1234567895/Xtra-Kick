@@ -3,7 +3,6 @@ package com.xtrakick.app.repository.datasource
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.xtrakick.app.model.ui.Game
-import com.xtrakick.app.model.ui.Tag
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.util.AppConstants
 import java.util.Locale

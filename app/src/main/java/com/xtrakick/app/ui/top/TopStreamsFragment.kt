@@ -229,14 +229,7 @@ class TopStreamsFragment : PagedListFragment(), Scrollable, StreamsSortDialog.On
 
     private fun toggleTag(tag: String) {
         viewLifecycleOwner.lifecycleScope.launch {
-            val current = viewModel.tags.toList()
-            val normalized = tag.trim()
-            val isCurrentlyActive = TagFilterHelper.isTagActive(normalized, current)
-            val newTags = if (isCurrentlyActive) {
-                current.filterNot { TagFilterHelper.isTagActive(it, listOf(normalized)) }
-            } else {
-                current + normalized
-            }.distinct().sorted().toTypedArray()
+            val newTags = TagFilterHelper.toggleTag(viewModel.tags.toList(), tag)
             viewModel.setFilter(viewModel.sort, newTags, viewModel.languages)
             updateFiltersText()
             (pagingAdapter as? ActiveTagsAdapter)?.activeTags = newTags.toSet()
@@ -244,31 +237,7 @@ class TopStreamsFragment : PagedListFragment(), Scrollable, StreamsSortDialog.On
     }
 
     private fun updateFiltersText() {
-        viewModel.filtersText.value = if (viewModel.tags.isNotEmpty() || viewModel.languages.isNotEmpty()) {
-            buildString {
-                if (viewModel.tags.isNotEmpty()) {
-                    append(
-                        resources.getQuantityString(
-                            R.plurals.tags,
-                            viewModel.tags.size,
-                            viewModel.tags.joinToString()
-                        )
-                    )
-                }
-                if (viewModel.languages.isNotEmpty()) {
-                    if (isNotEmpty()) {
-                        append(". ")
-                    }
-                    append(
-                        resources.getQuantityString(
-                            R.plurals.languages,
-                            viewModel.languages.size,
-                            viewModel.languages.joinToString()
-                        )
-                    )
-                }
-            }
-        } else null
+        viewModel.filtersText.value = TagFilterHelper.formatFiltersText(resources, viewModel.tags.toList(), viewModel.languages.toList())
     }
 
     override fun onChange(sort: String, sortText: CharSequence, tags: Array<String>, languages: Array<String>, changed: Boolean, saveFilters: Boolean, saveSort: Boolean, saveDefault: Boolean) {

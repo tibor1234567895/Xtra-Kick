@@ -22,6 +22,7 @@ import android.text.style.StyleSpan
 import android.text.style.URLSpan
 import android.util.Patterns
 import android.view.View
+import androidx.core.text.getSpans
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
 import androidx.fragment.app.Fragment
@@ -138,6 +139,18 @@ object ChatAdapterUtils {
                 animatedFrameSchedulers[rootView] = it
             }
         }
+    }
+
+    internal fun requestInvalidate(view: View, framesPerSecond: Int = DEFAULT_ANIMATED_EMOTE_FPS) {
+        animatedFrameScheduler(view, framesPerSecond).requestInvalidate(view)
+    }
+
+    fun updateAnimatedEmoteFps(fps: Int) {
+        MasterEmoteManager.updateFps(fps)
+    }
+
+    fun clearMasterEmotes() {
+        MasterEmoteManager.clear()
     }
 
     private class ThrottledAnimatedDrawable(
@@ -1472,12 +1485,13 @@ object ChatAdapterUtils {
 
     fun loadImages(fragment: Fragment, itemView: View, bind: (SpannableStringBuilder) -> Unit, images: List<Image>, imagePaint: NamePaint?, userName: String?, userNameStartIndex: Int?, backgroundColor: Int, imageLibrary: String?, builder: SpannableStringBuilder, emoteSize: Int, badgeSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int = DEFAULT_ANIMATED_EMOTE_FPS) {
         if (imagePaint != null) {
+            val paintUrl = imagePaint.imageUrl
+            val paintTargetSize = (itemView as? android.widget.TextView)?.lineHeight?.takeIf { it > 0 } ?: badgeSize
             if (imageLibrary == "0") {
                 fragment.requireContext().imageLoader.enqueue(
                     ImageRequest.Builder(fragment.requireContext()).apply {
-                        data(imagePaint.imageUrl)
-                        val targetSize = (itemView as? android.widget.TextView)?.lineHeight?.takeIf { it > 0 } ?: badgeSize
-                        size(targetSize, targetSize)
+                        data(paintUrl)
+                        size(paintTargetSize, paintTargetSize)
                         crossfade(false)
                         httpHeaders(NetworkHeaders.Builder().apply {
                             add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
@@ -1485,9 +1499,17 @@ object ChatAdapterUtils {
                         target(
                             onSuccess = {
                                 (it.asDrawable(fragment.resources)).let { loaded ->
-                                    val result = if (loaded is Animatable && animateGifs) {
-                                        throttleAnimatedDrawable(loaded, itemView, animatedEmoteFps).also {
-                                            startAnimationIfOnScreen(it, itemView)
+                                    val result = if (loaded is Animatable && animateGifs && MasterEmoteManager.isSyncEnabled) {
+                                        if (paintUrl != null) {
+                                            val key = ChatImageKey(paintUrl, paintTargetSize, isEmote = false, isAnimated = true)
+                                            val master = MasterEmoteManager.getOrCreateMaster(key, loaded, paintTargetSize, animatedEmoteFps)
+                                            ProxyEmoteDrawable(master, itemView).also { proxy ->
+                                                startAnimationIfOnScreen(proxy, itemView)
+                                            }
+                                        } else {
+                                            throttleAnimatedDrawable(loaded, itemView, animatedEmoteFps).also { anim ->
+                                                startAnimationIfOnScreen(anim, itemView)
+                                            }
                                         }
                                     } else loaded
                                     try {
@@ -1513,13 +1535,21 @@ object ChatAdapterUtils {
                 )
             } else {
                 Glide.with(fragment)
-                    .load(GlideUrl(imagePaint.imageUrl) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) })
+                    .load(GlideUrl(paintUrl) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) })
                     .diskCacheStrategy(DiskCacheStrategy.DATA)
                     .into(object : CustomTarget<Drawable>() {
                         override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
-                            val result = if (resource is Animatable && animateGifs) {
-                                throttleAnimatedDrawable(resource, itemView, animatedEmoteFps).also {
-                                    startAnimationIfOnScreen(it, itemView)
+                            val result = if (resource is Animatable && animateGifs && MasterEmoteManager.isSyncEnabled) {
+                                if (paintUrl != null) {
+                                    val key = ChatImageKey(paintUrl, paintTargetSize, isEmote = false, isAnimated = true)
+                                    val master = MasterEmoteManager.getOrCreateMaster(key, resource, paintTargetSize, animatedEmoteFps)
+                                    ProxyEmoteDrawable(master, itemView).also { proxy ->
+                                        startAnimationIfOnScreen(proxy, itemView)
+                                    }
+                                } else {
+                                    throttleAnimatedDrawable(resource, itemView, animatedEmoteFps).also { anim ->
+                                        startAnimationIfOnScreen(anim, itemView)
+                                    }
                                 }
                             } else resource
                             try {
@@ -1551,7 +1581,7 @@ object ChatAdapterUtils {
             } else {
                 badgeSize
             }
-            loadImage(imageLibrary, fragment, image, emoteQuality, imageSize) { loaded ->
+            loadImage(imageLibrary, fragment, image, emoteQuality, imageSize, itemView, animatedEmoteFps, animateGifs) { loaded ->
                 if (loaded != null) {
                     val result = prepareDrawableForChat(fragment, loaded, imageSize, itemView, animateGifs, animatedEmoteFps)
                     if (image.overlayEmote != null) {
@@ -1570,7 +1600,7 @@ object ChatAdapterUtils {
     }
 
     private fun nextOverlayEmote(imageLibrary: String?, fragment: Fragment, drawables: Array<Drawable>, image: Image, bottomImage: Image, itemView: View, bind: (SpannableStringBuilder) -> Unit, builder: SpannableStringBuilder, emoteSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int) {
-        loadImage(imageLibrary, fragment, image, emoteQuality, emoteSize) { loaded ->
+        loadImage(imageLibrary, fragment, image, emoteQuality, emoteSize, itemView, animatedEmoteFps, animateGifs) { loaded ->
             val array = if (loaded != null) {
                 val result = prepareDrawableForChat(fragment, loaded, emoteSize, itemView, animateGifs, animatedEmoteFps)
                 drawables.plus(result)
@@ -1593,7 +1623,20 @@ object ChatAdapterUtils {
         }
     }
 
-    private fun loadImage(imageLibrary: String?, fragment: Fragment, image: Image, emoteQuality: String, targetHeight: Int, onLoaded: (Drawable?) -> Unit) {
+    private fun loadImage(
+        imageLibrary: String?,
+        fragment: Fragment,
+        image: Image,
+        emoteQuality: String,
+        targetHeight: Int,
+        itemView: View,
+        animatedEmoteFps: Int,
+        animateGifs: Boolean,
+        onLoaded: (Drawable?) -> Unit,
+    ) {
+        val isAnimated = (image.isAnimated || image.format.equals("gif", true))
+        val isSyncCandidate = isAnimated && animateGifs && image.isEmote && MasterEmoteManager.isSyncEnabled
+
         image.localDataLoader?.let { load ->
             fragment.viewLifecycleOwner.lifecycleScope.launch {
                 val source = withContext(Dispatchers.IO) {
@@ -1614,6 +1657,36 @@ object ChatAdapterUtils {
         }
         val key = createChatImageKey(image, source, targetHeight)
         if (key != null) {
+            if (isSyncCandidate) {
+                val existingMaster = MasterEmoteManager.getMaster(key)
+                if (existingMaster != null) {
+                    onLoaded(ProxyEmoteDrawable(existingMaster, itemView))
+                    return
+                }
+
+                chatImageCoordinator.load(
+                    key = key,
+                    startLoad = { complete ->
+                        loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { result ->
+                            complete(result)
+                        }
+                    },
+                    callback = { rawDrawable ->
+                        if (rawDrawable != null) {
+                            if (rawDrawable is Animatable) {
+                                val master = MasterEmoteManager.getOrCreateMaster(key, rawDrawable, targetHeight, animatedEmoteFps)
+                                onLoaded(ProxyEmoteDrawable(master, itemView))
+                            } else {
+                                onLoaded(cloneDrawableForBind(fragment, rawDrawable))
+                            }
+                        } else {
+                            onLoaded(null)
+                        }
+                    },
+                )
+                return
+            }
+
             chatImageCoordinator.load(
                 key = key,
                 startLoad = { complete ->
@@ -1705,6 +1778,7 @@ object ChatAdapterUtils {
     }
 
     private fun cloneDrawableForBind(fragment: Fragment, drawable: Drawable): Drawable {
+        if (drawable is ProxyEmoteDrawable) return drawable
         return (drawable.constantState?.newDrawable(fragment.resources) ?: drawable).mutate()
     }
 
@@ -1716,6 +1790,10 @@ object ChatAdapterUtils {
         animateGifs: Boolean,
         animatedEmoteFps: Int,
     ): Drawable {
+        if (drawable is ProxyEmoteDrawable) {
+            startAnimationIfOnScreen(drawable, itemView)
+            return drawable
+        }
         val result = cloneDrawableForBind(fragment, drawable)
         val intrinsicWidth = result.intrinsicWidth.takeIf { it > 0 } ?: targetHeight
         val intrinsicHeight = result.intrinsicHeight.takeIf { it > 0 } ?: targetHeight
@@ -1777,6 +1855,44 @@ object ChatAdapterUtils {
             }
         } else {
             image.url4x ?: image.url3x ?: image.url2x ?: image.url1x
+        }
+    }
+
+    fun startSpanAnimations(text: CharSequence?) {
+        val spannable = text as? android.text.Spannable ?: return
+        val imageSpans = spannable.getSpans<ImageSpan>()
+        for (span in imageSpans) {
+            val drawable = span.drawable
+            if (drawable is Animatable) {
+                drawable.start()
+            } else if (drawable is LayerDrawable) {
+                for (i in 0 until drawable.numberOfLayers) {
+                    (drawable.getDrawable(i) as? Animatable)?.start()
+                }
+            }
+        }
+        val namePaintSpans = spannable.getSpans<NamePaintImageSpan>()
+        for (span in namePaintSpans) {
+            (span.drawable as? Animatable)?.start()
+        }
+    }
+
+    fun stopSpanAnimations(text: CharSequence?) {
+        val spannable = text as? android.text.Spannable ?: return
+        val imageSpans = spannable.getSpans<ImageSpan>()
+        for (span in imageSpans) {
+            val drawable = span.drawable
+            if (drawable is Animatable) {
+                drawable.stop()
+            } else if (drawable is LayerDrawable) {
+                for (i in 0 until drawable.numberOfLayers) {
+                    (drawable.getDrawable(i) as? Animatable)?.stop()
+                }
+            }
+        }
+        val namePaintSpans = spannable.getSpans<NamePaintImageSpan>()
+        for (span in namePaintSpans) {
+            (span.drawable as? Animatable)?.stop()
         }
     }
 
