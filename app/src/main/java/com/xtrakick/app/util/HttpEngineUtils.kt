@@ -39,7 +39,7 @@ object HttpEngineUtils {
 
             override fun onResponseStarted(request: UrlRequest, info: UrlResponseInfo) {
                 val bodyLength = info.headers.asMap[CONTENT_LENGTH_HEADER_NAME]?.takeIf { it.size == 1 }?.getOrNull(0)?.toLongOrNull() ?: -1
-                require(bodyLength <= MAX_ARRAY_SIZE) { "The body is too large and wouldn't fit in a byte array!" }
+                require(output != null || bodyLength <= MAX_ARRAY_SIZE) { "The body is too large and wouldn't fit in a byte array!" }
                 mResponseBodyStream = if (output == null && bodyLength >= 0) {
                     ByteArrayOutputStream(bodyLength.toInt())
                 } else {

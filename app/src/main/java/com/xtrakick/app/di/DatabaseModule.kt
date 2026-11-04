@@ -1,6 +1,7 @@
 package com.xtrakick.app.di
 
 import android.app.Application
+import android.content.Context
 import androidx.room.Room
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -91,8 +92,10 @@ class DatabaseModule {
 
     @Singleton
     @Provides
-    fun providesAppDatabase(application: Application): AppDatabase =
-        Room.databaseBuilder(application, AppDatabase::class.java, "database")
+    fun providesAppDatabase(application: Application): AppDatabase = buildDatabase(application, "database")
+
+    internal fun buildDatabase(application: Context, name: String): AppDatabase =
+        Room.databaseBuilder(application, AppDatabase::class.java, name)
             .addMigrations(
                 object : Migration(9, 10) {
                     override fun migrate(db: SupportSQLiteDatabase) {

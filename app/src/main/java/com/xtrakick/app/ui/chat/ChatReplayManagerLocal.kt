@@ -14,6 +14,7 @@ class ChatReplayManagerLocal(
     private val getCurrentSpeed: () -> Float?,
     private val coroutineScope: CoroutineScope,
     private val listener: ChatReplayManager.Listener,
+    private val isPlaybackPlaying: () -> Boolean = { true },
 ) {
     companion object {
         internal fun messageLowerBound(messages: List<ChatMessage>, timestamp: Long): Int {
@@ -149,6 +150,7 @@ class ChatReplayManagerLocal(
     private fun startJob() {
         messageJob = coroutineScope.launch {
             while (isActive) {
+                ChatReplayPacing.awaitPlayback(isPlaybackPlaying)
                 val message = queuedMessages.getOrNull(nextMessageIndex) ?: break
                 if (message.timestamp != null) {
                     var currentPosition: Long
@@ -170,11 +172,13 @@ class ChatReplayManagerLocal(
                             currentPosition < messageOffset
                         }
                     ) {
+                        ChatReplayPacing.awaitPlayback(isPlaybackPlaying)
                         delay(nextSyncDelay(messageOffset - currentPosition))
                     }
                     if (!isActive) {
                         break
                     }
+                    ChatReplayPacing.awaitPlayback(isPlaybackPlaying)
                     listener.onChatMessage(
                         ChatMessage(
                             id = message.id,

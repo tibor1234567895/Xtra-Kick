@@ -62,6 +62,7 @@ import dagger.Lazy
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -81,6 +82,47 @@ import javax.inject.Inject
 import kotlin.concurrent.schedule
 import kotlin.concurrent.scheduleAtFixedRate
 
+
+@OptIn(UnstableApi::class)
+internal fun playbackControllerConnection(
+    connectionResult: MediaSession.ConnectionResult,
+    controllerUid: Int,
+    appUid: Int,
+): MediaSession.ConnectionResult {
+    if (controllerUid != appUid) return connectionResult
+    val sessionCommands = connectionResult.availableSessionCommands.buildUpon().apply {
+        add(SessionCommand(PlaybackService.START_STREAM, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.START_VIDEO, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.START_CLIP, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.START_OFFLINE_VIDEO, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.STOP_PLAYBACK, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.TOGGLE_DYNAMICS_PROCESSING, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.SET_SLEEP_TIMER, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.GET_QUALITIES, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.GET_DURATION, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.GET_ERROR_CODE, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.GET_MEDIA_PLAYLIST, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.GET_MULTIVARIANT_PLAYLIST, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.UPDATE_CHANNEL_LOGO, Bundle.EMPTY))
+    }.build()
+    val playerCommands = Player.Commands.Builder()
+        .addAllCommands()
+        .build()
+    return MediaSession.ConnectionResult.accept(sessionCommands, playerCommands)
+}
+
+internal class PlaybackPositionWriter(private val scope: CoroutineScope) {
+    private var tail: Job? = null
+
+    @Synchronized
+    fun enqueue(write: suspend () -> Unit): Job {
+        val previous = tail
+        return scope.launch {
+            previous?.join()
+            write()
+        }.also { tail = it }
+    }
+}
 
 @OptIn(UnstableApi::class)
 @AndroidEntryPoint
@@ -129,6 +171,10 @@ class PlaybackService : MediaSessionService() {
     @JvmField
     var trustManager: javax.net.ssl.X509TrustManager? = null
 
+    @Inject
+    lateinit var applicationScope: CoroutineScope
+
+    private val positionWriter by lazy { PlaybackPositionWriter(applicationScope) }
     private var mediaSession: MediaSession? = null
     private var dynamicsProcessing: DynamicsProcessing? = null
     private var background = false
@@ -400,28 +446,13 @@ class PlaybackService : MediaSessionService() {
                 object : MediaSession.Callback {
                     override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
                         val connectionResult = super.onConnect(session, controller)
-                        val sessionCommands = connectionResult.availableSessionCommands.buildUpon().apply {
-                            add(SessionCommand(START_STREAM, Bundle.EMPTY))
-                            add(SessionCommand(START_VIDEO, Bundle.EMPTY))
-                            add(SessionCommand(START_CLIP, Bundle.EMPTY))
-                            add(SessionCommand(START_OFFLINE_VIDEO, Bundle.EMPTY))
-                            add(SessionCommand(STOP_PLAYBACK, Bundle.EMPTY))
-                            add(SessionCommand(TOGGLE_DYNAMICS_PROCESSING, Bundle.EMPTY))
-                            add(SessionCommand(SET_SLEEP_TIMER, Bundle.EMPTY))
-                            add(SessionCommand(GET_QUALITIES, Bundle.EMPTY))
-                            add(SessionCommand(GET_DURATION, Bundle.EMPTY))
-                            add(SessionCommand(GET_ERROR_CODE, Bundle.EMPTY))
-                            add(SessionCommand(GET_MEDIA_PLAYLIST, Bundle.EMPTY))
-                            add(SessionCommand(GET_MULTIVARIANT_PLAYLIST, Bundle.EMPTY))
-                            add(SessionCommand(UPDATE_CHANNEL_LOGO, Bundle.EMPTY))
-                        }.build()
-                        val playerCommands = Player.Commands.Builder()
-                            .addAllCommands()
-                            .build()
-                        return MediaSession.ConnectionResult.accept(sessionCommands, playerCommands)
+                        return playbackControllerConnection(connectionResult, controller.uid, Process.myUid())
                     }
 
                     override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
+                        if (controller.uid != Process.myUid()) {
+                            return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
+                        }
                         return when (customCommand.customAction) {
                             START_STREAM -> {
                                 val uri = customCommand.customExtras.getString(URI)
@@ -911,7 +942,7 @@ class PlaybackService : MediaSessionService() {
                 val position = player.currentPosition
                 val vid = videoId
                 val offId = offlineVideoId
-                ioScope.launch {
+                positionWriter.enqueue {
                     if (vid != null) {
                         playerRepository.saveVideoPosition(VideoPosition(vid, position))
                     } else if (offId != null) {
@@ -931,7 +962,7 @@ class PlaybackService : MediaSessionService() {
                     lastSavedPosition = currentPosition
                     val vid = videoId
                     val offId = offlineVideoId
-                    ioScope.launch {
+                    positionWriter.enqueue {
                         if (vid != null) {
                             playerRepository.saveVideoPosition(VideoPosition(vid, currentPosition))
                         } else if (offId != null) {

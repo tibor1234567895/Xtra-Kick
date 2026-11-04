@@ -4,8 +4,53 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.EOFException
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 
 class PlaylistUtilsByteRangeTest {
+    @Test
+    fun byteRangesSurviveSavingAndSelectedWindows() {
+        val playlist = parse("#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-BYTERANGE:100@50\n#EXTINF:2,\nasset.ts\n#EXT-X-BYTERANGE:200\n#EXTINF:2,\nasset.ts\n#EXT-X-ENDLIST\n")
+        val output = ByteArrayOutputStream()
+        PlaylistUtils.writeMediaPlaylist(playlist.copy(segments = playlist.segments.drop(1)), output)
+        val saved = parse(output.toString("UTF-8"))
+        assertEquals(150L, saved.segments.single().byteRangeStart)
+        assertEquals(200L, saved.segments.single().byteRangeLength)
+        assertTrue(output.toString("UTF-8").contains("#EXT-X-VERSION:4"))
+    }
+
+    @Test
+    fun copySegmentExtractsTheExactRangeAndRejectsTruncation() {
+        val segment = Segment("asset.ts", 2f, null, null, 2, 3)
+        val output = ByteArrayOutputStream()
+        PlaylistUtils.copySegment("abcdefgh".byteInputStream(), output, segment)
+        assertEquals("cde", output.toString("UTF-8"))
+        assertThrows(EOFException::class.java) {
+            PlaylistUtils.copySegment("abc".byteInputStream(), ByteArrayOutputStream(), segment)
+        }
+    }
+
+    @Test
+    fun signedPlaylistPathsAndRelativeAssetsAreResolvedCorrectly() {
+        assertTrue(PlaylistUtils.isHlsUrl("https://example.com/a.M3U8?token=secret#fragment"))
+        assertFalse(PlaylistUtils.isHlsUrl("https://example.com/a.mp4?file=.m3u8"))
+        assertEquals("https://example.com/segment.ts", PlaylistUtils.resolveUri("https://example.com/live/master.m3u8?token=x", "/segment.ts"))
+        assertEquals("https://cdn.example.com/segment.ts", PlaylistUtils.resolveUri("https://example.com/live/master.m3u8", "//cdn.example.com/segment.ts"))
+        assertEquals("https://example.com/segment.ts?token=x", PlaylistUtils.resolveUri("https://example.com/live/master.m3u8", "../segment.ts?token=x"))
+    }
+
+    @Test
+    fun assetNamesAreStableAndSeparateSameBasenames() {
+        assertEquals("segment.ts", PlaylistUtils.assetFileName("segment.ts"))
+        val nested = PlaylistUtils.assetFileName("one/segment.ts")
+        assertEquals(nested, PlaylistUtils.assetFileName("one/segment.ts"))
+        assertFalse(nested == PlaylistUtils.assetFileName("two/segment.ts"))
+        assertFalse(nested.contains('/'))
+        assertFalse(PlaylistUtils.assetFileName("https://example.com/segment.ts?token=x").contains('?'))
+    }
 
     private fun parse(text: String): MediaPlaylist =
         PlaylistUtils.parseMediaPlaylist(ByteArrayInputStream(text.toByteArray()))

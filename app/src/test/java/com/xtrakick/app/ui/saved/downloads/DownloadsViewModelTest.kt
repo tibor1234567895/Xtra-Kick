@@ -36,6 +36,22 @@ import java.util.concurrent.atomic.AtomicInteger
 @Config(application = android.app.Application::class)
 @RunWith(RobolectricTestRunner::class)
 class DownloadsViewModelTest {
+    @Test
+    fun conversionCopiesByteRangesBeforeDeletingTheSharedAsset() = runBlocking {
+        val directory = File(context.cacheDir, "range-conversion").apply { mkdirs() }
+        File(directory, "asset.ts").writeText("abcdefgh")
+        val playlist = File(directory, "video.m3u8").apply {
+            writeText("#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\n#EXT-X-BYTERANGE:3@1\nasset.ts\n#EXTINF:1,\n#EXT-X-BYTERANGE:2@5\nasset.ts\n#EXT-X-ENDLIST\n")
+        }
+        val video = OfflineVideo(url = playlist.path, downloadPath = directory.parent, downloadDate = 5)
+        video.id = repository.saveVideo(video).toInt()
+        viewModel.convertToFile(video)
+        kotlinx.coroutines.withTimeout(5000) {
+            while (repository.getVideoById(video.id)?.url == playlist.path) kotlinx.coroutines.delay(10)
+        }
+        val converted = repository.getVideoById(video.id)!!
+        assertEquals("bcdfg", File(converted.url!!).readText())
+    }
     private val context = RuntimeEnvironment.getApplication()
     private val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
     private val repository = OfflineRepository(database.videos(), database.localFollowsChannel(), database.bookmarks())

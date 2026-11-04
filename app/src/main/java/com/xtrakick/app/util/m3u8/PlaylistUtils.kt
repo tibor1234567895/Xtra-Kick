@@ -10,9 +10,51 @@ import com.xtrakick.app.player.lowlatency.HlsPlaylistParser
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.regex.Pattern
+import java.net.URI
+import java.io.EOFException
+import java.security.MessageDigest
 import kotlin.math.roundToInt
 
 object PlaylistUtils {
+    fun isHlsUrl(url: String): Boolean = URI(url).path.orEmpty().endsWith(".m3u8", ignoreCase = true)
+
+    fun resolveUri(playlistUrl: String, uri: String): String = URI(playlistUrl).resolve(uri).toString()
+
+    fun assetFileName(uri: String): String {
+        val parsed = URI(uri)
+        val name = parsed.path.orEmpty().substringAfterLast('/').ifBlank { "segment" }
+            .replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        if (!parsed.isAbsolute && parsed.path == name && parsed.rawQuery == null && name != "." && name != "..") return name
+        val hash = MessageDigest.getInstance("SHA-256").digest(uri.toByteArray())
+            .take(8).joinToString("") { "%02x".format(it) }
+        return "${hash}_${name.takeLast(100)}"
+    }
+
+    fun copySegment(input: InputStream, output: OutputStream, segment: Segment) {
+        val length = segment.byteRangeLength
+        if (length == null) {
+            input.copyTo(output)
+            return
+        }
+        var skip = requireNotNull(segment.byteRangeStart)
+        require(skip >= 0 && length > 0) { "Invalid HLS byte range" }
+        while (skip > 0) {
+            val skipped = input.skip(skip)
+            if (skipped > 0) skip -= skipped else {
+                if (input.read() == -1) throw EOFException("HLS byte range starts past the end of the asset")
+                skip--
+            }
+        }
+        var remaining = length
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (remaining > 0) {
+            val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+            if (read == -1) throw EOFException("Incomplete HLS byte range")
+            output.write(buffer, 0, read)
+            remaining -= read
+        }
+    }
+
     @OptIn(UnstableApi::class)
     fun parseVariantUrls(playlist: String, playlistUrl: String): Map<Pair<String, String?>, String> {
         val master = HlsPlaylistParser().parse(Uri.parse(playlistUrl), playlist.byteInputStream())
@@ -151,7 +193,12 @@ object PlaylistUtils {
         output.bufferedWriter().use { writer ->
             writer.write("#EXTM3U")
             writer.newLine()
-            writer.write("#EXT-X-VERSION:${if (playlist.initSegmentUri != null) 6 else 3}")
+            val version = when {
+                playlist.initSegmentUri != null -> 6
+                playlist.segments.any { it.byteRangeLength != null } -> 4
+                else -> 3
+            }
+            writer.write("#EXT-X-VERSION:$version")
             writer.newLine()
             writer.write("#EXT-X-PLAYLIST-TYPE:EVENT")
             writer.newLine()
@@ -164,7 +211,13 @@ object PlaylistUtils {
             }
             playlist.segments.forEach {
                 writer.newLine()
-                writer.write("#EXTINF:${it.duration}")
+                writer.write("#EXTINF:${it.duration},${it.title.orEmpty()}")
+                it.byteRangeLength?.let { length ->
+                    val offset = requireNotNull(it.byteRangeStart)
+                    require(length > 0 && offset >= 0) { "Invalid HLS byte range" }
+                    writer.newLine()
+                    writer.write("#EXT-X-BYTERANGE:$length@$offset")
+                }
                 writer.newLine()
                 writer.write(it.uri)
             }

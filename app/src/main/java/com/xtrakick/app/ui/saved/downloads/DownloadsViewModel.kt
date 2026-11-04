@@ -260,37 +260,31 @@ class DownloadsViewModel @Inject internal constructor(
                             maxProgress = tracksToDelete.count()
                         })
 
-                        applicationContext.contentResolver.openOutputStream(newVideoFileUri, "wt")?.use { outputStream ->
+                        (applicationContext.contentResolver.openOutputStream(newVideoFileUri, "wt")
+                            ?: throw java.io.IOException("Cannot open converted video")).use { outputStream ->
                             if (oldPlaylist.initSegmentUri != null) {
                                 val oldFileUri = oldPlaylist.initSegmentUri
-                                runCatching {
-                                    applicationContext.contentResolver.openInputStream(oldFileUri.toUri())?.use { inputStream ->
-                                        inputStream.copyTo(outputStream)
-                                    }
-                                }.onFailure { e ->
-                                    Log.w("DownloadsViewModel", "Failed to copy init segment $oldFileUri: ${e.message}")
+                                (applicationContext.contentResolver.openInputStream(oldFileUri.toUri())
+                                    ?: throw java.io.IOException("Missing initialization segment")).use { inputStream ->
+                                    inputStream.copyTo(outputStream)
                                 }
                             }
 
                             oldPlaylist.segments.forEach { track ->
                                 val oldFileUri = track.uri
-                                val oldFileName = oldFileUri.substringAfterLast("%2F").substringAfterLast("/")
-                                runCatching {
-                                    applicationContext.contentResolver.openInputStream(oldFileUri.toUri())?.use { inputStream ->
-                                        inputStream.copyTo(outputStream)
-                                    }
-                                }.onFailure { e ->
-                                    Log.w("DownloadsViewModel", "Skipping missing segment $oldFileUri: ${e.message}")
-                                }
-
-                                if (tracksToDelete.contains(oldFileName)) {
-                                    runCatching {
-                                        DocumentsContract.deleteDocument(applicationContext.contentResolver, oldFileUri.toUri())
-                                    }
+                                (applicationContext.contentResolver.openInputStream(oldFileUri.toUri())
+                                    ?: throw java.io.IOException("Missing media segment")).use { inputStream ->
+                                    PlaylistUtils.copySegment(inputStream, outputStream, track)
                                 }
                                 repository.updateVideo(video.apply {
                                     progress += 1
                                 })
+                            }
+                        }
+
+                        oldPlaylist.segments.distinctBy { it.uri }.forEach { track ->
+                            if (track.uri.substringAfterLast("%2F").substringAfterLast('/') in tracksToDelete) {
+                                runCatching { DocumentsContract.deleteDocument(applicationContext.contentResolver, track.uri.toUri()) }
                             }
                         }
 
@@ -350,32 +344,21 @@ class DownloadsViewModel @Inject internal constructor(
                                 FileOutputStream(newVideoFile).use { outputStream ->
                                     if (oldPlaylist.initSegmentUri != null) {
                                         val oldFile = File(oldVideoDirectory, oldPlaylist.initSegmentUri.substringAfterLast("%2F").substringAfterLast("/"))
-                                        if (oldFile.exists()) {
-                                            runCatching {
-                                                oldFile.inputStream().use { inputStream ->
-                                                    inputStream.copyTo(outputStream)
-                                                }
-                                            }
-                                        }
+                                        oldFile.inputStream().use { inputStream -> inputStream.copyTo(outputStream) }
                                     }
 
                                     oldPlaylist.segments.forEach { track ->
                                         val oldFile = File(oldVideoDirectory, track.uri.substringAfterLast("%2F").substringAfterLast("/"))
-                                        if (oldFile.exists()) {
-                                            runCatching {
-                                                oldFile.inputStream().use { inputStream ->
-                                                    inputStream.copyTo(outputStream)
-                                                }
-                                            }
-                                            if (tracksToDelete.contains(oldFile.name)) {
-                                                oldFile.delete()
-                                            }
-                                        }
+                                        oldFile.inputStream().use { inputStream -> PlaylistUtils.copySegment(inputStream, outputStream, track) }
                                         repository.updateVideo(video.apply {
                                             progress += 1
                                         })
                                     }
                                 }
+
+                                oldPlaylist.segments.map { it.uri.substringAfterLast("%2F").substringAfterLast('/') }
+                                    .distinct().filter { it in tracksToDelete }
+                                    .forEach { File(oldVideoDirectory, it).delete() }
 
                                 repository.updateVideo(video.apply {
                                     thumbnail.let {

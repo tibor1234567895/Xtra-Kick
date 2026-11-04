@@ -12,9 +12,7 @@ import android.os.ext.SdkExtensions
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.JsonReader
-import android.util.Xml
 import androidx.core.net.toUri
-import org.xmlpull.v1.XmlPullParser
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.sqlite.db.SimpleSQLiteQuery
@@ -64,7 +62,6 @@ import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.io.InputStream
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import kotlin.coroutines.suspendCoroutine
@@ -687,71 +684,13 @@ class SettingsViewModel @Inject constructor(
         return BackupFileType.UNKNOWN
     }
 
-    private fun restorePreferencesIntoEditor(inputStream: InputStream, prefs: android.content.SharedPreferences) {
-        val parser = Xml.newPullParser().apply {
-            setInput(inputStream, "utf-8")
-        }
-        val editor = prefs.edit().clear()
-        var eventType = parser.eventType
-        var currentSet: MutableSet<String>? = null
-        var currentSetName: String? = null
-
-        while (eventType != XmlPullParser.END_DOCUMENT) {
-            when (eventType) {
-                XmlPullParser.START_TAG -> {
-                    when (parser.name) {
-                        "set" -> {
-                            currentSetName = parser.getAttributeValue(null, "name")
-                            currentSet = mutableSetOf()
-                        }
-                        "string" -> {
-                            val name = parser.getAttributeValue(null, "name")
-                            val text = parser.nextText().orEmpty()
-                            if (currentSet != null) {
-                                currentSet.add(text)
-                            } else if (!name.isNullOrBlank()) {
-                                editor.putString(name, text)
-                            }
-                        }
-                        "boolean" -> {
-                            val name = parser.getAttributeValue(null, "name")
-                            val value = parser.getAttributeValue(null, "value")?.toBooleanStrictOrNull() ?: false
-                            if (!name.isNullOrBlank()) editor.putBoolean(name, value)
-                        }
-                        "int" -> {
-                            val name = parser.getAttributeValue(null, "name")
-                            val value = parser.getAttributeValue(null, "value")?.toIntOrNull() ?: 0
-                            if (!name.isNullOrBlank()) editor.putInt(name, value)
-                        }
-                        "long" -> {
-                            val name = parser.getAttributeValue(null, "name")
-                            val value = parser.getAttributeValue(null, "value")?.toLongOrNull() ?: 0L
-                            if (!name.isNullOrBlank()) editor.putLong(name, value)
-                        }
-                        "float" -> {
-                            val name = parser.getAttributeValue(null, "name")
-                            val value = parser.getAttributeValue(null, "value")?.toFloatOrNull() ?: 0f
-                            if (!name.isNullOrBlank()) editor.putFloat(name, value)
-                        }
-                    }
-                }
-                XmlPullParser.END_TAG -> {
-                    if (parser.name == "set" && currentSet != null && !currentSetName.isNullOrBlank()) {
-                        editor.putStringSet(currentSetName, currentSet)
-                        currentSet = null
-                        currentSetName = null
-                    }
-                }
-            }
-            eventType = parser.next()
-        }
-        editor.commit()
-    }
-
     fun restoreSettings(list: List<String>, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         viewModelScope.launch(Dispatchers.IO) {
             var tmpZipPrefs: File? = null
             var tmpZipDb: File? = null
+            var preparedDb: File? = null
+            var restartRequired = false
+            var restoreSucceeded = false
             try {
                 var prefsUri: Uri? = null
                 var dbUri: Uri? = null
@@ -767,11 +706,13 @@ class SettingsViewModel @Inject constructor(
                                         if (entryName.endsWith(".xml") || entryName == "preferences.xml") {
                                             val tmpFile = File.createTempFile("restore-zip-prefs", ".xml", applicationContext.cacheDir)
                                             tmpFile.outputStream().use { zipIn.copyTo(it) }
+                                            tmpZipPrefs?.delete()
                                             tmpZipPrefs = tmpFile
                                             prefsUri = tmpFile.toUri()
                                         } else if (entryName == "database" || entryName.endsWith(".db") || entryName.endsWith(".sqlite")) {
                                             val tmpFile = File.createTempFile("restore-zip-db", ".db", applicationContext.cacheDir)
                                             tmpFile.outputStream().use { zipIn.copyTo(it) }
+                                            tmpZipDb?.delete()
                                             tmpZipDb = tmpFile
                                             dbUri = tmpFile.toUri()
                                         }
@@ -792,70 +733,45 @@ class SettingsViewModel @Inject constructor(
                     restoreStatus.emit(applicationContext.getString(R.string.restore_invalid))
                     return@launch
                 }
-                runCatching {
-                    val safetyDir = File(applicationContext.filesDir, "backup-before-restore").apply { mkdirs() }
-                    File("${applicationContext.applicationInfo.dataDir}/shared_prefs/${applicationContext.packageName}_preferences.xml")
-                        .takeIf { it.exists() }?.copyTo(File(safetyDir, "preferences.xml"), overwrite = true)
-                    applicationContext.getDatabasePath("database")
-                        .takeIf { it.exists() }?.copyTo(File(safetyDir, "database"), overwrite = true)
+                val restoredPreferences = resolvedPrefsUri?.let { uri ->
+                    applicationContext.contentResolver.openInputStream(uri)!!.use(SettingsBackupRestore::readPreferences)
                 }
-                if (resolvedPrefsUri != null) {
-                    val prefsBytes = applicationContext.contentResolver.openInputStream(resolvedPrefsUri)!!.use { it.readBytes() }
-                    val prefsText = String(prefsBytes, Charsets.UTF_8)
-                    if (!prefsText.contains("<map")) {
-                        restoreStatus.emit(applicationContext.getString(R.string.restore_invalid))
-                        return@launch
+                val stagedDatabase = resolvedDbUri?.let { uri ->
+                    File.createTempFile("restore-check", ".db", applicationContext.cacheDir).also { file ->
+                        preparedDb = file
+                        applicationContext.contentResolver.openInputStream(uri)!!.use { input ->
+                            file.outputStream().use { input.copyTo(it) }
+                        }
                     }
-                    java.io.ByteArrayInputStream(prefsBytes).use { input ->
-                        restorePreferencesIntoEditor(input, applicationContext.prefs())
-                    }
-                    val targetPrefs = File("${applicationContext.applicationInfo.dataDir}/shared_prefs/${applicationContext.packageName}_preferences.xml")
-                    targetPrefs.parentFile?.mkdirs()
-                    targetPrefs.writeBytes(prefsBytes)
-                    toggleNotifications(prefsText.contains("name=\"${AppConstants.LIVE_NOTIFICATIONS_ENABLED}\" value=\"true\""), networkLibrary, kickWebHeaders, kickPublicApiHeaders)
                 }
-                if (resolvedDbUri != null) {
-                    val tmpDb = File.createTempFile("restore-check", ".db", applicationContext.cacheDir)
-                    try {
-                        applicationContext.contentResolver.openInputStream(resolvedDbUri)!!.use { input ->
-                            tmpDb.outputStream().use { input.copyTo(it) }
-                        }
-                        if (tmpDb.length() < 4096) throw IllegalStateException("database too small")
-                        val backupVersion = try {
-                            val sqldb = SQLiteDatabase.openDatabase(tmpDb.path, null, SQLiteDatabase.OPEN_READONLY)
-                            sqldb.version.also { sqldb.close() }
-                        } catch (e: Exception) {
-                            DiagnosticLogger.e("SettingsViewModel", "restore db version check failed", e)
-                            null
-                        }
-                        if (backupVersion != null && backupVersion > 36) {
-                            throw IllegalStateException("backup v$backupVersion newer than app v36")
-                        }
-                        val database = applicationContext.getDatabasePath("database")
-                        appDatabase.close()
-                        File(database.parent, "database-shm").delete()
-                        File(database.parent, "database-wal").delete()
-                        tmpDb.copyTo(database, overwrite = true)
-                    } finally {
-                        tmpDb.delete()
-                    }
+                SettingsBackupRestore.apply(applicationContext, appDatabase, applicationContext.prefs(),
+                    restoredPreferences, stagedDatabase, onDatabaseClosed = { restartRequired = true })
+                restoreSucceeded = true
+                if (!restartRequired && restoredPreferences != null) {
+                    toggleNotifications(applicationContext.prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false),
+                        networkLibrary, kickWebHeaders, kickPublicApiHeaders)
                 }
                 restoreStatus.emit(applicationContext.getString(R.string.restore_success))
-                delay(800)
-                applicationContext.startActivity(
-                    Intent(applicationContext, MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                    }
-                )
-                exitProcess(0)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 DiagnosticLogger.e("SettingsViewModel", "restoreSettings failed", e)
                 runCatching {
-                    restoreStatus.emit(applicationContext.getString(R.string.restore_failed, e.message ?: "unknown"))
+                    restoreStatus.emit(applicationContext.getString(R.string.restore_failed,
+                        applicationContext.getString(R.string.restore_invalid)))
                 }
             } finally {
                 tmpZipPrefs?.delete()
                 tmpZipDb?.delete()
+                preparedDb?.let { SQLiteDatabase.deleteDatabase(it) }
+                if (restartRequired || restoreSucceeded) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        delay(800)
+                        applicationContext.startActivity(Intent(applicationContext, MainActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                        })
+                        exitProcess(0)
+                    }
+                }
             }
         }
     }

@@ -4199,6 +4199,7 @@ class ChatViewModel @Inject constructor(
                 getCurrentSpeed = getCurrentSpeed,
                 coroutineScope = viewModelScope,
                 listener = ChatReplayListener(),
+                isPlaybackPlaying = isPlaybackPlaying,
             )
             readChatFile(chatUrl, channelId, channelLogin, startTime.takeIf { it >= 0 })
         } else {
