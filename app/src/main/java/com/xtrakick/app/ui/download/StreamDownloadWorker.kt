@@ -84,8 +84,20 @@ import kotlin.coroutines.suspendCoroutine
 
 import kotlin.math.max
 
-private val IVS_NAME_REGEX = Regex("IVS-NAME=\"(.+?)\"")
-private val M3U8_URL_REGEX = Regex("https://.*\\.m3u8")
+internal fun selectStreamQualityUrl(qualities: Map<String, String>, requestedQuality: String?): String? {
+    qualities[requestedQuality]?.let { return it }
+    val resolution = requestedQuality?.substringBefore('p')?.toIntOrNull()
+        ?: return qualities.values.firstOrNull()
+    val fps = requestedQuality.substringAfter('p', "").takeWhile { it.isDigit() }.toIntOrNull() ?: 30
+    val videoQualities = qualities.entries.mapNotNull { (quality, url) ->
+        val height = quality.substringBefore('p').toIntOrNull() ?: return@mapNotNull null
+        val frameRate = quality.substringAfter('p', "").takeWhile { it.isDigit() }.toIntOrNull() ?: 30
+        Triple(height, frameRate, url)
+    }
+    return videoQualities.firstOrNull { (height, frameRate, _) -> height < resolution || height == resolution && frameRate <= fps }?.third
+        ?: videoQualities.lastOrNull()?.third
+        ?: qualities.values.firstOrNull()
+}
 
 @HiltWorker
 class StreamDownloadWorker @AssistedInject constructor(
@@ -199,32 +211,11 @@ class StreamDownloadWorker @AssistedInject constructor(
                 }
             }
             if (!playlist.isNullOrBlank()) {
-                val names = IVS_NAME_REGEX.findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList()
-                val urls = M3U8_URL_REGEX.findAll(playlist).map(MatchResult::value).toMutableList()
-                val map = names.zip(urls)
-                    .sortedWith(
-                        compareByDescending<Pair<String, String>> { it.first == "source" }
-                            .thenByDescending { it.first.substringBefore("p", "").takeWhile { c -> c.isDigit() }.toIntOrNull() ?: 0 }
-                            .thenByDescending { it.first.substringAfter("p", "").takeWhile { c -> c.isDigit() }.toIntOrNull() ?: 0 }
-                    )
+                val map = PlaylistUtils.parseVariantUrls(playlist, playlistUrl)
+                    .map { it.key.first to it.value }
                     .toMap()
                 if (map.isNotEmpty()) {
-                    val mediaPlaylistUrl = if (!quality.isNullOrBlank()) {
-                        quality.split("p").let { targetQuality ->
-                            targetQuality.getOrNull(0)?.takeWhile { it.isDigit() }?.toIntOrNull()?.let { targetResolution ->
-                                val targetFps = targetQuality.getOrNull(1)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 30
-                                val last = map.keys.last { it != "audio_only" && it != "chat_only" }
-                                map.entries.find { entry ->
-                                    val quality = entry.key.split("p")
-                                    val resolution = quality.getOrNull(0)?.takeWhile { it.isDigit() }?.toIntOrNull()
-                                    val fps = quality.getOrNull(1)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 30
-                                    resolution != null && ((targetResolution == resolution && targetFps >= fps) || targetResolution > resolution || entry.key == last)
-                                }
-                            }
-                        }?.value ?: map.values.first()
-                    } else {
-                        map.values.first()
-                    }
+                    val mediaPlaylistUrl = selectStreamQualityUrl(map, quality)!!
                     val url = if (proxyMultivariantPlaylist && !proxyHost.isNullOrBlank() && proxyPort != null) {
                         val url = playlistUrl
                         val newPlaylist = when {
@@ -261,32 +252,11 @@ class StreamDownloadWorker @AssistedInject constructor(
                                 }
                             }
                         }
-                        val newNames = IVS_NAME_REGEX.findAll(newPlaylist).mapNotNull { it.groups[1]?.value }.toMutableList()
-                        val newUrls = M3U8_URL_REGEX.findAll(newPlaylist).map(MatchResult::value).toMutableList()
-                        val newMap = newNames.zip(newUrls)
-                            .sortedWith(
-                                compareByDescending<Pair<String, String>> { it.first == "source" }
-                                    .thenByDescending { it.first.substringBefore("p", "").takeWhile { c -> c.isDigit() }.toIntOrNull() ?: 0 }
-                                    .thenByDescending { it.first.substringAfter("p", "").takeWhile { c -> c.isDigit() }.toIntOrNull() ?: 0 }
-                            )
+                        val newMap = PlaylistUtils.parseVariantUrls(newPlaylist, url)
+                            .map { it.key.first to it.value }
                             .toMap()
                         if (newMap.isNotEmpty()) {
-                            if (!quality.isNullOrBlank()) {
-                                quality.split("p").let { targetQuality ->
-                                    targetQuality.getOrNull(0)?.takeWhile { it.isDigit() }?.toIntOrNull()?.let { targetResolution ->
-                                        val targetFps = targetQuality.getOrNull(1)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 30
-                                        val last = newMap.keys.last { it != "audio_only" && it != "chat_only" }
-                                        newMap.entries.find { entry ->
-                                            val quality = entry.key.split("p")
-                                            val resolution = quality.getOrNull(0)?.takeWhile { it.isDigit() }?.toIntOrNull()
-                                            val fps = quality.getOrNull(1)?.takeWhile { it.isDigit() }?.toIntOrNull() ?: 30
-                                            resolution != null && ((targetResolution == resolution && targetFps >= fps) || targetResolution > resolution || entry.key == last)
-                                        }
-                                    }
-                                }?.value ?: newMap.values.first()
-                            } else {
-                                newMap.values.first()
-                            }
+                            selectStreamQualityUrl(newMap, quality)!!
                         } else mediaPlaylistUrl
                     } else {
                         mediaPlaylistUrl

@@ -1,10 +1,46 @@
 package com.xtrakick.app.util.m3u8
 
+import android.net.Uri
+import androidx.annotation.OptIn
+import androidx.media3.common.C
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
+import androidx.media3.exoplayer.hls.playlist.HlsMultivariantPlaylist
+import com.xtrakick.app.player.lowlatency.HlsPlaylistParser
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.regex.Pattern
+import kotlin.math.roundToInt
 
 object PlaylistUtils {
+    @OptIn(UnstableApi::class)
+    fun parseVariantUrls(playlist: String, playlistUrl: String): Map<Pair<String, String?>, String> {
+        val master = HlsPlaylistParser().parse(Uri.parse(playlistUrl), playlist.byteInputStream())
+            as? HlsMultivariantPlaylist ?: return emptyMap()
+        val urls = linkedMapOf<Pair<String, String?>, String>()
+        for (variant in master.variants) {
+            val format = variant.format
+            if (format.roleFlags and C.ROLE_FLAG_TRICK_PLAY != 0) continue
+            val name = format.label?.takeIf { it.isNotBlank() } ?: when {
+                format.height > 0 -> "${format.height}p" + if (format.frameRate > 30) format.frameRate.roundToInt() else ""
+                Util.getCodecsOfType(format.codecs, C.TRACK_TYPE_AUDIO) != null &&
+                        Util.getCodecsOfType(format.codecs, C.TRACK_TYPE_VIDEO) == null -> "audio_only"
+                else -> "source"
+            }
+            val quality = when {
+                name.equals("source", true) -> "source"
+                name.startsWith("audio", true) -> "audio_only"
+                else -> name
+            }
+            urls.putIfAbsent(quality to format.codecs, variant.url.toString())
+        }
+        return urls.entries.sortedWith(
+            compareByDescending<Map.Entry<Pair<String, String?>, String>> { it.key.first == "source" }
+                .thenByDescending { it.key.first.substringBefore('p', "").toIntOrNull() }
+                .thenByDescending { it.key.first.substringAfter('p', "").takeWhile { c -> c.isDigit() }.toIntOrNull() }
+        ).associate { it.toPair() }
+    }
+
     private val targetDurationPattern = Pattern.compile("#EXT-X-TARGETDURATION:(\\d+)\\b")
     private val dateRangeIdPattern = Pattern.compile("ID=\"(.+?)\"")
     private val startDatePattern = Pattern.compile("START-DATE=\"(.+?)\"")

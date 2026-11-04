@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.net.URI
 import javax.inject.Inject
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -137,16 +136,25 @@ class DownloadViewModel @Inject constructor(
         }
         viewModelScope.launch {
             try {
-                val playlist = channelLogin
+                val playlistUrl = channelLogin
                     ?.takeIf { it.isNotBlank() }
                     ?.let { kickRepository.getChannel(it) }
                     ?.let { kickRepository.getPlayableUrl(it) }
-                    ?.let { playerRepository.loadTextFromUrl(networkLibrary, it) }
+                if (playlistUrl.isNullOrBlank()) {
+                    errorMessage.value = R.string.download_unavailable
+                    return@launch
+                }
+                val playlist = playerRepository.loadTextFromUrl(networkLibrary, playlistUrl)
                 if (playlist.isNullOrBlank()) {
                     errorMessage.value = R.string.download_unavailable
                     return@launch
                 }
-                _qualities.value = parsePlaylistQualities(playlist)
+                val parsedQualities = parseDownloadPlaylistQualities(applicationContext, playlist, playlistUrl)
+                if (parsedQualities.isEmpty()) {
+                    errorMessage.value = R.string.download_unavailable
+                } else {
+                    _qualities.value = parsedQualities
+                }
             } catch (e: Exception) {
                 if (e.message == "failed integrity check" && integrity.value == null) {
                     integrity.value = "refresh"
@@ -194,7 +202,7 @@ class DownloadViewModel @Inject constructor(
                         playerRepository.loadTextFromUrl(networkLibrary, url)
                     }.getOrNull()
                     val parsedQualities = playlist?.takeIf { it.isNotBlank() }?.let {
-                        parsePlaylistQualities(it, url)
+                        parseDownloadPlaylistQualities(applicationContext, it, url)
                     }.orEmpty()
                     _qualities.value = parsedQualities.ifEmpty {
                         linkedMapOf(
@@ -302,55 +310,33 @@ class DownloadViewModel @Inject constructor(
             .toMap()
     }
 
-    private fun parsePlaylistQualities(playlist: String, playlistUrl: String? = null): Map<String, Pair<String, String>> {
-        val names = Regex("(?:IVS-NAME|NAME)=\"(.+?)\"").findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList()
-        val codecs = Regex("CODECS=\"(.+?)\"").findAll(playlist).mapNotNull { it.groups[1]?.value }.toMutableList()
-        val urls = playlist.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() && !it.startsWith("#") && it.substringBefore('?').endsWith(".m3u8") }
-            .map { url -> playlistUrl?.let { resolvePlaylistUrl(it, url) } ?: url }
-            .toMutableList()
-        val codecList = codecs.map { codec ->
-            codec.substringBefore('.').let {
-                when (it) {
-                    "av01" -> "AV1"
-                    "hev1" -> "H.265"
-                    "avc1" -> "H.264"
-                    else -> it
-                }
-            }
-        }.takeUnless { it.all { it == "H.264" || it == "mp4a" } }
-        val map = mutableMapOf<String, Pair<String, String>>()
-        names.forEachIndexed { index, quality ->
-            urls.getOrNull(index)?.let { url ->
-                when {
-                    quality.equals("source", true) -> {
-                        val label = ContextCompat.getString(applicationContext, R.string.source)
-                        map["source"] = Pair(codecList?.getOrNull(index)?.let { "$label $it" } ?: label, url)
-                    }
-                    quality.startsWith("audio", true) -> {
-                        map["audio_only"] = Pair(ContextCompat.getString(applicationContext, R.string.audio_only), url)
-                    }
-                    else -> {
-                        map[quality] = Pair(codecList?.getOrNull(index)?.let { "$quality $it" } ?: quality, url)
-                    }
-                }
+}
+
+internal fun parseDownloadPlaylistQualities(context: Context, playlist: String, playlistUrl: String): Map<String, Pair<String, String>> {
+    val variants = PlaylistUtils.parseVariantUrls(playlist, playlistUrl)
+    val codecs = variants.keys.associateWith { (_, codec) ->
+        codec?.substringBefore('.')?.let {
+            when (it) {
+                "av01" -> "AV1"
+                "hev1", "hvc1" -> "H.265"
+                "avc1" -> "H.264"
+                else -> it
             }
         }
-        return map.toList()
-            .sortedByDescending {
-                it.first.substringAfter("p", "").takeWhile { it.isDigit() }.toIntOrNull()
-            }
-            .sortedByDescending {
-                it.first.substringBefore("p", "").takeWhile { it.isDigit() }.toIntOrNull()
-            }
-            .sortedByDescending {
-                it.first == "source"
-            }
-            .toMap()
     }
-
-    private fun resolvePlaylistUrl(baseUrl: String, url: String): String {
-        return runCatching { URI(baseUrl).resolve(url).toString() }.getOrElse { url }
+    val hideCodecs = codecs.values.all { it == null || it == "H.264" || it == "mp4a" }
+    val qualityCounts = variants.keys.groupingBy { it.first }.eachCount()
+    val map = mutableMapOf<String, Pair<String, String>>()
+    variants.forEach { (variant, url) ->
+        val quality = variant.first
+        val label = when (quality) {
+            "source" -> ContextCompat.getString(context, R.string.source)
+            "audio_only" -> ContextCompat.getString(context, R.string.audio_only)
+            else -> quality
+        }
+        val codec = codecs[variant]?.takeUnless { hideCodecs || quality == "audio_only" }
+        val key = if (qualityCounts.getValue(quality) > 1 && codec != null) "$quality $codec" else quality
+        map.putIfAbsent(key, (codec?.let { "$label $it" } ?: label) to url)
     }
+    return map
 }
