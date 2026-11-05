@@ -1,7 +1,12 @@
 package com.xtrakick.app.ui.chat
 
 import com.xtrakick.app.model.chat.ChatMessage
+import com.xtrakick.app.model.chat.GiftedSubInfo
+import com.xtrakick.app.model.chat.KicksDonation
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -11,6 +16,82 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 
 class ChatReplayManagerLocalTest {
+    @Test
+    fun emittedMessagesPreserveDeletionDonationAndGiftData() = runBlocking {
+        var position = 0L
+        val emitted = mutableListOf<ChatMessage>()
+        val scope = CoroutineScope(coroutineContext + Job())
+        val donation = KicksDonation(100, giftName = "Gift")
+        val giftedSub = GiftedSubInfo("Gifter", count = 5, isCommunityGift = true)
+        val replay = ChatReplayManagerLocal({ position }, { 1f }, scope, object : ChatReplayManager.Listener {
+            override suspend fun onChatMessage(message: ChatMessage) { emitted += message }
+        })
+        try {
+            replay.setMessages(listOf(ChatMessage(id = "event", timestamp = 1000, isDeleted = true,
+                kicksDonation = donation, giftedSubInfo = giftedSub)), 0)
+            replay.startLoad()
+            delay(25)
+            position = 2000
+            withTimeout(2000) { while (emitted.isEmpty()) delay(5) }
+            assertTrue(emitted.single().isDeleted)
+            assertSame(donation, emitted.single().kicksDonation)
+            assertSame(giftedSub, emitted.single().giftedSubInfo)
+        } finally {
+            replay.stop()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun stoppedReplayIgnoresSeekSpeedAndLateMessageLoadsUntilExplicitRestart() = runBlocking {
+        var position = 0L
+        val emitted = mutableListOf<String?>()
+        val scope = CoroutineScope(coroutineContext + Job())
+        val replay = ChatReplayManagerLocal({ position }, { 1f }, scope, object : ChatReplayManager.Listener {
+            override suspend fun onChatMessage(message: ChatMessage) { emitted += message.id }
+            override suspend fun onChatMessages(messages: List<ChatMessage>) { emitted += messages.map { it.id } }
+        })
+        try {
+            replay.setMessages(listOf(ChatMessage(id = "old", timestamp = 1000)), 0)
+            replay.startLoad()
+            delay(25)
+            replay.stop()
+            position = 30_000
+            replay.updatePosition(position)
+            replay.updateSpeed(2f)
+            replay.setMessages(listOf(ChatMessage(id = "new", timestamp = 1000)), 0)
+            delay(50)
+            assertFalse(replay.isActive)
+            assertTrue(emitted.isEmpty())
+
+            replay.startLoad()
+            withTimeout(2000) { while (emitted.isEmpty()) delay(5) }
+            assertTrue(replay.isActive)
+            assertEquals(listOf("new"), emitted)
+        } finally {
+            replay.stop()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun stoppingBeforeQueuedLoadRunsAlsoCancelsItsClearEvent() = runBlocking {
+        var clears = 0
+        val scope = CoroutineScope(coroutineContext + Job())
+        val replay = ChatReplayManagerLocal({ 0L }, { 1f }, scope, object : ChatReplayManager.Listener {
+            override suspend fun clearMessages() { clears++ }
+        })
+        try {
+            replay.setMessages(listOf(ChatMessage(timestamp = 1000)), 0)
+            replay.startLoad()
+            replay.stop()
+            delay(25)
+            assertEquals(0, clears)
+        } finally {
+            scope.cancel()
+        }
+    }
+
     @Test
     fun pauseStopsCurrentBucketUntilPlaybackResumes() = runBlocking {
         var position = 0L

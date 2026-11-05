@@ -81,29 +81,28 @@ class ChatReplayManager(
     }
 
     fun start() {
-        if (!started) {
+        if (!started || !isActive) {
             started = true
+            isActive = true
             val currentPosition = getCurrentPosition() ?: 0
             lastCheckedPosition = currentPosition
             playbackSpeed = getCurrentSpeed()
             list.clear()
             resetSpread()
-            coroutineScope.launch {
-                listener.clearMessages()
-            }
             load(currentPosition + startTime, preload = true)
         }
     }
 
     fun stop() {
+        isActive = false
         loadJob?.cancel()
         messageJob?.cancel()
-        isActive = false
     }
 
     private fun load(position: Long? = null, preload: Boolean = false) {
         isLoading = true
         loadJob = coroutineScope.launch(Dispatchers.IO) {
+            if (preload) listener.clearMessages()
             // Kick VODs have no Twitch-style comment API: replay without a downloaded chat
             // file yields no messages. Downloaded-file playback uses ChatReplayManagerLocal.
             isLoading = false
@@ -174,15 +173,12 @@ class ChatReplayManager(
     }
 
     fun updatePosition(position: Long) {
-        if (started && lastCheckedPosition != position) {
+        if (started && isActive && lastCheckedPosition != position) {
             if (position - lastCheckedPosition !in 0..LARGE_SEEK_THRESHOLD_MS) {
                 loadJob?.cancel()
                 messageJob?.cancel()
                 list.clear()
                 resetSpread()
-                coroutineScope.launch {
-                    listener.clearMessages()
-                }
                 load(position + startTime, preload = true)
             } else {
                 messageJob?.cancel()
@@ -193,7 +189,7 @@ class ChatReplayManager(
     }
 
     fun updateSpeed(speed: Float) {
-        if (started && playbackSpeed != speed) {
+        if (started && isActive && playbackSpeed != speed) {
             playbackSpeed = speed
             messageJob?.cancel()
             startJob()

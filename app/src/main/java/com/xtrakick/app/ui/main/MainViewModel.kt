@@ -5,9 +5,6 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
-import android.net.http.HttpEngine
-import android.os.Build
-import android.os.ext.SdkExtensions
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.edit
@@ -22,6 +19,7 @@ import androidx.work.workDataOf
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.model.AppUpdateInfo
+import com.xtrakick.app.util.parseAppUpdateInfo
 import com.xtrakick.app.model.VideoPosition
 import com.xtrakick.app.model.kick.auth.KickBackendIntrospectRequest
 import com.xtrakick.app.model.ui.Clip
@@ -36,17 +34,16 @@ import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.OfflineRepository
 import com.xtrakick.app.repository.PlayerRepository
+import com.xtrakick.app.ui.common.cacheMediaImage
 import com.xtrakick.app.ui.download.StreamDownloadWorker
 import com.xtrakick.app.ui.download.VideoDownloadWorker
 import com.xtrakick.app.ui.login.LoginActivity
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
-import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.NetworkUtils
-import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import com.xtrakick.app.util.FcmSyncManager
@@ -67,23 +64,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.chromium.net.CronetEngine
-import org.chromium.net.apihelpers.RedirectHandlers
-import org.chromium.net.apihelpers.UrlRequestCallbacks
 import kotlinx.coroutines.ensureActive
-import java.io.File
-import java.io.FileOutputStream
 import java.util.Timer
-import java.util.concurrent.ExecutorService
 import javax.inject.Inject
-import kotlin.coroutines.suspendCoroutine
 import kotlin.math.max
 
 @HiltViewModel
@@ -94,10 +77,6 @@ class MainViewModel @Inject constructor(
     private val playerRepository: PlayerRepository,
     private val offlineRepository: OfflineRepository,
     private val authRepository: AuthRepository,
-    private val httpEngine: Lazy<HttpEngine>?,
-    private val cronetEngine: Lazy<CronetEngine>?,
-    private val cronetExecutor: ExecutorService,
-    private val okHttpClient: OkHttpClient,
     private val json: Json,
     private val fcmSyncManager: Lazy<FcmSyncManager>,
     private val kickAccountMutedUsersStore: KickAccountMutedUsersStore,
@@ -396,119 +375,11 @@ class MainViewModel @Inject constructor(
     fun downloadStream(networkLibrary: String?, filesDir: String, id: String?, title: String?, startedAt: String?, channelId: String?, channelLogin: String?, channelName: String?, channelLogo: String?, thumbnail: String?, gameId: String?, gameSlug: String?, gameName: String?, downloadPath: String, quality: String, downloadChat: Boolean, downloadChatEmotes: Boolean, wifiOnly: Boolean) {
         viewModelScope.launch {
             if (!channelLogin.isNullOrBlank()) {
-                val downloadedThumbnail = id.takeIf { !it.isNullOrBlank() }?.let { id ->
-                    thumbnail.takeIf { !it.isNullOrBlank() }?.let {
-                        File(filesDir, "thumbnails").mkdir()
-                        val path = filesDir + File.separator + "thumbnails" + File.separator + id
-                        viewModelScope.launch(Dispatchers.IO) {
-                            try {
-                                when {
-                                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                        val response = suspendCoroutine { continuation ->
-                                            httpEngine.get().newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                        }
-                                        if (response.first.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.second)
-                                            }
-                                        }
-                                    }
-                                    networkLibrary == "Cronet" && cronetEngine != null -> {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                            val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                            cronetEngine.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                            val response = request.future.get()
-                                            if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                                FileOutputStream(path).use {
-                                                    it.write(response.responseBody as ByteArray)
-                                                }
-                                            }
-                                        } else {
-                                            val response = suspendCoroutine { continuation ->
-                                                cronetEngine.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                            }
-                                            if (response.first.httpStatusCode in 200..299) {
-                                                FileOutputStream(path).use {
-                                                    it.write(response.second)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    else -> {
-                                        okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                            if (response.isSuccessful) {
-                                                FileOutputStream(path).use { outputStream ->
-                                                    response.body.byteStream().use { inputStream ->
-                                                        inputStream.copyTo(outputStream)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch (e: Exception) {
-
-                            }
-                        }
-                        path
-                    }
+                val downloadedThumbnail = viewModelScope.cacheMediaImage(filesDir, "thumbnails", id, thumbnail) { url, output ->
+                    playerRepository.downloadTo(networkLibrary, url, output)
                 }
-                val downloadedLogo = channelId.takeIf { !it.isNullOrBlank() }?.let { id ->
-                    channelLogo.takeIf { !it.isNullOrBlank() }?.let {
-                        File(filesDir, "profile_pics").mkdir()
-                        val path = filesDir + File.separator + "profile_pics" + File.separator + id
-                        viewModelScope.launch(Dispatchers.IO) {
-                            try {
-                                when {
-                                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                        val response = suspendCoroutine { continuation ->
-                                            httpEngine.get().newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                        }
-                                        if (response.first.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.second)
-                                            }
-                                        }
-                                    }
-                                    networkLibrary == "Cronet" && cronetEngine != null -> {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                            val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                            cronetEngine.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                            val response = request.future.get()
-                                            if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                                FileOutputStream(path).use {
-                                                    it.write(response.responseBody as ByteArray)
-                                                }
-                                            }
-                                        } else {
-                                            val response = suspendCoroutine { continuation ->
-                                                cronetEngine.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                            }
-                                            if (response.first.httpStatusCode in 200..299) {
-                                                FileOutputStream(path).use {
-                                                    it.write(response.second)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    else -> {
-                                        okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                            if (response.isSuccessful) {
-                                                FileOutputStream(path).use { outputStream ->
-                                                    response.body.byteStream().use { inputStream ->
-                                                        inputStream.copyTo(outputStream)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch (e: Exception) {
-
-                            }
-                        }
-                        path
-                    }
+                val downloadedLogo = viewModelScope.cacheMediaImage(filesDir, "profile_pics", channelId, channelLogo) { url, output ->
+                    playerRepository.downloadTo(networkLibrary, url, output)
                 }
                 val videoId = offlineRepository.saveVideo(
                     OfflineVideo(
@@ -549,119 +420,11 @@ class MainViewModel @Inject constructor(
 
     fun downloadVideo(networkLibrary: String?, filesDir: String, id: String?, title: String?, uploadDate: String?, type: String?, channelId: String?, channelLogin: String?, channelName: String?, channelLogo: String?, thumbnail: String?, gameId: String?, gameSlug: String?, gameName: String?, url: String, downloadPath: String, quality: String, from: Long, to: Long, downloadChat: Boolean, downloadChatEmotes: Boolean, playlistToFile: Boolean, wifiOnly: Boolean) {
         viewModelScope.launch {
-            val downloadedThumbnail = id.takeIf { !it.isNullOrBlank() }?.let { id ->
-                thumbnail.takeIf { !it.isNullOrBlank() }?.let {
-                    File(filesDir, "thumbnails").mkdir()
-                    val path = filesDir + File.separator + "thumbnails" + File.separator + id
-                    viewModelScope.launch(Dispatchers.IO) {
-                        try {
-                            when {
-                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                    val response = suspendCoroutine { continuation ->
-                                        httpEngine.get().newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                    }
-                                    if (response.first.httpStatusCode in 200..299) {
-                                        FileOutputStream(path).use {
-                                            it.write(response.second)
-                                        }
-                                    }
-                                }
-                                networkLibrary == "Cronet" && cronetEngine != null -> {
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                        val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                        cronetEngine.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                        val response = request.future.get()
-                                        if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.responseBody as ByteArray)
-                                            }
-                                        }
-                                    } else {
-                                        val response = suspendCoroutine { continuation ->
-                                            cronetEngine.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                        }
-                                        if (response.first.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.second)
-                                            }
-                                        }
-                                    }
-                                }
-                                else -> {
-                                    okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                        if (response.isSuccessful) {
-                                            FileOutputStream(path).use { outputStream ->
-                                                response.body.byteStream().use { inputStream ->
-                                                    inputStream.copyTo(outputStream)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
-
-                        }
-                    }
-                    path
-                }
+            val downloadedThumbnail = viewModelScope.cacheMediaImage(filesDir, "thumbnails", id, thumbnail) { url, output ->
+                playerRepository.downloadTo(networkLibrary, url, output)
             }
-            val downloadedLogo = channelId.takeIf { !it.isNullOrBlank() }?.let { id ->
-                channelLogo.takeIf { !it.isNullOrBlank() }?.let {
-                    File(filesDir, "profile_pics").mkdir()
-                    val path = filesDir + File.separator + "profile_pics" + File.separator + id
-                    viewModelScope.launch(Dispatchers.IO) {
-                        try {
-                            when {
-                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                    val response = suspendCoroutine { continuation ->
-                                        httpEngine.get().newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                    }
-                                    if (response.first.httpStatusCode in 200..299) {
-                                        FileOutputStream(path).use {
-                                            it.write(response.second)
-                                        }
-                                    }
-                                }
-                                networkLibrary == "Cronet" && cronetEngine != null -> {
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                        val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                        cronetEngine.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                        val response = request.future.get()
-                                        if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.responseBody as ByteArray)
-                                            }
-                                        }
-                                    } else {
-                                        val response = suspendCoroutine { continuation ->
-                                            cronetEngine.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                        }
-                                        if (response.first.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.second)
-                                            }
-                                        }
-                                    }
-                                }
-                                else -> {
-                                    okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                        if (response.isSuccessful) {
-                                            FileOutputStream(path).use { outputStream ->
-                                                response.body.byteStream().use { inputStream ->
-                                                    inputStream.copyTo(outputStream)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
-
-                        }
-                    }
-                    path
-                }
+            val downloadedLogo = viewModelScope.cacheMediaImage(filesDir, "profile_pics", channelId, channelLogo) { url, output ->
+                playerRepository.downloadTo(networkLibrary, url, output)
             }
             val videoId = offlineRepository.saveVideo(
                 OfflineVideo(
@@ -707,119 +470,11 @@ class MainViewModel @Inject constructor(
 
     fun downloadClip(networkLibrary: String?, filesDir: String, clipId: String?, title: String?, uploadDate: String?, duration: Double?, videoId: String?, vodOffset: Int?, channelId: String?, channelLogin: String?, channelName: String?, channelLogo: String?, thumbnail: String?, gameId: String?, gameSlug: String?, gameName: String?, url: String, downloadPath: String, quality: String, downloadChat: Boolean, downloadChatEmotes: Boolean, playlistToFile: Boolean, wifiOnly: Boolean) {
         viewModelScope.launch {
-            val downloadedThumbnail = clipId.takeIf { !it.isNullOrBlank() }?.let { id ->
-                thumbnail.takeIf { !it.isNullOrBlank() }?.let {
-                    File(filesDir, "thumbnails").mkdir()
-                    val path = filesDir + File.separator + "thumbnails" + File.separator + id
-                    viewModelScope.launch(Dispatchers.IO) {
-                        try {
-                            when {
-                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                    val response = suspendCoroutine { continuation ->
-                                        httpEngine.get().newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                    }
-                                    if (response.first.httpStatusCode in 200..299) {
-                                        FileOutputStream(path).use {
-                                            it.write(response.second)
-                                        }
-                                    }
-                                }
-                                networkLibrary == "Cronet" && cronetEngine != null -> {
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                        val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                        cronetEngine.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                        val response = request.future.get()
-                                        if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.responseBody as ByteArray)
-                                            }
-                                        }
-                                    } else {
-                                        val response = suspendCoroutine { continuation ->
-                                            cronetEngine.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                        }
-                                        if (response.first.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.second)
-                                            }
-                                        }
-                                    }
-                                }
-                                else -> {
-                                    okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                        if (response.isSuccessful) {
-                                            FileOutputStream(path).use { outputStream ->
-                                                response.body.byteStream().use { inputStream ->
-                                                    inputStream.copyTo(outputStream)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
-
-                        }
-                    }
-                    path
-                }
+            val downloadedThumbnail = viewModelScope.cacheMediaImage(filesDir, "thumbnails", clipId, thumbnail) { url, output ->
+                playerRepository.downloadTo(networkLibrary, url, output)
             }
-            val downloadedLogo = channelId.takeIf { !it.isNullOrBlank() }?.let { id ->
-                channelLogo.takeIf { !it.isNullOrBlank() }?.let {
-                    File(filesDir, "profile_pics").mkdir()
-                    val path = filesDir + File.separator + "profile_pics" + File.separator + id
-                    viewModelScope.launch(Dispatchers.IO) {
-                        try {
-                            when {
-                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                    val response = suspendCoroutine { continuation ->
-                                        httpEngine.get().newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                    }
-                                    if (response.first.httpStatusCode in 200..299) {
-                                        FileOutputStream(path).use {
-                                            it.write(response.second)
-                                        }
-                                    }
-                                }
-                                networkLibrary == "Cronet" && cronetEngine != null -> {
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                        val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                        cronetEngine.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                        val response = request.future.get()
-                                        if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.responseBody as ByteArray)
-                                            }
-                                        }
-                                    } else {
-                                        val response = suspendCoroutine { continuation ->
-                                            cronetEngine.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                        }
-                                        if (response.first.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.second)
-                                            }
-                                        }
-                                    }
-                                }
-                                else -> {
-                                    okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                        if (response.isSuccessful) {
-                                            FileOutputStream(path).use { outputStream ->
-                                                response.body.byteStream().use { inputStream ->
-                                                    inputStream.copyTo(outputStream)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
-
-                        }
-                    }
-                    path
-                }
+            val downloadedLogo = viewModelScope.cacheMediaImage(filesDir, "profile_pics", channelId, channelLogo) { url, output ->
+                playerRepository.downloadTo(networkLibrary, url, output)
             }
             // Prefer Kick's prepared clip MP4 over the source HLS playlist
             // (~130MB vs ~660MB for the same clip). Null falls back to [url].
@@ -1046,56 +701,13 @@ class MainViewModel @Inject constructor(
                 }
             }
             val updateInfoResult: AppUpdateInfo? = try {
-                val response = when {
-                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                        val response = suspendCoroutine { continuation ->
-                            httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                        }
-                        json.decodeFromString<JsonObject>(String(response.second))
-                    }
-                    networkLibrary == "Cronet" && cronetEngine != null -> {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                            val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                            cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                            val response = request.future.get().responseBody as String
-                            json.decodeFromString<JsonObject>(response)
-                        } else {
-                            val response = suspendCoroutine { continuation ->
-                                cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                            }
-                            json.decodeFromString<JsonObject>(String(response.second))
-                        }
-                    }
-                    else -> {
-                        okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                            json.decodeFromString<JsonObject>(response.body.string())
-                        }
-                    }
-                }
-                val releaseNotes = response["body"]?.jsonPrimitive?.contentOrNull
-                val releaseTitle = response["name"]?.jsonPrimitive?.contentOrNull ?: response["tag_name"]?.jsonPrimitive?.contentOrNull
-                response["assets"]?.jsonArray?.find {
-                    val asset = it.jsonObject
-                    asset["content_type"]?.jsonPrimitive?.contentOrNull == "application/vnd.android.package-archive" ||
-                        (asset["name"]?.jsonPrimitive?.contentOrNull)?.endsWith(".apk") == true
-                }?.jsonObject?.let { obj ->
-                    val updatedAt = obj["updated_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
-                        ?: response["published_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
-                        ?: response["created_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
-                    val downloadUrl = obj["browser_download_url"]?.jsonPrimitive?.contentOrNull
-                    val size = obj["size"]?.jsonPrimitive?.longOrNull
-                    if (updatedAt != null && downloadUrl != null && updatedAt > lastChecked) {
-                        updateSize = size
-                        AppUpdateInfo(
-                            downloadUrl = downloadUrl,
-                            size = size,
-                            updatedAt = updatedAt,
-                            releaseTitle = releaseTitle,
-                            releaseNotes = releaseNotes
-                        )
-                    } else null
+                playerRepository.loadTextFromUrl(networkLibrary, url)?.let { body ->
+                    parseAppUpdateInfo(json.parseToJsonElement(body) as? JsonObject, lastChecked)
+                }.also { info ->
+                    if (info != null) updateSize = info.size
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 if (e is java.io.IOException) {
                     DiagnosticLogger.w("MainViewModel", "checkUpdates network non-fatal error: ${e.message ?: e.javaClass.simpleName}")
                 } else {

@@ -24,6 +24,8 @@ import com.xtrakick.app.util.getByteArrayCronetCallback
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -132,35 +134,34 @@ class PlayerRepository @Inject constructor(
         if (status !in 200..299 || bytesRead == 0) throw IOException("Update download failed: HTTP $status, $bytesRead bytes")
     }
 
-    suspend fun loadTextFromUrl(networkLibrary: String?, url: String): String? = withContext(Dispatchers.IO) {
+    suspend fun loadTextFromUrl(networkLibrary: String?, url: String, headers: Map<String, String> = emptyMap()): String? = withContext(Dispatchers.IO) {
         when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
+                val response = suspendCancellableCoroutine { continuation ->
+                    val request = httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                        headers.forEach { (name, value) -> addHeader(name, value) }
+                    }.build()
+                    continuation.invokeOnCancellation { request.cancel() }
+                    request.start()
                 }
                 if (response.first.httpStatusCode in 200..299) {
                     String(response.second)
                 } else null
             }
             networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                    val response = request.future.get()
-                    if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                        response.responseBody as String
-                    } else null
-                } else {
-                    val response = suspendCoroutine { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                    }
-                    if (response.first.httpStatusCode in 200..299) {
-                        String(response.second)
-                    } else null
+                val response = suspendCancellableCoroutine { continuation ->
+                    val request = cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
+                        headers.forEach { (name, value) -> addHeader(name, value) }
+                    }.build()
+                    continuation.invokeOnCancellation { request.cancel() }
+                    request.start()
                 }
+                String(response.second).takeIf { response.first.httpStatusCode in 200..299 }
             }
             else -> {
-                okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                okHttpClient.newCall(Request.Builder().url(url).apply {
+                    headers.forEach { (name, value) -> header(name, value) }
+                }.build()).useCancellable { response ->
                     if (response.isSuccessful) {
                         response.body.string()
                     } else null
@@ -387,6 +388,7 @@ class PlayerRepository @Inject constructor(
                 }
             }
         } catch (_: Exception) {
+            currentCoroutineContext().ensureActive()
             try {
                 readCachedEmoteResponse("global.stv")?.let { cached ->
                     json.decodeFromString<StvGlobalResponse>(cached)
@@ -410,6 +412,7 @@ class PlayerRepository @Inject constructor(
                 }
             }
         } catch (_: Exception) {
+            currentCoroutineContext().ensureActive()
             try {
                 readCachedEmoteResponse("channel_$channelId.stv")?.let { cached ->
                     json.decodeFromString<StvChannelResponse>(cached)
@@ -449,58 +452,41 @@ class PlayerRepository @Inject constructor(
      * the same models the live event stream produces.
      */
     suspend fun loadStvCosmetics(paintIds: List<String>, badgeIds: List<String>): JsonObject? = withContext(Dispatchers.IO) {
-        val ids = (paintIds + badgeIds).filter { it.isNotBlank() }.joinToString(",") { "\\\"$it\\\"" }
+        val ids = (paintIds + badgeIds).filter { it.isNotBlank() }.distinct().joinToString(",") { JsonPrimitive(it).toString() }
         if (ids.isEmpty()) return@withContext null
         // Small authenticated-free POST; OkHttp is always available and Cronet upload plumbing
         // is not worth it for a one-off hydration request.
-        runCatching {
+        try {
+            val query = "{ cosmetics(list: [$ids]) { paints { id name gradients { function angle repeat " +
+                "image_url stops { at color } } shadows { x_offset y_offset radius color } } " +
+                "badges { id name tooltip host { url files { name format } } } } }"
             okHttpClient.newCall(Request.Builder().apply {
                 url("https://7tv.io/v3/gql")
                 header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                 post(
-                    ("{\"query\":\"{ cosmetics(list: [$ids]) { paints { id name gradients { function angle repeat " +
-                        "image_url stops { at color } } shadows { x_offset y_offset radius color } } " +
-                        "badges { id name tooltip host { url files { name format } } } } }\"}")
+                    buildJsonObject { put("query", query) }.toString()
                         .toRequestBody("application/json".toMediaType())
                 )
-            }.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val data = json.parseToJsonElement(response.body.string()).jsonObject["data"]?.jsonObject
-                data?.get("cosmetics")?.jsonObject
+            }.build()).useCancellable { response ->
+                if (response.isSuccessful) {
+                    val data = json.parseToJsonElement(response.body.string()).jsonObject["data"]?.jsonObject
+                    data?.get("cosmetics")?.jsonObject
+                } else null
             }
-        }.getOrNull()
+        } catch (_: Exception) {
+            currentCoroutineContext().ensureActive()
+            null
+        }
     }
 
     /** GET honoring the network-library preference; null on any failure or non-2xx. */
-    private suspend fun stvGet(networkLibrary: String?, url: String): String? = withContext(Dispatchers.IO) {
-        runCatching {
-            when {
-                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                    val response = suspendCoroutine { continuation ->
-                        httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                            addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                        }.build().start()
-                    }
-                    String(response.second).takeIf { response.first.httpStatusCode in 200..299 }
-                }
-                networkLibrary == "Cronet" && cronetEngine != null -> {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).apply {
-                        addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build().start()
-                    val response = request.future.get()
-                    response.responseBody?.takeIf { response.urlResponseInfo.httpStatusCode in 200..299 }
-                }
-                else -> {
-                    okHttpClient.newCall(Request.Builder().apply {
-                        url(url)
-                        header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                    }.build()).execute().use { response ->
-                        response.body.string().takeIf { response.isSuccessful }
-                    }
-                }
-            }
-        }.getOrNull()
+    private suspend fun stvGet(networkLibrary: String?, url: String): String? {
+        return try {
+            loadTextFromUrl(networkLibrary, url, mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME))
+        } catch (_: Exception) {
+            currentCoroutineContext().ensureActive()
+            null
+        }
     }
 
     suspend fun loadStvKickEmotes(networkLibrary: String?, userId: String, useWebp: Boolean): Pair<String?, List<Emote>> = withContext(Dispatchers.IO) {
@@ -569,31 +555,25 @@ class PlayerRepository @Inject constructor(
         }.toString()
         when {
             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                suspendCoroutine { continuation ->
-                    httpEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/${stvUserId}/presences", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                suspendCancellableCoroutine { continuation ->
+                    val request = httpEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/${stvUserId}/presences", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
                         addHeader("Content-Type", "application/json")
                         addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                         setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(body.toByteArray()), cronetExecutor)
-                    }.build().start()
+                    }.build()
+                    continuation.invokeOnCancellation { request.cancel() }
+                    request.start()
                 }
             }
             networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/${stvUserId}/presences", request.callback, cronetExecutor).apply {
+                suspendCancellableCoroutine<Pair<org.chromium.net.UrlResponseInfo, ByteArray>> { continuation ->
+                    val request = cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/${stvUserId}/presences", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
                         addHeader("Content-Type", "application/json")
                         addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                         setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                    request.future.get().responseBody as String
-                } else {
-                    suspendCoroutine<Pair<org.chromium.net.UrlResponseInfo, ByteArray>> { continuation ->
-                        cronetEngine.get().newUrlRequestBuilder("https://7tv.io/v3/users/${stvUserId}/presences", getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                            addHeader("Content-Type", "application/json")
-                            addHeader("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                            setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                        }.build().start()
-                    }
+                    }.build()
+                    continuation.invokeOnCancellation { request.cancel() }
+                    request.start()
                 }
             }
             else -> {
@@ -602,7 +582,7 @@ class PlayerRepository @Inject constructor(
                     header("Content-Type", "application/json")
                     header("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                     post(body.toRequestBody())
-                }.build()).execute().close()
+                }.build()).useCancellable { }
             }
         }
     }

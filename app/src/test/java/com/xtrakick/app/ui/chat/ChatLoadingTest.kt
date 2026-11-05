@@ -6,6 +6,9 @@ import androidx.lifecycle.ViewModelStore
 import androidx.room.Room
 import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.model.chat.Emote
+import com.xtrakick.app.model.chat.ChatMessage
+import com.xtrakick.app.model.chat.GiftedSubInfo
+import com.xtrakick.app.model.chat.KicksDonation
 import com.xtrakick.app.model.chat.RecentEmote
 import com.xtrakick.app.repository.AuthRepository
 import com.xtrakick.app.repository.BookmarksRepository
@@ -36,6 +39,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -50,6 +54,33 @@ import java.time.Duration
 @Config(application = android.app.Application::class)
 @RunWith(RobolectricTestRunner::class)
 class ChatLoadingTest {
+    @Test fun deletingMessagesPreservesDonationAndGiftContent() {
+        val donation = KicksDonation(100)
+        val gift = GiftedSubInfo("Gifter")
+        val message = ChatMessage(id = "event", timestamp = 5000, kicksDonation = donation, giftedSubInfo = gift)
+        val method = ChatViewModel::class.java.getDeclaredMethod("createDeletedMessage", ChatMessage::class.java)
+            .apply { isAccessible = true }
+        val deleted = method.invoke(viewModel, message) as ChatMessage
+
+        assertTrue(deleted.isDeleted)
+        assertEquals(message.timestamp, deleted.timestamp)
+        assertSame(donation, deleted.kicksDonation)
+        assertSame(gift, deleted.giftedSubInfo)
+    }
+    @Test fun relativeReplayTimestampsPreserveDonationAndGiftContent() {
+        val donation = KicksDonation(100, giftName = "Gift")
+        val gift = GiftedSubInfo("Gifter", count = 5)
+        val message = ChatMessage(id = "event", timestamp = 5000, isDeleted = true,
+            kicksDonation = donation, giftedSubInfo = gift)
+        val method = ChatViewModel::class.java.getDeclaredMethod("withRelativeReplayTimestamp",
+            ChatMessage::class.java, Long::class.javaPrimitiveType).apply { isAccessible = true }
+        val relative = method.invoke(viewModel, message, 2000L) as ChatMessage
+
+        assertEquals(3000L, relative.timestamp)
+        assertTrue(relative.isDeleted)
+        assertSame(donation, relative.kicksDonation)
+        assertSame(gift, relative.giftedSubInfo)
+    }
     private val context = RuntimeEnvironment.getApplication()
     private val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
     private val executor = Executors.newSingleThreadExecutor()
@@ -119,7 +150,7 @@ class ChatLoadingTest {
         channelId: String = "43",
         viewerCount: Int = 50,
     ): PlayerViewModel {
-        val model = PlayerViewModel(publicApi, kick, follows, shown, notifications, null, null, executor, client,
+        val model = PlayerViewModel(publicApi, kick, follows, shown, notifications,
             player, BookmarksRepository(database.bookmarks(), database.videos()),
             OfflineRepository(database.videos(), database.localFollowsChannel(), database.bookmarks()))
         store.put("player", model)

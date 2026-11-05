@@ -2,7 +2,6 @@ package com.xtrakick.app.util.chat
 
 import android.graphics.Canvas
 import android.graphics.ColorFilter
-import android.graphics.Rect
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.Drawable
 import android.view.View

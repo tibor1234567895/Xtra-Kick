@@ -2294,28 +2294,7 @@ class ChatViewModel @Inject constructor(
 
     private fun ChatMessage.withRelativeReplayTimestamp(replayStartTimeMs: Long): ChatMessage {
         val relativeTimestamp = timestamp?.let { (it - replayStartTimeMs).coerceAtLeast(0L) }
-        return ChatMessage(
-            id = id,
-            userId = userId,
-            userLogin = userLogin,
-            userName = userName,
-            message = message,
-            color = color,
-            emotes = emotes,
-            badges = badges,
-            isAction = isAction,
-            isDeleted = isDeleted,
-            isFirst = isFirst,
-            bits = bits,
-            systemMsg = systemMsg,
-            msgId = msgId,
-            reward = reward,
-            reply = reply,
-            isReply = isReply,
-            replyParent = replyParent,
-            timestamp = relativeTimestamp,
-            fullMsg = fullMsg
-        )
+        return copyContent(timestamp = relativeTimestamp)
     }
 
     private suspend fun clearChatMessages(): Int {
@@ -2688,30 +2667,7 @@ class ChatViewModel @Inject constructor(
         )
     }
 
-    private fun createDeletedMessage(chatMessage: ChatMessage): ChatMessage {
-        return ChatMessage(
-            id = chatMessage.id,
-            userId = chatMessage.userId,
-            userLogin = chatMessage.userLogin,
-            userName = chatMessage.userName,
-            message = chatMessage.message,
-            color = chatMessage.color,
-            emotes = chatMessage.emotes,
-            badges = chatMessage.badges,
-            isAction = chatMessage.isAction,
-            isDeleted = true,
-            isFirst = chatMessage.isFirst,
-            bits = chatMessage.bits,
-            systemMsg = chatMessage.systemMsg,
-            msgId = chatMessage.msgId,
-            reward = chatMessage.reward,
-            reply = chatMessage.reply,
-            isReply = chatMessage.isReply,
-            replyParent = chatMessage.replyParent,
-            timestamp = chatMessage.timestamp,
-            fullMsg = chatMessage.fullMsg
-        )
-    }
+    private fun createDeletedMessage(chatMessage: ChatMessage): ChatMessage = chatMessage.copyContent(isDeleted = true)
 
     private suspend fun markMessageDeleted(targetId: String?, fallbackMessage: ChatMessage? = null): ChatMessage? {
         if (!targetId.isNullOrBlank()) {

@@ -24,6 +24,34 @@ class ChatMessage(
     val kicksDonation: KicksDonation? = null,
     val giftedSubInfo: GiftedSubInfo? = null,
 ) {
+    fun copyContent(
+        timestamp: Long? = this.timestamp,
+        isDeleted: Boolean = this.isDeleted,
+    ): ChatMessage = ChatMessage(
+        id = id,
+        userId = userId,
+        userLogin = userLogin,
+        userName = userName,
+        message = message,
+        color = color,
+        emotes = emotes,
+        badges = badges,
+        isAction = isAction,
+        isDeleted = isDeleted,
+        isFirst = isFirst,
+        bits = bits,
+        systemMsg = systemMsg,
+        msgId = msgId,
+        reward = reward,
+        reply = reply,
+        isReply = isReply,
+        replyParent = replyParent,
+        timestamp = timestamp,
+        fullMsg = fullMsg,
+        kicksDonation = kicksDonation,
+        giftedSubInfo = giftedSubInfo,
+    )
+
     /**
      * Stable alternating-row slot assigned once when the message enters the list.
      * Survives head trims so scrolled-up chat does not flip stripe colors.

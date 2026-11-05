@@ -15,25 +15,25 @@ import com.xtrakick.app.model.kick.auth.KickTokenIntrospectResponse
 import com.xtrakick.app.model.kick.auth.KickUsersResponse
 import com.xtrakick.app.util.BackendRequestSigner
 import com.xtrakick.app.util.HttpEngineUtils
+import com.xtrakick.app.util.NetworkUtils.useCancellable
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import dagger.Lazy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.chromium.net.CronetEngine
-import org.chromium.net.apihelpers.RedirectHandlers
 import org.chromium.net.apihelpers.UploadDataProviders
-import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -118,24 +118,10 @@ class AuthRepository @Inject constructor(
         when {
             networkLibrary == "HttpEngine" && canUseHttpEngine() -> executeHttpEngineGet(url, headers)
             networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).apply {
-                        headers.forEach { (k, v) -> addHeader(k, v) }
-                    }.build().start()
-                    val response = request.future.get(KICK_AUTH_REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                    val statusCode = response.urlResponseInfo.httpStatusCode
-                    if (statusCode in 200..299) {
-                        response.responseBody as String
-                    } else {
-                        throw KickAuthRequestException.HttpFailure(statusCode)
-                    }
-                } else {
-                    val response = awaitTimedCronetResponse(url) {
-                        headers.forEach { (k, v) -> addHeader(k, v) }
-                    }
-                    response.asCronetStringBody()
+                val response = awaitTimedCronetResponse(url) {
+                    headers.forEach { (k, v) -> addHeader(k, v) }
                 }
+                response.asCronetStringBody()
             }
             else -> {
                 executeOkHttp(
@@ -174,28 +160,12 @@ class AuthRepository @Inject constructor(
                     authHeaders.forEach { (name, value) -> addHeader(name, value) }
                 }
             networkLibrary == "Cronet" && cronetEngine != null -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                    cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).apply {
-                        addHeader("Content-Type", "application/json")
-                        authHeaders.forEach { (name, value) -> addHeader(name, value) }
-                        setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                    }.build().start()
-                    val response = request.future.get(KICK_AUTH_REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                    val statusCode = response.urlResponseInfo.httpStatusCode
-                    if (statusCode in 200..299) {
-                        response.responseBody as String
-                    } else {
-                        throw KickAuthRequestException.HttpFailure(statusCode)
-                    }
-                } else {
-                    val response = awaitTimedCronetResponse(url) {
-                        addHeader("Content-Type", "application/json")
-                        authHeaders.forEach { (name, value) -> addHeader(name, value) }
-                        setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
-                    }
-                    response.asCronetStringBody()
+                val response = awaitTimedCronetResponse(url) {
+                    addHeader("Content-Type", "application/json")
+                    authHeaders.forEach { (name, value) -> addHeader(name, value) }
+                    setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
                 }
+                response.asCronetStringBody()
             }
             else -> {
                 executeOkHttp(
@@ -242,7 +212,8 @@ class AuthRepository @Inject constructor(
     private suspend fun <T> executeRequest(isBackendRequest: Boolean, block: suspend () -> T): T {
         return try {
             block()
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             if (e is CancellationException && e !is TimeoutCancellationException) {
                 throw e
             }
@@ -278,18 +249,14 @@ class AuthRepository @Inject constructor(
         }
     }
 
-    private fun executeOkHttp(request: Request): String {
-        return kickAuthOkHttpClient.newCall(request).awaitStringBody()
-    }
-
-    private fun Call.awaitStringBody(): String {
-        execute().use { response ->
+    private suspend fun executeOkHttp(request: Request): String =
+        kickAuthOkHttpClient.newCall(request).useCancellable { response ->
             if (response.isSuccessful) {
-                return response.body.string()
+                response.body.string()
+            } else {
+                throw KickAuthRequestException.HttpFailure(response.code)
             }
-            throw KickAuthRequestException.HttpFailure(response.code)
         }
-    }
 
     @RequiresApi(Build.VERSION_CODES.R)
     @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)

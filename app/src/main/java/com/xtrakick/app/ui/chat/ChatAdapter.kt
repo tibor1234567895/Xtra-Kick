@@ -268,6 +268,7 @@ class ChatAdapter(
             messages.getOrNull(position)
         } ?: return
         val bindKey = messageBindKey(chatMessage)
+        ChatAdapterUtils.beginImageBinding(holder.textView)
         val result = ChatAdapterUtils.prepareChatMessage(
             chatMessage, renderSignature(), enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg,
             rewardChatMsg, replyMessage, null, useRandomColors, random, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints,
@@ -448,6 +449,7 @@ class ChatAdapter(
     }
 
     override fun onViewRecycled(holder: ViewHolder) {
+        ChatAdapterUtils.clearImageBinding(holder.textView)
         // Recycle can precede detach; stop frame callbacks here so an animated
         // row can't keep decoding after it leaves the pool.
         if (animateGifs) {
@@ -457,11 +459,10 @@ class ChatAdapter(
     }
 
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
-        if (animateGifs) {
-            for (i in 0 until recyclerView.childCount) {
-                val text = recyclerView.getChildAt(i).findViewById<TextView>(R.id.chatMessageText)?.text
-                ChatAdapterUtils.stopSpanAnimations(text)
-            }
+        for (i in 0 until recyclerView.childCount) {
+            val textView = recyclerView.getChildAt(i).findViewById<TextView>(R.id.chatMessageText) ?: continue
+            ChatAdapterUtils.clearImageBinding(textView)
+            if (animateGifs) ChatAdapterUtils.stopSpanAnimations(textView.text)
         }
         super.onDetachedFromRecyclerView(recyclerView)
     }

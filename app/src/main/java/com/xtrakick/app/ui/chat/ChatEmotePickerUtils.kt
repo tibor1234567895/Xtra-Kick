@@ -19,12 +19,12 @@ object ChatEmotePickerUtils {
             val name = emote.name ?: return@forEach
             lookup.putIfAbsent(name, emote)
         }
-        kickEmoteGroups
-            .flatMap { it.emotes }
-            .forEach { emote ->
-                val name = emote.name ?: return@forEach
+        for (group in kickEmoteGroups) {
+            for (emote in group.emotes) {
+                val name = emote.name ?: continue
                 lookup.putIfAbsent(name, emote)
             }
+        }
         sevenTvEmotes.forEach { emote ->
             val name = emote.name ?: return@forEach
             lookup.putIfAbsent(name, emote)
@@ -64,6 +64,24 @@ object ChatEmotePickerUtils {
         }
 
         return buildList {
+            fun addSection(
+                key: String,
+                emotes: List<Emote>?,
+                expandedByDefault: Boolean,
+                title: () -> String,
+            ) {
+                val filteredEmotes = emotes?.filterForQuery() ?: return
+                if (filteredEmotes.isEmpty()) return
+                add(
+                    EmotePickerSection(
+                        key = key,
+                        title = title(),
+                        emotes = filteredEmotes,
+                        expandedByDefault = expandedByDefault,
+                    )
+                )
+            }
+
             if (!hasQuery && resolvedRecentEmotes.isNotEmpty()) {
                 add(
                     EmotePickerSection(
@@ -88,33 +106,13 @@ object ChatEmotePickerUtils {
                 }
             }
 
-            collectiblesKickGroup?.emotes
-                ?.filterForQuery()
-                ?.takeIf { it.isNotEmpty() }
-                ?.let { emotes ->
-                    add(
-                        EmotePickerSection(
-                            key = "kick-collectibles",
-                            title = context.getString(R.string.emote_section_collectibles),
-                            emotes = emotes,
-                            expandedByDefault = true,
-                        )
-                    )
-                }
+            addSection("kick-collectibles", collectiblesKickGroup?.emotes, true) {
+                context.getString(R.string.emote_section_collectibles)
+            }
 
-            currentKickGroup?.emotes
-                ?.filterForQuery()
-                ?.takeIf { it.isNotEmpty() }
-                ?.let { emotes ->
-                    add(
-                        EmotePickerSection(
-                            key = "kick-current",
-                            title = currentKickGroup.title,
-                            emotes = emotes,
-                            expandedByDefault = true,
-                        )
-                    )
-                }
+            currentKickGroup?.let { group ->
+                addSection("kick-current", group.emotes, true) { group.title }
+            }
             val globalKickEmotes = LinkedHashMap<String, Emote>()
             otherKickGroups.forEach { group ->
                 val isGlobalLike = group.title.equals("Global", ignoreCase = true) ||
@@ -126,48 +124,14 @@ object ChatEmotePickerUtils {
                         globalKickEmotes.putIfAbsent(name, emote)
                     }
                 } else {
-                    val emotes = group.emotes.filterForQuery()
-                    if (emotes.isEmpty()) {
-                        return@forEach
-                    }
-                    add(
-                        EmotePickerSection(
-                            key = "kick-${group.id}",
-                            title = group.title,
-                            emotes = emotes,
-                            expandedByDefault = hasQuery,
-                        )
-                    )
+                    addSection("kick-${group.id}", group.emotes, hasQuery) { group.title }
                 }
             }
-            globalKickEmotes.values
-                .toList()
-                .filterForQuery()
-                .takeIf { it.isNotEmpty() }
-                ?.let { emotes ->
-                    add(
-                        EmotePickerSection(
-                            key = "kick-global",
-                            title = context.getString(R.string.emote_section_global),
-                            emotes = emotes,
-                            expandedByDefault = hasQuery,
-                        )
-                    )
-                }
+            addSection("kick-global", globalKickEmotes.values.toList(), hasQuery) {
+                context.getString(R.string.emote_section_global)
+            }
 
-            sevenTvEmotes
-                .filterForQuery()
-                .takeIf { it.isNotEmpty() }
-                ?.let { emotes ->
-                    add(
-                        EmotePickerSection(
-                            key = "7tv",
-                            title = "7TV",
-                            emotes = emotes,
-                            expandedByDefault = hasQuery,
-                        )
-                    )
-                }
+            addSection("7tv", sevenTvEmotes, hasQuery) { "7TV" }
         }
     }
 }

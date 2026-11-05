@@ -61,7 +61,7 @@ class MainViewModelTest {
         database.recentEmotes(), database.videoPositions())
     private val viewModel = MainViewModel(context, publicApi, kick, player,
         OfflineRepository(database.videos(), database.localFollowsChannel(), database.bookmarks()), auth,
-        null, null, executor, client, json, dagger.Lazy { error("Unused FCM") }, KickAccountMutedUsersStore(kick))
+        json, dagger.Lazy { error("Unused FCM") }, KickAccountMutedUsersStore(kick))
     private val store = ViewModelStore().apply { put("main", viewModel) }
 
     @After fun close() {

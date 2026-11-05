@@ -200,9 +200,10 @@ class FollowedLiveStreamsRepositoryTest {
         loaded.items.forEach { it.profileImageUrl = "data:image/png;base64,invalid-test-image" }
         val factory = LiveChannelsRemoteViewsFactory(context, repository)
         try {
-            val before = requests.size
+            // Playback prefetch runs independently; count the following-data request being tested.
+            val before = requests.count { it.url.encodedPath == "/public/v1/livestreams" }
             factory.onDataSetChanged()
-            assertEquals(before, requests.size)
+            assertEquals(before, requests.count { it.url.encodedPath == "/public/v1/livestreams" })
             assertEquals(27, factory.getCount())
             val row = factory.getViewAt(0)!!.apply(context, FrameLayout(context))
             assertEquals("follow27", row.findViewById<TextView>(R.id.widgetChannelName).text.toString())

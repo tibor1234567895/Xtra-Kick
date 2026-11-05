@@ -3,11 +3,6 @@ package com.xtrakick.app.util
 import com.xtrakick.app.model.AppUpdateInfo
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -15,36 +10,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppUpdateParsingTest {
+    @Test
+    fun malformedAssetsCannotHideALaterUsableApk() {
+        val info = parseReleasePayload("""{
+          "tag_name":"v3", "name":{}, "body":[], "published_at":"2026-08-28T12:00:00Z",
+          "assets":[null, 12, {"name":"missing-url.apk"},
+            {"name":"usable.apk", "browser_download_url":"https://example.invalid/app.apk", "size":-1}]
+        }""", 0)
+
+        assertEquals("https://example.invalid/app.apk", info?.downloadUrl)
+        assertEquals("v3", info?.releaseTitle)
+        assertNull(info?.releaseNotes)
+        assertNull(info?.size)
+    }
+
+    @Test
+    fun invalidAssetsAndEmptyDownloadUrlsProduceNoUpdate() {
+        for (payload in listOf("[]", "{\"assets\":{}}", """{
+          "published_at":"2026-08-28T12:00:00Z",
+          "assets":[{"name":"app.apk", "browser_download_url":" "}]
+        }""")) {
+            assertNull(parseReleasePayload(payload, 0))
+        }
+    }
+
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    private fun parseReleasePayload(payload: String, lastChecked: Long): AppUpdateInfo? {
-        val response = json.decodeFromString<JsonObject>(payload)
-        val releaseNotes = response["body"]?.jsonPrimitive?.contentOrNull
-        val releaseTitle = response["name"]?.jsonPrimitive?.contentOrNull ?: response["tag_name"]?.jsonPrimitive?.contentOrNull
-
-        return response["assets"]?.jsonArray?.find {
-            val asset = it.jsonObject
-            asset["content_type"]?.jsonPrimitive?.contentOrNull == "application/vnd.android.package-archive" ||
-                (asset["name"]?.jsonPrimitive?.contentOrNull)?.endsWith(".apk") == true
-        }?.jsonObject?.let { obj ->
-            val updatedAt = obj["updated_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
-                ?: response["published_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
-                ?: response["created_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
-            val downloadUrl = obj["browser_download_url"]?.jsonPrimitive?.contentOrNull
-            val size = obj["size"]?.jsonPrimitive?.longOrNull
-
-            if (updatedAt != null && downloadUrl != null && updatedAt > lastChecked) {
-                AppUpdateInfo(
-                    downloadUrl = downloadUrl,
-                    size = size,
-                    updatedAt = updatedAt,
-                    releaseTitle = releaseTitle,
-                    releaseNotes = releaseNotes
-                )
-            } else null
-        }
-    }
+    private fun parseReleasePayload(payload: String, lastChecked: Long): AppUpdateInfo? =
+        parseAppUpdateInfo(json.parseToJsonElement(payload) as? JsonObject, lastChecked)
 
     @Test
     fun parseReleaseWithApkAssetAndChangelog() {

@@ -1,7 +1,6 @@
 package com.xtrakick.app.ui.channel.videos
 
 import android.content.Context
-import android.net.http.HttpEngine
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -16,38 +15,27 @@ import com.xtrakick.app.repository.BookmarksRepository
 import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.PlayerRepository
+import com.xtrakick.app.ui.common.cacheMediaImage
 import com.xtrakick.app.repository.SortChannelRepository
 import com.xtrakick.app.repository.datasource.ChannelVideosDataSource
 import com.xtrakick.app.ui.channel.ChannelPagerFragmentArgs
 import com.xtrakick.app.ui.common.VideosSortDialog
-import com.xtrakick.app.util.NetworkUtils
-import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
-import org.chromium.net.CronetEngine
-import java.io.File
-import java.io.FileOutputStream
-import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 
 @HiltViewModel
 class ChannelVideosViewModel @Inject constructor(
     @param:ApplicationContext private val applicationContext: Context,
     private val sortChannelRepository: SortChannelRepository,
-    playerRepository: PlayerRepository,
+    private val playerRepository: PlayerRepository,
     private val bookmarksRepository: BookmarksRepository,
     private val kickPublicApiRepository: KickPublicApiRepository,
     private val kickRepository: KickRepository,
-    private val httpEngine: Lazy<HttpEngine>?,
-    private val cronetEngine: Lazy<CronetEngine>?,
-    private val cronetExecutor: ExecutorService,
-    private val okHttpClient: OkHttpClient,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -127,57 +115,11 @@ class ChannelVideosViewModel @Inject constructor(
             if (item != null) {
                 bookmarksRepository.deleteBookmark(item)
             } else {
-                val downloadedThumbnail = video.id.takeIf { !it.isNullOrBlank() }?.let { id ->
-                    video.thumbnail.takeIf { !it.isNullOrBlank() }?.let {
-                        File(filesDir, "thumbnails").mkdir()
-                        val path = filesDir + File.separator + "thumbnails" + File.separator + id
-                        viewModelScope.launch(Dispatchers.IO) {
-                            try {
-                                val (status, bytes) = NetworkUtils.fetchBytesRaw(
-                                    httpEngine,
-                                    cronetEngine,
-                                    cronetExecutor,
-                                    okHttpClient,
-                                    networkLibrary,
-                                    it
-                                )
-                                if (status in 200..299) {
-                                    FileOutputStream(path).use {
-                                        it.write(bytes)
-                                    }
-                                }
-                            } catch (e: Exception) {
-
-                            }
-                        }
-                        path
-                    }
+                val downloadedThumbnail = viewModelScope.cacheMediaImage(filesDir, "thumbnails", video.id, video.thumbnail) { url, output ->
+                    playerRepository.downloadTo(networkLibrary, url, output)
                 }
-                val downloadedLogo = video.channelId.takeIf { !it.isNullOrBlank() }?.let { id ->
-                    video.channelLogo.takeIf { !it.isNullOrBlank() }?.let {
-                        File(filesDir, "profile_pics").mkdir()
-                        val path = filesDir + File.separator + "profile_pics" + File.separator + id
-                        viewModelScope.launch(Dispatchers.IO) {
-                            try {
-                                val (status, bytes) = NetworkUtils.fetchBytesRaw(
-                                    httpEngine,
-                                    cronetEngine,
-                                    cronetExecutor,
-                                    okHttpClient,
-                                    networkLibrary,
-                                    it
-                                )
-                                if (status in 200..299) {
-                                    FileOutputStream(path).use {
-                                        it.write(bytes)
-                                    }
-                                }
-                            } catch (e: Exception) {
-
-                            }
-                        }
-                        path
-                    }
+                val downloadedLogo = viewModelScope.cacheMediaImage(filesDir, "profile_pics", video.channelId, video.channelLogo) { url, output ->
+                    playerRepository.downloadTo(networkLibrary, url, output)
                 }
                 val userTypes = video.channelId?.let {
                     if (kickPublicApiHeaders.isNotEmpty()) {

@@ -6,16 +6,22 @@ import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.db.NotificationUsersDao
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.repository.NotificationUsersRepository
+import com.xtrakick.app.util.NetworkUtils.useCancellable
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,9 +30,18 @@ class FcmSyncManager @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val notificationUsersDao: NotificationUsersDao,
     private val localFollowChannelRepository: LocalFollowChannelRepository? = null,
+    okHttpClient: OkHttpClient = OkHttpClient(),
 ) {
 
     private val subscriptionMutex = Mutex()
+    private val subscriptionClient by lazy {
+        okHttpClient.newBuilder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(10, TimeUnit.SECONDS)
+            .build()
+    }
 
     companion object {
         private const val FCM_LAST_SYNCED_SIGNATURE = "fcm_last_synced_signature_v1"
@@ -84,25 +99,9 @@ class FcmSyncManager @Inject constructor(
                 body = bodyBytes,
             )
 
-            return@withContext runCatching {
-                val connection = URL(url).openConnection() as HttpURLConnection
-                try {
-                    connection.requestMethod = "POST"
-                    connection.connectTimeout = 10000
-                    connection.readTimeout = 10000
-                    connection.doOutput = true
-                    connection.setRequestProperty("Content-Type", "application/json")
-                    headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
-                    connection.outputStream.use { it.write(bodyBytes) }
-                    val ok = connection.responseCode in 200..299
-                    if (ok) {
-                        context.prefs().edit().putString(FCM_LAST_SYNCED_SIGNATURE, currentSignature).apply()
-                    }
-                    ok
-                } finally {
-                    connection.disconnect()
-                }
-            }.getOrDefault(false)
+            val ok = postSubscriptionRequest(url, bodyBytes, headers)
+            if (ok) context.prefs().edit().putString(FCM_LAST_SYNCED_SIGNATURE, currentSignature).apply()
+            ok
         }
     }
 
@@ -130,25 +129,23 @@ class FcmSyncManager @Inject constructor(
                 body = bodyBytes,
             )
 
-            return@withContext runCatching {
-                val connection = URL(url).openConnection() as HttpURLConnection
-                try {
-                    connection.requestMethod = "POST"
-                    connection.connectTimeout = 10000
-                    connection.readTimeout = 10000
-                    connection.doOutput = true
-                    connection.setRequestProperty("Content-Type", "application/json")
-                    headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
-                    connection.outputStream.use { it.write(bodyBytes) }
-                    val ok = connection.responseCode in 200..299
-                    if (ok) {
-                        context.prefs().edit().remove(FCM_LAST_SYNCED_SIGNATURE).apply()
-                    }
-                    ok
-                } finally {
-                    connection.disconnect()
-                }
-            }.getOrDefault(false)
+            val ok = postSubscriptionRequest(url, bodyBytes, headers)
+            if (ok) context.prefs().edit().remove(FCM_LAST_SYNCED_SIGNATURE).apply()
+            ok
+        }
+    }
+
+    internal suspend fun postSubscriptionRequest(url: String, body: ByteArray, headers: Map<String, String>): Boolean {
+        return try {
+            val request = Request.Builder().url(url)
+                .header("Content-Type", "application/json")
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .apply { headers.forEach { (name, value) -> header(name, value) } }
+                .build()
+            subscriptionClient.newCall(request).useCancellable { it.isSuccessful }
+        } catch (_: Exception) {
+            currentCoroutineContext().ensureActive()
+            false
         }
     }
 }

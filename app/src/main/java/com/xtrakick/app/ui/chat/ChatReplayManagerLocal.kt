@@ -5,6 +5,7 @@ import com.xtrakick.app.util.chat.ChatReplayPacing
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -80,15 +81,15 @@ class ChatReplayManagerLocal(
     fun setMessages(newMessages: List<ChatMessage>, newStartTime: Long) {
         messages = newMessages
         startTime = newStartTime
-        if (started) {
+        if (started && isActive) {
             start()
         }
     }
 
     fun startLoad() {
-        isActive = true
-        if (!started) {
+        if (!started || !isActive) {
             started = true
+            isActive = true
             if (messages.isNotEmpty()) {
                 start()
             }
@@ -105,22 +106,21 @@ class ChatReplayManagerLocal(
         queuedMessages = emptyList()
         nextMessageIndex = 0
         resetSpread()
-        coroutineScope.launch {
-            listener.clearMessages()
-        }
         load(currentPosition + startTime, preload = true)
     }
 
     fun stop() {
+        isActive = false
         loadJob?.cancel()
         messageJob?.cancel()
-        isActive = false
     }
 
     private fun load(position: Long, preload: Boolean = false) {
         loadJob?.cancel()
         loadJob = coroutineScope.launch {
             try {
+                listener.clearMessages()
+                ensureActive()
                 // Upper bound: everything already due pops in at once (one bulk
                 // submit), the future keeps trickling in sync with playback.
                 // Previously messages exactly at the current position streamed
@@ -179,29 +179,7 @@ class ChatReplayManagerLocal(
                         break
                     }
                     ChatReplayPacing.awaitPlayback(isPlaybackPlaying)
-                    listener.onChatMessage(
-                        ChatMessage(
-                            id = message.id,
-                            userId = message.userId,
-                            userLogin = message.userLogin,
-                            userName = message.userName,
-                            message = message.message,
-                            color = message.color,
-                            emotes = message.emotes,
-                            badges = message.badges,
-                            isAction = message.isAction,
-                            isFirst = message.isFirst,
-                            bits = message.bits,
-                            systemMsg = message.systemMsg,
-                            msgId = message.msgId,
-                            reward = message.reward,
-                            reply = message.reply,
-                            isReply = message.isReply,
-                            replyParent = message.replyParent,
-                            timestamp = message.timestamp,
-                            fullMsg = message.fullMsg
-                        )
-                    )
+                    listener.onChatMessage(message.copyContent())
                     // Counted before the head is removed below, so the just-emitted message is
                     // included - that is what [advanceStagger] expects.
                     spreadStaggerMs = ChatReplayPacing.advanceStagger(stagger, remainingInBucket)
@@ -220,16 +198,13 @@ class ChatReplayManagerLocal(
     }
 
     fun updatePosition(position: Long) {
-        if (started && messages.isNotEmpty() && lastCheckedPosition != position) {
+        if (started && isActive && messages.isNotEmpty() && lastCheckedPosition != position) {
             if (position - lastCheckedPosition !in 0..LARGE_SEEK_THRESHOLD_MS) {
                 loadJob?.cancel()
                 messageJob?.cancel()
                 queuedMessages = emptyList()
                 nextMessageIndex = 0
                 resetSpread()
-                coroutineScope.launch {
-                    listener.clearMessages()
-                }
                 load(position + startTime, preload = true)
             } else {
                 messageJob?.cancel()
@@ -240,7 +215,7 @@ class ChatReplayManagerLocal(
     }
 
     fun updateSpeed(speed: Float) {
-        if (started && messages.isNotEmpty() && playbackSpeed != speed) {
+        if (started && isActive && messages.isNotEmpty() && playbackSpeed != speed) {
             playbackSpeed = speed
             messageJob?.cancel()
             startJob()

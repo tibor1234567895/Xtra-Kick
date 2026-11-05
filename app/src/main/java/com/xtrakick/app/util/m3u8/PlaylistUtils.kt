@@ -9,6 +9,7 @@ import androidx.media3.exoplayer.hls.playlist.HlsMultivariantPlaylist
 import com.xtrakick.app.player.lowlatency.HlsPlaylistParser
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.File
 import java.util.regex.Pattern
 import java.net.URI
 import java.io.EOFException
@@ -19,6 +20,36 @@ object PlaylistUtils {
     fun isHlsUrl(url: String): Boolean = URI(url).path.orEmpty().endsWith(".m3u8", ignoreCase = true)
 
     fun resolveUri(playlistUrl: String, uri: String): String = URI(playlistUrl).resolve(uri).toString()
+
+    internal fun localAssetName(uri: String): String = Uri.decode(uri).substringAfterLast('/').substringAfterLast('\\')
+
+    internal fun unsharedAssetUris(playlist: MediaPlaylist, siblings: List<MediaPlaylist?>): List<String> {
+        val seenNames = HashSet<String>()
+        for (sibling in siblings) {
+            // An unreadable sibling may own any of these files. Retain them until ownership is known.
+            if (sibling == null || sibling.segments.isEmpty()) return emptyList()
+            sibling.initSegmentUri?.let { seenNames.add(localAssetName(it)) }
+            for (segment in sibling.segments) seenNames.add(localAssetName(segment.uri))
+        }
+        return buildList {
+            playlist.initSegmentUri?.let { if (seenNames.add(localAssetName(it))) add(it) }
+            for (segment in playlist.segments) {
+                if (seenNames.add(localAssetName(segment.uri))) add(segment.uri)
+            }
+        }
+    }
+
+    internal fun localAssetFile(directory: File, uri: String): File? {
+        val parsed = Uri.parse(uri)
+        val rawFile = File(uri)
+        val file = when {
+            rawFile.isAbsolute -> rawFile
+            parsed.scheme == null -> File(directory, uri)
+            parsed.scheme == "file" -> parsed.path?.let(::File) ?: return null
+            else -> return null
+        }.canonicalFile
+        return file.takeIf { it.parentFile == directory.canonicalFile }
+    }
 
     fun assetFileName(uri: String): String {
         val parsed = URI(uri)

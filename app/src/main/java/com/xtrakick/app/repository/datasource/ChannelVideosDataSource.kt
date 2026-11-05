@@ -5,6 +5,8 @@ import androidx.paging.PagingState
 import com.xtrakick.app.model.ui.Video
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.util.KickApiHelper
+import kotlinx.coroutines.CancellationException
+import java.io.IOException
 
 class ChannelVideosDataSource(
     private val channelId: String?,
@@ -13,10 +15,9 @@ class ChannelVideosDataSource(
     private val clipBroadcastTypes: String,
     private val clipSort: String,
     private val kickRepository: KickRepository,
-) : PagingSource<Int, Video>() {
-    private var offset: String? = null
+) : PagingSource<String, Video>() {
 
-    override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Video> {
+    override suspend fun load(params: LoadParams<String>): LoadResult<String, Video> {
         return if (channelLogin.isNullOrBlank()) {
             LoadResult.Page(
                 data = emptyList(),
@@ -25,16 +26,14 @@ class ChannelVideosDataSource(
             )
         } else try {
             kickLoad(params)
-        } catch (_: Exception) {
-            LoadResult.Page(
-                data = emptyList(),
-                prevKey = null,
-                nextKey = null
-            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            LoadResult.Error(error)
         }
     }
 
-    private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Video> {
+    private suspend fun kickLoad(params: LoadParams<String>): LoadResult<String, Video> {
         val login = channelLogin?.takeIf { it.isNotBlank() } ?: throw Exception()
         val now = System.currentTimeMillis()
         val periodStart = when (clipPeriod) {
@@ -46,22 +45,24 @@ class ChannelVideosDataSource(
         val desiredCount = params.loadSize
         val aggregated = mutableListOf<Video>()
         val seenIds = mutableSetOf<String>()
-        var nextCursor = offset
+        var nextCursor = params.key
+        val visitedCursors = mutableSetOf<String?>()
         var pagesFetched = 0
         do {
+            visitedCursors.add(nextCursor)
             val page = kickRepository.getChannelVideosPage(
                 channelSlug = login,
                 channelId = channelId,
                 limit = maxOf(desiredCount, 30),
                 cursor = nextCursor,
-            ) ?: break
+            ) ?: throw IOException("Channel video request failed")
             page.videos.forEach { video ->
                 val id = video.id ?: return@forEach
                 if (seenIds.add(id)) {
                     aggregated += video
                 }
             }
-            nextCursor = page.nextCursor
+            nextCursor = page.nextCursor?.takeIf { it.isNotBlank() && it !in visitedCursors }
             pagesFetched++
         } while (aggregated.size < desiredCount && !nextCursor.isNullOrBlank() && pagesFetched < 5)
         val filtered = aggregated
@@ -89,22 +90,13 @@ class ChannelVideosDataSource(
                     else -> sequence.sortedByDescending { it.uploadDate?.let(KickApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
                 }
             }
-            .take(desiredCount)
             .toList()
-        offset = nextCursor
         return LoadResult.Page(
             data = filtered,
             prevKey = null,
-            nextKey = if (!offset.isNullOrBlank() && aggregated.isNotEmpty()) {
-                (params.key ?: 1) + 1
-            } else null
+            nextKey = nextCursor.takeIf { aggregated.isNotEmpty() }
         )
     }
 
-    override fun getRefreshKey(state: PagingState<Int, Video>): Int? {
-        return state.anchorPosition?.let { anchorPosition ->
-            val anchorPage = state.closestPageToPosition(anchorPosition)
-            anchorPage?.prevKey?.plus(1) ?: anchorPage?.nextKey?.minus(1)
-        }
-    }
+    override fun getRefreshKey(state: PagingState<String, Video>): String? = null
 }

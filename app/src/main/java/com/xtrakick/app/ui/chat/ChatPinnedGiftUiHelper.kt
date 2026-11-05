@@ -57,6 +57,7 @@ class ChatPinnedGiftUiHelper(
     private val resources get() = fragment.resources
 
     fun resetPinnedGiftUiState() {
+        getBinding()?.pinnedGiftTitle?.let(ChatAdapterUtils::clearImageBinding)
         pinnedGiftUiState = PinnedGiftUiState()
         cachedPinnedGiftMessageKey = null
         cachedPinnedGiftMessageResult = null
@@ -328,6 +329,7 @@ class ChatPinnedGiftUiHelper(
 
     fun renderPinnedGift() {
         val binding = getBinding() ?: return
+        ChatAdapterUtils.beginImageBinding(binding.pinnedGiftTitle)
         val pinnedGift = viewModel.pinnedGift.value
         val dismissed = viewModel.pinnedGiftDismissed.value
         binding.pinnedGiftRestore.isVisible = pinnedGift != null && dismissed

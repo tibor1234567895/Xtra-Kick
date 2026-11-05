@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 
 object DownloadStorage {
 
@@ -97,16 +98,22 @@ object DownloadStorage {
                         if (file.isFile) {
                             val targetName = file.name ?: return@forEach
                             if (canonical.findFile(targetName) == null) {
+                                var destination: DocumentFile? = null
                                 runCatching {
                                     val dest = canonical.createFile(file.type ?: "*/*", targetName)
-                                    if (dest != null) {
-                                        resolver.openInputStream(file.uri)?.use { input ->
-                                            resolver.openOutputStream(dest.uri, "wt")?.use { output ->
-                                                input.copyTo(output)
-                                            }
+                                        ?: throw IOException("Cannot create recovered download")
+                                    destination = dest
+                                    (resolver.openInputStream(file.uri)
+                                        ?: throw IOException("Cannot read duplicate download")).use { input ->
+                                        (resolver.openOutputStream(dest.uri, "wt")
+                                            ?: throw IOException("Cannot write recovered download")).use { output ->
+                                            input.copyTo(output)
                                         }
-                                        file.delete()
                                     }
+                                    file.delete()
+                                }.onFailure {
+                                    // Only this attempt's new target is disposable; retain the source for retry.
+                                    destination?.let { runCatching { it.delete() } }
                                 }
                             }
                         }
@@ -127,12 +134,12 @@ object DownloadStorage {
                 val uri = urlStr.toUri()
                 // DocumentFile.exists() can lie for provider rows whose backing
                 // file was deleted via raw path (stale msd: entries), so prove
-                // readability instead. Playlists additionally require at least
-                // the init/first segment to be openable.
+                // readability instead. Playlists require the first media asset
+                // and any declared initialization asset to be openable.
                 if (urlStr.endsWith(".m3u8")) {
                     existsPlaylistSAF(context, uri)
                 } else {
-                    context.contentResolver.openInputStream(uri)?.use { it.read() } != -1
+                    context.contentResolver.openInputStream(uri)?.use { it.read() != -1 } == true
                 }
             }.getOrDefault(false)
         } else {
@@ -150,10 +157,11 @@ object DownloadStorage {
                 com.xtrakick.app.util.m3u8.PlaylistUtils.parseMediaPlaylist(it)
             }
             val dir = playlistFile.parentFile ?: return@runCatching false
-            val first = playlist.initSegmentUri?.substringAfterLast("%2F")?.substringAfterLast("/")
-                ?: playlist.segments.firstOrNull()?.uri?.substringAfterLast("%2F")?.substringAfterLast("/")
-                ?: return@runCatching false
-            File(dir, android.net.Uri.decode(first)).exists()
+            val first = playlist.segments.firstOrNull()?.uri ?: return@runCatching false
+            listOfNotNull(playlist.initSegmentUri, first).all { uri ->
+                File(dir, android.net.Uri.decode(uri.substringAfterLast("%2F").substringAfterLast("/")))
+                    .let { it.isFile && it.length() > 0 }
+            }
         }.getOrDefault(false)
     }
 
@@ -161,14 +169,10 @@ object DownloadStorage {
         val playlist = context.contentResolver.openInputStream(playlistUri)?.use {
             com.xtrakick.app.util.m3u8.PlaylistUtils.parseMediaPlaylist(it)
         } ?: return false
-        val candidates = listOfNotNull(
-            playlist.initSegmentUri,
-            playlist.segments.firstOrNull()?.uri
-        )
-        if (candidates.isEmpty()) return false
-        return candidates.any { segUri ->
+        val first = playlist.segments.firstOrNull()?.uri ?: return false
+        return listOfNotNull(playlist.initSegmentUri, first).all { segUri ->
             runCatching {
-                context.contentResolver.openInputStream(segUri.toUri())?.use { it.read() } != -1
+                context.contentResolver.openInputStream(segUri.toUri())?.use { it.read() != -1 } == true
             }.getOrDefault(false)
         }
     }

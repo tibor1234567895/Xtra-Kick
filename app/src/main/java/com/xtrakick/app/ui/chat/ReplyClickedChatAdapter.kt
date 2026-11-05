@@ -148,6 +148,7 @@ class ReplyClickedChatAdapter(
         val chatMessage = synchronized(messages) {
             messages.getOrNull(position)
         } ?: return
+        ChatAdapterUtils.beginImageBinding(holder.textView)
         val result = ChatAdapterUtils.prepareChatMessage(
             chatMessage, renderSignature(), enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg,
             rewardChatMsg, replyMessage, { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClick(url, name, format, isAnimated, source, thirdParty, emoteId) },
@@ -235,12 +236,17 @@ class ReplyClickedChatAdapter(
         }
     }
 
+    override fun onViewRecycled(holder: ViewHolder) {
+        ChatAdapterUtils.clearImageBinding(holder.textView)
+        if (animateGifs) ChatAdapterUtils.stopSpanAnimations(holder.textView.text)
+        super.onViewRecycled(holder)
+    }
+
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
-        if (animateGifs) {
-            for (i in 0 until recyclerView.childCount) {
-                val text = recyclerView.getChildAt(i).findViewById<TextView>(R.id.chatMessageText)?.text
-                ChatAdapterUtils.stopSpanAnimations(text)
-            }
+        for (i in 0 until recyclerView.childCount) {
+            val textView = recyclerView.getChildAt(i).findViewById<TextView>(R.id.chatMessageText) ?: continue
+            ChatAdapterUtils.clearImageBinding(textView)
+            if (animateGifs) ChatAdapterUtils.stopSpanAnimations(textView.text)
         }
         super.onDetachedFromRecyclerView(recyclerView)
     }

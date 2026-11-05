@@ -6,6 +6,8 @@ import com.xtrakick.app.model.kick.ClipsPeriod
 import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.util.KickApiHelper
+import kotlinx.coroutines.CancellationException
+import java.io.IOException
 
 class GameClipsDataSource(
     private val gameId: String?,
@@ -16,10 +18,9 @@ class GameClipsDataSource(
     private val startedAt: String?,
     private val endedAt: String?,
     private val kickRepository: KickRepository,
-) : PagingSource<Int, Clip>() {
-    private var offset: String? = null
+) : PagingSource<String, Clip>() {
 
-    override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Clip> {
+    override suspend fun load(params: LoadParams<String>): LoadResult<String, Clip> {
         if (gameId.isNullOrBlank() && gameSlug.isNullOrBlank() && gameName.isNullOrBlank()) {
             return LoadResult.Page(
                 data = emptyList(),
@@ -29,12 +30,14 @@ class GameClipsDataSource(
         }
         return try {
             kickLoad(params)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             LoadResult.Error(e)
         }
     }
 
-    private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Clip> {
+    private suspend fun kickLoad(params: LoadParams<String>): LoadResult<String, Clip> {
         val slug = gameSlug?.takeIf { it.isNotBlank() }
             ?: kickRepository.resolveCategorySlug(gameId, gameName)
             ?: KickApiHelper.toCategorySlug(gameName)
@@ -60,14 +63,11 @@ class GameClipsDataSource(
             gameName = gameName,
             limit = maxOf(params.loadSize, 20),
             time = kickTime,
-            cursor = offset,
-        ) ?: return LoadResult.Page(
-            data = emptyList(),
-            prevKey = null,
-            nextKey = null
-        )
+            cursor = params.key,
+        ) ?: throw IOException("Category clip request failed")
         val list = page.clips.asSequence()
             .filter { clip ->
+                if (startMs == null && endMs == null) return@filter true
                 val ts = clip.uploadDate?.let { KickApiHelper.parseIso8601DateUTC(it) } ?: return@filter false
                 val afterStart = startMs?.let { ts >= it } ?: true
                 val beforeEnd = endMs?.let { ts <= it } ?: true
@@ -77,22 +77,13 @@ class GameClipsDataSource(
                 compareByDescending<Clip> { it.viewCount ?: -1 }
                     .thenByDescending { it.uploadDate?.let(KickApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
             )
-            .take(params.loadSize)
             .toList()
-        offset = page.nextCursor
         return LoadResult.Page(
             data = list,
             prevKey = null,
-            nextKey = if (!offset.isNullOrBlank() && page.clips.isNotEmpty()) {
-                (params.key ?: 1) + 1
-            } else null
+            nextKey = page.nextCursor?.takeIf { it.isNotBlank() && it != params.key && page.clips.isNotEmpty() }
         )
     }
 
-    override fun getRefreshKey(state: PagingState<Int, Clip>): Int? {
-        return state.anchorPosition?.let { anchorPosition ->
-            val anchorPage = state.closestPageToPosition(anchorPosition)
-            anchorPage?.prevKey?.plus(1) ?: anchorPage?.nextKey?.minus(1)
-        }
-    }
+    override fun getRefreshKey(state: PagingState<String, Clip>): String? = null
 }

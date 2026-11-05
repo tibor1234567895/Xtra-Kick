@@ -8,6 +8,18 @@ import java.io.IOException
 
 object SafStorageUtils {
 
+    fun deleteIfEmptyDirectory(context: Context, directoryUri: Uri) {
+        val documentId = DocumentsContract.getDocumentId(directoryUri)
+        val children = if (DocumentsContract.isTreeUri(directoryUri)) {
+            DocumentsContract.buildChildDocumentsUriUsingTree(directoryUri, documentId)
+        } else {
+            DocumentsContract.buildChildDocumentsUri(requireNotNull(directoryUri.authority), documentId)
+        }
+        context.contentResolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null)?.use {
+            if (!it.moveToFirst()) DocumentsContract.deleteDocument(context.contentResolver, directoryUri)
+        }
+    }
+
     /**
      * Resolves a user-friendly display path for an SAF tree URI.
      * E.g. "Download/Xtra-kick-backup/VODs" or "VODs".

@@ -6,6 +6,8 @@ import com.xtrakick.app.model.kick.ClipsPeriod
 import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.util.KickApiHelper
+import kotlinx.coroutines.CancellationException
+import java.io.IOException
 
 class ChannelClipsDataSource(
     private val channelId: String?,
@@ -15,10 +17,9 @@ class ChannelClipsDataSource(
     private val startedAt: String?,
     private val endedAt: String?,
     private val kickRepository: KickRepository,
-) : PagingSource<Int, Clip>() {
-    private var offset: String? = null
+) : PagingSource<String, Clip>() {
 
-    override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Clip> {
+    override suspend fun load(params: LoadParams<String>): LoadResult<String, Clip> {
         if (channelLogin.isNullOrBlank()) {
             return LoadResult.Page(
                 data = emptyList(),
@@ -45,17 +46,14 @@ class ChannelClipsDataSource(
                 channelId = channelId,
                 limit = maxOf(params.loadSize, 20),
                 time = kickTime,
-                cursor = offset,
-            ) ?: return LoadResult.Page(
-                data = emptyList(),
-                prevKey = null,
-                nextKey = null
-            )
+                cursor = params.key,
+            ) ?: throw IOException("Channel clip request failed")
             val startMs = startedAt?.let { KickApiHelper.parseIso8601DateUTC(it) }
             val endMs = endedAt?.let { KickApiHelper.parseIso8601DateUTC(it) }
             val list = page.clips
                 .asSequence()
                 .filter { clip ->
+                    if (startMs == null && endMs == null) return@filter true
                     val ts = clip.uploadDate?.let { KickApiHelper.parseIso8601DateUTC(it) } ?: return@filter false
                     val afterStart = startMs?.let { ts >= it } ?: true
                     val beforeEnd = endMs?.let { ts <= it } ?: true
@@ -65,29 +63,18 @@ class ChannelClipsDataSource(
                     compareByDescending<Clip> { it.viewCount ?: -1 }
                         .thenByDescending { it.uploadDate?.let(KickApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
                 )
-                .take(params.loadSize)
                 .toList()
-            offset = page.nextCursor
             LoadResult.Page(
                 data = list,
                 prevKey = null,
-                nextKey = if (!offset.isNullOrBlank() && page.clips.isNotEmpty()) {
-                    (params.key ?: 1) + 1
-                } else null
+                nextKey = page.nextCursor?.takeIf { it.isNotBlank() && it != params.key && page.clips.isNotEmpty() }
             )
-        } catch (_: Exception) {
-            LoadResult.Page(
-                data = emptyList(),
-                prevKey = null,
-                nextKey = null
-            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            LoadResult.Error(error)
         }
     }
 
-    override fun getRefreshKey(state: PagingState<Int, Clip>): Int? {
-        return state.anchorPosition?.let { anchorPosition ->
-            val anchorPage = state.closestPageToPosition(anchorPosition)
-            anchorPage?.prevKey?.plus(1) ?: anchorPage?.nextKey?.minus(1)
-        }
-    }
+    override fun getRefreshKey(state: PagingState<String, Clip>): String? = null
 }

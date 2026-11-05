@@ -7,8 +7,6 @@ import android.content.pm.PackageInstaller
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.net.http.HttpEngine
-import android.os.Build
-import android.os.ext.SdkExtensions
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.JsonReader
@@ -18,6 +16,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.model.AppUpdateInfo
+import com.xtrakick.app.util.parseAppUpdateInfo
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.repository.NotificationUsersRepository
 import com.xtrakick.app.repository.OfflineRepository
@@ -31,11 +30,9 @@ import com.xtrakick.app.util.enqueueLiveNotificationsPollingWork
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
-import com.xtrakick.app.util.HttpEngineUtils
-import com.xtrakick.app.util.KickApiHelper
+import com.xtrakick.app.util.DownloadStorage
 import com.xtrakick.app.util.hasPersistedUriPermission
 import com.xtrakick.app.util.prefs
-import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.m3u8.PlaylistUtils
 import com.xtrakick.app.util.m3u8.Segment
 import dagger.Lazy
@@ -49,22 +46,13 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.chromium.net.CronetEngine
-import org.chromium.net.apihelpers.RedirectHandlers
-import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
-import kotlin.coroutines.suspendCoroutine
 import kotlin.math.max
 import kotlin.system.exitProcess
 
@@ -122,14 +110,12 @@ class SettingsViewModel @Inject constructor(
     private data class SharedLeftover(val uri: Uri, val name: String, val bytes: Long)
 
     private suspend fun referencedSharedDocIds(): Set<String> {
-        return runCatching {
-            val ids = hashSetOf<String>()
-            val videos = offlineRepository.getAllVideos()
+        val videos = offlineRepository.getAllVideos()
+        return buildSet {
             (videos.mapNotNull { it.url } + videos.mapNotNull { it.chatUrl }).forEach { url ->
-                runCatching { DocumentsContract.getDocumentId(url.toUri()) }.getOrNull()?.let { ids.add(it) }
+                if (DownloadStorage.isContentUri(url)) add(DocumentsContract.getDocumentId(url.toUri()))
             }
-            ids
-        }.getOrDefault(emptySet())
+        }
     }
 
     private fun queryChildDocs(treeUri: Uri, parentDocId: String): List<Triple<String, String, Long>> {
@@ -253,14 +239,25 @@ class SettingsViewModel @Inject constructor(
         val allVideos = offlineRepository.getAllVideos()
         val videoByUrl = allVideos.associateBy { it.url }
         val referencedChatUrls = allVideos.mapNotNullTo(hashSetOf()) { it.chatUrl }
+        val referencedDirectories = buildSet<File> {
+            allVideos.forEach { video ->
+                listOfNotNull(video.url, video.chatUrl).forEach { url ->
+                    if (!DownloadStorage.isContentUri(url)) {
+                        var directory = File(url).canonicalFile.parentFile
+                        while (directory != null && add(directory)) directory = directory.parentFile
+                    }
+                }
+            }
+        }
         applicationContext.getExternalFilesDirs(".downloads").forEach { storage ->
             val files = storage?.absolutePath?.let { File(it).listFiles() } ?: return@forEach
-            files.forEach { entry ->
+            files.forEach entryLoop@ { entry ->
                 when {
                     entry.name.endsWith(".json") -> {
                         if (entry.path !in referencedChatUrls) orphans.add(entry)
                     }
                     entry.isDirectory -> {
+                        if (entry.canonicalFile in referencedDirectories) return@entryLoop
                         val playlists = entry.listFiles()?.filter { it.name.endsWith(".m3u8") }.orEmpty()
                         if (playlists.isNotEmpty() && playlists.all { videoByUrl[it.path] == null }) {
                             orphans.add(entry)
@@ -521,55 +518,11 @@ class SettingsViewModel @Inject constructor(
                 }
             }
             val updateInfoResult: AppUpdateInfo? = try {
-                val response = when {
-                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                        val response = suspendCoroutine { continuation ->
-                            httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                        }
-                        json.decodeFromString<JsonObject>(String(response.second))
-                    }
-                    networkLibrary == "Cronet" && cronetEngine != null -> {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                            val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                            cronetEngine.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                            val response = request.future.get().responseBody as String
-                            json.decodeFromString<JsonObject>(response)
-                        } else {
-                            val response = suspendCoroutine { continuation ->
-                                cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                            }
-                            json.decodeFromString<JsonObject>(String(response.second))
-                        }
-                    }
-                    else -> {
-                        okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                            json.decodeFromString<JsonObject>(response.body.string())
-                        }
-                    }
-                }
-                val releaseNotes = response["body"]?.jsonPrimitive?.contentOrNull
-                val releaseTitle = response["name"]?.jsonPrimitive?.contentOrNull ?: response["tag_name"]?.jsonPrimitive?.contentOrNull
-                response["assets"]?.jsonArray?.find {
-                    val asset = it.jsonObject
-                    asset["content_type"]?.jsonPrimitive?.contentOrNull == "application/vnd.android.package-archive" ||
-                        (asset["name"]?.jsonPrimitive?.contentOrNull)?.endsWith(".apk") == true
-                }?.jsonObject?.let { obj ->
-                    val updatedAt = obj["updated_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
-                        ?: response["published_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
-                        ?: response["created_at"]?.jsonPrimitive?.contentOrNull?.let { KickApiHelper.parseIso8601DateUTC(it) }
-                    val downloadUrl = obj["browser_download_url"]?.jsonPrimitive?.contentOrNull
-                    val size = obj["size"]?.jsonPrimitive?.longOrNull
-                    if (updatedAt != null && downloadUrl != null && updatedAt > lastChecked) {
-                        AppUpdateInfo(
-                            downloadUrl = downloadUrl,
-                            size = size,
-                            updatedAt = updatedAt,
-                            releaseTitle = releaseTitle,
-                            releaseNotes = releaseNotes
-                        )
-                    } else null
+                playerRepository.loadTextFromUrl(networkLibrary, url)?.let { body ->
+                    parseAppUpdateInfo(json.parseToJsonElement(body) as? JsonObject, lastChecked)
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 DiagnosticLogger.e("SettingsViewModel", "checkUpdates failed", e)
                 null
             }

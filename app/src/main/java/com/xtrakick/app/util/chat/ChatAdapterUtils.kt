@@ -219,80 +219,6 @@ object ChatAdapterUtils {
         return ConcatenatedEmoteMatcher(emotes).split(token)
     }
 
-    private val concatenatedMatcherCache = Collections.synchronizedMap(
-        object : LinkedHashMap<Pair<String?, Int>, ConcatenatedEmoteMatcher>(16, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<String?, Int>, ConcatenatedEmoteMatcher>?): Boolean {
-                return size > 16
-            }
-        }
-    )
-
-    private fun getOrCreateConcatenatedEmoteMatcher(
-        setId: String?,
-        personalEmotes: List<Emote>?,
-        thirdPartyEmotes: List<Emote>,
-    ): ConcatenatedEmoteMatcher {
-        val tpHash = synchronized(thirdPartyEmotes) {
-            var result = thirdPartyEmotes.size
-            result = 31 * result + (thirdPartyEmotes.firstOrNull()?.name?.hashCode() ?: 0)
-            result = 31 * result + (thirdPartyEmotes.lastOrNull()?.name?.hashCode() ?: 0)
-            result
-        }
-        val key = Pair(setId, tpHash)
-        return concatenatedMatcherCache.getOrPut(key) {
-            val availableThirdPartyEmotes = buildList {
-                addAll(personalEmotes.orEmpty())
-                addAll(synchronized(thirdPartyEmotes) { thirdPartyEmotes.toList() })
-            }.distinctBy { it.name }
-            ConcatenatedEmoteMatcher(availableThirdPartyEmotes)
-        }
-    }
-
-    private class ConcatenatedEmoteMatcher(emotes: List<Emote>) {
-        private val emoteByName = LinkedHashMap<String, Emote>()
-        private val names: List<String>
-
-        init {
-            emotes.forEach { emote ->
-                emote.name?.takeIf(String::isNotBlank)?.let { name ->
-                    emoteByName.putIfAbsent(name, emote)
-                }
-            }
-            names = emoteByName.keys.sortedByDescending(String::length)
-        }
-
-        fun getExactEmote(name: String): Emote? = emoteByName[name]
-
-        fun split(token: String): List<Emote>? {
-            if (token.length < 2 || names.isEmpty()) return null
-            val memo = HashMap<Int, List<Emote>?>()
-
-            fun resolve(index: Int): List<Emote>? {
-                if (index == token.length) return emptyList()
-                if (memo.containsKey(index)) return memo[index]
-                val remainingLen = token.length - index
-                for (name in names) {
-                    if (name.length > remainingLen) continue
-                    if (!token.startsWith(name, index)) continue
-                    val match = emoteByName.getValue(name)
-                    val suffix = resolve(index + name.length)
-                    if (suffix != null) {
-                        val result = ArrayList<Emote>(1 + suffix.size).apply {
-                            add(match)
-                            addAll(suffix)
-                        }
-                        memo[index] = result
-                        return result
-                    }
-                }
-                memo[index] = null
-                return null
-            }
-
-            return resolve(0)?.takeIf { it.size > 1 }
-        }
-    }
-
     private val chatNameColors = intArrayOf(-65536, -16776961, -16744448, -5103070, -32944, -6632142, -47872, -13726889, -2448096, -2987746, -10510688, -14774017, -38476, -7722014, -16711809)
     private const val RED_HUE_DEGREES = 0f
     private const val GREEN_HUE_DEGREES = 120f
@@ -1132,7 +1058,7 @@ object ChatAdapterUtils {
                     }
                 }
             } else null
-            val concatenatedEmoteMatcher = getOrCreateConcatenatedEmoteMatcher(
+            val concatenatedEmoteMatcher = ConcatenatedEmoteMatcherCache.get(
                 stvUser?.emoteSetId,
                 personalEmotes,
                 thirdPartyEmotes
@@ -1483,7 +1409,17 @@ object ChatAdapterUtils {
         }
     }
 
+    fun beginImageBinding(itemView: View) {
+        itemView.setTag(R.id.chat_image_binding, Any())
+    }
+
+    fun clearImageBinding(itemView: View) {
+        itemView.setTag(R.id.chat_image_binding, null)
+    }
+
     fun loadImages(fragment: Fragment, itemView: View, bind: (SpannableStringBuilder) -> Unit, images: List<Image>, imagePaint: NamePaint?, userName: String?, userNameStartIndex: Int?, backgroundColor: Int, imageLibrary: String?, builder: SpannableStringBuilder, emoteSize: Int, badgeSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int = DEFAULT_ANIMATED_EMOTE_FPS) {
+        val bindingToken = itemView.getTag(R.id.chat_image_binding)
+        val isCurrentBinding = { fragment.isAdded && itemView.getTag(R.id.chat_image_binding) === bindingToken }
         if (imagePaint != null) {
             val paintUrl = imagePaint.imageUrl
             val paintTargetSize = (itemView as? android.widget.TextView)?.lineHeight?.takeIf { it > 0 } ?: badgeSize
@@ -1497,7 +1433,8 @@ object ChatAdapterUtils {
                             add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
                         }.build())
                         target(
-                            onSuccess = {
+                            onSuccess = onSuccess@{
+                                if (!isCurrentBinding()) return@onSuccess
                                 (it.asDrawable(fragment.resources)).let { loaded ->
                                     val result = if (loaded is Animatable && animateGifs && MasterEmoteManager.isSyncEnabled) {
                                         if (paintUrl != null) {
@@ -1539,6 +1476,7 @@ object ChatAdapterUtils {
                     .diskCacheStrategy(DiskCacheStrategy.DATA)
                     .into(object : CustomTarget<Drawable>() {
                         override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
+                            if (!isCurrentBinding()) return
                             val result = if (resource is Animatable && animateGifs && MasterEmoteManager.isSyncEnabled) {
                                 if (paintUrl != null) {
                                     val key = ChatImageKey(paintUrl, paintTargetSize, isEmote = false, isAnimated = true)
@@ -1581,12 +1519,13 @@ object ChatAdapterUtils {
             } else {
                 badgeSize
             }
-            loadImage(imageLibrary, fragment, image, emoteQuality, imageSize, itemView, animatedEmoteFps, animateGifs) { loaded ->
+            loadImage(imageLibrary, fragment, image, emoteQuality, imageSize, itemView, animatedEmoteFps, animateGifs, isCurrentBinding) { loaded ->
+                if (!isCurrentBinding()) return@loadImage
                 if (loaded != null) {
                     val result = prepareDrawableForChat(fragment, loaded, imageSize, itemView, animateGifs, animatedEmoteFps)
                     if (image.overlayEmote != null) {
                         val drawables = arrayOf(result)
-                        nextOverlayEmote(imageLibrary, fragment, drawables, image.overlayEmote!!, image, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps)
+                        nextOverlayEmote(imageLibrary, fragment, drawables, image.overlayEmote!!, image, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps, isCurrentBinding)
                     } else {
                         replaceImageSpan(builder, image.start, image.end, CenteredImageSpan(result))
                         bind(builder)
@@ -1599,8 +1538,9 @@ object ChatAdapterUtils {
         }
     }
 
-    private fun nextOverlayEmote(imageLibrary: String?, fragment: Fragment, drawables: Array<Drawable>, image: Image, bottomImage: Image, itemView: View, bind: (SpannableStringBuilder) -> Unit, builder: SpannableStringBuilder, emoteSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int) {
-        loadImage(imageLibrary, fragment, image, emoteQuality, emoteSize, itemView, animatedEmoteFps, animateGifs) { loaded ->
+    private fun nextOverlayEmote(imageLibrary: String?, fragment: Fragment, drawables: Array<Drawable>, image: Image, bottomImage: Image, itemView: View, bind: (SpannableStringBuilder) -> Unit, builder: SpannableStringBuilder, emoteSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int, isCurrentBinding: () -> Boolean) {
+        loadImage(imageLibrary, fragment, image, emoteQuality, emoteSize, itemView, animatedEmoteFps, animateGifs, isCurrentBinding) { loaded ->
+            if (!isCurrentBinding()) return@loadImage
             val array = if (loaded != null) {
                 val result = prepareDrawableForChat(fragment, loaded, emoteSize, itemView, animateGifs, animatedEmoteFps)
                 drawables.plus(result)
@@ -1608,7 +1548,7 @@ object ChatAdapterUtils {
                 drawables
             }
             if (image.overlayEmote != null) {
-                nextOverlayEmote(imageLibrary, fragment, array, image.overlayEmote!!, bottomImage, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps)
+                nextOverlayEmote(imageLibrary, fragment, array, image.overlayEmote!!, bottomImage, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps, isCurrentBinding)
             } else if (array.isNotEmpty()) {
                 val layer = LayerDrawable(array)
                 val width = array.maxOf { it.bounds.right }
@@ -1632,8 +1572,10 @@ object ChatAdapterUtils {
         itemView: View,
         animatedEmoteFps: Int,
         animateGifs: Boolean,
+        isCurrentBinding: () -> Boolean,
         onLoaded: (Drawable?) -> Unit,
     ) {
+        if (!isCurrentBinding()) return
         val isAnimated = (image.isAnimated || image.format.equals("gif", true))
         val isSyncCandidate = isAnimated && animateGifs && image.isEmote && MasterEmoteManager.isSyncEnabled
 
@@ -1642,6 +1584,7 @@ object ChatAdapterUtils {
                 val source = withContext(Dispatchers.IO) {
                     runCatching { load() }.getOrNull()
                 }
+                if (!isCurrentBinding()) return@launch
                 if (source == null) {
                     onLoaded(null)
                     return@launch
@@ -1671,7 +1614,8 @@ object ChatAdapterUtils {
                             complete(result)
                         }
                     },
-                    callback = { rawDrawable ->
+                    callback = callback@{ rawDrawable ->
+                        if (!isCurrentBinding()) return@callback
                         if (rawDrawable != null) {
                             if (rawDrawable is Animatable) {
                                 val master = MasterEmoteManager.getOrCreateMaster(key, rawDrawable, targetHeight, animatedEmoteFps)
@@ -1694,7 +1638,8 @@ object ChatAdapterUtils {
                         complete(result)
                     }
                 },
-                callback = { cached ->
+                callback = callback@{ cached ->
+                    if (!isCurrentBinding()) return@callback
                     if (cached != null) {
                         onLoaded(cloneDrawableForBind(fragment, cached))
                     } else {
@@ -1718,6 +1663,7 @@ object ChatAdapterUtils {
     }
 
     private fun loadCoil(fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable?) -> Unit) {
+        val resources = fragment.resources
         fragment.requireContext().imageLoader.enqueue(
             ImageRequest.Builder(fragment.requireContext()).apply {
                 data(source)
@@ -1736,7 +1682,7 @@ object ChatAdapterUtils {
                         onLoaded(null)
                     },
                     onSuccess = {
-                        onLoaded((it.asDrawable(fragment.resources)))
+                        onLoaded((it.asDrawable(resources)))
                     },
                 )
                 listener(
