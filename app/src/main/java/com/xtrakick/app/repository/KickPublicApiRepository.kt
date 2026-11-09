@@ -273,10 +273,14 @@ class KickPublicApiRepository @Inject constructor(
         return executePublicApi(networkLibrary, "/public/v1/videos", headers, query = query)
     }
 
+    /**
+     * Retrieves user information from Kick's /public/v1/users endpoint.
+     * Note: Kick's public API accepts only numeric user IDs ('id' query param).
+     * If no IDs are provided, Kick returns the currently authorized user.
+     */
     suspend fun getUsers(networkLibrary: String?, headers: Map<String, String>, ids: List<String>? = null, logins: List<String>? = null): UsersResponse {
         val queryParams = mutableListOf<String>().apply {
             ids?.forEach { add("id=${encodeParam(it)}") }
-            logins?.forEach { add("login=${encodeParam(it)}") }
         }
         val query = queryParams.takeIf { it.isNotEmpty() }?.joinToString("&", "?") ?: ""
         return executePublicApi(networkLibrary, "/public/v1/users", headers, query = query)

@@ -25,6 +25,7 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickClipApi
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -187,7 +188,10 @@ class PlayerViewModel @Inject constructor(
                         )
                     }
                     streamResult.value = playbackUrl
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
+                    val isNetworkFailure = e is IOException || e.cause is IOException
                     if (e.message == "failed integrity check" && integrity.value == null) {
                         integrity.value = "refreshStream"
                         return@launch
@@ -245,13 +249,25 @@ class PlayerViewModel @Inject constructor(
                         return@launch
                     }
                     if (forceRefresh) {
-                        DiagnosticLogger.e(
-                            "PlayerViewModel",
-                            "Kick stream force refresh failed channel=$channelLogin message=${e.message}",
-                            e
-                        )
+                        if (isNetworkFailure) {
+                            DiagnosticLogger.w(
+                                "PlayerViewModel",
+                                "Kick stream force refresh failed channel=$channelLogin (network error): ${e.message}"
+                            )
+                        } else if (e.message == "Kick playback URL unavailable") {
+                            DiagnosticLogger.i(
+                                "PlayerViewModel",
+                                "Kick stream force refresh: channel=$channelLogin is offline"
+                            )
+                        } else {
+                            DiagnosticLogger.e(
+                                "PlayerViewModel",
+                                "Kick stream force refresh failed channel=$channelLogin message=${e.message}",
+                                e
+                            )
+                        }
                     }
-                    streamError.value = if (e is java.io.IOException) R.string.no_connection else R.string.stream_ended
+                    streamError.value = if (isNetworkFailure) R.string.no_connection else R.string.stream_ended
                 }
             }
         }
@@ -390,7 +406,7 @@ class PlayerViewModel @Inject constructor(
                                     channelSlug = login,
                                     channelId = channelId,
                                     limit = 50
-                                ).firstOrNull { it.id == videoId || it.uuid == videoId || it.slug == videoId }
+                                ).firstOrNull { it.id == videoId || it.uuid == videoId || it.slug == videoId || it.vodId == videoId }
                             }.getOrNull()?.also { fallbackVideo = it }?.url
                         }
                         if (!kickUrl.isNullOrBlank()) {

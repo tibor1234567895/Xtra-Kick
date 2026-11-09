@@ -25,6 +25,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -471,6 +472,40 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             if (!isChatTouched && binding.btnDown.isGone) {
                 scrollChatToBottom(size - 1)
             }
+        }
+    }
+
+    private fun setScrollDownButtonVisible(visible: Boolean) {
+        val btn = _binding?.btnDown ?: return
+        if (visible) {
+            if (btn.isGone || btn.alpha < 0.9f) {
+                btn.animate().cancel()
+                btn.visibility = View.VISIBLE
+                btn.scaleX = 0.8f
+                btn.scaleY = 0.8f
+                btn.alpha = 0f
+                btn.animate()
+                    .alpha(1f)
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(160L)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+            }
+        } else if (btn.isVisible && btn.alpha > 0.05f) {
+            btn.animate().cancel()
+            btn.animate()
+                .alpha(0f)
+                .scaleX(0.8f)
+                .scaleY(0.8f)
+                .setDuration(120L)
+                .setInterpolator(DecelerateInterpolator())
+                .withEndAction {
+                    btn.visibility = View.GONE
+                    btn.scaleX = 1f
+                    btn.scaleY = 1f
+                }
+                .start()
         }
     }
 
@@ -1423,12 +1458,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 isChatTouched = newState == RecyclerView.SCROLL_STATE_DRAGGING
                                 val offset = recyclerView.computeVerticalScrollOffset()
                                 if (offset < 0) {
-                                    btnDown.isVisible = false
+                                    setScrollDownButtonVisible(false)
                                 } else {
                                     val extent = recyclerView.computeVerticalScrollExtent()
                                     val range = recyclerView.computeVerticalScrollRange()
                                     val percentage = (100f * offset / (range - extent).toFloat())
-                                    btnDown.isVisible = percentage < 100f
+                                    setScrollDownButtonVisible(percentage < 100f)
                                 }
                                 if (showChatStatus && chatStatus.isGone) {
                                     chatStatus.visibility = View.VISIBLE
@@ -1467,7 +1502,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 viewModel.chatMessages.lastIndex
                             }
                             scrollChatToBottom(lastIndex)
-                            it.visibility = View.GONE
+                            setScrollDownButtonVisible(false)
                         }
                     }
                     editText.setOnFocusChangeListener { _, hasFocus ->

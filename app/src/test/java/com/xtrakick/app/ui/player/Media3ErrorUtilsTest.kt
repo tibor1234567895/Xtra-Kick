@@ -63,4 +63,20 @@ class Media3ErrorUtilsTest {
         assertFalse(Media3ErrorUtils.isBehindLiveWindowError(null))
         assertFalse(Media3ErrorUtils.isBehindLiveWindowError(IllegalArgumentException("Other error")))
     }
+
+    @Test
+    fun testIsObsoleteSurfaceError_detectsObsoleteAndReleasedSurfaceExceptions() {
+        val obsoleteException = RuntimeException("rendering to non-initialized(obsolete) surface")
+        val wrappedObsolete = RuntimeException("Decoder failed: c2.qti.avc.decoder", obsoleteException)
+        assertTrue(Media3ErrorUtils.isObsoleteSurfaceError(obsoleteException))
+        assertTrue(Media3ErrorUtils.isObsoleteSurfaceError(wrappedObsolete))
+
+        val releasedException = IllegalStateException("releaseOutputBuffer() is valid only at Executing states; currently at Released state")
+        val wrappedReleased = RuntimeException("Decoder failed", releasedException)
+        assertTrue(Media3ErrorUtils.isObsoleteSurfaceError(releasedException))
+        assertTrue(Media3ErrorUtils.isObsoleteSurfaceError(wrappedReleased))
+
+        assertFalse(Media3ErrorUtils.isObsoleteSurfaceError(null))
+        assertFalse(Media3ErrorUtils.isObsoleteSurfaceError(RuntimeException("Different decoding error")))
+    }
 }

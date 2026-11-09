@@ -1,7 +1,10 @@
 package com.xtrakick.app.repository
 
 import com.xtrakick.app.model.ui.Video
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class KickVideoParsingTest {
@@ -90,5 +93,106 @@ class KickVideoParsingTest {
         val targetPositionMs = 25 * 60 * 1000L
         val chatTimestampMs = streamStartMs!! + targetPositionMs
         assertEquals(streamStartMs + 1_500_000L, chatTimestampMs)
+    }
+
+    @Test
+    fun testExtractKickVideoUrl_withRootRecordingUrl() {
+        val json = """
+            {
+                "id": "01a1adfa-8980-733f-a6bd-e9c096e071cd",
+                "recording_url": "https://stream.kick.com/ivs/v1/master.m3u8"
+            }
+        """.trimIndent()
+        val obj = Json.parseToJsonElement(json).jsonObject
+        val url = KickRepository.extractKickVideoUrl(obj)
+        assertEquals("https://stream.kick.com/ivs/v1/master.m3u8", url)
+    }
+
+    @Test
+    fun testExtractKickVideoUrl_withNestedLivestreamRecordingUrl() {
+        val json = """
+            {
+                "id": "12345",
+                "livestream": {
+                    "recording_url": "https://stream.kick.com/ivs/v1/stream.m3u8"
+                }
+            }
+        """.trimIndent()
+        val obj = Json.parseToJsonElement(json).jsonObject
+        val url = KickRepository.extractKickVideoUrl(obj)
+        assertEquals("https://stream.kick.com/ivs/v1/stream.m3u8", url)
+    }
+
+    @Test
+    fun testExtractKickVideoUrl_withNestedVideoRecordingUrl() {
+        val json = """
+            {
+                "id": "12345",
+                "video": {
+                    "recording_url": "https://stream.kick.com/ivs/v1/vod.m3u8"
+                }
+            }
+        """.trimIndent()
+        val obj = Json.parseToJsonElement(json).jsonObject
+        val url = KickRepository.extractKickVideoUrl(obj)
+        assertEquals("https://stream.kick.com/ivs/v1/vod.m3u8", url)
+    }
+
+    @Test
+    fun testExtractKickVideoUrl_withSourceUrl() {
+        val json = """
+            {
+                "id": "12345",
+                "source": {
+                    "url": "https://stream.kick.com/ivs/v1/master.m3u8"
+                }
+            }
+        """.trimIndent()
+        val obj = Json.parseToJsonElement(json).jsonObject
+        val url = KickRepository.extractKickVideoUrl(obj)
+        assertEquals("https://stream.kick.com/ivs/v1/master.m3u8", url)
+    }
+
+    @Test
+    fun testExtractKickVideoUrl_normalizesKickStreamWithoutM3u8() {
+        val json = """
+            {
+                "id": "12345",
+                "playback_url": "https://stream.kick.com/channel/hls"
+            }
+        """.trimIndent()
+        val obj = Json.parseToJsonElement(json).jsonObject
+        val url = KickRepository.extractKickVideoUrl(obj)
+        assertEquals("https://stream.kick.com/channel/hls/playlist.m3u8", url)
+    }
+
+    @Test
+    fun testExtractKickVideoUrl_returnsNullWhenNoValidUrlPresent() {
+        val json = """
+            {
+                "id": "12345",
+                "title": "Some Stream"
+            }
+        """.trimIndent()
+        val obj = Json.parseToJsonElement(json).jsonObject
+        val url = KickRepository.extractKickVideoUrl(obj)
+        assertNull(url)
+    }
+
+    @Test
+    fun testVideoLookupMatchesVodId() {
+        val video = Video(
+            id = "136225445",
+            uuid = "6398d731-0c1b-4bcf-9b69-0748e78ff88c",
+            vodId = "01a1adfa-8980-733f-a6bd-e9c096e071cd",
+            url = "https://stream.kick.com/ivs/v1/master.m3u8"
+        )
+        val videos = listOf(video)
+        val targetQueryId = "01a1adfa-8980-733f-a6bd-e9c096e071cd"
+
+        val matched = videos.firstOrNull {
+            it.id == targetQueryId || it.uuid == targetQueryId || it.slug == targetQueryId || it.vodId == targetQueryId
+        }
+        assertEquals(video, matched)
     }
 }

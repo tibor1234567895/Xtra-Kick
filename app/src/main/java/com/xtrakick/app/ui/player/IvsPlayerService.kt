@@ -56,6 +56,7 @@ import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
+import com.xtrakick.app.util.UsagePing
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -294,10 +295,12 @@ class IvsPlayerService : Service() {
     fun setMultiPovPlayingState(isPlaying: Boolean) {
         if (multiPovDelegate == null) return
         if (isPlaying) {
+            UsagePing.noteWatchStarted()
             requestAudioFocus()
             acquirePlaybackLocks()
             startKickViewerWatchIfNeeded()
         } else {
+            UsagePing.noteWatchStopped(this)
             abandonAudioFocus()
             releasePlaybackLocks()
             stopKickViewerWatch()
@@ -521,11 +524,13 @@ class IvsPlayerService : Service() {
                         hasStablePlayback = true
                     }
                     if (state == Player.State.PLAYING) {
+                        UsagePing.noteWatchStarted()
                         retryCount = 0
                         suspendedByFocusLoss = false
                         startKickViewerWatchIfNeeded()
                         requestAudioFocus()
                     } else {
+                        UsagePing.noteWatchStopped(this@IvsPlayerService)
                         stopKickViewerWatch()
                     }
                     if (state == Player.State.READY && playbackRequested && !suspendedByFocusLoss) {
@@ -1642,6 +1647,7 @@ class IvsPlayerService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        UsagePing.noteWatchStopped(this)
         becomingNoisyReceiver?.let { runCatching { unregisterReceiver(it) } }
         becomingNoisyReceiver = null
         ioScope.cancel()

@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.doOnLayout
@@ -92,8 +93,15 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
                                     importProgressContainer.setOnClickListener(null)
                                 } else {
                                     importProgressContainer.setOnClickListener(null)
-                                    importProgressContainer.alpha = 1f
-                                    importProgressContainer.visibility = View.VISIBLE
+                                    if (importProgressContainer.visibility != View.VISIBLE) {
+                                        importProgressContainer.alpha = 0f
+                                        importProgressContainer.visibility = View.VISIBLE
+                                        importProgressContainer.animate()
+                                            .alpha(1f)
+                                            .setDuration(180L)
+                                            .setInterpolator(DecelerateInterpolator())
+                                            .start()
+                                    }
                                     importProgressBar.visibility = View.VISIBLE
                                     if (state.count > 0) {
                                         importProgressText.text = getString(R.string.importing_kick_follows_progress, state.count)
@@ -109,7 +117,8 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
                                     delay(2500L)
                                     importProgressContainer.animate()
                                         .alpha(0f)
-                                        .setDuration(300)
+                                        .setDuration(180L)
+                                        .setInterpolator(DecelerateInterpolator())
                                         .withEndAction {
                                             importProgressContainer.visibility = View.GONE
                                             importProgressContainer.alpha = 1f

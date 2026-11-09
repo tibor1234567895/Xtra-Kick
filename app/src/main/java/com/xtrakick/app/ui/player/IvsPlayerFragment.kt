@@ -993,6 +993,7 @@ class IvsPlayerFragment : PlayerFragment() {
     override fun onNetworkTypeChanged(type: NetworkMonitor.NetworkType) {
         val previous = previousNetworkType
         previousNetworkType = type
+        retryStreamIfNetworkRestored(previous, type)
         if (previous == null || previous == type || videoType != STREAM) return
         if (type == NetworkMonitor.NetworkType.OTHER || type == NetworkMonitor.NetworkType.NONE || type == NetworkMonitor.NetworkType.UNKNOWN) return
         if (previous == NetworkMonitor.NetworkType.OTHER || previous == NetworkMonitor.NetworkType.NONE || previous == NetworkMonitor.NetworkType.UNKNOWN) return

@@ -84,18 +84,20 @@ class GamesAdapter(
                 if (item != null) {
                     val context = fragment.requireContext()
                     root.setOnClickListener {
+                        val resolvedSlug = KickApiHelper.resolveEffectiveCategorySlug(item.gameSlug, item.gameName)
+                        val resolvedId = KickApiHelper.sanitizeGameId(item.gameId, resolvedSlug)
                         fragment.findNavController().navigate(
                             if (context.prefs().getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                                 GamePagerFragmentDirections.actionGlobalGamePagerFragment(
-                                    gameId = item.gameId,
-                                    gameSlug = item.gameSlug,
+                                    gameId = resolvedId,
+                                    gameSlug = resolvedSlug,
                                     gameName = item.gameName,
                                     boxArt = item.boxArt
                                 )
                             } else {
                                 GameMediaFragmentDirections.actionGlobalGameMediaFragment(
-                                    gameId = item.gameId,
-                                    gameSlug = item.gameSlug,
+                                    gameId = resolvedId,
+                                    gameSlug = resolvedSlug,
                                     gameName = item.gameName,
                                     boxArt = item.boxArt
                                 )

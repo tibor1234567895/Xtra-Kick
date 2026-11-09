@@ -38,18 +38,34 @@ class AutoCompleteAdapterTest {
 
     @Test
     fun getMatchRank_longerQuerySupportsFuzzyMatch() {
-        // Query length >= 3 allows subsequence match at rank 3
-        assertEquals(3, AutoCompleteAdapter.getMatchRank("hsp", "hospital"))
+        // Query length >= 3 allows compact subsequence match at rank 4
+        assertEquals(4, AutoCompleteAdapter.getMatchRank("hsp", "hospital"))
         assertEquals(-1, AutoCompleteAdapter.getMatchRank("xyz", "hospital"))
     }
 
     @Test
     fun getMatchRank_fuzzyTierCatchesSubstitutionsAndTranspositions() {
-        // "heilo" is not a subsequence of "hello" (no 'i'), but edit distance is 1
-        assertEquals(4, AutoCompleteAdapter.getMatchRank("heilo", "hello"))
+        // 1-edit distance ranks at tier 3 ahead of loose subsequences
+        assertEquals(3, AutoCompleteAdapter.getMatchRank("heilo", "hello"))
         // "teh" -> "the" is a transposition
-        assertEquals(4, AutoCompleteAdapter.getMatchRank("teh", "the"))
-        assertEquals(4, AutoCompleteAdapter.getMatchRank("HEILO", "hello"))
+        assertEquals(3, AutoCompleteAdapter.getMatchRank("teh", "the"))
+        assertEquals(3, AutoCompleteAdapter.getMatchRank("HEILO", "hello"))
+    }
+
+    @Test
+    fun getMatchRank_oneEditDistanceRanksHigherThanSubsequence() {
+        // "tiff" vs "tuff" is edit distance 1 -> rank 3
+        assertEquals(3, AutoCompleteAdapter.getMatchRank("tiff", "tuff"))
+        // "hsp" vs "hospital" is subsequence -> rank 4
+        assertEquals(4, AutoCompleteAdapter.getMatchRank("hsp", "hospital"))
+    }
+
+    @Test
+    fun getMatchRank_unrelatedLongMemesRejectedForShortFuzzyQueries() {
+        // Subsequence scattered across long memes must not match 4-letter queries
+        assertEquals(-1, AutoCompleteAdapter.getMatchRank("tiff", "catsittingverycomfortablearoundacampfirewithitsfriends"))
+        assertEquals(-1, AutoCompleteAdapter.getMatchRank("tiff", "collectiblespeepoCoffee"))
+        assertEquals(-1, AutoCompleteAdapter.getMatchRank("tuff", "WTFF"))
     }
 
     @Test

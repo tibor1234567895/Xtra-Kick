@@ -41,6 +41,7 @@ import com.xtrakick.app.model.kick.KickMessageIdentity
 import com.xtrakick.app.model.kick.KickMessageSender
 import com.xtrakick.app.model.kick.KickMessagesData
 import com.xtrakick.app.model.kick.KickMessagesEnvelope
+import com.xtrakick.app.model.kick.KickOfficialChannel
 import com.xtrakick.app.model.kick.KickOfficialChannelFollowedEvent
 import com.xtrakick.app.model.kick.KickOfficialChannelSubscriptionEvent
 import com.xtrakick.app.model.kick.KickOfficialChannelSubscriptionGiftsEvent
@@ -272,6 +273,8 @@ class KickRepository @Inject constructor(
     private val videoPagesCache = boundedCache<Pair<Long, KickVideoPage>>()
     private val categorySlugById = ConcurrentHashMap<String, String>()
     private val categorySlugByName = ConcurrentHashMap<String, String>()
+    private val categoryIdBySlug = ConcurrentHashMap<String, String>()
+    private val categoryIdByName = ConcurrentHashMap<String, String>()
     private val categoryTagsById = ConcurrentHashMap<String, List<String>>()
     private val categoryTagsBySlug = ConcurrentHashMap<String, List<String>>()
     private val categoryTagsByName = ConcurrentHashMap<String, List<String>>()
@@ -777,8 +780,24 @@ class KickRepository @Inject constructor(
 
     fun cacheCategorySlug(id: String?, name: String?, slug: String?) {
         val cleanSlug = slug?.trim()?.takeIf { it.isNotBlank() } ?: return
-        id?.trim()?.takeIf { it.isNotBlank() }?.let { categorySlugById[it] = cleanSlug }
-        name?.trim()?.takeIf { it.isNotBlank() }?.let { categorySlugByName[it.lowercase(Locale.ROOT)] = cleanSlug }
+        val cleanId = id?.trim()?.takeIf { it.isNotBlank() }
+        val cleanName = name?.trim()?.takeIf { it.isNotBlank() }
+        val lowerSlug = cleanSlug.lowercase(Locale.ROOT)
+        val lowerName = cleanName?.lowercase(Locale.ROOT)
+
+        val isMismatchedParentId = cleanId != null && cleanId in KickApiHelper.PARENT_CATEGORY_IDS &&
+            lowerSlug !in KickApiHelper.PARENT_CATEGORY_SLUGS
+
+        if (cleanId != null && !isMismatchedParentId) {
+            categorySlugById[cleanId] = cleanSlug
+            categoryIdBySlug[lowerSlug] = cleanId
+        }
+        if (lowerName != null) {
+            categorySlugByName[lowerName] = cleanSlug
+            if (cleanId != null && !isMismatchedParentId) {
+                categoryIdByName[lowerName] = cleanId
+            }
+        }
     }
 
     fun getCachedCategorySlug(id: String?): String? {
@@ -787,6 +806,37 @@ class KickRepository @Inject constructor(
 
     fun getCachedCategorySlugByName(name: String?): String? {
         return name?.trim()?.takeIf { it.isNotBlank() }?.let { categorySlugByName[it.lowercase(Locale.ROOT)] }
+    }
+
+    fun getCachedCategoryId(slug: String?, name: String? = null): String? {
+        slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { categoryIdBySlug[it] }?.let { return it }
+        name?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { categoryIdByName[it] }?.let { return it }
+        return null
+    }
+
+    suspend fun resolveCategoryId(slug: String?, name: String?): String? {
+        getCachedCategoryId(slug, name)?.let { return it }
+
+        val cleanSlug = slug?.trim()?.takeIf { it.isNotBlank() }
+        val cleanName = name?.trim()?.takeIf { it.isNotBlank() }
+
+        if (cleanSlug != null || cleanName != null) {
+            val typesenseResult = runCatching {
+                if (cleanSlug != null) {
+                    searchTypesense(preset = "category_search", query = "*", filterBy = "slug:=$cleanSlug", page = 1, perPage = 1)
+                } else {
+                    searchTypesense(preset = "category_search", query = cleanName!!, page = 1, perPage = 1)
+                }
+            }.getOrNull()
+
+            val doc = typesenseResult?.hits?.firstOrNull()?.document
+            val foundId = doc?.id?.trim()?.takeIf { it.isNotBlank() }
+            if (foundId != null) {
+                cacheCategorySlug(foundId, doc.name ?: cleanName, doc.slug ?: cleanSlug)
+                return foundId
+            }
+        }
+        return null
     }
 
     fun getOrInferCachedCategorySlug(id: String?, name: String?): String? {
@@ -1018,9 +1068,11 @@ class KickRepository @Inject constructor(
             val channel = item.objOrNull("channel")
             val channelUser = channel?.objOrNull("user")
             val category = item.arrayOrNull("categories")?.firstOrNull() as? JsonObject
-            val categoryId = category?.firstLongOrNull("category_id", "id")?.toString()
-            val categorySlug = category?.primitiveOrNull("slug")
+            val categoryId = category?.firstLongOrNull("id", "category_id")?.toString()
             val categoryName = category?.primitiveOrNull("name")
+            val categorySlug = category?.primitiveOrNull("slug")
+                ?: categoryId?.let { getCachedCategorySlug(it) }
+                ?: KickApiHelper.toCategorySlug(categoryName)
             val thumbnail = item.objOrNull("thumbnail")
             cacheCategorySlug(categoryId, categoryName, categorySlug)
 
@@ -1581,6 +1633,35 @@ class KickRepository @Inject constructor(
                 userId = targetUserId,
             )
         )
+    }
+
+    suspend fun getOfficialChannels(
+        networkLibrary: String?,
+        broadcasterUserIds: List<Long>? = null,
+        slugs: List<String>? = null,
+    ): List<KickOfficialChannel> = withContext(Dispatchers.IO) {
+        val accessToken = requireKickAccessToken(networkLibrary)
+        kickOfficialApiClient.getChannels(
+            accessToken = accessToken,
+            broadcasterUserIds = broadcasterUserIds,
+            slugs = slugs,
+        )
+    }
+
+    suspend fun resolveUserIdBySlug(networkLibrary: String?, slug: String): Long? = withContext(Dispatchers.IO) {
+        val normalizedSlug = slug.trim().removePrefix("@").lowercase(Locale.ROOT)
+        if (normalizedSlug.isBlank()) return@withContext null
+        val token = runCatching { requireKickAccessToken(networkLibrary) }.getOrNull()
+        if (!token.isNullOrBlank()) {
+            runCatching {
+                kickOfficialApiClient.getChannels(accessToken = token, slugs = listOf(normalizedSlug))
+                    .firstOrNull()?.broadcasterUserId
+            }.getOrNull()?.let { return@withContext it }
+        }
+        runCatching {
+            val channel = getChannel(normalizedSlug)
+            channel.userId ?: channel.user?.id ?: channel.id
+        }.getOrNull()
     }
 
     suspend fun deleteKickChatMessage(
@@ -3623,35 +3704,6 @@ class KickRepository @Inject constructor(
             ?: objOrNull("video")?.intOrNull("offset")
             ?: objOrNull("video")?.intOrNull("video_offset")
 
-    private fun extractKickVideoUrl(item: JsonObject): String? {
-        val directUrl = item.primitiveOrNull("playback_url")
-            ?: item.primitiveOrNull("playlist_url")
-            ?: item.primitiveOrNull("hls_url")
-            ?: item.primitiveOrNull("video_url")
-            ?: item.primitiveOrNull("source")
-            ?: item.objOrNull("source")?.primitiveOrNull("url")
-            ?: item.objOrNull("video")?.primitiveOrNull("url")
-            ?: item.objOrNull("livestream")?.primitiveOrNull("playback_url")
-        return normalizeKickVideoUrl(directUrl)
-    }
-
-    private fun normalizeKickVideoUrl(url: String?): String? {
-        val normalizedUrl = url?.trim().takeUnless { it.isNullOrBlank() } ?: return null
-        return when {
-            normalizedUrl.endsWith(".m3u8", ignoreCase = true) -> normalizedUrl
-            normalizedUrl.contains("kick.com", ignoreCase = true) &&
-                    (normalizedUrl.contains("/hls/", ignoreCase = true) ||
-                            normalizedUrl.contains("/stream/", ignoreCase = true)) -> {
-                if (normalizedUrl.endsWith("/")) {
-                    "${normalizedUrl}playlist.m3u8"
-                } else {
-                    "$normalizedUrl/playlist.m3u8"
-                }
-            }
-            else -> normalizedUrl
-        }
-    }
-
     suspend fun getRecentMessages(channelOrChatroomId: String): KickMessagesData {
         val raw = getRaw("https://kick.com/api/v2/channels/${urlEncode(channelOrChatroomId)}/messages")
         val root = runCatching { json.parseToJsonElement(raw) }.getOrElse { error ->
@@ -4137,10 +4189,13 @@ class KickRepository @Inject constructor(
                 channelName = null,
                 channelLogo = null,
                 limit = 1,
-            ).firstOrNull()?.let { return@withContext it }
+            ).firstOrNull()?.takeIf { !it.url.isNullOrBlank() }?.let { return@withContext it }
             val obj = (root as? JsonObject)?.objOrNull("data") ?: root as? JsonObject ?: continue
+            val resolvedUrl = extractKickVideoUrl(obj)
+            if (resolvedUrl.isNullOrBlank()) continue
             val resolvedId = obj.primitiveOrNull("id") ?: obj.primitiveOrNull("video_id") ?: id
-            val channel = obj.objOrNull("channel") ?: obj.objOrNull("livestream")?.objOrNull("channel")
+            val livestream = obj.objOrNull("livestream")
+            val channel = obj.objOrNull("channel") ?: livestream?.objOrNull("channel")
             val user = channel?.objOrNull("user") ?: obj.objOrNull("user")
             val channelLoginResolved = channel?.primitiveOrNull("slug")
                 ?: user?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
@@ -4155,27 +4210,41 @@ class KickRepository @Inject constructor(
                 ?: user?.primitiveOrNull("profile_picture")
                 ?: channel?.primitiveOrNull("profile_picture")
                 ?: channel?.primitiveOrNull("profile_pic")
+            val category = obj.objOrNull("category")
+                ?: livestream?.objOrNull("category")
+                ?: obj.arrayOrNull("categories")?.firstNotNullOfOrNull { it as? JsonObject }
+                ?: livestream?.arrayOrNull("categories")?.firstNotNullOfOrNull { it as? JsonObject }
             return@withContext Video(
                 id = resolvedId,
                 source = AppConstants.KICK,
-                url = extractKickVideoUrl(obj),
-                channelId = channel?.primitiveOrNull("id") ?: obj.primitiveOrNull("channel_id") ?: resolvedChannelId,
+                url = resolvedUrl,
+                channelId = channel?.primitiveOrNull("id") ?: obj.primitiveOrNull("channel_id") ?: livestream?.primitiveOrNull("channel_id") ?: resolvedChannelId,
                 channelLogin = channelLoginResolved,
                 channelName = channelNameResolved,
-                title = obj.primitiveOrNull("session_title") ?: obj.primitiveOrNull("title"),
-                uploadDate = normalizeDate(obj.primitiveOrNull("created_at") ?: obj.primitiveOrNull("start_time")),
+                title = obj.primitiveOrNull("session_title")
+                    ?: obj.primitiveOrNull("title")
+                    ?: livestream?.primitiveOrNull("session_title")
+                    ?: livestream?.primitiveOrNull("title"),
+                uploadDate = normalizeDate(obj.primitiveOrNull("created_at") ?: obj.primitiveOrNull("start_time") ?: livestream?.primitiveOrNull("start_time") ?: livestream?.primitiveOrNull("created_at")),
                 thumbnailUrl = extractImageUrl(obj.objOrNull("thumbnail"))
+                    ?: extractImageUrl(livestream?.objOrNull("thumbnail"))
                     ?: obj.primitiveOrNull("thumbnail_url")
                     ?: obj.primitiveOrNull("preview_thumbnail_url"),
-                viewCount = obj.intOrNull("views") ?: obj.intOrNull("view_count") ?: obj.intOrNull("viewer_count"),
+                viewCount = obj.intOrNull("views") ?: obj.intOrNull("view_count") ?: obj.intOrNull("viewer_count") ?: livestream?.intOrNull("viewer_count"),
                 type = "ARCHIVE",
                 duration = normalizeVideoDurationSeconds(
                     obj.firstLongOrNull("duration_seconds", "length_seconds")
                         ?: obj.firstLongOrNull("duration")
+                        ?: livestream?.firstLongOrNull("duration_seconds", "length_seconds")
+                        ?: livestream?.firstLongOrNull("duration")
                 ),
+                gameId = category?.primitiveOrNull("id"),
+                gameSlug = category?.primitiveOrNull("slug"),
+                gameName = category?.primitiveOrNull("name"),
                 profileImageUrl = channelLogoResolved,
                 uuid = obj.objOrNull("video")?.primitiveOrNull("uuid") ?: obj.primitiveOrNull("uuid") ?: resolvedId.takeIf { KickSubOnlyVodUtils.isUuidShaped(it) },
-                slug = obj.primitiveOrNull("slug"),
+                slug = obj.primitiveOrNull("slug") ?: livestream?.primitiveOrNull("slug"),
+                vodId = obj.primitiveOrNull("vod_id") ?: livestream?.primitiveOrNull("vod_id") ?: resolvedId.takeIf { KickSubOnlyVodUtils.isUuidShaped(it) },
             )
         }
         null
@@ -5602,13 +5671,30 @@ class KickRepository @Inject constructor(
             return@coroutineScope null
         }
 
+        val livestreamException = livestreamResult.exceptionOrNull()
+        if (livestreamException is CancellationException) throw livestreamException
+
         // Livestream request itself failed — fall back to the channel endpoint.
-        val channel = runCatching { getChannel(normalizedSlug, forceRefresh = forceRefresh) }.getOrNull()
+        val channelResult = runCatching { getChannel(normalizedSlug, forceRefresh = forceRefresh) }
+        val channelException = channelResult.exceptionOrNull()
+        if (channelException is CancellationException) throw channelException
+
+        val channel = channelResult.getOrNull()
         val playableUrl = channel?.let { getPlayableUrl(it) }
         if (playableUrl != null) {
             cachePlaybackUrl(normalizedSlug, playableUrl)
+            return@coroutineScope playableUrl
         }
-        return@coroutineScope playableUrl
+
+        // If both resolution attempts failed due to network / IO exceptions, propagate the
+        // network failure so callers can distinguish between an offline stream and a network drop.
+        if (livestreamResult.isFailure && channelResult.isFailure) {
+            val networkException = livestreamException ?: channelException
+            if (networkException is IOException) {
+                throw networkException
+            }
+        }
+        return@coroutineScope null
     }
 
     suspend fun pingCurrentViewers(livestreamId: String): String? {
@@ -5629,6 +5715,40 @@ class KickRepository @Inject constructor(
 
         /** Fixed client token the official app sends as X-CLIENT-TOKEN on the viewer socket token fetch. */
         private val KICK_VIEWER_CLIENT_TOKEN = BuildConfig.KICK_VIEWER_CLIENT_TOKEN
+
+        internal fun extractKickVideoUrl(item: JsonObject): String? {
+            val directUrl = item.primitiveOrNull("playback_url")
+                ?: item.primitiveOrNull("recording_url")
+                ?: item.primitiveOrNull("playlist_url")
+                ?: item.primitiveOrNull("hls_url")
+                ?: item.primitiveOrNull("video_url")
+                ?: item.primitiveOrNull("source")
+                ?: item.objOrNull("source")?.primitiveOrNull("url")
+                ?: item.objOrNull("video")?.primitiveOrNull("url")
+                ?: item.objOrNull("video")?.primitiveOrNull("recording_url")
+                ?: item.objOrNull("video")?.primitiveOrNull("playback_url")
+                ?: item.objOrNull("livestream")?.primitiveOrNull("playback_url")
+                ?: item.objOrNull("livestream")?.primitiveOrNull("recording_url")
+                ?: item.objOrNull("livestream")?.primitiveOrNull("source")
+            return normalizeKickVideoUrl(directUrl)
+        }
+
+        internal fun normalizeKickVideoUrl(url: String?): String? {
+            val normalizedUrl = url?.trim().takeUnless { it.isNullOrBlank() } ?: return null
+            return when {
+                normalizedUrl.endsWith(".m3u8", ignoreCase = true) -> normalizedUrl
+                normalizedUrl.contains("kick.com", ignoreCase = true) &&
+                        (normalizedUrl.contains("hls", ignoreCase = true) ||
+                                normalizedUrl.contains("stream", ignoreCase = true)) -> {
+                    if (normalizedUrl.endsWith("/")) {
+                        "${normalizedUrl}playlist.m3u8"
+                    } else {
+                        "$normalizedUrl/playlist.m3u8"
+                    }
+                }
+                else -> normalizedUrl
+            }
+        }
 
         fun parseActiveChattersResponse(rawJson: String): List<String> {
             if (rawJson.isBlank()) return emptyList()

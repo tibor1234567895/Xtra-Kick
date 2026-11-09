@@ -22,6 +22,7 @@ import com.xtrakick.app.databinding.SortBarBinding
 import com.xtrakick.app.model.ui.SavedFilter
 import com.xtrakick.app.model.ui.SortGame
 import com.xtrakick.app.model.ui.Stream
+import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.ui.common.ActiveTagsAdapter
 import com.xtrakick.app.ui.common.FragmentHost
 import com.xtrakick.app.ui.common.IntegrityDialog
@@ -73,10 +74,17 @@ class GameStreamsFragment : PagedListFragment(), Scrollable, Sortable, StreamsSo
         }
     }
 
+    private fun getEffectiveGameId(): String? {
+        val slug = KickApiHelper.resolveEffectiveCategorySlug(args.gameSlug, args.gameName)
+        return KickApiHelper.sanitizeGameId(args.gameId, slug)
+            ?: viewModel.getCachedCategoryId(slug, args.gameName)
+    }
+
     override fun initialize() {
         viewLifecycleOwner.lifecycleScope.launch {
             if (viewModel.filter.value == null) {
-                val sortValues = args.gameId?.let { viewModel.getSortGame(it) } ?: viewModel.getSortGame("default")
+                val effectiveId = getEffectiveGameId()
+                val sortValues = effectiveId?.let { viewModel.getSortGame(it) } ?: viewModel.getSortGame("default")
                 viewModel.setFilter(
                     sort = sortValues?.streamSort,
                     tags = args.tags ?: sortValues?.streamTags?.split(',')?.toTypedArray(),
@@ -138,7 +146,7 @@ class GameStreamsFragment : PagedListFragment(), Scrollable, Sortable, StreamsSo
                     sort = viewModel.sort,
                     tags = viewModel.tags,
                     languages = viewModel.languages,
-                    saved = args.gameId?.let { viewModel.getSortGame(it) } != null
+                    saved = getEffectiveGameId()?.let { viewModel.getSortGame(it) } != null
                 ).show(childFragmentManager, null)
             }
         }
@@ -185,11 +193,13 @@ class GameStreamsFragment : PagedListFragment(), Scrollable, Sortable, StreamsSo
                     updateFiltersText()
                     (pagingAdapter as? ActiveTagsAdapter)?.activeTags = tags.toSet()
                 }
+                val effectiveGameId = getEffectiveGameId()
+                val effectiveSlug = KickApiHelper.resolveEffectiveCategorySlug(args.gameSlug, args.gameName)
                 if (saveFilters && (tags.isNotEmpty() || languages.isNotEmpty())) {
                     viewModel.saveFilters(
                         SavedFilter(
-                            gameId = args.gameId,
-                            gameSlug = args.gameSlug,
+                            gameId = effectiveGameId,
+                            gameSlug = effectiveSlug,
                             gameName = args.gameName,
                             tags = tags.takeIf { it.isNotEmpty() }?.joinToString(","),
                             languages = languages.takeIf { it.isNotEmpty() }?.joinToString(",")
@@ -197,7 +207,7 @@ class GameStreamsFragment : PagedListFragment(), Scrollable, Sortable, StreamsSo
                     )
                 }
                 if (saveSort) {
-                    args.gameId?.let { id ->
+                    effectiveGameId?.let { id ->
                         val item = viewModel.getSortGame(id)?.apply {
                             streamSort = sort
                             streamTags = tags.takeIf { it.isNotEmpty() }?.joinToString(",")
@@ -231,7 +241,7 @@ class GameStreamsFragment : PagedListFragment(), Scrollable, Sortable, StreamsSo
     override fun deleteSavedSort() {
         if ((parentFragment as? FragmentHost)?.currentFragment == this) {
             viewLifecycleOwner.lifecycleScope.launch {
-                args.gameId?.let { viewModel.getSortGame(it) }?.let { viewModel.deleteSortGame(it) }
+                getEffectiveGameId()?.let { viewModel.getSortGame(it) }?.let { viewModel.deleteSortGame(it) }
             }
         }
     }

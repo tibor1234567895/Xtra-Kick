@@ -77,24 +77,28 @@ class FollowedLiveStreamsRepository @Inject constructor(
         val tags: List<String>? = null,
         val eventTitle: String? = null,
     ) {
-        fun toStream(): Stream = Stream(
-            id = id,
-            source = source,
-            channelId = channelId,
-            channelLogin = channelLogin,
-            channelName = channelName,
-            playbackUrl = playbackUrl,
-            gameId = gameId,
-            gameSlug = gameSlug,
-            gameName = gameName,
-            title = title,
-            viewerCount = viewerCount,
-            startedAt = startedAt,
-            thumbnailUrl = thumbnailUrl,
-            profileImageUrl = profileImageUrl,
-            tags = tags,
-            eventTitle = eventTitle,
-        )
+        fun toStream(): Stream {
+            val resolvedGameSlug = KickApiHelper.resolveEffectiveCategorySlug(gameSlug, gameName)
+            val resolvedGameId = KickApiHelper.sanitizeGameId(gameId, resolvedGameSlug)
+            return Stream(
+                id = id,
+                source = source,
+                channelId = channelId,
+                channelLogin = channelLogin,
+                channelName = channelName,
+                playbackUrl = playbackUrl,
+                gameId = resolvedGameId,
+                gameSlug = resolvedGameSlug,
+                gameName = gameName,
+                title = title,
+                viewerCount = viewerCount,
+                startedAt = startedAt,
+                thumbnailUrl = thumbnailUrl,
+                profileImageUrl = profileImageUrl,
+                tags = tags,
+                eventTitle = eventTitle,
+            )
+        }
     }
 
     @Serializable
@@ -448,22 +452,23 @@ class FollowedLiveStreamsRepository @Inject constructor(
         if (loginsToFetch.isNotEmpty()) {
             coroutineScope {
                 loginsToFetch
-                    .chunked(USER_LOOKUP_BATCH_SIZE)
+                    .chunked(50)
                     .chunked(PUBLIC_API_PARALLELISM)
                     .forEach { requestWindow ->
                         currentCoroutineContext().ensureActive()
-                        requestWindow.map { logins ->
+                        requestWindow.map { slugs ->
                             async {
-                                kickPublicApiRepository.getUsers(
-                                    networkLibrary = networkLibrary,
-                                    headers = headers,
-                                    logins = logins,
-                                )
+                                runCatching {
+                                    kickRepository.getOfficialChannels(
+                                        networkLibrary = networkLibrary,
+                                        slugs = slugs,
+                                    )
+                                }.getOrElse { emptyList() }
                             }
-                        }.awaitAll().forEach { response ->
-                            response.data.forEach { user ->
-                                val login = user.channelLogin?.takeIf { it.isNotBlank() }?.lowercase() ?: return@forEach
-                                val broadcasterId = user.channelId?.takeIf { it.isNotBlank() } ?: return@forEach
+                        }.awaitAll().forEach { channels ->
+                            channels.forEach { ch ->
+                                val login = ch.slug?.takeIf { it.isNotBlank() }?.lowercase() ?: return@forEach
+                                val broadcasterId = ch.broadcasterUserId?.toString() ?: return@forEach
                                 val follow = followByLogin[login] ?: return@forEach
                                 followsByBroadcasterId[broadcasterId] = follow
                                 if (broadcasterIdCache[login] != broadcasterId) {
@@ -563,9 +568,12 @@ class FollowedLiveStreamsRepository @Inject constructor(
     private fun com.xtrakick.app.model.kick.api.livestream.Livestream.toUiStream(
         follow: LocalFollowChannel?,
     ): Stream {
-        val catId = category?.id?.toString()
+        val rawCatId = category?.id?.toString()
         val catName = category?.name
-        val catSlug = kickRepository.getOrInferCachedCategorySlug(catId, catName)
+        val catSlug = kickRepository.getOrInferCachedCategorySlug(rawCatId, catName)
+        val catId = KickApiHelper.sanitizeGameId(rawCatId, catSlug)
+            ?: kickRepository.getCachedCategoryId(catSlug, catName)
+            ?: rawCatId
         val chId = broadcasterUserId?.toString() ?: follow?.userId ?: channelId?.toString()
         val eventTitle = chId?.let { kickRepository.getCachedChannelEventTitle(it) }
         val combinedTags = buildList {

@@ -113,17 +113,7 @@ internal class KickSlashCommandDispatcher(
             }
         }
         suspend fun resolveTargetUserId(login: String): String? {
-            return runCatching {
-                kickPublicApiRepository.getUsers(
-                    networkLibrary = networkLibrary,
-                    headers = kickPublicApiHeaders,
-                    logins = listOf(login),
-                ).data.firstOrNull()?.channelId
-            }.getOrNull()
-                ?: runCatching {
-                    val channel = kickRepository.getChannel(login)
-                    channel.id?.toString() ?: channel.user?.id?.toString()
-                }.getOrNull()
+            return kickRepository.resolveUserIdBySlug(networkLibrary, login)?.toString()
         }
         val hasDirectKickSession = !channelLogin.isNullOrBlank() && (AuthStateHelper.isKickGoogleSession(context) || kickRepository.hasKickWebsiteSessionCookieOnly())
         when {

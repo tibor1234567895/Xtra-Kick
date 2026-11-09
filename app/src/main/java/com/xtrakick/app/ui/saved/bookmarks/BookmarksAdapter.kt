@@ -94,17 +94,19 @@ class BookmarksAdapter(
                         )
                     }
                     val gameListener: (View) -> Unit = {
+                        val resolvedSlug = KickApiHelper.resolveEffectiveCategorySlug(item.gameSlug, item.gameName)
+                        val resolvedId = KickApiHelper.sanitizeGameId(item.gameId, resolvedSlug)
                         fragment.findNavController().navigate(
                             if (context.prefs().getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                                 GamePagerFragmentDirections.actionGlobalGamePagerFragment(
-                                    gameId = item.gameId,
-                                    gameSlug = item.gameSlug,
+                                    gameId = resolvedId,
+                                    gameSlug = resolvedSlug,
                                     gameName = item.gameName
                                 )
                             } else {
                                 GameMediaFragmentDirections.actionGlobalGameMediaFragment(
-                                    gameId = item.gameId,
-                                    gameSlug = item.gameSlug,
+                                    gameId = resolvedId,
+                                    gameSlug = resolvedSlug,
                                     gameName = item.gameName
                                 )
                             }

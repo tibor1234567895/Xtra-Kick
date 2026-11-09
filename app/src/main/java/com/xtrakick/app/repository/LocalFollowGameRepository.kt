@@ -2,6 +2,7 @@ package com.xtrakick.app.repository
 
 import com.xtrakick.app.db.LocalFollowsGameDao
 import com.xtrakick.app.model.ui.LocalFollowGame
+import com.xtrakick.app.util.KickApiHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -32,11 +33,14 @@ class LocalFollowGameRepository @Inject constructor(
     }
 
     suspend fun getFollowByIdOrSlug(id: String?, slug: String?) = withContext(Dispatchers.IO) {
-        if (id.isNullOrBlank() && slug.isNullOrBlank()) null
-        else localFollowsGameDao.getByIdOrSlug(id, slug)
+        val cleanSlug = slug?.trim()?.takeIf { it.isNotBlank() }
+        val sanitizedId = KickApiHelper.sanitizeGameId(id, cleanSlug)
+        if (sanitizedId.isNullOrBlank() && cleanSlug.isNullOrBlank()) null
+        else localFollowsGameDao.getByIdOrSlug(sanitizedId, cleanSlug)
     }
 
     suspend fun saveFollow(item: LocalFollowGame) = withContext(Dispatchers.IO) {
+        item.gameId = KickApiHelper.sanitizeGameId(item.gameId, item.gameSlug)
         localFollowsGameDao.insert(item)
         _followsChanged.tryEmit(Unit)
     }

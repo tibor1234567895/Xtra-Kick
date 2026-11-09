@@ -64,6 +64,15 @@ class KickOfficialApiClient @Inject constructor(
         broadcasterUserIds: List<Long>? = null,
         slugs: List<String>? = null,
     ): List<KickOfficialChannel> {
+        require(broadcasterUserIds.isNullOrEmpty() || slugs.isNullOrEmpty()) {
+            "Cannot mix broadcaster_user_id and slug parameters in Kick getChannels."
+        }
+        require((broadcasterUserIds?.size ?: 0) <= 50) {
+            "Maximum 50 broadcaster_user_id parameters allowed."
+        }
+        require((slugs?.size ?: 0) <= 50) {
+            "Maximum 50 slug parameters allowed."
+        }
         return requestData(
             path = "/channels",
             accessToken = accessToken,

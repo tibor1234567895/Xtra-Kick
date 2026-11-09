@@ -33,20 +33,21 @@ class GamePagerViewModel @Inject constructor(
     val game: StateFlow<Game?> = _game
 
     fun loadGame(networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
+        val initialSlug = KickApiHelper.resolveEffectiveCategorySlug(args.gameSlug, args.gameName)
+        val initialSanitizedId = KickApiHelper.sanitizeGameId(args.gameId, initialSlug)
         if (_game.value == null) {
-            if (!args.gameSlug.isNullOrBlank() || !args.gameName.isNullOrBlank() || !args.boxArt.isNullOrBlank()) {
+            if (!initialSlug.isNullOrBlank() || !args.gameName.isNullOrBlank() || !args.boxArt.isNullOrBlank()) {
                 _game.value = Game(
-                    gameId = args.gameId,
-                    gameSlug = args.gameSlug,
+                    gameId = initialSanitizedId,
+                    gameSlug = initialSlug,
                     gameName = args.gameName,
                     boxArtUrl = args.boxArt
                 )
             }
         }
         viewModelScope.launch {
-            val slug = args.gameSlug?.takeIf { it.isNotBlank() }
-                ?: kickRepository.resolveCategorySlug(args.gameId, args.gameName)
-                ?: KickApiHelper.toCategorySlug(args.gameName)
+            val slug = initialSlug
+                ?: kickRepository.resolveCategorySlug(initialSanitizedId, args.gameName)
             if (!slug.isNullOrBlank()) {
                 val subcategory = try {
                     kickRepository.getSubcategory(slug)
@@ -56,7 +57,7 @@ class GamePagerViewModel @Inject constructor(
                 if (subcategory != null) {
                     val fetchedGame = kickRepository.toGame(subcategory)
                     _game.value = Game(
-                        gameId = fetchedGame.gameId ?: args.gameId ?: _game.value?.gameId,
+                        gameId = fetchedGame.gameId ?: initialSanitizedId ?: _game.value?.gameId,
                         gameSlug = fetchedGame.gameSlug ?: slug,
                         gameName = fetchedGame.gameName ?: args.gameName ?: _game.value?.gameName,
                         boxArtUrl = fetchedGame.boxArtUrl ?: args.boxArt ?: _game.value?.boxArtUrl,
@@ -69,7 +70,7 @@ class GamePagerViewModel @Inject constructor(
                 }
             }
             if (_game.value == null) {
-                val queryId = args.gameId.takeIf { args.gameSlug.isNullOrBlank() }
+                val queryId = initialSanitizedId.takeIf { slug.isNullOrBlank() }
                 _game.value = try {
                     kickPublicApiRepository.getGames(
                         networkLibrary = networkLibrary,
@@ -91,7 +92,8 @@ class GamePagerViewModel @Inject constructor(
     }
 
     private suspend fun syncFollowedGame(game: Game, slug: String) {
-        val targetId = game.gameId ?: args.gameId
+        val targetId = KickApiHelper.sanitizeGameId(game.gameId ?: args.gameId, slug)
+            ?: kickRepository.getCachedCategoryId(slug, game.gameName)
         val existingFollow = localFollowsGame.getFollowByIdOrSlug(targetId, slug) ?: return
         var followChanged = false
         val freshBoxArt = game.boxArtUrl
@@ -121,7 +123,9 @@ class GamePagerViewModel @Inject constructor(
         if (_isFollowing.value == null) {
             viewModelScope.launch {
                 try {
-                    _isFollowing.value = localFollowsGame.getFollowByIdOrSlug(gameId, gameSlug) != null
+                    val effectiveSlug = KickApiHelper.resolveEffectiveCategorySlug(gameSlug, gameName)
+                    val effectiveId = KickApiHelper.sanitizeGameId(gameId ?: _game.value?.gameId, effectiveSlug)
+                    _isFollowing.value = localFollowsGame.getFollowByIdOrSlug(effectiveId, effectiveSlug) != null
                 } catch (e: Exception) {
 
                 }
@@ -132,8 +136,11 @@ class GamePagerViewModel @Inject constructor(
     fun saveFollowGame(gameId: String?, gameSlug: String?, gameName: String?, gameBoxArt: String?, setting: Int, filesDir: String, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                val effectiveSlug = gameSlug?.takeIf { it.isNotBlank() } ?: KickApiHelper.toCategorySlug(gameName)
-                val effectiveId = gameId ?: _game.value?.gameId
+                val effectiveSlug = KickApiHelper.resolveEffectiveCategorySlug(gameSlug, gameName)
+                val sanitizedParamId = KickApiHelper.sanitizeGameId(gameId, effectiveSlug)
+                val effectiveId = _game.value?.gameId
+                    ?: sanitizedParamId
+                    ?: kickRepository.getCachedCategoryId(effectiveSlug, gameName ?: _game.value?.gameName)
                 val effectiveName = gameName ?: _game.value?.gameName
                 val effectiveBoxArt = gameBoxArt?.takeIf { it.isNotBlank() }
                     ?: _game.value?.boxArtUrl
@@ -159,7 +166,9 @@ class GamePagerViewModel @Inject constructor(
     fun deleteFollowGame(gameId: String?, setting: Int, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             try {
-                val followItem = localFollowsGame.getFollowByIdOrSlug(gameId, args.gameSlug)
+                val effectiveSlug = KickApiHelper.resolveEffectiveCategorySlug(args.gameSlug, args.gameName)
+                val effectiveId = KickApiHelper.sanitizeGameId(gameId ?: _game.value?.gameId, effectiveSlug)
+                val followItem = localFollowsGame.getFollowByIdOrSlug(effectiveId, effectiveSlug)
                 if (followItem != null) {
                     localFollowsGame.deleteFollow(followItem)
                     _isFollowing.value = false
@@ -174,12 +183,12 @@ class GamePagerViewModel @Inject constructor(
     fun updateLocalGame(filesDir: String, gameId: String?, gameName: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         if (!updatedLocalGame) {
             updatedLocalGame = true
-            val slug = args.gameSlug?.takeIf { it.isNotBlank() }
-                ?: KickApiHelper.toCategorySlug(gameName)
-            if (slug.isNullOrBlank() && gameId.isNullOrBlank()) return
+            val slug = KickApiHelper.resolveEffectiveCategorySlug(args.gameSlug, gameName)
+            val id = KickApiHelper.sanitizeGameId(gameId ?: _game.value?.gameId, slug)
+            if (slug.isNullOrBlank() && id.isNullOrBlank()) return
 
             viewModelScope.launch {
-                val follow = localFollowsGame.getFollowByIdOrSlug(gameId, slug) ?: return@launch
+                val follow = localFollowsGame.getFollowByIdOrSlug(id, slug) ?: return@launch
                 val currentLoadedGame = _game.value
                 if (currentLoadedGame?.boxArtUrl != null && !slug.isNullOrBlank()) {
                     syncFollowedGame(currentLoadedGame, slug)

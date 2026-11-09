@@ -283,6 +283,9 @@ object KickApiHelper {
         }
     }
 
+    val PARENT_CATEGORY_IDS = setOf("1", "2", "3", "4", "5", "6")
+    val PARENT_CATEGORY_SLUGS = setOf("games", "irl", "music", "gambling", "creative", "alternative")
+
     fun toCategorySlug(name: String?): String? {
         val trimmed = name?.trim() ?: return null
         if (trimmed.isEmpty()) return null
@@ -296,6 +299,19 @@ object KickApiHelper {
         cleaned = cleaned.replace(Regex("[^a-zA-Z0-9-]"), "")
         val slug = cleaned.replace(Regex("-+"), "-").trim('-').lowercase(Locale.ROOT)
         return slug.ifBlank { null }
+    }
+
+    fun resolveEffectiveCategorySlug(slug: String?, name: String?): String? {
+        return slug?.trim()?.takeIf { it.isNotBlank() } ?: toCategorySlug(name)
+    }
+
+    fun sanitizeGameId(gameId: String?, gameSlug: String?): String? {
+        val id = gameId?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val slug = gameSlug?.trim()?.lowercase(Locale.ROOT)
+        if (id in PARENT_CATEGORY_IDS && slug != null && slug !in PARENT_CATEGORY_SLUGS) {
+            return null
+        }
+        return id
     }
 
     fun formatTimeString(context: Context, iso8601date: String): String? {

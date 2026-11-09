@@ -3,7 +3,6 @@ package com.xtrakick.app.ui.player
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
-import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.annotation.SuppressLint
 import android.app.KeyguardManager
@@ -1014,16 +1013,16 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     if (velocityTracker == null) {
                         velocityTracker = VelocityTracker.obtain()
                     }
-                    velocityTracker?.addMovement(
-                        MotionEvent.obtain(
-                            event.downTime,
-                            event.eventTime,
-                            event.action,
-                            slidingLayout.translationX,
-                            slidingLayout.translationY,
-                            event.metaState
-                        )
+                    val downObtain = MotionEvent.obtain(
+                        event.downTime,
+                        event.eventTime,
+                        event.action,
+                        slidingLayout.translationX,
+                        slidingLayout.translationY,
+                        event.metaState
                     )
+                    velocityTracker?.addMovement(downObtain)
+                    downObtain.recycle()
                     startTranslationX = slidingLayout.translationX
                     startTranslationY = slidingLayout.translationY
                 }
@@ -1048,6 +1047,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 translationX(0f)
                                 translationY(0f)
                                 setDuration(200L)
+                                setInterpolator(DecelerateInterpolator())
                                 start()
                             }
                         }
@@ -1083,6 +1083,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 translationX(0f)
                                 translationY(0f)
                                 setDuration(250L)
+                                setInterpolator(DecelerateInterpolator(1.2f))
                                 setListener(
                                     object : AnimatorListenerAdapter() {
                                         override fun onAnimationEnd(animation: Animator) {
@@ -1100,30 +1101,48 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         }
                     }
                 } else {
+                    val upObtain = MotionEvent.obtain(
+                        event.downTime,
+                        event.eventTime,
+                        event.action,
+                        slidingLayout.translationX,
+                        slidingLayout.translationY,
+                        event.metaState
+                    )
+                    velocityTracker?.addMovement(upObtain)
+                    upObtain.recycle()
                     velocityTracker?.computeCurrentVelocity(1000)
                     val xVelocity = velocityTracker?.xVelocity ?: 0f
                     velocityTracker?.recycle()
                     velocityTracker = null
+
+                    val dismissThreshold = (slidingLayout.width * slidingLayout.scaleX) * 0.35f
+                    val deltaX = slidingLayout.translationX - startTranslationX
+                    val shouldDismissRight = xVelocity > 800f || (xVelocity > -200f && deltaX > dismissThreshold)
+                    val shouldDismissLeft = xVelocity < -800f || (xVelocity < 200f && deltaX < -dismissThreshold)
+
                     when {
-                        xVelocity > 1500 -> {
+                        shouldDismissRight || shouldDismissLeft -> {
                             isAnimating = true
-                            slidingLayout.animate().apply {
-                                translationX(slidingLayout.translationX + (slidingLayout.width * slidingLayout.scaleX))
-                                setDuration(250L)
+                            moveAnimation?.cancel()
+                            val direction = if (shouldDismissRight) 1f else -1f
+                            val targetX = slidingLayout.translationX + direction * ((slidingLayout.width * slidingLayout.scaleX) + 80f)
+                            moveAnimation = slidingLayout.animate().apply {
+                                translationX(targetX)
+                                alpha(0f)
+                                setDuration(180L)
+                                setInterpolator(DecelerateInterpolator(1.2f))
+                                setListener(object : AnimatorListenerAdapter() {
+                                    override fun onAnimationEnd(animation: Animator) {
+                                        setListener(null)
+                                        isAnimating = false
+                                        moveAnimation = null
+                                        close()
+                                        (activity as? MainActivity)?.closePlayer()
+                                    }
+                                })
                                 start()
                             }
-                            close()
-                            (activity as? MainActivity)?.closePlayer()
-                        }
-                        xVelocity < -1500 -> {
-                            isAnimating = true
-                            slidingLayout.animate().apply {
-                                translationX(slidingLayout.translationX - (slidingLayout.width * slidingLayout.scaleX))
-                                setDuration(250L)
-                                start()
-                            }
-                            close()
-                            (activity as? MainActivity)?.closePlayer()
                         }
                         else -> {
                             if (isTap && (event.eventTime - tapEventTime) < longPressTimeout) {
@@ -1152,7 +1171,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                         moveAnimation = slidingLayout.animate().apply {
                                             newX?.let { translationX(it) }
                                             newY?.let { translationY(it) }
-                                            setDuration(250L)
+                                            alpha(1f)
+                                            setDuration(200L)
+                                            setInterpolator(DecelerateInterpolator(1.2f))
+                                            setListener(object : AnimatorListenerAdapter() {
+                                                override fun onAnimationEnd(animation: Animator) {
+                                                    setListener(null)
+                                                    moveAnimation = null
+                                                }
+                                            })
                                             start()
                                         }
                                     }
@@ -1161,7 +1188,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     moveAnimation = slidingLayout.animate().apply {
                                         translationX(x)
                                         translationY(y)
-                                        setDuration(250L)
+                                        alpha(1f)
+                                        setDuration(200L)
+                                        setInterpolator(DecelerateInterpolator(1.2f))
+                                        setListener(object : AnimatorListenerAdapter() {
+                                            override fun onAnimationEnd(animation: Animator) {
+                                                setListener(null)
+                                                moveAnimation = null
+                                            }
+                                        })
                                         start()
                                     }
                                 }
@@ -1172,6 +1207,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             }
 
             dragView.setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN && moveAnimation != null) {
+                    moveAnimation?.cancel()
+                    moveAnimation = null
+                    isAnimating = false
+                }
                 if (!isAnimating) {
                     if (event.pointerCount > 1 || videoZoomGestureActive) {
                         if (chatDragActive) {
@@ -1330,16 +1370,16 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                         }
                                         lastX = x - translationX
                                         lastY = y - translationY
-                                        velocityTracker?.addMovement(
-                                            MotionEvent.obtain(
-                                                event.downTime,
-                                                event.eventTime,
-                                                event.action,
-                                                slidingLayout.translationX,
-                                                slidingLayout.translationY,
-                                                event.metaState
-                                            )
+                                        val moveObtain = MotionEvent.obtain(
+                                            event.downTime,
+                                            event.eventTime,
+                                            event.action,
+                                            slidingLayout.translationX,
+                                            slidingLayout.translationY,
+                                            event.metaState
                                         )
+                                        velocityTracker?.addMovement(moveObtain)
+                                        moveObtain.recycle()
                                         if (isTap && ((startTranslationX - slidingLayout.translationX) !in touchSlopRange || (startTranslationY - slidingLayout.translationY) !in touchSlopRange)) {
                                             isTap = false
                                         }
@@ -1511,18 +1551,24 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     category.visibility = View.VISIBLE
                     category.text = gameName
                     category.setOnClickListener {
-                        val initialSlug = requireArguments().getString(KEY_GAME_SLUG)?.takeIf { it.isNotBlank() }
-                            ?: KickApiHelper.toCategorySlug(gameName)
+                        val initialSlug = KickApiHelper.resolveEffectiveCategorySlug(
+                            requireArguments().getString(KEY_GAME_SLUG),
+                            gameName
+                        )
+                        val resolvedId = KickApiHelper.sanitizeGameId(
+                            requireArguments().getString(KEY_GAME_ID),
+                            initialSlug
+                        )
                         findNavController().navigate(
                             if (prefs.getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                                 GamePagerFragmentDirections.actionGlobalGamePagerFragment(
-                                    gameId = requireArguments().getString(KEY_GAME_ID),
+                                    gameId = resolvedId,
                                     gameSlug = initialSlug,
                                     gameName = gameName
                                 )
                             } else {
                                 GameMediaFragmentDirections.actionGlobalGameMediaFragment(
-                                    gameId = requireArguments().getString(KEY_GAME_ID),
+                                    gameId = resolvedId,
                                     gameSlug = initialSlug,
                                     gameName = gameName
                                 )
@@ -1977,6 +2023,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                         gameSlug = requireArguments().getString(KEY_GAME_SLUG),
                                         gameName = requireArguments().getString(KEY_GAME_NAME),
                                         uuid = videoId,
+                                        vodId = requireArguments().getString(KEY_VOD_ID) ?: videoId,
                                     ),
                                     offset,
                                     true
@@ -2113,8 +2160,24 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             repeatOnLifecycle(Lifecycle.State.STARTED) {
                                 viewModel.isFollowing.collectLatest {
                                     if (it != null) {
+                                        val wasFollowing = follow.tag as? Boolean
+                                        follow.tag = it
                                         if (it) {
                                             follow.setImageResource(R.drawable.baseline_favorite_black_24)
+                                            if (wasFollowing == false) {
+                                                follow.animate().cancel()
+                                                follow.scaleX = 0.8f
+                                                follow.scaleY = 0.8f
+                                                follow.animate()
+                                                    .scaleX(1.22f)
+                                                    .scaleY(1.22f)
+                                                    .setDuration(120L)
+                                                    .setInterpolator(DecelerateInterpolator())
+                                                    .withEndAction {
+                                                        follow.animate().scaleX(1f).scaleY(1f).setDuration(100L).start()
+                                                    }
+                                                    .start()
+                                            }
                                         } else {
                                             follow.setImageResource(R.drawable.baseline_favorite_border_black_24)
                                         }
@@ -2700,7 +2763,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         val durationMs = (220f * abs(clampedTarget - start)).toLong().coerceIn(120L, 250L)
         chatProgressAnimator = ValueAnimator.ofFloat(start, clampedTarget).apply {
             duration = durationMs
-            interpolator = if (clampedTarget >= start) DecelerateInterpolator() else AccelerateInterpolator()
+            interpolator = DecelerateInterpolator(1.2f)
             addUpdateListener { va ->
                 applyChatOpenProgress(va.animatedValue as Float, finalize = false)
             }
@@ -2821,10 +2884,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 visibility = View.GONE
             }
         }
-        val effectiveSlug = gameSlug?.takeIf { it.isNotBlank() } ?: KickApiHelper.toCategorySlug(gameName)
+        val effectiveSlug = KickApiHelper.resolveEffectiveCategorySlug(gameSlug, gameName)
+        val sanitizedId = KickApiHelper.sanitizeGameId(gameId, effectiveSlug)
         runCatching {
             requireArguments().apply {
-                gameId?.takeIf { it.isNotBlank() }?.let { putString(KEY_GAME_ID, it) }
+                sanitizedId?.takeIf { it.isNotBlank() }?.let { putString(KEY_GAME_ID, it) }
                 effectiveSlug?.takeIf { it.isNotBlank() }?.let { putString(KEY_GAME_SLUG, it) }
                 gameName?.takeIf { it.isNotBlank() }?.let { putString(KEY_GAME_NAME, it) }
             }
@@ -2837,13 +2901,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     findNavController().navigate(
                         if (prefs.getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                             GamePagerFragmentDirections.actionGlobalGamePagerFragment(
-                                gameId = gameId,
+                                gameId = sanitizedId,
                                 gameSlug = effectiveSlug,
                                 gameName = gameName
                             )
                         } else {
                             GameMediaFragmentDirections.actionGlobalGameMediaFragment(
-                                gameId = gameId,
+                                gameId = sanitizedId,
                                 gameSlug = effectiveSlug,
                                 gameName = gameName
                             )
@@ -3040,8 +3104,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     open fun showOfflineOverlay(messageResId: Int = R.string.stream_ended) {
         if (_binding == null) return
+        val isOffline = networkMonitor.networkType.value == NetworkMonitor.NetworkType.NONE
+        val effectiveResId = if (isOffline) R.string.no_connection else messageResId
         binding.bufferingIndicator.isVisible = false
-        binding.offlineText.setText(messageResId)
+        binding.offlineText.setText(effectiveResId)
+        binding.offlineIcon.contentDescription = getString(effectiveResId)
         binding.offlineOverlay.visibility = View.VISIBLE
         hideController(force = true)
         binding.playerControls.root.visibility = View.GONE
@@ -3173,6 +3240,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private fun handleDefaultNetworkTypeChanged(type: NetworkMonitor.NetworkType) {
         val previous = previousNetworkType
         previousNetworkType = type
+        retryStreamIfNetworkRestored(previous, type)
         if (previous == null || previous == type) return
         if (type == NetworkMonitor.NetworkType.OTHER || type == NetworkMonitor.NetworkType.NONE || type == NetworkMonitor.NetworkType.UNKNOWN) return
         if (previous == NetworkMonitor.NetworkType.OTHER || previous == NetworkMonitor.NetworkType.NONE || previous == NetworkMonitor.NetworkType.UNKNOWN) return
@@ -3183,6 +3251,23 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 changeQuality(preferredQuality)
             }
             logAutomaticQualityChange(preferredQuality, type)
+        }
+    }
+
+    protected fun retryStreamIfNetworkRestored(previous: NetworkMonitor.NetworkType?, current: NetworkMonitor.NetworkType) {
+        if (videoType != STREAM) return
+        val isRestored = (previous == NetworkMonitor.NetworkType.NONE || previous == NetworkMonitor.NetworkType.UNKNOWN) &&
+            (current == NetworkMonitor.NetworkType.WIFI || current == NetworkMonitor.NetworkType.CELLULAR)
+        if (!isRestored) return
+
+        if (_binding != null && binding.offlineOverlay.isVisible) {
+            val isNoConnectionError = binding.offlineText.text == getString(R.string.no_connection)
+            if (isNoConnectionError) {
+                DiagnosticLogger.i("PlayerFragment", "Network restored ($current): automatically retrying stream load")
+                hideOfflineOverlay()
+                binding.bufferingIndicator.isVisible = true
+                loadStream(forceRefresh = true)
+            }
         }
     }
 
@@ -3311,57 +3396,63 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         if (_binding != null && binding.offlineOverlay.isVisible) {
             return
         }
-        if (!controllerIsAnimating) {
-            if (!binding.playerControls.root.isVisible) {
-                binding.playerControls.root.removeCallbacks(controllerHideAction)
-                controllerAnimation = binding.playerControls.root.animate().apply {
-                    alpha(1f)
-                    setDuration(250L)
-                    setListener(
-                        object : AnimatorListenerAdapter() {
-                            override fun onAnimationStart(animation: Animator) {
-                                controllerIsAnimating = true
-                                if (view != null) {
-                                    binding.playerControls.root.visibility = View.VISIBLE
-                                    updateProgress()
-                                }
-                            }
-
-                            override fun onAnimationEnd(animation: Animator) {
-                                controllerIsAnimating = false
-                                setListener(null)
-                                if (view != null && controllerAutoHide && controllerHideOnTouch && !binding.playerControls.progressBar.isPressed) {
-                                    binding.playerControls.root.postDelayed(controllerHideAction, 3000)
-                                }
+        if (force) {
+            controllerAnimation?.cancel()
+            controllerIsAnimating = false
+            binding.playerControls.root.removeCallbacks(controllerHideAction)
+            binding.playerControls.root.alpha = 1f
+            binding.playerControls.root.visibility = View.VISIBLE
+            rescheduleHideController()
+            return
+        }
+        if (!binding.playerControls.root.isVisible || controllerIsAnimating) {
+            controllerAnimation?.cancel()
+            binding.playerControls.root.removeCallbacks(controllerHideAction)
+            controllerAnimation = binding.playerControls.root.animate().apply {
+                alpha(1f)
+                setDuration(200L)
+                setInterpolator(DecelerateInterpolator())
+                setListener(
+                    object : AnimatorListenerAdapter() {
+                        override fun onAnimationStart(animation: Animator) {
+                            controllerIsAnimating = true
+                            if (view != null) {
+                                binding.playerControls.root.visibility = View.VISIBLE
+                                updateProgress()
                             }
                         }
-                    )
-                    start()
-                }
-            } else {
-                binding.playerControls.root.removeCallbacks(controllerHideAction)
-                if (controllerAutoHide && controllerHideOnTouch && !binding.playerControls.progressBar.isPressed) {
-                    binding.playerControls.root.postDelayed(controllerHideAction, 3000)
-                }
+
+                        override fun onAnimationEnd(animation: Animator) {
+                            controllerIsAnimating = false
+                            setListener(null)
+                            if (view != null) {
+                                rescheduleHideController()
+                            }
+                        }
+                    }
+                )
+                start()
             }
         } else {
-            if (force) {
-                controllerAnimation?.cancel()
-                binding.playerControls.root.removeCallbacks(controllerHideAction)
-                binding.playerControls.root.alpha = 1f
-                binding.playerControls.root.visibility = View.VISIBLE
-                if (controllerAutoHide && controllerHideOnTouch && !binding.playerControls.progressBar.isPressed) {
-                    binding.playerControls.root.postDelayed(controllerHideAction, 3000)
-                }
-            }
+            rescheduleHideController()
         }
     }
 
     private fun hideController(force: Boolean = false) {
-        if (!controllerIsAnimating && binding.playerControls.root.isVisible) {
+        if (force) {
+            controllerAnimation?.cancel()
+            controllerIsAnimating = false
+            binding.playerControls.root.alpha = 0f
+            binding.playerControls.root.visibility = View.GONE
+            return
+        }
+        if (binding.playerControls.root.isVisible || controllerIsAnimating) {
+            controllerAnimation?.cancel()
+            binding.playerControls.root.removeCallbacks(controllerHideAction)
             controllerAnimation = binding.playerControls.root.animate().apply {
                 alpha(0f)
-                setDuration(250L)
+                setDuration(150L)
+                setInterpolator(DecelerateInterpolator())
                 setListener(
                     object : AnimatorListenerAdapter() {
                         override fun onAnimationStart(animation: Animator) {
@@ -3378,12 +3469,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     }
                 )
                 start()
-            }
-        } else {
-            if (force) {
-                controllerAnimation?.cancel()
-                binding.playerControls.root.alpha = 0f
-                binding.playerControls.root.visibility = View.GONE
             }
         }
     }
@@ -4406,6 +4491,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     scaleX(minimizedScaleX)
                     scaleY(minimizedScaleY)
                     setDuration(250L)
+                    setInterpolator(DecelerateInterpolator(1.2f))
                     setListener(
                         object : AnimatorListenerAdapter() {
                             override fun onAnimationStart(animation: Animator) {
@@ -4481,6 +4567,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 scaleX(1f)
                 scaleY(1f)
                 setDuration(250L)
+                setInterpolator(DecelerateInterpolator(1.2f))
                 setListener(
                     object : AnimatorListenerAdapter() {
                         override fun onAnimationStart(animation: Animator) {
@@ -4936,6 +5023,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             KEY_UPLOAD_DATE to item.uploadDate,
             KEY_DURATION to item.duration,
             KEY_VIDEO_ID to item.videoId,
+            KEY_VOD_ID to item.videoId,
             KEY_VIDEO_ANIMATED_PREVIEW to item.videoAnimatedPreviewURL,
             KEY_VOD_OFFSET to (item.vodOffset ?: -1),
             KEY_CLIP_REPLAY_START_TIME to item.replayStartTime,

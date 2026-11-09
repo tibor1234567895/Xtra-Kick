@@ -80,6 +80,10 @@ class GameStreamsViewModel @Inject constructor(
         }.flow
     }.cachedIn(viewModelScope)
 
+    fun getCachedCategoryId(slug: String?, name: String?): String? {
+        return kickRepository.getCachedCategoryId(slug, name)
+    }
+
     suspend fun getSortGame(id: String): SortGame? {
         return sortGameRepository.getById(id)
     }

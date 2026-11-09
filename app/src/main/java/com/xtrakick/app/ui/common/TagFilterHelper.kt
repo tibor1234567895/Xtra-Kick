@@ -41,7 +41,7 @@ object TagFilterHelper {
         val density = context.resources.displayMetrics.density
         text.setCompoundDrawablesRelative(null, null, null, null)
         text.contentDescription = if (isEvent) context.getString(R.string.stream_event_tag, tag) else null
-        if (isHighlighted && !isEvent) {
+        if (isHighlighted) {
             val hPad = (8 * density).toInt()
             val vPad = (2 * density).toInt()
             val cornerRadius = 12 * density
@@ -67,14 +67,14 @@ object TagFilterHelper {
                 typedArray.recycle()
             }
             text.setTypeface(null, Typeface.NORMAL)
-        }
-        if (isEvent) {
-            val surface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurface, Color.BLACK)
-            text.setTextColor(ContextCompat.getColor(context, if (MaterialColors.isColorLight(surface)) {
-                R.color.eventTagForegroundLight
-            } else {
-                R.color.eventTagForegroundDark
-            }))
+            if (isEvent) {
+                val surface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurface, Color.BLACK)
+                text.setTextColor(ContextCompat.getColor(context, if (MaterialColors.isColorLight(surface)) {
+                    R.color.eventTagForegroundLight
+                } else {
+                    R.color.eventTagForegroundDark
+                }))
+            }
         }
     }
 

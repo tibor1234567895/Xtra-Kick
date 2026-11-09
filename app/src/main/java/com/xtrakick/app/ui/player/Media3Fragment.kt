@@ -9,6 +9,7 @@ import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.text.format.DateUtils
 import android.util.Log
+import android.view.SurfaceHolder
 import android.view.View
 import android.widget.HorizontalScrollView
 import android.widget.TextView
@@ -66,6 +67,8 @@ class Media3Fragment : PlayerFragment() {
     private var pendingInitialLiveSync = false
     private var liveTargetOffsetMs: Long? = null
     private val updateProgressAction = Runnable { if (view != null) updateProgress() }
+    private var surfaceHolderCallback: SurfaceHolder.Callback? = null
+    private var surfaceCreated = false
 
     private fun mediaItemUri(mediaItem: androidx.media3.common.MediaItem?): android.net.Uri? {
         return mediaItem?.mediaId?.takeIf { it.isNotBlank() }?.toUri()
@@ -107,8 +110,6 @@ class Media3Fragment : PlayerFragment() {
         binding.playerSurface.visibility = View.VISIBLE
         if (binding.playerSurface.holder.surface?.isValid == true) {
             player.setVideoSurface(binding.playerSurface.holder.surface)
-        } else {
-            player.setVideoSurfaceView(binding.playerSurface)
         }
     }
 
@@ -159,6 +160,49 @@ class Media3Fragment : PlayerFragment() {
         super.onStart()
         screenOffResumeFuture?.let { runCatching { MediaController.releaseFuture(it) } }
         screenOffResumeFuture = null
+
+        surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
+        val callback = object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {
+                surfaceCreated = true
+                val controller = player
+                if (controller != null && controller.isConnected && viewModel.quality != AUDIO_ONLY_QUALITY && viewModel.quality != CHAT_ONLY_QUALITY) {
+                    if (prefs.getBoolean(AppConstants.PLAYER_DISABLE_BACKGROUND_VIDEO, true)) {
+                        controller.trackSelectionParameters = controller.trackSelectionParameters.buildUpon().apply {
+                            setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
+                            clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
+                        }.build()
+                    }
+                    controller.setVideoSurface(holder.surface)
+                }
+            }
+
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
+
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                surfaceCreated = false
+                val controller = player
+                if (controller != null && controller.isConnected) {
+                    if (shouldContinuePlaybackInBackground() && prefs.getBoolean(AppConstants.PLAYER_DISABLE_BACKGROUND_VIDEO, true)) {
+                        if (viewModel.quality != AUDIO_ONLY_QUALITY) {
+                            viewModel.restoreQuality = true
+                            viewModel.previousQuality = viewModel.quality
+                            viewModel.quality = AUDIO_ONLY_QUALITY
+                        }
+                        controller.trackSelectionParameters = controller.trackSelectionParameters.buildUpon().apply {
+                            setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
+                        }.build()
+                    }
+                    controller.clearVideoSurface()
+                }
+            }
+        }
+        binding.playerSurface.holder.addCallback(callback)
+        surfaceHolderCallback = callback
+        if (binding.playerSurface.holder.surface?.isValid == true) {
+            surfaceCreated = true
+        }
+
         controllerFuture = MediaController.Builder(
             requireContext(),
             SessionToken(
@@ -1320,6 +1364,18 @@ class Media3Fragment : PlayerFragment() {
         context?.let { PlaybackService.stopService(it) }
     }
 
+    override fun onPause() {
+        super.onPause()
+        if (!shouldContinuePlaybackInBackground()) {
+            player?.let { p ->
+                if (p.isConnected && p.playWhenReady) {
+                    viewModel.resume = true
+                    p.pause()
+                }
+            }
+        }
+    }
+
     override fun onStop() {
         super.onStop()
         if (shouldClosePlaybackAfterPipDismiss()) {
@@ -1371,6 +1427,8 @@ class Media3Fragment : PlayerFragment() {
         playerListener?.let { player?.removeListener(it) }
         playerListener = null
         controllerFuture?.let { MediaController.releaseFuture(it) }
+        surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
+        surfaceHolderCallback = null
         clearPipDismissState()
     }
 
@@ -1423,6 +1481,8 @@ class Media3Fragment : PlayerFragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
+        surfaceHolderCallback = null
         screenOffResumeFuture?.let { runCatching { MediaController.releaseFuture(it) } }
         screenOffResumeFuture = null
         player?.let {

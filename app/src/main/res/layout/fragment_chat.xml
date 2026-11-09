@@ -14,8 +14,7 @@
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:animateLayoutChanges="true">
+            android:layout_weight="1">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/recyclerView"
@@ -23,18 +22,22 @@
                 android:layout_height="match_parent"
                 tools:listitem="@layout/chat_list_item" />
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnDown"
                 style="?attr/elevatedButtonStyle"
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_gravity="bottom"
-                android:layout_marginStart="4dp"
-                android:layout_marginLeft="4dp"
-                android:layout_marginEnd="4dp"
-                android:layout_marginRight="4dp"
+                android:layout_gravity="bottom|center_horizontal"
+                android:layout_marginBottom="12dp"
+                android:minHeight="36dp"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="6dp"
                 android:text="@string/scroll_down"
                 android:visibility="gone"
+                app:cornerRadius="20dp"
+                app:icon="@drawable/baseline_expand_more_black_24"
+                app:iconGravity="textStart"
+                app:iconSize="18dp"
                 tools:visibility="visible" />
 
             <LinearLayout

@@ -60,11 +60,17 @@ class GameStreamsDataSource(
     }
 
     private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
+        val slug = gameSlug?.takeIf { it.isNotBlank() }
+            ?: kickRepository.resolveCategorySlug(gameId, gameName)
+            ?: KickApiHelper.toCategorySlug(gameName)
+        val normalizedSlug = slug?.trim()?.lowercase(Locale.ROOT)
+        val normalizedName = gameName?.trim()?.lowercase(Locale.ROOT)
+        val targetInferredSlug = KickApiHelper.toCategorySlug(gameName)
+        val sanitizedTargetId = KickApiHelper.sanitizeGameId(gameId, normalizedSlug)
+
         kickRepository.getEventFilterStreams(tags.orEmpty())?.let { streams ->
             val matched = streams.filter { stream ->
-                (gameId == null || stream.gameId == gameId) &&
-                    (gameSlug == null || stream.gameSlug.equals(gameSlug, true)) &&
-                    (gameName == null || stream.gameName.equals(gameName, true))
+                matchesCategory(stream, sanitizedTargetId, normalizedSlug, normalizedName, targetInferredSlug)
             }
             return LoadResult.Page(
                 data = StreamsDataSource.filterEventStreams(matched, gqlLanguages, gqlSort),
@@ -73,14 +79,26 @@ class GameStreamsDataSource(
             )
         }
         val languageCodes = StreamsDataSource.requestedLanguageCodes(gqlLanguages, tags)
-        if (languageCodes.isNotEmpty() && !gameId.isNullOrBlank() && gqlSort != "VIEWER_COUNT_ASC" && gqlSort != "RECENT") {
+        val resolvedGameId = sanitizedTargetId
+            ?: kickRepository.getCachedCategoryId(slug, gameName)
+        if (languageCodes.isNotEmpty() && !resolvedGameId.isNullOrBlank() && gqlSort != "VIEWER_COUNT_ASC" && gqlSort != "RECENT") {
             val page = params.key ?: 1
             val cursor = if (page == 1) null else languageCursors[page] ?: error("Missing language page cursor")
-            kickRepository.getLanguageFilteredLivestreams(gameId, languageCodes, cursor, params.loadSize,
+            kickRepository.getLanguageFilteredLivestreams(resolvedGameId, languageCodes, cursor, params.loadSize,
                 awaitEventMetadata = kickRepository.hasCachedEventFilter(tags.orEmpty()))?.let { response ->
                 languageEndpointActive = true
                 val streams = response.livestreams
-                    .filter { it.category?.id?.toString() == gameId }
+                    .filter { stream ->
+                        val cat = stream.category
+                        val catId = cat?.id?.toString()
+                        val catSlug = cat?.slug?.lowercase(Locale.ROOT)
+                        val catName = cat?.name?.lowercase(Locale.ROOT)
+                        val catInferred = KickApiHelper.toCategorySlug(cat?.name)
+                        val targetInferred = KickApiHelper.toCategorySlug(normalizedName)
+                        catId == resolvedGameId ||
+                            (normalizedSlug != null && (catSlug == normalizedSlug || catInferred == normalizedSlug)) ||
+                            (normalizedName != null && (catName == normalizedName || catInferred == targetInferred))
+                    }
                     .filter { StreamsDataSource.matchesFilters(it.toLegacyLivestream(), gqlLanguages, tags,
                         kickRepository.getCachedChannelEventTitle(it.channel.id.toString())) }
                     .map { kickRepository.toStream(it) }
@@ -99,12 +117,6 @@ class GameStreamsDataSource(
         val collectedStreams = mutableListOf<Stream>()
         var scannedPages = 0
 
-        val slug = gameSlug?.takeIf { it.isNotBlank() }
-            ?: kickRepository.resolveCategorySlug(gameId, gameName)
-            ?: KickApiHelper.toCategorySlug(gameName)
-        val normalizedSlug = slug?.trim()?.lowercase(Locale.ROOT)
-        val normalizedName = gameName?.trim()?.lowercase(Locale.ROOT)
-
         while (scannedPages < maxPagesToScan && nextPageKey != null) {
             val response = kickRepository.getLivestreams(
                 page = currentPage,
@@ -117,12 +129,17 @@ class GameStreamsDataSource(
                 .filter { item ->
                     // Guard against Kick falling back to global popular livestreams when subcategory is unmatched
                     val itemCats = item.categories
+                    val targetInferred = KickApiHelper.toCategorySlug(normalizedName)
                     val matchesCategory = (normalizedSlug.isNullOrBlank() && normalizedName.isNullOrBlank() && gameId.isNullOrBlank()) ||
                         itemCats.isNullOrEmpty() ||
                         itemCats.any { cat ->
-                            (gameId != null && cat.id?.toString() == gameId) ||
-                            (normalizedSlug != null && cat.slug?.lowercase(Locale.ROOT) == normalizedSlug) ||
-                            (normalizedName != null && cat.name?.lowercase(Locale.ROOT) == normalizedName)
+                            val catId = cat.id?.toString()
+                            val catSlug = cat.slug?.lowercase(Locale.ROOT)
+                            val catName = cat.name?.lowercase(Locale.ROOT)
+                            val catInferred = KickApiHelper.toCategorySlug(cat.name)
+                            (gameId != null && catId == gameId) ||
+                            (normalizedSlug != null && (catSlug == normalizedSlug || catInferred == normalizedSlug)) ||
+                            (normalizedName != null && (catName == normalizedName || catInferred == targetInferred))
                         }
                     matchesCategory && StreamsDataSource.matchesFilters(item, gqlLanguages, tags,
                         kickRepository.getCachedChannelEventTitle((item.channel?.id ?: item.channelId)?.toString()))
@@ -160,6 +177,57 @@ class GameStreamsDataSource(
             prevKey = null,
             nextKey = nextPageKey
         )
+    }
+
+    internal fun matchesCategory(
+        stream: Stream,
+        targetId: String? = null,
+        targetSlug: String? = null,
+        targetName: String? = null,
+        targetInferredSlug: String? = null
+    ): Boolean {
+        val tSlug = targetSlug ?: gameSlug?.trim()?.lowercase(Locale.ROOT)
+        val tId = targetId ?: KickApiHelper.sanitizeGameId(gameId, tSlug)
+        val tName = targetName ?: gameName?.trim()?.lowercase(Locale.ROOT)
+        val tInferred = targetInferredSlug ?: KickApiHelper.toCategorySlug(gameName)
+
+        val hasCategoryConstraint = !tId.isNullOrBlank() || !tSlug.isNullOrBlank() || !tName.isNullOrBlank()
+        if (!hasCategoryConstraint) return true
+
+        val sId = stream.gameId?.trim()
+        val sSlug = stream.gameSlug?.trim()?.lowercase(Locale.ROOT)
+        val sName = stream.gameName?.trim()?.lowercase(Locale.ROOT)
+        val sInferredSlug = KickApiHelper.toCategorySlug(stream.gameName)
+
+        // 1. Direct ID match
+        if (!tId.isNullOrBlank() && !sId.isNullOrBlank() && sId == tId) return true
+
+        // 2. Direct slug match
+        if (!tSlug.isNullOrBlank() && !sSlug.isNullOrBlank() && sSlug == tSlug) return true
+
+        // 3. Direct name match
+        if (!tName.isNullOrBlank() && !sName.isNullOrBlank() && sName == tName) return true
+
+        // 4. Inferred slug from stream name matches target slug
+        if (!tSlug.isNullOrBlank() && !sInferredSlug.isNullOrBlank() && sInferredSlug == tSlug) return true
+
+        // 5. Inferred slug from target name matches stream slug
+        if (!sSlug.isNullOrBlank() && !tInferred.isNullOrBlank() && sSlug == tInferred) return true
+
+        // 6. Inferred slug from target name matches inferred slug from stream name
+        if (!tInferred.isNullOrBlank() && !sInferredSlug.isNullOrBlank() && sInferredSlug == tInferred) return true
+
+        // 7. Cached slug/ID cross-referencing
+        if (!sId.isNullOrBlank() && !tSlug.isNullOrBlank()) {
+            val cachedSlug = kickRepository.getCachedCategorySlug(sId)?.lowercase(Locale.ROOT)
+            if (cachedSlug != null && (cachedSlug == tSlug || cachedSlug == tInferred)) return true
+        }
+        if (!tId.isNullOrBlank() && !sSlug.isNullOrBlank()) {
+            val cachedSlug = kickRepository.getCachedCategorySlug(tId)?.lowercase(Locale.ROOT)
+            if (cachedSlug != null && (cachedSlug == sSlug || cachedSlug == sInferredSlug)) return true
+        }
+
+        return false
     }
 
     override fun getRefreshKey(state: PagingState<Int, Stream>): Int? {

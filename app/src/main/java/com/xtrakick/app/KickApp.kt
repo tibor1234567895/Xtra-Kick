@@ -102,6 +102,7 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             DiagnosticLogger.updateAppState(WebSocketRuntime.isAppInForeground)
             DiagnosticLogger.logCrash(throwable)
+            UsagePing.noteCrash(this)
             previousUncaughtExceptionHandler?.uncaughtException(thread, throwable)
                 ?: kotlin.system.exitProcess(10)
         }

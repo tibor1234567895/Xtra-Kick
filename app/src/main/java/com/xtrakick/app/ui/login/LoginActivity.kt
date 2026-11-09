@@ -12,6 +12,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -234,7 +235,11 @@ class LoginActivity : AppCompatActivity() {
     private fun revealWebView() {
         binding.loadingContainer.visibility = View.GONE
         if (binding.webView.alpha < 1f) {
-            binding.webView.animate().alpha(1f).setDuration(200).start()
+            binding.webView.animate()
+                .alpha(1f)
+                .setDuration(200L)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
         }
     }
 

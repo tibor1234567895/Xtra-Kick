@@ -722,17 +722,19 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                 gameName.visibility = View.VISIBLE
                 gameName.text = stream.gameName
                 gameName.setOnClickListener {
+                    val resolvedSlug = KickApiHelper.resolveEffectiveCategorySlug(stream.gameSlug, stream.gameName)
+                    val resolvedId = KickApiHelper.sanitizeGameId(stream.gameId, resolvedSlug)
                     findNavController().navigate(
                         if (requireContext().prefs().getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                             GamePagerFragmentDirections.actionGlobalGamePagerFragment(
-                                gameId = stream.gameId,
-                                gameSlug = stream.gameSlug,
+                                gameId = resolvedId,
+                                gameSlug = resolvedSlug,
                                 gameName = stream.gameName
                             )
                         } else {
                             GameMediaFragmentDirections.actionGlobalGameMediaFragment(
-                                gameId = stream.gameId,
-                                gameSlug = stream.gameSlug,
+                                gameId = resolvedId,
+                                gameSlug = resolvedSlug,
                                 gameName = stream.gameName
                             )
                         }

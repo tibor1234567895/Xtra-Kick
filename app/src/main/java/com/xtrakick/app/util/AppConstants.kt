@@ -40,6 +40,8 @@ object AppConstants {
     const val USAGE_PING_LAST_DAY = "usage_ping_last_day"
     const val USAGE_STATS_ENABLED = "usage_stats_enabled"
     const val USAGE_SESSIONS_UNREPORTED = "usage_sessions_unreported"
+    const val USAGE_UNREPORTED_CRASHES = "usage_unreported_crashes"
+    const val USAGE_WATCH_TIME_UNREPORTED_MINUTES = "usage_watch_time_unreported_minutes"
     const val FIRST_LAUNCH1 = "first_launch1"
     const val FIRST_LAUNCH2 = "first_launch2"
     const val FIRST_LAUNCH3 = "first_launch3"

@@ -13,6 +13,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.widget.SeekBar
 import android.widget.Toast
 import androidx.core.view.isVisible
@@ -363,13 +364,32 @@ class ClipCreatorSheet : BottomSheetDialogFragment() {
         curB.root.removeCallbacks(progressPoller)
         if (playWhenReady) {
             curB.clipCenterPlayPause.animate().cancel()
-            curB.clipCenterPlayPause.visibility = View.GONE
-            curB.clipCenterPlayPause.alpha = 0f
+            curB.clipCenterPlayPause.animate()
+                .scaleX(1.15f)
+                .scaleY(1.15f)
+                .alpha(0f)
+                .setDuration(120L)
+                .setInterpolator(DecelerateInterpolator())
+                .withEndAction {
+                    curB.clipCenterPlayPause.visibility = View.GONE
+                    curB.clipCenterPlayPause.scaleX = 1f
+                    curB.clipCenterPlayPause.scaleY = 1f
+                }
+                .start()
             curB.root.post(progressPoller)
         } else {
             curB.clipCenterPlayPause.animate().cancel()
             curB.clipCenterPlayPause.visibility = View.VISIBLE
-            curB.clipCenterPlayPause.alpha = 1f
+            curB.clipCenterPlayPause.scaleX = 0.85f
+            curB.clipCenterPlayPause.scaleY = 0.85f
+            curB.clipCenterPlayPause.alpha = 0f
+            curB.clipCenterPlayPause.animate()
+                .scaleX(1f)
+                .scaleY(1f)
+                .alpha(1f)
+                .setDuration(140L)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
             previewPlayer?.let { updateScrubberUi(it.currentPosition / 1000f) }
         }
     }

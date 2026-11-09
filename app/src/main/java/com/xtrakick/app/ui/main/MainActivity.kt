@@ -591,19 +591,21 @@ class MainActivity : AppCompatActivity() {
                         val tag = pair.second
                         if (game != null) {
                             playerFragment?.minimize()
+                            val resolvedSlug = KickApiHelper.resolveEffectiveCategorySlug(game.gameSlug, game.gameName)
+                            val resolvedId = KickApiHelper.sanitizeGameId(game.gameId, resolvedSlug)
                             navController.navigate(
                                 if (prefs.getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                                     GamePagerFragmentDirections.actionGlobalGamePagerFragment(
-                                        gameId = game.gameId,
-                                        gameSlug = game.gameSlug,
+                                        gameId = resolvedId,
+                                        gameSlug = resolvedSlug,
                                         gameName = game.gameName,
                                         boxArt = game.boxArt,
                                         tags = tag?.let { arrayOf(it) },
                                     )
                                 } else {
                                     GameMediaFragmentDirections.actionGlobalGameMediaFragment(
-                                        gameId = game.gameId,
-                                        gameSlug = game.gameSlug,
+                                        gameId = resolvedId,
+                                        gameSlug = resolvedSlug,
                                         gameName = game.gameName,
                                         boxArt = game.boxArt,
                                         tags = tag?.let { arrayOf(it) },
@@ -801,6 +803,7 @@ class MainActivity : AppCompatActivity() {
                         is KickLink.Clip -> {
                             viewModel.loadClip(
                                 clipId = link.clipId,
+                                channelLogin = link.channelLogin,
                                 networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
                                 kickWebHeaders = KickApiHelper.getKickWebHeaders(this),
                                 kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(this),

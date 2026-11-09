@@ -238,7 +238,7 @@ class MainViewModel @Inject constructor(
         playerRepository.saveVideoPosition(VideoPosition(id, position))
     }
 
-    fun loadClip(clipId: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun loadClip(clipId: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean, channelLogin: String? = null) {
         if (clip.value == null) {
             viewModelScope.launch {
                 val id = clipId?.takeIf { it.isNotBlank() }
@@ -246,7 +246,7 @@ class MainViewModel @Inject constructor(
                 val loadedClip = if (id == null) {
                     null
                 } else {
-                    runCatching { kickRepository.getClip(id) }.getOrNull()
+                    val clipResult = runCatching { kickRepository.getClip(id) }.getOrNull()
                         ?: runCatching {
                             kickPublicApiRepository.getClips(
                                 networkLibrary = networkLibrary,
@@ -272,6 +272,10 @@ class MainViewModel @Inject constructor(
                                 )
                             }
                         }.getOrNull()
+                    if (clipResult != null && clipResult.channelLogin.isNullOrBlank() && !channelLogin.isNullOrBlank()) {
+                        clipResult.channelLogin = channelLogin
+                    }
+                    clipResult
                 }
                 clip.value = loadedClip
                 clipLoadFailed.value = loadedClip == null
@@ -297,19 +301,12 @@ class MainViewModel @Inject constructor(
                         }
                     }.getOrNull()
                         ?: runCatching {
-                            kickPublicApiRepository.getUsers(
-                                networkLibrary = networkLibrary,
-                                headers = kickPublicApiHeaders,
-                                logins = listOf(slug),
-                            ).data.firstOrNull()?.let {
+                            kickRepository.getOfficialChannels(networkLibrary, slugs = listOf(slug)).firstOrNull()?.let {
                                 User(
-                                    channelId = it.channelId,
-                                    channelLogin = it.channelLogin,
-                                    channelName = it.channelName,
-                                    type = it.type,
-                                    broadcasterType = it.broadcasterType,
-                                    profileImageUrl = it.profileImageUrl,
-                                    createdAt = it.createdAt,
+                                    channelId = it.broadcasterUserId?.toString(),
+                                    channelLogin = it.slug,
+                                    channelName = it.slug,
+                                    profileImageUrl = it.thumbnail,
                                 )
                             }
                         }.getOrNull()

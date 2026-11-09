@@ -12,6 +12,7 @@ import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.model.ui.Tag
 import com.xtrakick.app.model.ui.User
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.KickApiHelper
 import java.util.Locale
 
 internal object KickWebsiteSearchMapper {
@@ -29,7 +30,7 @@ internal object KickWebsiteSearchMapper {
         channelLogin = item.channel.slug,
         channelName = item.user.username,
         gameId = event.category?.id?.toString(),
-        gameSlug = event.category?.slug,
+        gameSlug = event.category?.slug ?: KickApiHelper.toCategorySlug(event.category?.name),
         gameName = event.category?.name,
         title = item.livestream.title,
         viewerCount = item.livestream.viewCount.takeIf { item.livestream.showViewCount },

@@ -55,6 +55,7 @@ import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.UsagePing
 import com.xtrakick.app.util.prefs
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -314,6 +315,7 @@ class PlaybackService : MediaSessionService() {
                             "currentPosition=${player.currentPosition}"
                     )
                     if (isPlaying) {
+                        UsagePing.noteWatchStarted()
                         backgroundPrepareRetryCount = 0
                         startKickViewerWatchIfNeeded()
                         stopIdleTimer()
@@ -327,6 +329,7 @@ class PlaybackService : MediaSessionService() {
                             }
                         }
                     } else {
+                        UsagePing.noteWatchStopped(this@PlaybackService)
                         stopKickViewerWatch()
                         savePositionTimer?.cancel()
                         savePositionTimer = null
@@ -385,6 +388,7 @@ class PlaybackService : MediaSessionService() {
                         }
                         if (error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
                             error.errorCodeName == "ERROR_CODE_DECODING_FAILED" ||
+                            Media3ErrorUtils.isObsoleteSurfaceError(error) ||
                             error.cause is androidx.media3.exoplayer.mediacodec.MediaCodecDecoderException ||
                             error.cause is android.media.MediaCodec.CodecException) {
                             DiagnosticLogger.w(TAG, "background decoding error on video renderer: disabling video track and clearing surface")
@@ -1002,6 +1006,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         isRunning = false
+        UsagePing.noteWatchStopped(this)
         watchOwner.release()
         clearActiveLiveChannel()
         ioScope.cancel()
@@ -1027,7 +1032,10 @@ class PlaybackService : MediaSessionService() {
         val message = "playerError code=${error.errorCode} name=${error.errorCodeName} " +
             "http=$responseCode background=$background " +
             "message=${error.message}"
-        if (responseCode == 403 || responseCode == 404 || Media3ErrorUtils.isBehindLiveWindowError(error)) {
+        if (responseCode == 403 || responseCode == 404 ||
+            Media3ErrorUtils.isBehindLiveWindowError(error) ||
+            (background && Media3ErrorUtils.isObsoleteSurfaceError(error))
+        ) {
             DiagnosticLogger.w(TAG, message)
         } else {
             DiagnosticLogger.e(TAG, message, error)

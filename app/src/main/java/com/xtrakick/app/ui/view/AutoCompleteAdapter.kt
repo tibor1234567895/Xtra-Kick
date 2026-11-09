@@ -171,8 +171,9 @@ class AutoCompleteAdapter(
             if (target.startsWith(query, ignoreCase = true)) return 1
             if (target.contains(query, ignoreCase = true)) return 2
             if (query.length >= 3) {
-                if (matchesSubsequence(query, target)) return 3
-                if (isWithinEditDistance(query, target, if (query.length < 4) 1 else 2)) return 4
+                if (isWithinEditDistance(query, target, 1)) return 3
+                if (matchesSubsequence(query, target)) return 4
+                if (query.length >= 5 && isWithinEditDistance(query, target, 2)) return 5
             }
             return -1
         }
@@ -180,10 +181,29 @@ class AutoCompleteAdapter(
         fun matchesSubsequence(query: String, target: String): Boolean {
             if (target.length < query.length) return false
             var qIdx = 0
+            var firstIdx = -1
+            var lastIdx = -1
+            var isAcronym = true
             for (tIdx in 0 until target.length) {
                 if (target[tIdx].equals(query[qIdx], ignoreCase = true)) {
+                    if (qIdx == 0) firstIdx = tIdx
+                    lastIdx = tIdx
+
+                    val isBoundary = tIdx == 0 ||
+                        target[tIdx - 1] == '_' ||
+                        target[tIdx - 1] == '-' ||
+                        target[tIdx - 1] == ' ' ||
+                        (!target[tIdx - 1].isUpperCase() && target[tIdx].isUpperCase())
+                    if (!isBoundary) {
+                        isAcronym = false
+                    }
+
                     qIdx++
-                    if (qIdx == query.length) return true
+                    if (qIdx == query.length) {
+                        val span = lastIdx - firstIdx + 1
+                        val maxSpan = maxOf(query.length * 2, query.length + 3)
+                        return isAcronym || span <= maxSpan
+                    }
                 }
             }
             return false

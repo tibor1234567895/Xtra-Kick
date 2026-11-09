@@ -16,6 +16,7 @@ import com.xtrakick.app.ui.game.GameMediaFragmentDirections
 import com.xtrakick.app.ui.game.GamePagerFragmentDirections
 import com.xtrakick.app.ui.top.TopStreamsFragmentDirections
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
 
 class FiltersAdapter(
@@ -51,19 +52,21 @@ class FiltersAdapter(
                     val context = fragment.requireContext()
                     root.setOnClickListener {
                         if (item.gameId != null || item.gameSlug != null || item.gameName != null) {
+                            val resolvedSlug = KickApiHelper.resolveEffectiveCategorySlug(item.gameSlug, item.gameName)
+                            val resolvedId = KickApiHelper.sanitizeGameId(item.gameId, resolvedSlug)
                             fragment.findNavController().navigate(
                                 if (context.prefs().getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                                     GamePagerFragmentDirections.actionGlobalGamePagerFragment(
-                                        gameId = item.gameId,
-                                        gameSlug = item.gameSlug,
+                                        gameId = resolvedId,
+                                        gameSlug = resolvedSlug,
                                         gameName = item.gameName,
                                         tags = item.tags?.split(',')?.toTypedArray(),
                                         languages = item.languages?.split(',')?.toTypedArray()
                                     )
                                 } else {
                                     GameMediaFragmentDirections.actionGlobalGameMediaFragment(
-                                        gameId = item.gameId,
-                                        gameSlug = item.gameSlug,
+                                        gameId = resolvedId,
+                                        gameSlug = resolvedSlug,
                                         gameName = item.gameName,
                                         tags = item.tags?.split(',')?.toTypedArray(),
                                         languages = item.languages?.split(',')?.toTypedArray()

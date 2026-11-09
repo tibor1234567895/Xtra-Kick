@@ -31,7 +31,6 @@ import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
-import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.graphics.Color
 import android.text.TextUtils
@@ -1238,14 +1237,14 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                     binding.tileGrid.pivotY = 0f
                     binding.tileGrid.pivotX = root.width / 2f
 
-                    binding.chatDividerHandle.animate().scaleX(1.2f).scaleY(1.2f).setDuration(120).start()
+                    binding.chatDividerHandle.animate().scaleX(1.2f).scaleY(1.2f).setDuration(120).setInterpolator(DecelerateInterpolator()).start()
                     binding.chatDividerHandle.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#53FC18"))
 
                     // Reveal mode badge
                     binding.chatDividerLabel.text = getString(hoveredPreset.labelRes(isPortrait))
                     binding.chatDividerLabel.alpha = 0f
                     binding.chatDividerLabel.isVisible = true
-                    binding.chatDividerLabel.animate().alpha(1f).setDuration(120).start()
+                    binding.chatDividerLabel.animate().alpha(1f).setDuration(120).setInterpolator(DecelerateInterpolator()).start()
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -1271,8 +1270,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                     if (newHoverPreset != hoveredPreset) {
                         hoveredPreset = newHoverPreset
                         binding.chatDividerLabel.text = getString(newHoverPreset.labelRes(isPortrait))
-                        binding.chatDividerLabel.animate().scaleX(1.15f).scaleY(1.15f).setDuration(80).withEndAction {
-                            binding.chatDividerLabel.animate().scaleX(1f).scaleY(1f).setDuration(80).start()
+                        binding.chatDividerLabel.animate().scaleX(1.15f).scaleY(1.15f).setDuration(80).setInterpolator(DecelerateInterpolator()).withEndAction {
+                            binding.chatDividerLabel.animate().scaleX(1f).scaleY(1f).setDuration(80).setInterpolator(DecelerateInterpolator()).start()
                         }.start()
                         view?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     }
@@ -1312,8 +1311,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                                 binding.chatDivider.translationY = 0f
                                 binding.chatFragmentContainer.translationY = 0f
                                 binding.chatDividerHandle.backgroundTintList = null
-                                binding.chatDividerHandle.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120).start()
-                                binding.chatDividerLabel.animate().alpha(0f).setDuration(120).withEndAction {
+                                binding.chatDividerHandle.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120).setInterpolator(DecelerateInterpolator()).start()
+                                binding.chatDividerLabel.animate().alpha(0f).setDuration(120).setInterpolator(DecelerateInterpolator()).withEndAction {
                                     binding.chatDividerLabel.isVisible = false
                                 }.start()
 
@@ -2405,7 +2404,12 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         tile.root.animate().cancel()
         tile.root.scaleX = 0.97f
         tile.root.scaleY = 0.97f
-        tile.root.animate().scaleX(1f).scaleY(1f).setDuration(150L).start()
+        tile.root.animate()
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(150L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
     }
 
     private fun bindTileChrome(tile: ItemMultipovTileBinding, slot: MultiPovSlot) {
@@ -2756,7 +2760,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         val durationMs = (220f * abs(clampedTarget - start)).toLong().coerceIn(120L, 250L)
         chatProgressAnimator = ValueAnimator.ofFloat(start, clampedTarget).apply {
             duration = durationMs
-            interpolator = if (clampedTarget >= start) DecelerateInterpolator() else AccelerateInterpolator()
+            interpolator = DecelerateInterpolator(1.2f)
             addUpdateListener { va ->
                 applyChatOpenProgress(va.animatedValue as Float, finalize = false)
             }

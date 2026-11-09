@@ -5,6 +5,7 @@ import com.xtrakick.app.model.kick.KickLivestream
 import com.xtrakick.app.model.kick.KickSubcategory
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.repository.datasource.StreamsDataSource
+import com.xtrakick.app.ui.common.TagFilterHelper
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -160,5 +161,20 @@ class KickTagsFilterTest {
         assertEquals(2, list.size)
         assertEquals("202", list[0].channelId)
         assertEquals("203", list[1].channelId)
+    }
+
+    @Test
+    fun testTagFilterHelperIsTagActiveAndToggle() {
+        val activeTags = listOf("English", "nopixel V")
+
+        assertTrue(TagFilterHelper.isTagActive("nopixel V", activeTags))
+        assertTrue(TagFilterHelper.isTagActive("English", activeTags))
+        assertFalse(TagFilterHelper.isTagActive("18+", activeTags))
+
+        val toggledOff = TagFilterHelper.toggleTag(activeTags, "nopixel V")
+        assertEquals(listOf("English"), toggledOff.toList())
+
+        val toggledOn = TagFilterHelper.toggleTag(toggledOff.toList(), "nopixel V")
+        assertEquals(listOf("English", "nopixel V"), toggledOn.toList())
     }
 }

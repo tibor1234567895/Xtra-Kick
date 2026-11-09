@@ -31,4 +31,20 @@ object Media3ErrorUtils {
         }
         return false
     }
+
+    @JvmStatic
+    fun isObsoleteSurfaceError(error: Throwable?): Boolean {
+        var cause: Throwable? = error
+        while (cause != null) {
+            val message = cause.message.orEmpty()
+            if (message.contains("obsolete", ignoreCase = true) ||
+                message.contains("non-initialized", ignoreCase = true) ||
+                (message.contains("releaseOutputBuffer", ignoreCase = true) && message.contains("Released state", ignoreCase = true))
+            ) {
+                return true
+            }
+            cause = cause.cause
+        }
+        return false
+    }
 }

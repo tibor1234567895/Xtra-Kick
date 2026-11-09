@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
@@ -77,6 +78,19 @@ class ImageClickedDialog : BottomSheetDialogFragment() {
         with(binding) {
             val args = requireArguments()
             val imageLibrary = requireContext().prefs().getString(AppConstants.CHAT_IMAGE_LIBRARY, "0")
+            val revealImage = { drawable: Drawable ->
+                image.setImageDrawable(drawable)
+                image.alpha = 0f
+                image.scaleX = 0.92f
+                image.scaleY = 0.92f
+                image.animate()
+                    .alpha(1f)
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(160L)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+            }
             if (imageLibrary == "0" || (imageLibrary == "1" && !args.getString(IMAGE_FORMAT).equals("webp", true))) {
                 requireContext().imageLoader.enqueue(
                     ImageRequest.Builder(requireContext()).apply {
@@ -92,7 +106,7 @@ class ImageClickedDialog : BottomSheetDialogFragment() {
                                 if (result is Animatable && args.getBoolean(IMAGE_ANIMATED) && requireContext().prefs().getBoolean(AppConstants.ANIMATED_EMOTES, true)) {
                                     (result as Animatable).start()
                                 }
-                                image.setImageDrawable(result)
+                                revealImage(result)
                             }
                         )
                     }.build()
@@ -110,7 +124,7 @@ class ImageClickedDialog : BottomSheetDialogFragment() {
                             if (resource is Animatable && args.getBoolean(IMAGE_ANIMATED) && requireContext().prefs().getBoolean(AppConstants.ANIMATED_EMOTES, true)) {
                                 (resource as Animatable).start()
                             }
-                            image.setImageDrawable(resource)
+                            revealImage(resource)
                         }
 
                         override fun onLoadCleared(placeholder: Drawable?) {}

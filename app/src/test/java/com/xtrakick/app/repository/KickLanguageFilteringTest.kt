@@ -48,7 +48,7 @@ class KickLanguageFilteringTest {
                 """{"data":{"livestreams":[
                 ${stream("one", 100, "en", 8, false)},
                 ${stream("wrong-language", 900, "tr", 8)},
-                ${stream("wrong-category", 901, "en", 1552)}
+                ${stream("wrong-category", 901, "en", 1552, categorySlug = "just-chatting", categoryName = "Just Chatting")}
                 ],"pagination":{"next_cursor":"opaque+/cursor="}}}"""
             } else {
                 """{"data":{"livestreams":[${stream("one", 100, "en", 8)},${stream("two", 101, "en-IN", 8)}],"pagination":{}}}"""
@@ -61,12 +61,20 @@ class KickLanguageFilteringTest {
             .message("fixture").body(body.toResponseBody("application/json".toMediaType())).build()
     }.build()
 
-    private fun stream(id: String, channelId: Long, language: String, category: Long, showViewers: Boolean = true) = """
+    private fun stream(
+        id: String,
+        channelId: Long,
+        language: String,
+        category: Long,
+        showViewers: Boolean = true,
+        categorySlug: String = "grand-theft-auto-v",
+        categoryName: String = "GTA",
+    ) = """
         {"id":"$id","language":"$language","title":"Test stream","viewer_count":42,"show_view_count":$showViewers,
         "start_time":"2026-11-02T10:00:00Z","is_mature":true,"tags":["Drops"],
         "thumbnail":{"src":"https://images.kick.com/thumb.webp"},
         "channel":{"id":$channelId,"slug":"channel$channelId","username":"Channel $channelId","profile_pic":"https://files.kick.com/avatar.webp"},
-        "category":{"id":$category,"name":"GTA","slug":"grand-theft-auto-v"}}
+        "category":{"id":$category,"name":"$categoryName","slug":"$categorySlug"}}
     """
 
     private fun repository() = KickRepository(context, client, null, executor, json,
