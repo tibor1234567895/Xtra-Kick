@@ -208,20 +208,22 @@ class BookmarksAdapter(
                     } else {
                         userImage.visibility = View.GONE
                     }
-                    if (item.userName != null) {
+                    val effectiveUserName = item.userName ?: item.userLogin
+                    if (effectiveUserName != null) {
                         username.visibility = View.VISIBLE
-                        username.text = if (item.userLogin != null && !item.userLogin.equals(item.userName, true)) {
+                        username.text = if (item.userLogin != null && item.userName != null && !item.userLogin.equals(item.userName, true)) {
                             when (context.prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
                                 "0" -> "${item.userName}(${item.userLogin})"
                                 "1" -> item.userName
                                 else -> item.userLogin
                             }
                         } else {
-                            item.userName
+                            effectiveUserName
                         }
                         username.setOnClickListener(channelListener)
                     } else {
                         username.visibility = View.GONE
+                        username.setOnClickListener(null)
                     }
                     if (position != null && getDuration != null && getDuration > 0L) {
                         progressBar.progress = (position / (getDuration * 10)).toInt()
@@ -235,12 +237,14 @@ class BookmarksAdapter(
                     } else {
                         title.visibility = View.GONE
                     }
-                    if (item.gameName != null) {
+                    val effectiveGameName = item.gameName ?: item.gameSlug
+                    if (effectiveGameName != null) {
                         gameName.visibility = View.VISIBLE
-                        gameName.text = item.gameName
+                        gameName.text = effectiveGameName
                         gameName.setOnClickListener(gameListener)
                     } else {
                         gameName.visibility = View.GONE
+                        gameName.setOnClickListener(null)
                     }
                     options.setOnClickListener { it ->
                         PopupMenu(context, it).apply {

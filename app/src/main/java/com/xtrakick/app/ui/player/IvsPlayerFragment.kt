@@ -291,6 +291,15 @@ class IvsPlayerFragment : PlayerFragment() {
                         } else if (state == Player.State.PLAYING) {
                             clearFreezeFrame()
                             lastBufferRecoveryTimeMs = SystemClock.uptimeMillis()
+                        } else if (state == Player.State.ENDED && videoType == STREAM && !viewModel.isLiveRewound && playbackService?.isPlaybackRequested() == true) {
+                            DiagnosticLogger.logNonUiPause(
+                                context,
+                                "IvsPlayerFragment.onStateChanged",
+                                "Player.State.ENDED on live stream",
+                                "latency=${player?.liveLatency}ms pos=${player?.position}ms buf=${player?.bufferedPosition}ms"
+                            )
+                            recoverFromLiveStreamEnded()
+                            return
                         } else if ((state == Player.State.READY || state == Player.State.ENDED) &&
                             playbackService?.isPlaybackRequested() == false &&
                             lastPausedTimestampMs == 0L
@@ -308,6 +317,15 @@ class IvsPlayerFragment : PlayerFragment() {
                     }
 
                     override fun onError(exception: PlayerException) {
+                        DiagnosticLogger.logPause(
+                            callingContext = context,
+                            source = "IvsPlayerFragment.onError",
+                            reason = "PlayerException code=${exception.code} type=${exception.errorType} source=${exception.source} session=${player?.sessionId}: ${exception.errorMessage}",
+                            isUserInitiated = false,
+                            engine = "AmazonIVS",
+                            details = "channel=${arguments?.getString(KEY_CHANNEL_LOGIN)} state=${player?.state}",
+                            throwable = exception,
+                        )
                         playerDebugWarn(
                             "IVS playback error code=${exception.code} type=${exception.errorType} source=${exception.source} session=${player?.sessionId}: ${exception.errorMessage}"
                         )
@@ -427,8 +445,8 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     private fun updatePlayingState() {
+        val isPlaying = isPlaybackPlaying()
         val state = player?.state ?: Player.State.IDLE
-        val isPlaying = state == Player.State.PLAYING
         binding.bufferingIndicator.isVisible = state == Player.State.BUFFERING
         with(binding.playerControls) {
             if (isPlaying) {
@@ -571,6 +589,14 @@ class IvsPlayerFragment : PlayerFragment() {
     override fun getCurrentPosition(): Long? = player?.position
 
     override fun pausePlaybackForOverlay() {
+        DiagnosticLogger.logPause(
+            callingContext = context,
+            source = "IvsPlayerFragment.pausePlaybackForOverlay",
+            reason = "Overlay opened",
+            isUserInitiated = true,
+            engine = "AmazonIVS",
+            details = "channel=${arguments?.getString(KEY_CHANNEL_LOGIN)}",
+        )
         player?.pause()
     }
 
@@ -579,7 +605,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun getCurrentSpeed(): Float? = player?.playbackRate
-    override fun isPlaybackPlaying() = player?.state == Player.State.PLAYING
+    override fun isPlaybackPlaying() = playbackService?.isPaused() != true && player?.state == Player.State.PLAYING
 
     override fun getCurrentVolume(): Float? = player?.volume
 
@@ -588,6 +614,14 @@ class IvsPlayerFragment : PlayerFragment() {
             Player.State.PLAYING -> {
                 noteStreamPaused()
                 captureFreezeFrame()
+                DiagnosticLogger.logPause(
+                    callingContext = context,
+                    source = "IvsPlayerFragment.playPause",
+                    reason = "User tapped Play/Pause button in UI",
+                    isUserInitiated = true,
+                    engine = "AmazonIVS",
+                    details = "channel=${arguments?.getString(KEY_CHANNEL_LOGIN)} state=${player?.state}",
+                )
                 playbackService?.pause(clearPlaybackRequest = true)
             }
             Player.State.READY,
@@ -610,7 +644,6 @@ class IvsPlayerFragment : PlayerFragment() {
                 }
             }
         }
-        updatePlayingState()
     }
 
     override fun seek(position: Long) {
@@ -663,7 +696,8 @@ class IvsPlayerFragment : PlayerFragment() {
         }
         val ivsPlayer = player ?: return
         // A fresh load starts a couple segments back, so reloading near-live lands
-        // FURTHER from the edge (e.g. 1.7s -> 2.4s). Skip unless genuinely behind.
+        // around the live edge floor (~1.8s–2.2s). Skip reload only when latency is
+        // already within the target drift threshold; otherwise reload to sync to the live edge.
         val latency = ivsPlayer.liveLatency.takeIf { it > 0L }
         val target = LiveLatencySettings.resolve(prefs).targetOffsetMs
         if (ivsPlayer.duration <= 0L && latency != null && latency <= target + GO_LIVE_SKIP_THRESHOLD_MS) {
@@ -675,6 +709,7 @@ class IvsPlayerFragment : PlayerFragment() {
         // Only an explicit tap jumps to live; auto paths always resume in place.
         ivsPlayer.setRebufferToLive(true)
         resetCatchupState()
+        lastBufferRecoveryTimeMs = 0L
         val duration = ivsPlayer.duration
         if (duration > 0L) {
             ivsPlayer.seekTo(duration)
@@ -710,9 +745,12 @@ class IvsPlayerFragment : PlayerFragment() {
                 if (binding.bufferingIndicator.isVisible) {
                     binding.bufferingIndicator.isVisible = false
                 }
-                val currentPosition = ivsPlayer.position
-                val bufferedPosition = ivsPlayer.bufferedPosition
-                val forwardBufferMs = (bufferedPosition - currentPosition).coerceAtLeast(0L)
+                val estimatedFallbackMs = KickLivePlayback.estimateLiveForwardBufferMs(
+                    latency,
+                    latencyConfig.rebufferMs,
+                    latencyConfig.maxBufferMs
+                )
+                val forwardBufferMs = computeEffectiveBufferMs(ivsPlayer, estimatedFallbackMs)
                 val now = SystemClock.uptimeMillis()
 
                 val targetQuality = getTargetQuality()
@@ -877,13 +915,24 @@ class IvsPlayerFragment : PlayerFragment() {
         val decoded = stats.decodedFrames
         val skippedStr = if (decoded > 0) "$dropped / $decoded" else "$dropped"
 
-        val pos = ivsPlayer.position
-        val buf = ivsPlayer.bufferedPosition
-        val bufferMs = (buf - pos).coerceAtLeast(0L)
-        val bufferStr = String.format(Locale.US, "%.2f sec.", bufferMs / 1000.0)
-
         val latMs = ivsPlayer.liveLatency.takeIf { it > 0 }
         val latStr = latMs?.let { String.format(Locale.US, "%.2f sec.", it / 1000.0) }
+
+        val isBuffering = ivsPlayer.state == Player.State.BUFFERING
+        val isPlaybackActive = ivsPlayer.state == Player.State.PLAYING || ivsPlayer.state == Player.State.READY
+        val bufferStr = when {
+            isBuffering || !isPlaybackActive -> "0.00 sec."
+            else -> {
+                val latencyConfig = LiveLatencySettings.resolve(prefs)
+                val fallbackBufferMs = KickLivePlayback.estimateLiveForwardBufferMs(
+                    latMs,
+                    latencyConfig.rebufferMs,
+                    latencyConfig.maxBufferMs
+                )
+                val effectiveBufferMs = computeEffectiveBufferMs(ivsPlayer, fallbackBufferMs)
+                String.format(Locale.US, "%.2f sec.", effectiveBufferMs / 1000.0)
+            }
+        }
 
         val codecs = q.codecs.takeIf { it.isNotBlank() }
         val backendVersion = "Amazon IVS ${ivsPlayer.version}"
@@ -901,6 +950,25 @@ class IvsPlayerFragment : PlayerFragment() {
             protocol = "HLS",
             backendVersion = backendVersion
         )
+    }
+
+    private fun isLiveRewoundSafe(): Boolean = runCatching { viewModel.isLiveRewound }.getOrDefault(false)
+
+    private fun computeEffectiveBufferMs(ivsPlayer: Player, fallbackMs: Long): Long {
+        if (ivsPlayer.state == Player.State.BUFFERING ||
+            ivsPlayer.state == Player.State.IDLE ||
+            ivsPlayer.state == Player.State.ENDED
+        ) {
+            return 0L
+        }
+        val pos = ivsPlayer.position
+        val buf = ivsPlayer.bufferedPosition
+        val rawBufferMs = (buf - pos).coerceAtLeast(0L)
+        return if (videoType == STREAM && !isLiveRewoundSafe() && (pos <= 0L || rawBufferMs > 60_000L)) {
+            fallbackMs
+        } else {
+            rawBufferMs
+        }
     }
 
     override fun changeQuality(selectedQuality: String?) {
@@ -1249,14 +1317,24 @@ class IvsPlayerFragment : PlayerFragment() {
                 }
                 backgroundSaverApplied =
                     prefs.getBoolean(AppConstants.PLAYER_DISABLE_BACKGROUND_VIDEO, true) &&
-                        applyAudioSaverCeiling(deferred = false)
+                        applyAudioSaverCeiling(deferred = true)
                 resumeOnStart = false
             } else {
                 playbackService?.setBackgroundPlaybackEnabled(false)
                 resumeOnStart = playbackService?.isPlaybackRequested() == true
+                DiagnosticLogger.logPause(
+                    callingContext = context,
+                    source = "IvsPlayerFragment.onStop",
+                    reason = "shouldKeepPlaybackAliveInBackground=false (state=${ivsPlayer.state})",
+                    isUserInitiated = false,
+                    engine = "AmazonIVS",
+                    details = "resumeOnStart=$resumeOnStart locked=${isScreenLockedOrOff()} pip=${activity?.isInPictureInPictureMode} channel=${arguments?.getString(KEY_CHANNEL_LOGIN)}",
+                )
                 if (ivsPlayer.state == Player.State.PLAYING) {
                     playbackService?.pause(clearPlaybackRequest = false)
                     updatePlayingState()
+                } else if (resumeOnStart) {
+                    playbackService?.pause(clearPlaybackRequest = false)
                 }
                 if (resumeOnStart) {
                     noteBackgroundPause()
@@ -1323,6 +1401,12 @@ class IvsPlayerFragment : PlayerFragment() {
                 networkLossGraceRunnable = null
                 if (!isAdded) return@Runnable
                 networkPauseApplied = true
+                DiagnosticLogger.logNonUiPause(
+                    context,
+                    "IvsPlayerFragment.onNetworkLost",
+                    "network loss grace elapsed",
+                    "channel=${arguments?.getString(KEY_CHANNEL_LOGIN)}"
+                )
                 player?.pause()
                 updatePlayingState()
             }
@@ -1437,6 +1521,35 @@ class IvsPlayerFragment : PlayerFragment() {
         }
     }
 
+    private var liveEndedRecoveryAttempts = 0
+    private var lastLiveEndedRecoveryTimeMs = 0L
+
+    private fun recoverFromLiveStreamEnded() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastLiveEndedRecoveryTimeMs > 20_000L) {
+            liveEndedRecoveryAttempts = 0
+        }
+        lastLiveEndedRecoveryTimeMs = now
+        liveEndedRecoveryAttempts++
+        if (liveEndedRecoveryAttempts > 3) {
+            playerDebugWarn("Live stream hit ENDED repeatedly ($liveEndedRecoveryAttempts times), aborting auto-recovery")
+            updatePlayingState()
+            return
+        }
+        playerDebugWarn("Live stream hit ENDED unexpectedly (attempt $liveEndedRecoveryAttempts); auto-recovering to live edge")
+        val ivsPlayer = player ?: return
+        ivsPlayer.setRebufferToLive(true)
+        resetCatchupState()
+        if (!reloadIvsLiveStreamWithFreshUrl("ended recovery")) {
+            val url = currentUrl ?: resolveStreamUrl()
+            if (!url.isNullOrBlank()) {
+                ivsPlayer.load(Uri.parse(url))
+                playbackService?.play()
+            }
+        }
+        updatePlayingState()
+    }
+
     private fun reloadIvsLiveStreamWithFreshUrl(reason: String): Boolean {
         val resolvedUrl = resolveStreamUrl()
         if (resolvedUrl.isNullOrBlank()) {
@@ -1523,8 +1636,8 @@ class IvsPlayerFragment : PlayerFragment() {
     companion object {
         private const val TAG = "IvsPlayerFragment"
         private const val KEY_RESUME_ON_START = "resume_on_start"
-        // Reloads start a couple segments back; skip when already near-live.
-        private const val GO_LIVE_SKIP_THRESHOLD_MS = 2_000L
+        // Reloads start a couple segments back; skip reload only when already within safe drift margin of target.
+        const val GO_LIVE_SKIP_THRESHOLD_MS = LiveLatencySettings.CATCHUP_DRIFT_THRESHOLD_MS
         // Brief VALIDATED-capability flaps recover on their own; only pause the
         // player when the loss outlasts this grace period.
         private const val NETWORK_LOSS_GRACE_MS = 4_000L

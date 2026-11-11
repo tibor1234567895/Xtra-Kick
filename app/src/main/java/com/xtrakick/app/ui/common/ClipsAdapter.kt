@@ -19,7 +19,7 @@ import coil3.request.target
 import coil3.request.transformations
 import coil3.transform.CircleCropTransformation
 import com.xtrakick.app.R
-import com.xtrakick.app.databinding.FragmentVideosListItemBinding
+import com.xtrakick.app.databinding.FragmentClipsListItemBinding
 import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.ui.channel.ChannelPagerFragmentDirections
 import com.xtrakick.app.ui.game.GameMediaFragmentDirections
@@ -41,11 +41,16 @@ class ClipsAdapter(
 
         override fun areContentsTheSame(oldItem: Clip, newItem: Clip): Boolean =
             oldItem.viewCount == newItem.viewCount &&
-                    oldItem.title == newItem.title
+                    oldItem.title == newItem.title &&
+                    oldItem.channelName == newItem.channelName &&
+                    oldItem.channelLogo == newItem.channelLogo &&
+                    oldItem.creatorName == newItem.creatorName &&
+                    oldItem.thumbnail == newItem.thumbnail &&
+                    oldItem.uploadDate == newItem.uploadDate
     }) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PagingViewHolder {
-        val binding = FragmentVideosListItemBinding.inflate(LayoutInflater.from(parent.context), parent, false)
+        val binding = FragmentClipsListItemBinding.inflate(LayoutInflater.from(parent.context), parent, false)
         return PagingViewHolder(binding, fragment, showGame, showChannel)
     }
 
@@ -54,7 +59,7 @@ class ClipsAdapter(
     }
 
     inner class PagingViewHolder(
-        private val binding: FragmentVideosListItemBinding,
+        private val binding: FragmentClipsListItemBinding,
         private val fragment: Fragment,
         private val showGame: Boolean,
         private val showChannel: Boolean,
@@ -67,25 +72,21 @@ class ClipsAdapter(
                         (fragment.activity as MainActivity).startClip(item)
                     }
                     root.setOnLongClickListener { showDownloadDialog(item); true }
-                    fragment.requireContext().imageLoader.enqueue(
-                        ImageRequest.Builder(fragment.requireContext()).apply {
-                            data(item.thumbnail)
-                            diskCachePolicy(CachePolicy.DISABLED)
-                            crossfade(true)
-                            target(thumbnail)
-                        }.build()
-                    )
-                    if (item.uploadDate != null) {
-                        val text = item.uploadDate.let { KickApiHelper.formatTimeString(context, it) }
-                        if (text != null) {
-                            date.visibility = View.VISIBLE
-                            date.text = text
-                        } else {
-                            date.visibility = View.GONE
-                        }
+                    val resolvedThumbnail = item.thumbnail
+                    thumbnail.visibility = View.VISIBLE
+                    if (!resolvedThumbnail.isNullOrBlank()) {
+                        fragment.requireContext().imageLoader.enqueue(
+                            ImageRequest.Builder(fragment.requireContext()).apply {
+                                data(resolvedThumbnail)
+                                diskCachePolicy(CachePolicy.DISABLED)
+                                crossfade(true)
+                                target(thumbnail)
+                            }.build()
+                        )
                     } else {
-                        date.visibility = View.GONE
+                        thumbnail.setImageDrawable(null)
                     }
+                    date.visibility = View.GONE
                     if (item.viewCount != null) {
                         views.visibility = View.VISIBLE
                         val count = item.viewCount
@@ -104,15 +105,18 @@ class ClipsAdapter(
                         duration.visibility = View.GONE
                     }
                     if (showChannel) {
+                        val effectiveChannelName = item.channelName ?: item.channelLogin
                         val channelListener: (View) -> Unit = {
-                            fragment.findNavController().navigate(
-                                ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(
-                                    channelId = item.channelId,
-                                    channelLogin = item.channelLogin,
-                                    channelName = item.channelName,
-                                    channelLogo = item.channelLogo,
+                            if (effectiveChannelName != null || item.channelId != null) {
+                                fragment.findNavController().navigate(
+                                    ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(
+                                        channelId = item.channelId,
+                                        channelLogin = item.channelLogin ?: item.channelName,
+                                        channelName = effectiveChannelName,
+                                        channelLogo = item.channelLogo,
+                                    )
                                 )
-                            )
+                            }
                         }
                         if (item.channelLogo != null) {
                             userImage.visibility = View.VISIBLE
@@ -129,25 +133,29 @@ class ClipsAdapter(
                             userImage.setOnClickListener(channelListener)
                         } else {
                             userImage.visibility = View.GONE
+                            userImage.setOnClickListener(null)
                         }
-                        if (item.channelName != null) {
+                        if (effectiveChannelName != null) {
                             username.visibility = View.VISIBLE
-                            username.text = if (item.channelLogin != null && !item.channelLogin.equals(item.channelName, true)) {
+                            username.text = if (item.channelLogin != null && !item.channelLogin.equals(effectiveChannelName, true)) {
                                 when (context.prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
-                                    "0" -> "${item.channelName}(${item.channelLogin})"
-                                    "1" -> item.channelName
+                                    "0" -> "${effectiveChannelName}(${item.channelLogin})"
+                                    "1" -> effectiveChannelName
                                     else -> item.channelLogin
                                 }
                             } else {
-                                item.channelName
+                                effectiveChannelName
                             }
                             username.setOnClickListener(channelListener)
                         } else {
                             username.visibility = View.GONE
+                            username.setOnClickListener(null)
                         }
                     } else {
                         userImage.visibility = View.GONE
+                        userImage.setOnClickListener(null)
                         username.visibility = View.GONE
+                        username.setOnClickListener(null)
                     }
                     if (item.title != null && item.title != "") {
                         title.visibility = View.VISIBLE
@@ -155,31 +163,67 @@ class ClipsAdapter(
                     } else {
                         title.visibility = View.GONE
                     }
-                    if (showGame && item.gameName != null) {
+                    val effectiveGameName = item.gameName ?: item.gameSlug
+                    if (showGame && effectiveGameName != null) {
                         val gameListener: (View) -> Unit = {
-                            val resolvedSlug = KickApiHelper.resolveEffectiveCategorySlug(item.gameSlug, item.gameName)
+                            val resolvedSlug = KickApiHelper.resolveEffectiveCategorySlug(item.gameSlug, effectiveGameName)
                             val resolvedId = KickApiHelper.sanitizeGameId(item.gameId, resolvedSlug)
                             fragment.findNavController().navigate(
                                 if (context.prefs().getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                                     GamePagerFragmentDirections.actionGlobalGamePagerFragment(
                                         gameId = resolvedId,
                                         gameSlug = resolvedSlug,
-                                        gameName = item.gameName
+                                        gameName = effectiveGameName
                                     )
                                 } else {
                                     GameMediaFragmentDirections.actionGlobalGameMediaFragment(
                                         gameId = resolvedId,
                                         gameSlug = resolvedSlug,
-                                        gameName = item.gameName
+                                        gameName = effectiveGameName
                                     )
                                 }
                             )
                         }
                         gameName.visibility = View.VISIBLE
-                        gameName.text = item.gameName
+                        gameName.text = effectiveGameName
                         gameName.setOnClickListener(gameListener)
                     } else {
                         gameName.visibility = View.GONE
+                        gameName.setOnClickListener(null)
+                    }
+                    val creatorDisplayName = item.creatorName ?: item.creatorLogin
+                    val relativeDate = item.uploadDate?.let {
+                        KickApiHelper.formatRelativeTimeString(it) ?: KickApiHelper.formatTimeString(context, it)
+                    }
+                    val clipperString = if (!creatorDisplayName.isNullOrBlank()) {
+                        context.getString(R.string.clipped_by, creatorDisplayName)
+                    } else null
+                    val combinedClipper = when {
+                        clipperString != null && !relativeDate.isNullOrBlank() -> "$clipperString • $relativeDate"
+                        clipperString != null -> clipperString
+                        !relativeDate.isNullOrBlank() -> relativeDate
+                        else -> null
+                    }
+                    if (combinedClipper != null) {
+                        clipper.visibility = View.VISIBLE
+                        clipper.text = combinedClipper
+                        if (!creatorDisplayName.isNullOrBlank()) {
+                            clipper.setOnClickListener {
+                                fragment.findNavController().navigate(
+                                    ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(
+                                        channelId = item.creatorId,
+                                        channelLogin = item.creatorLogin ?: creatorDisplayName,
+                                        channelName = creatorDisplayName,
+                                        channelLogo = item.creatorLogo,
+                                    )
+                                )
+                            }
+                        } else {
+                            clipper.setOnClickListener(null)
+                        }
+                    } else {
+                        clipper.visibility = View.GONE
+                        clipper.setOnClickListener(null)
                     }
                     options.setOnClickListener { it ->
                         PopupMenu(context, it).apply {

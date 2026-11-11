@@ -22,6 +22,7 @@ import com.amazonaws.ivs.player.PlayerException
 import com.amazonaws.ivs.player.Quality
 import com.xtrakick.app.ui.player.KickLivePlayback
 import com.xtrakick.app.util.AppConstants as AppC
+import com.xtrakick.app.util.DiagnosticLogger
 
 /**
  * IVS-native MultiPOV playback: one Amazon IVS player per slot.
@@ -371,6 +372,13 @@ class MultiPovIvsPlaybackController(
         } else {
             userPaused.add(key)
             playRequested.remove(key)
+            DiagnosticLogger.logPause(
+                callingContext = context,
+                source = "MultiPovIvsPlaybackController.togglePlayPause",
+                reason = "MultiPOV slot pause key=$key",
+                isUserInitiated = true,
+                engine = "AmazonIVS",
+            )
             runCatching { player.pause() }
             false
         }
@@ -382,6 +390,13 @@ class MultiPovIvsPlaybackController(
         if (paused) {
             userPaused.add(key)
             playRequested.remove(key)
+            DiagnosticLogger.logPause(
+                callingContext = context,
+                source = "MultiPovIvsPlaybackController.setPaused",
+                reason = "MultiPOV setPaused key=$key",
+                isUserInitiated = true,
+                engine = "AmazonIVS",
+            )
             runCatching { player.pause() }
         } else {
             userPaused.remove(key)
@@ -495,6 +510,13 @@ class MultiPovIvsPlaybackController(
     }
 
     fun pauseSecondaries() {
+        DiagnosticLogger.logPause(
+            callingContext = context,
+            source = "MultiPovIvsPlaybackController.pauseSecondaries",
+            reason = "Pause non-focused secondary streams",
+            isUserInitiated = true,
+            engine = "AmazonIVS",
+        )
         players.forEach { (key, player) ->
             if (key != focusedKey) {
                 playRequested.remove(key)
@@ -513,6 +535,13 @@ class MultiPovIvsPlaybackController(
     }
 
     fun pauseAll() {
+        DiagnosticLogger.logPause(
+            callingContext = context,
+            source = "MultiPovIvsPlaybackController.pauseAll",
+            reason = "Pause all MultiPOV streams",
+            isUserInitiated = true,
+            engine = "AmazonIVS",
+        )
         playRequested.clear()
         players.values.forEach { runCatching { it.pause() } }
     }

@@ -11,6 +11,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.Animatable
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -40,6 +42,7 @@ import androidx.viewpager2.widget.MarginPageTransformer
 import androidx.viewpager2.widget.ViewPager2
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.model.GlideUrl
+import com.bumptech.glide.request.target.Target
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.chip.Chip
@@ -63,21 +66,25 @@ import com.xtrakick.app.util.RouletteAnimationAssets
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlin.coroutines.resume
 import kotlin.math.abs
-import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -98,6 +105,7 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
     private var isClaiming = false
     private var pendingStreakPop = false
     private val cardAdapter = ChallengeCardAdapter()
+    private val preloadedDrawables = ConcurrentHashMap<String, Drawable>()
 
     // Roulette phase-machine animators and stage players (released in onStop/onDestroyView)
     private var reelAnimator: ValueAnimator? = null
@@ -193,6 +201,7 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         streakPopAnimator?.cancel()
         streakPopAnimator = null
         releaseStagePlayers()
+        preloadedDrawables.clear()
         _binding = null
         super.onDestroyView()
     }
@@ -218,7 +227,7 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         pollJob = null
     }
 
-    private suspend fun loadReward(isPeriodicRefresh: Boolean = false) {
+    private suspend fun loadReward(isPeriodicRefresh: Boolean = false, keepActiveCardView: Boolean = false) {
         if (!isPeriodicRefresh) {
             showLoading()
         }
@@ -253,18 +262,34 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
             selectedChallengeId = sorted.firstOrNull()?.id
         }
 
-        cardAdapter.notifyDataSetChanged()
+        if (!keepActiveCardView) {
+            cardAdapter.notifyDataSetChanged()
 
-        val peekMarginPx = if (sorted.size > 1) (20 * resources.displayMetrics.density).toInt() else 0
-        binding.cardViewPager.setPadding(peekMarginPx, 0, peekMarginPx, 0)
+            val peekMarginPx = if (sorted.size > 1) (20 * resources.displayMetrics.density).toInt() else 0
+            binding.cardViewPager.setPadding(peekMarginPx, 0, peekMarginPx, 0)
 
-        val selectedIndex = sorted.indexOfFirst { it.id == selectedChallengeId }.coerceAtLeast(0)
-        if (binding.cardViewPager.currentItem != selectedIndex) {
-            binding.cardViewPager.setCurrentItem(selectedIndex, false)
+            val selectedIndex = sorted.indexOfFirst { it.id == selectedChallengeId }.coerceAtLeast(0)
+            if (binding.cardViewPager.currentItem != selectedIndex) {
+                binding.cardViewPager.setCurrentItem(selectedIndex, false)
+            }
+
+            updateChallengeChips(sorted)
+            renderChallengeDetails(selectedChallenge, streak)
+        } else {
+            // Keep the active claimed card and celebrate view intact without clobbering images or interrupting 3D tilt
+            updateChallengeChips(sorted)
+            val isDailyRewardTab = selectedChallenge?.featured != true
+            val showStreak = isDailyRewardTab && (streak != null && streak > 0)
+            binding.streakContainer.isVisible = showStreak
+            if (showStreak) {
+                val days = streak.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                binding.streakText.text = resources.getQuantityString(R.plurals.daily_reward_streak, days, days)
+            }
+            if (pendingStreakPop) {
+                pendingStreakPop = false
+                if (showStreak) startStreakPop(binding.streakText)
+            }
         }
-
-        updateChallengeChips(sorted)
-        renderChallengeDetails(selectedChallenge, streak)
     }
 
     private fun showLoading() {
@@ -509,7 +534,9 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
     private fun showKnownWinnerDetails(dailyChallenge: KickDailyChallenge?) {
         if (dailyChallenge == null) return
         val currentBinding = _binding ?: return
-        currentBinding.streakContainer.isVisible = false
+        val isDailyRewardTab = dailyChallenge.featured != true
+        val streak = lastKnownStreak
+        currentBinding.streakContainer.isVisible = isDailyRewardTab && (streak != null && streak > 0)
         currentBinding.watchProgress.isVisible = false
         currentBinding.progressText.isVisible = false
         val winner = dailyChallenge.winnerName
@@ -517,6 +544,7 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         val label = listOfNotNull(winner, rarity?.rarityLabel()).joinToString(" - ")
         currentBinding.winnerRarityText.isVisible = label.isNotBlank()
         currentBinding.winnerRarityText.text = label
+        rarity?.let { currentBinding.winnerRarityText.setTextColor(rarityColor(it)) }
 
         val isStandardDaily = dailyChallenge.recurrence.equals("daily", ignoreCase = true) && !dailyChallenge.featured
         val prefKey = if (isStandardDaily) AppConstants.REWARD_LAST_DAILY_CARD_URL else "${AppConstants.REWARD_LAST_DAILY_CARD_URL}_${dailyChallenge.id}"
@@ -547,8 +575,8 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         isClaiming = true
         currentBinding.cardViewPager.isUserInputEnabled = false
         currentBinding.claimButton.isEnabled = false
+        currentBinding.claimButton.animate().alpha(0.5f).setDuration(200L).start()
         currentBinding.statusText.setText(R.string.daily_reward_claiming)
-        currentBinding.loadingIndicator.isVisible = true
         lifecycleScope.launch {
             val result = try {
                 rewardsRepository.claimDailyChallenge(activeChallenge.id)
@@ -556,9 +584,9 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
                 com.xtrakick.app.util.DiagnosticLogger.w("KickRewards", "claimDailyChallenge failed: ${e.message}", e)
                 isClaiming = false
                 _binding?.let { b ->
-                    b.loadingIndicator.isVisible = false
                     b.statusText.setText(R.string.daily_reward_claim_failed)
                     b.claimButton.isEnabled = true
+                    b.claimButton.alpha = 1f
                     b.cardViewPager.isUserInputEnabled = true
                 }
                 return@launch
@@ -579,8 +607,8 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         isClaiming = true
         currentBinding.cardViewPager.isUserInputEnabled = false
         currentBinding.claimButton.isEnabled = false
+        currentBinding.claimButton.animate().alpha(0.5f).setDuration(200L).start()
         currentBinding.statusText.setText(R.string.daily_reward_claiming)
-        currentBinding.loadingIndicator.isVisible = true
 
         lifecycleScope.launch {
             // Debug sim is 1:1 claim data shape, unlimited retries: replay the persisted JSON of
@@ -629,15 +657,44 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         }
     }
 
+    /** Preloads all candidate roulette and winner assets into memory/disk cache concurrently. */
+    private fun startPreloadingRouletteAssets(
+        context: Context,
+        urls: List<String>,
+        tileWidth: Int,
+        tileHeight: Int,
+        winnerUrl: String,
+    ): kotlinx.coroutines.Deferred<Unit> = lifecycleScope.async(Dispatchers.IO) {
+        val appContext = context.applicationContext ?: return@async
+        urls.map { url ->
+            async {
+                val isWinnerCard = (url == winnerUrl)
+                val targetW = if (isWinnerCard) Target.SIZE_ORIGINAL else tileWidth
+                val targetH = if (isWinnerCard) Target.SIZE_ORIGINAL else tileHeight
+                runCatching {
+                    val drawable = Glide.with(appContext)
+                        .asDrawable()
+                        .load(buildKickGlideUrl(url))
+                        .dontTransform()
+                        .submit(targetW, targetH)
+                        .get()
+                    if (drawable != null) {
+                        preloadedDrawables[url] = drawable
+                    }
+                }
+            }
+        }.awaitAll()
+    }
+
     /**
      * 1:1 port of the kick.com daily-reward claim animation (chunk `2fak-f4t220l6.js`):
      *
-     *  openBox   — unbox.webm one-shot replaces the idle crate (server URL first)
+     *  openBox   — unbox.webm one-shot replaces the idle crate seamlessly without black flash
      *  NEAR      — during its last 1000ms the reel appears and starts spinning; crate fades 300ms
      *  spin      — reel travels restIndex → targetIndex at 3.5 tiles/s, cubic-bezier(0.18, 0.58, 0.12, 1)
-     *  landing   — winner tile shrinks 1.2 → 0.9 then pops 0.9 → 1.3, 700ms each, bezier(0.45, 0.05, 0.55, 0.95)
-     *  handoff   — reel fades + squishes to 0.92 over 700ms while the winner card mounts simultaneously
-     *  celebrate — card entrance 1.5 → 1, tilt 23° X/Y 3s × 5 cycles, streak count pop
+     *  landing   — winner tile shrinks slightly (180ms) then pops out punchily (320ms, overshoot)
+     *  handoff   — reel fades + squishes smoothly into the full-size winner card
+     *  celebrate — card entrance, 3D perspective tilt 23° X/Y 3s × 5 cycles, streak count pop
      *
      * Every failure degrades to showing the winner immediately, never blocks the reward.
      */
@@ -658,31 +715,42 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         val winner = result.winner
         val winnerUrl = safeRewardImageUrl(winner?.cardUrl) ?: FALLBACK_ROULETTE_URLS.first()
         shareCardUrl = safeRewardImageUrl(winner?.cardUrl)
-        // Warm the winner-card artwork so the reveal is instant once the reel hands off
-        context?.let { ctx -> runCatching { Glide.with(ctx).load(buildKickGlideUrl(winnerUrl)).preload() } }
 
         val refreshAfterClaim = !isSimulated
 
         val itemBinding = if (isAdded) getActiveCardViewHolder()?.itemBinding else null
         if (itemBinding == null) {
-            celebrate(winner, refreshAfterClaim)
+            celebrate(activeChallenge, winner, refreshAfterClaim)
             return
         }
 
         if (isReducedMotionEnabled()) {
             itemBinding.rouletteContainer.isVisible = false
             showRewardImage(itemBinding.rewardImage, winnerUrl)
-            celebrate(winner, refreshAfterClaim)
+            celebrate(activeChallenge, winner, refreshAfterClaim)
             return
         }
 
         val appContext = context ?: run {
-            celebrate(winner, refreshAfterClaim)
+            celebrate(activeChallenge, winner, refreshAfterClaim)
             return
         }
 
-        // ---- Phase: openBox — the unbox video takes over from the idle crate ----
-        itemBinding.rewardImage.isVisible = false
+        // Measure tile dimensions for preloading and layout
+        val containerWidth = currentBinding.cardViewPager.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        val density = resources.displayMetrics.density
+        val gapPx = (REEL_GAP_DP * density).roundToInt()
+        val tileWidth = ((containerWidth - 2f * gapPx) / VISIBLE_TILES).roundToInt()
+        val tileHeight = (tileWidth * REEL_TILE_H_RATIO).roundToInt()
+
+        // Extract all candidate image URLs and warm them up in memory/disk cache concurrently
+        val rouletteUrls = result.roulette.mapNotNull { safeRewardImageUrl(it.itemUrl) }
+        val effectiveRouletteUrls = if (rouletteUrls.isNotEmpty()) rouletteUrls else FALLBACK_ROULETTE_URLS
+        val allUrlsToPreload = (effectiveRouletteUrls + listOfNotNull(winnerUrl, safeRewardImageUrl(winner?.thumbnailUrl)) + FALLBACK_ROULETTE_URLS).distinct()
+        val preloadJob = startPreloadingRouletteAssets(appContext, allUrlsToPreload, tileWidth, tileHeight, winnerUrl)
+
+        // ---- Phase: openBox — prepare stage and keep crate image visible until unbox video renders ----
         itemBinding.reelBackgroundVideo.isVisible = false
         itemBinding.rouletteStrip.isVisible = false
         val container = itemBinding.rouletteContainer
@@ -693,26 +761,35 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         itemBinding.stageUnboxVideo.alpha = 1f
         currentBinding.loadingIndicator.isVisible = false
 
+        // Fade out claim button cleanly during the unboxing sequence
+        currentBinding.claimButton.animate().alpha(0f).setDuration(250L).withEndAction {
+            currentBinding.claimButton.isVisible = false
+            currentBinding.claimButton.alpha = 1f
+        }.start()
+
         startStagePlayers(appContext, itemBinding, safeRewardImageUrl(activeChallenge.unboxAnimationUrl))
 
         val nearFired = awaitOpenBoxNearComplete()
+        itemBinding.rewardImage.isVisible = false
         if (isClaimHostGone()) {
             isClaiming = false
             return
         }
+
+        // Await in-flight image preloads (majority already completed during the ~1.7s unbox playback)
+        withTimeoutOrNull(1200L) { preloadJob.await() }
 
         if (!nearFired) {
             // Unbox video missing/ended before the spin window — reveal the reward directly
             releaseStagePlayers()
             container.isVisible = false
             showRewardImage(itemBinding.rewardImage, winnerUrl)
-            celebrate(winner, refreshAfterClaim)
+            celebrate(activeChallenge, winner, refreshAfterClaim)
             return
         }
 
         if (result.roulette.isEmpty()) {
-            // Event-crate claims (e.g. Trick or Treat) return an empty roulette and a placeholder
-            // winner, so there is no reel data to travel: play the burst beat, then reveal directly
+            // Event-crate claims (e.g. Trick or Treat) return an empty roulette: play the burst beat, then reveal directly
             showReelBackgroundBeat(itemBinding)
             delay(NEAR_COMPLETE_MS)
             if (isClaimHostGone()) {
@@ -724,23 +801,26 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
                 isClaiming = false
                 return
             }
-            celebrate(winner, refreshAfterClaim)
+            celebrate(activeChallenge, winner, refreshAfterClaim)
             return
         }
 
         val strip = runCatching {
-            ReelStripBuilder.buildFixedReelStrip(result.roulette, winner?.id ?: result.roulette.first().id)
+            ReelStripBuilder.buildFixedReelStrip(
+                rewards = result.roulette,
+                winningRewardId = winner?.id ?: result.roulette.first().id,
+                leadInCount = 2,
+            )
         }.getOrElse {
-            // kick.com throws on an unknown winner id; degrade to the first second-copy tile
-            ReelStripBuilder.buildFixedReelStrip(result.roulette, result.roulette.first().id)
+            ReelStripBuilder.buildFixedReelStrip(result.roulette, result.roulette.first().id, leadInCount = 2)
         }
 
-        runReelPhase(itemBinding, strip, winnerUrl)
+        runReelPhase(itemBinding, strip, winnerUrl, tileWidth, tileHeight, gapPx)
         if (isClaimHostGone()) {
             isClaiming = false
             return
         }
-        celebrate(winner, refreshAfterClaim)
+        celebrate(activeChallenge, winner, refreshAfterClaim)
     }
 
     /** Waits for the unbox video's last 1000ms (kick.com's NEAR trigger). Degrades on failure. */
@@ -766,19 +846,18 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         itemBinding: ItemRewardCardPageBinding,
         strip: ReelStripBuilder.FixedReelStrip,
         winnerUrl: String,
+        tileWidth: Int,
+        tileHeight: Int,
+        gapPx: Int,
     ) {
         val container = itemBinding.rouletteContainer
         val stripView = itemBinding.rouletteStrip
 
-        // kick.com pops the reel in above the crate, which fades out over 300ms
         stripView.isVisible = true
+        stripView.alpha = 0f
         showReelBackgroundBeat(itemBinding)
 
-        // 3 visible tiles separated by 8dp gaps, tile height = width * 160/120 (kick.com design)
         val containerWidth = container.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
-        val gapPx = (REEL_GAP_DP * resources.displayMetrics.density).roundToInt()
-        val tileWidth = ((containerWidth - 2f * gapPx) / VISIBLE_TILES).roundToInt()
-        val tileHeight = (tileWidth * REEL_TILE_H_RATIO).roundToInt()
 
         stripView.removeAllViews()
         val inflater = LayoutInflater.from(context)
@@ -791,7 +870,14 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
                 marginEnd = gapPx
             }
             val itemImageUrl = safeRewardImageUrl(item.itemUrl)
-            if (itemImageUrl != null) {
+            val cached = itemImageUrl?.let { preloadedDrawables[it] }
+            if (cached != null) {
+                val drawable = cached.constantState?.newDrawable(resources) ?: cached
+                slotBinding.slotImage.setImageDrawable(drawable)
+                if (drawable is Animatable) {
+                    drawable.start()
+                }
+            } else if (itemImageUrl != null) {
                 Glide.with(this@KickDailyRewardDialog)
                     .load(buildKickGlideUrl(itemImageUrl))
                     .fallback(R.drawable.ic_kick_gem)
@@ -806,11 +892,26 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         }
 
         val pitch = tileWidth + gapPx
+        val invPitch = 1f / pitch
+        val halfTileWidth = tileWidth / 2f
         val centerX = containerWidth / 2f
-        val restX = centerX - tileWidth / 2f - strip.restIndex * pitch
-        val targetX = centerX - tileWidth / 2f - strip.targetIndex * pitch
+        val restX = centerX - halfTileWidth - strip.restIndex * pitch
+        val targetX = centerX - halfTileWidth - strip.targetIndex * pitch
         val winnerIndex = strip.targetIndex.coerceIn(tiles.indices)
         stripView.translationX = restX
+
+        fun updateTileTransforms(x: Float) {
+            for (i in tiles.indices) {
+                val tile = tiles[i]
+                val tileCenter = tile.left + x + halfTileWidth
+                val distance = abs(tileCenter - centerX)
+                val fraction = (1f - distance * invPitch).coerceIn(0f, 1f)
+                val scale = SIDE_TILE_SCALE + (CENTER_TILE_SCALE - SIDE_TILE_SCALE) * fraction
+                tile.scaleX = scale
+                tile.scaleY = scale
+                tile.alpha = 0.55f + 0.45f * fraction
+            }
+        }
 
         // One layout pass so the per-tile scale formula sees real positions
         stripView.awaitNextLayout()
@@ -818,6 +919,10 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
             isClaiming = false
             return
         }
+
+        // Apply starting tile transforms before becoming visible
+        updateTileTransforms(restX)
+        stripView.animate().alpha(1f).setDuration(CRATE_FADE_MS).start()
 
         // Spin: |targetIndex - restIndex| tiles at 3.5 tiles/s, cubic-bezier(0.18, 0.58, 0.12, 1)
         val spinDurationMs =
@@ -832,19 +937,7 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
                 }
                 val x = va.animatedValue as Float
                 stripView.translationX = x
-                for (i in tiles.indices) {
-                    val tile = tiles[i]
-                    val tileCenter = tile.left + x + tileWidth / 2f
-                    val distance = abs(tileCenter - centerX)
-                    // Winner rides at the center scale; passing tiles follow the distance falloff
-                    val scale = if (i == winnerIndex) {
-                        CENTER_TILE_SCALE
-                    } else {
-                        SIDE_TILE_SCALE + (CENTER_TILE_SCALE - SIDE_TILE_SCALE) * max(0f, 1f - distance / pitch)
-                    }
-                    tile.scaleX = scale
-                    tile.scaleY = scale
-                }
+                updateTileTransforms(x)
             }
         }
         reelAnimator = spinAnimator
@@ -855,41 +948,62 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
             return
         }
 
-        // Landing: winner tile shrinks 1.2 → 0.9, then pops 0.9 → 1.3 (700ms each)
+        // Landing: dim non-winning tiles so winner commands attention
+        for (i in tiles.indices) {
+            if (i != winnerIndex) {
+                tiles[i].animate().alpha(0.2f).setDuration(250L).start()
+            }
+        }
+
+        // Punchy winner pop: shrink 1.2 -> 0.95 (180ms), then pop 0.95 -> 1.35 (320ms, overshoot)
         val winnerTile = tiles[winnerIndex]
-        scaleAnimator(winnerTile, CENTER_TILE_SCALE, LANDING_SHRINK_SCALE, LANDING_MS, LANDING_EASING).awaitCompletion()
+        scaleAnimator(winnerTile, CENTER_TILE_SCALE, LANDING_SHRINK_SCALE, LANDING_SHRINK_MS, LANDING_SHRINK_EASING).awaitCompletion()
 
         if (isClaimHostGone()) {
             isClaiming = false
             return
         }
 
-        scaleAnimator(winnerTile, LANDING_SHRINK_SCALE, LANDING_GROW_SCALE, LANDING_MS, LANDING_EASING).awaitCompletion()
+        scaleAnimator(winnerTile, LANDING_SHRINK_SCALE, LANDING_GROW_SCALE, LANDING_GROW_MS, LANDING_GROW_EASING).awaitCompletion()
 
         if (isClaimHostGone()) {
             isClaiming = false
             return
         }
 
-        // Handoff: reel fades + squishes to 0.92 over 700ms while the winner card mounts
+        delay(180L)
+
+        // Handoff: seamless morph into full-size winner card
         runHandoff(itemBinding, winnerUrl)
     }
 
-    /** Reveals the glitch-particle loop and fades the crate out — kick.com's reel-in beat. */
+    /** Fades out unbox crate, revealing the already-looping glitch-particle background video. */
     private fun showReelBackgroundBeat(itemBinding: ItemRewardCardPageBinding) {
-        itemBinding.reelBackgroundVideo.isVisible = true
         itemBinding.stageUnboxVideo.animate().alpha(0f).setDuration(CRATE_FADE_MS).start()
-        backgroundPlayer?.let { player ->
-            itemBinding.reelBackgroundVideo.player = player
-            backgroundPlayerView = itemBinding.reelBackgroundVideo
-        }
     }
 
-    /** Handoff: stage fades + squishes to 0.92 while the winner card mounts; ends with tilt + player release. */
+    /** Handoff: stage fades + squishes while the winner card morphs smoothly from the tile pop. */
     private suspend fun runHandoff(itemBinding: ItemRewardCardPageBinding, winnerUrl: String) {
         val container = itemBinding.rouletteContainer
-        showRewardImage(itemBinding.rewardImage, winnerUrl)
-        startCardEntrance(itemBinding.rewardImage)
+        val imageView = itemBinding.rewardImage
+
+        val cachedWinner = preloadedDrawables[winnerUrl]
+        if (cachedWinner != null) {
+            val drawable = cachedWinner.constantState?.newDrawable(resources) ?: cachedWinner
+            imageView.setImageDrawable(drawable)
+            if (drawable is Animatable) {
+                drawable.start()
+            }
+        } else {
+            showRewardImage(imageView, winnerUrl)
+        }
+        imageView.isVisible = true
+        imageView.alpha = 0f
+        imageView.scaleX = LANDING_GROW_SCALE
+        imageView.scaleY = LANDING_GROW_SCALE
+        imageView.rotationX = 0f
+        imageView.rotationY = 0f
+
         val handoff = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = HANDOFF_MS
             interpolator = HANDOFF_EASING
@@ -900,9 +1014,14 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
                 }
                 val fraction = va.animatedValue as Float
                 container.alpha = 1f - fraction
-                val scale = 1f + (HANDOFF_END_SCALE - 1f) * fraction
-                container.scaleX = scale
-                container.scaleY = scale
+                val stageScale = 1f - 0.08f * fraction
+                container.scaleX = stageScale
+                container.scaleY = stageScale
+
+                imageView.alpha = fraction
+                val cardScale = LANDING_GROW_SCALE - (LANDING_GROW_SCALE - 1f) * fraction
+                imageView.scaleX = cardScale
+                imageView.scaleY = cardScale
             }
         }
         handoffAnimator = handoff
@@ -916,29 +1035,49 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         container.alpha = 1f
         container.scaleX = 1f
         container.scaleY = 1f
+        imageView.alpha = 1f
+        imageView.scaleX = 1f
+        imageView.scaleY = 1f
+
         // Web starts the card tilt right as the reel hands off (~700ms after HO started)
-        startCardTilt(itemBinding.rewardImage)
+        startCardTilt(imageView)
         releaseStagePlayers()
     }
 
-    private fun celebrate(winner: KickDailyRewardWinner?, refresh: Boolean) {
+    private fun celebrate(
+        activeChallenge: KickDailyChallenge,
+        winner: KickDailyRewardWinner?,
+        refresh: Boolean,
+    ) {
         val currentBinding = _binding ?: run {
             isClaiming = false
             return
         }
         val rarity = winner?.rarity?.rarityLabel()
+        val rarityColor = winner?.rarity?.let { rarityColor(it) } ?: COLOR_KICK_GREEN
         currentBinding.winnerRarityText.isVisible = rarity != null
         currentBinding.winnerRarityText.text = rarity?.let { getString(R.string.daily_reward_rarity, it) }
+        currentBinding.winnerRarityText.setTextColor(rarityColor)
         currentBinding.statusText.setText(R.string.daily_reward_claimed)
         currentBinding.claimButton.isVisible = false
         currentBinding.shareButton.isVisible = shareCardUrl != null && hasShareUsername()
         currentBinding.cardViewPager.isUserInputEnabled = true
         currentBinding.loadingIndicator.isVisible = false
         isClaiming = false
+
+        // Update in-memory active challenge so it reflects claimed status immediately
+        val updatedChallenge = activeChallenge.copy(
+            status = KickRewardsPolicy.STATUS_CLAIMED,
+            winnerName = winner?.id,
+            winnerRarity = winner?.rarity,
+            winnerCardUrl = winner?.cardUrl ?: shareCardUrl,
+        )
+        challenges = challenges.map { if (it.id == activeChallenge.id) updatedChallenge else it }
+
         if (refresh) {
             pendingStreakPop = true
             lifecycleScope.launch {
-                loadReward(isPeriodicRefresh = true)
+                loadReward(isPeriodicRefresh = true, keepActiveCardView = true)
             }
         }
     }
@@ -952,6 +1091,7 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         val unboxUri = RouletteAnimationAssets.unboxSourceUri(appContext, unboxServerUrl)
         val defaultUri = RouletteAnimationAssets.unboxSourceUri(appContext, null)
         var usingDefaultUnbox = unboxUri == defaultUri
+        var firstFrameRendered = false
         unboxPlayer = ExoPlayer.Builder(appContext).build().apply {
             setMediaItem(MediaItem.fromUri(unboxUri))
             volume = 0f
@@ -959,6 +1099,12 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
             playWhenReady = true
             itemBinding.stageUnboxVideo.player = this
             addListener(object : Player.Listener {
+                override fun onRenderedFirstFrame() {
+                    if (!firstFrameRendered) {
+                        firstFrameRendered = true
+                        itemBinding.rewardImage.isVisible = false
+                    }
+                }
                 override fun onPlayerError(error: PlaybackException) {
                     // Server-hosted video unplayable — swap once to kick.com's own unbox.webm
                     if (!usingDefaultUnbox) {
@@ -971,14 +1117,17 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
             prepare()
         }
         unboxPlayerView = itemBinding.stageUnboxVideo
-        // Buffers while the unbox video plays; attached to the reel background at spin start
+        // Buffers & loops seamlessly underneath the unbox video; surface ready for the spin handoff
         backgroundPlayer = ExoPlayer.Builder(appContext).build().apply {
             setMediaItem(MediaItem.fromUri(RouletteAnimationAssets.backgroundSourceUri(appContext)))
             volume = 0f
             repeatMode = Player.REPEAT_MODE_ONE
             playWhenReady = true
+            itemBinding.reelBackgroundVideo.player = this
             prepare()
         }
+        backgroundPlayerView = itemBinding.reelBackgroundVideo
+        itemBinding.reelBackgroundVideo.isVisible = true
     }
 
     private fun releaseStagePlayers() {
@@ -1017,12 +1166,21 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         imageView.animate().cancel()
         imageView.rotationX = 0f
         imageView.rotationY = 0f
-        Glide.with(this)
-            .load(buildKickGlideUrl(url))
-            .fallback(R.drawable.ic_kick_gem)
-            .error(R.drawable.ic_kick_gem)
-            .dontTransform()
-            .into(imageView)
+        val cached = preloadedDrawables[url]
+        if (cached != null) {
+            val drawable = cached.constantState?.newDrawable(resources) ?: cached
+            imageView.setImageDrawable(drawable)
+            if (drawable is Animatable) {
+                drawable.start()
+            }
+        } else {
+            Glide.with(this)
+                .load(buildKickGlideUrl(url))
+                .fallback(R.drawable.ic_kick_gem)
+                .error(R.drawable.ic_kick_gem)
+                .dontTransform()
+                .into(imageView)
+        }
     }
 
     /** kick.com entrance: card scales 1.5 → 1 over 700ms, bezier(0.45, 0.05, 0.55, 0.95). */
@@ -1256,10 +1414,19 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
                 }
 
                 if (imageUrl != null) {
-                    Glide.with(this@KickDailyRewardDialog)
-                        .load(buildKickGlideUrl(imageUrl))
-                        .dontTransform()
-                        .into(itemBinding.rewardImage)
+                    val cached = preloadedDrawables[imageUrl]
+                    if (cached != null) {
+                        val drawable = cached.constantState?.newDrawable(resources) ?: cached
+                        itemBinding.rewardImage.setImageDrawable(drawable)
+                        if (drawable is Animatable) {
+                            drawable.start()
+                        }
+                    } else {
+                        Glide.with(this@KickDailyRewardDialog)
+                            .load(buildKickGlideUrl(imageUrl))
+                            .dontTransform()
+                            .into(itemBinding.rewardImage)
+                    }
                 } else {
                     Glide.with(this@KickDailyRewardDialog).clear(itemBinding.rewardImage)
                     itemBinding.rewardImage.setImageDrawable(null)
@@ -1293,18 +1460,18 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         private const val COLOR_KICK_GREEN = 0xFF53FC18.toInt()
         private const val COLOR_KICK_GREEN_DISABLED = 0x4D53FC18.toInt()
 
-        // --- kick.com daily-rewards roulette constants, decoded 1:1 from their minified chunks ---
+        // --- kick.com daily-rewards roulette constants, decoded from minified chunks & tuned for fluid mobile feel ---
         private const val VISIBLE_TILES = 3                 // el
         private const val REEL_GAP_DP = 8f                  // ei
         private const val REEL_TILE_H_RATIO = 160f / 120f   // tile height = width * 160/120
         private const val SPIN_TILES_PER_SECOND = 3.5f      // eo
         private const val CENTER_TILE_SCALE = 1.2f          // ep
         private const val SIDE_TILE_SCALE = 0.8f            // eg
-        private const val LANDING_MS = 700L                 // ec / ed
-        private const val LANDING_SHRINK_SCALE = 0.9f       // eu
-        private const val LANDING_GROW_SCALE = 1.3f         // ef
-        private const val HANDOFF_MS = 700L                 // M
-        private const val HANDOFF_END_SCALE = 0.92f
+        private const val LANDING_SHRINK_MS = 180L
+        private const val LANDING_GROW_MS = 320L
+        private const val LANDING_SHRINK_SCALE = 0.95f
+        private const val LANDING_GROW_SCALE = 1.35f
+        private const val HANDOFF_MS = 420L                 // M
         private const val CRATE_FADE_MS = 300L
         private const val CARD_ENTRANCE_MS = 700L           // k
         private const val CARD_ENTRANCE_INITIAL_SCALE = 1.5f // y
@@ -1319,8 +1486,9 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         private const val DEFAULT_UNBOX_DURATION_MS = 2680L
 
         private val SPIN_EASING = PathInterpolator(0.18f, 0.58f, 0.12f, 1f)
-        private val LANDING_EASING = PathInterpolator(0.45f, 0.05f, 0.55f, 0.95f)
-        private val HANDOFF_EASING = PathInterpolator(0.4f, 0f, 1f, 1f)
+        private val LANDING_SHRINK_EASING = PathInterpolator(0.4f, 0f, 0.6f, 1f)
+        private val LANDING_GROW_EASING = PathInterpolator(0.15f, 0.85f, 0.35f, 1.2f)
+        private val HANDOFF_EASING = PathInterpolator(0.2f, 0.8f, 0.3f, 1f)
         private val CARD_ENTRANCE_EASING = PathInterpolator(0.45f, 0.05f, 0.55f, 0.95f)
 
         private val FALLBACK_ROULETTE_URLS = listOf(

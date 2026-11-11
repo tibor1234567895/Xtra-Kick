@@ -318,6 +318,15 @@ object KickApiHelper {
         return parseIso8601DateUTC(iso8601date)?.let { formatTime(context, it) }
     }
 
+    fun formatRelativeTimeString(iso8601date: String): String? {
+        val date = parseIso8601DateUTC(iso8601date) ?: return null
+        return DateUtils.getRelativeTimeSpanString(
+            date,
+            System.currentTimeMillis(),
+            DateUtils.MINUTE_IN_MILLIS
+        ).toString()
+    }
+
     fun formatTime(context: Context, date: Long): String {
         val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val currentYear = Year.now().value

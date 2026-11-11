@@ -81,16 +81,17 @@ class FollowedChannelsAdapter(
                             }.build()
                         )
                     }
-                    if (item.channelName != null) {
+                    val effectiveChannelName = item.channelName ?: item.channelLogin
+                    if (effectiveChannelName != null) {
                         username.visibility = View.VISIBLE
-                        username.text = if (item.channelLogin != null && !item.channelLogin.equals(item.channelName, true)) {
+                        username.text = if (item.channelLogin != null && item.channelName != null && !item.channelLogin.equals(item.channelName, true)) {
                             when (context.prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
                                 "0" -> "${item.channelName}(${item.channelLogin})"
                                 "1" -> item.channelName
                                 else -> item.channelLogin
                             }
                         } else {
-                            item.channelName
+                            effectiveChannelName
                         }
                     } else {
                         username.visibility = View.GONE

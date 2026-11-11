@@ -977,6 +977,11 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="debug_logs_diagnostics">Registro de archivos de diagnóstico</string>
     <string name="diagnostic_file_logging">Escribir archivo de registro de diagnóstico</string>
     <string name="diagnostic_file_logging_summary">Los cierres inesperados siempre se registran. Activado, las advertencias y errores seleccionados también se escriben en el almacenamiento privado de la app para verlos y compartirlos después.</string>
+    <string name="debug_logs_pause_diagnostics">Diagnóstico y registros de pausas</string>
+    <string name="debug_log_all_pauses">Registrar todas las pausas y paradas de reproducción</string>
+    <string name="debug_log_all_pauses_summary">Captura cada pausa, detención, interrupción y cambio de estado con contexto detallado del dispositivo, red y audio</string>
+    <string name="debug_log_non_user_pauses">Registrar pausas no iniciadas por el usuario</string>
+    <string name="debug_log_non_user_pauses_summary">Etiquetar y registrar específicamente pausas externas a la interfaz como pérdida de foco de audio, desconexión de auriculares o eventos en segundo plano</string>
     <string name="diagnostic_log_level">Nivel mínimo de diagnóstico</string>
     <string name="diagnostic_log_level_crash">Solo cierres inesperados</string>
     <string name="diagnostic_log_level_error">Error y cierre inesperado</string>
@@ -987,6 +992,8 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="diagnostic_log_share_empty">Aún no se ha escrito ningún registro de diagnóstico</string>
     <string name="diagnostic_log_status">%1$s • %2$d entradas</string>
     <string name="diagnostic_log_preview_truncated">Mostrando los últimos ~%1$d KB</string>
+    <string name="diagnostic_log_copy">Copiar</string>
+    <string name="diagnostic_log_copied">Registro de diagnóstico copiado al portapapeles</string>
     <string name="diagnostic_log_clear_action">Limpiar</string>
     <string name="diagnostic_log_share_title">Compartir registro de diagnóstico</string>
     <string name="diagnostic_log_test">Escribir entrada de diagnóstico de prueba</string>
@@ -1243,6 +1250,7 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="clip_set_end">Fijar fin</string>
     <string name="cancel">Cancelar</string>
     <string name="clip_created_subtitle">Clip de %1$s · %2$ds</string>
+    <string name="clipped_by">Clip creado por %1$s</string>
     <string name="copy_link">Copiar enlace</string>
     <string name="link_copied_to_clipboard">Enlace copiado al portapapeles</string>
     <string name="share_clip">Compartir clip</string>
@@ -1268,4 +1276,6 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="rewind_unavailable">El rebobinado no está disponible para esta transmisión</string>
     <string name="stream_event_tag">Evento: %1$s</string>
     <string name="videos_load_failed">No se pudieron cargar los vídeos. Inténtalo de nuevo.</string>
+    <string name="crash_reports_title">Enviar informes de fallos</string>
+    <string name="crash_reports_summary">Activado de forma predeterminada. Envía la pila de llamadas del fallo y datos básicos de la app, Android, CPU y reproductor para corregir errores. Sin identificadores de cuenta o dispositivo, mensajes de excepción ni registros de diagnóstico.</string>
 </resources>

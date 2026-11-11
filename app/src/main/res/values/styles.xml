@@ -12,6 +12,9 @@
         <item name="bottomSheetButtonStyle">@style/BottomSheetButton</item>
         <item name="elevatedButtonStyle">@style/Widget.Material3.Button.ElevatedButton</item>
         <item name="dialogButtonStyle">@style/Widget.Material3.Button.TextButton.Dialog</item>
+        <item name="tonalButtonStyle">@style/Widget.Material3.Button.TonalButton</item>
+        <item name="exposedDropdownLayoutStyle">@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu</item>
+        <item name="outlinedTextInputLayoutStyle">@style/Widget.Material3.TextInputLayout.OutlinedBox</item>
         <item name="primaryButtonColor">@color/accent</item>
         <item name="primaryButtonTextColor">@android:color/white</item>
         <item name="primaryButtonStyle">@style/MaterialPrimaryButton</item>
@@ -38,6 +41,9 @@
         <item name="bottomSheetButtonStyle">@style/BottomSheetButton</item>
         <item name="elevatedButtonStyle">@style/Widget.Material3.Button.ElevatedButton</item>
         <item name="dialogButtonStyle">@style/Widget.Material3.Button.TextButton.Dialog</item>
+        <item name="tonalButtonStyle">@style/Widget.Material3.Button.TonalButton</item>
+        <item name="exposedDropdownLayoutStyle">@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu</item>
+        <item name="outlinedTextInputLayoutStyle">@style/Widget.Material3.TextInputLayout.OutlinedBox</item>
         <item name="primaryButtonColor">@color/accent</item>
         <item name="primaryButtonTextColor">@android:color/white</item>
         <item name="primaryButtonStyle">@style/MaterialPrimaryButton</item>
@@ -70,6 +76,9 @@
         <item name="bottomSheetButtonStyle">@style/BottomSheetButton</item>
         <item name="elevatedButtonStyle">@style/Widget.Material3.Button.ElevatedButton</item>
         <item name="dialogButtonStyle">@style/Widget.Material3.Button.TextButton.Dialog</item>
+        <item name="tonalButtonStyle">@style/Widget.Material3.Button.TonalButton</item>
+        <item name="exposedDropdownLayoutStyle">@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu</item>
+        <item name="outlinedTextInputLayoutStyle">@style/Widget.Material3.TextInputLayout.OutlinedBox</item>
         <item name="primaryButtonColor">@android:color/white</item>
         <item name="primaryButtonTextColor">@android:color/black</item>
         <item name="primaryButtonStyle">@style/MaterialPrimaryButton</item>
@@ -106,6 +115,9 @@
         <item name="bottomSheetButtonStyle">@style/BottomSheetButton</item>
         <item name="elevatedButtonStyle">@style/Widget.Material3.Button.ElevatedButton</item>
         <item name="dialogButtonStyle">@style/Widget.Material3.Button.TextButton.Dialog</item>
+        <item name="tonalButtonStyle">@style/Widget.Material3.Button.TonalButton</item>
+        <item name="exposedDropdownLayoutStyle">@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu</item>
+        <item name="outlinedTextInputLayoutStyle">@style/Widget.Material3.TextInputLayout.OutlinedBox</item>
         <item name="primaryButtonColor">@color/accent</item>
         <item name="primaryButtonTextColor">@android:color/white</item>
         <item name="primaryButtonStyle">@style/MaterialPrimaryButton</item>
@@ -1242,13 +1254,16 @@
         <item name="bottomSheetButtonStyle">@style/MaterialButton</item>
         <item name="elevatedButtonStyle">@style/MaterialElevatedButton</item>
         <item name="dialogButtonStyle">@style/MaterialDialogButton</item>
+        <item name="tonalButtonStyle">@style/MaterialElevatedButton</item>
+        <item name="exposedDropdownLayoutStyle">@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu</item>
+        <item name="outlinedTextInputLayoutStyle">@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox</item>
         <item name="primaryButtonColor">@color/accent</item>
         <item name="primaryButtonTextColor">@android:color/white</item>
         <item name="primaryButtonStyle">@style/MaterialPrimaryButton</item>
         <item name="tabStyle">@style/MaterialTabLayoutDark</item>
         <item name="radioButtonStyle">@style/AppCompatRadioButton</item>
         <item name="checkboxStyle">@style/MaterialCheckBox</item>
-        <item name="sliderStyle">@style/Widget.Material3.Slider.Legacy</item>
+        <item name="sliderStyle">@style/Widget.MaterialComponents.Slider</item>
         <item name="linearProgressIndicatorStyle">@style/MaterialLinearProgressIndicator</item>
         <item name="floatingActionButtonSmallStyle">@style/MaterialFloatingActionButton</item>
         <item name="materialDividerStyle">@style/MaterialDividerDark</item>
@@ -1305,13 +1320,16 @@
         <item name="bottomSheetButtonStyle">@style/MaterialButton</item>
         <item name="elevatedButtonStyle">@style/MaterialElevatedButton</item>
         <item name="dialogButtonStyle">@style/MaterialDialogButton</item>
+        <item name="tonalButtonStyle">@style/MaterialElevatedButton</item>
+        <item name="exposedDropdownLayoutStyle">@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu</item>
+        <item name="outlinedTextInputLayoutStyle">@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox</item>
         <item name="primaryButtonColor">@color/accent</item>
         <item name="primaryButtonTextColor">@android:color/white</item>
         <item name="primaryButtonStyle">@style/MaterialPrimaryButton</item>
         <item name="tabStyle">@style/MaterialTabLayoutLight</item>
         <item name="radioButtonStyle">@style/AppCompatRadioButton</item>
         <item name="checkboxStyle">@style/MaterialCheckBox</item>
-        <item name="sliderStyle">@style/Widget.Material3.Slider.Legacy</item>
+        <item name="sliderStyle">@style/Widget.MaterialComponents.Slider</item>
         <item name="linearProgressIndicatorStyle">@style/MaterialLinearProgressIndicator</item>
         <item name="floatingActionButtonSmallStyle">@style/MaterialFloatingActionButton</item>
         <item name="materialDividerStyle">@style/MaterialDividerLight</item>
@@ -1370,13 +1388,16 @@
         <item name="bottomSheetButtonStyle">@style/MaterialButton</item>
         <item name="elevatedButtonStyle">@style/MaterialElevatedButton</item>
         <item name="dialogButtonStyle">@style/MaterialDialogButton</item>
+        <item name="tonalButtonStyle">@style/MaterialElevatedButton</item>
+        <item name="exposedDropdownLayoutStyle">@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu</item>
+        <item name="outlinedTextInputLayoutStyle">@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox</item>
         <item name="primaryButtonColor">@android:color/white</item>
         <item name="primaryButtonTextColor">@android:color/black</item>
         <item name="primaryButtonStyle">@style/MaterialPrimaryButton</item>
         <item name="tabStyle">@style/MaterialTabLayoutDark</item>
         <item name="radioButtonStyle">@style/AppCompatRadioButton</item>
         <item name="checkboxStyle">@style/MaterialCheckBox</item>
-        <item name="sliderStyle">@style/Widget.Material3.Slider.Legacy</item>
+        <item name="sliderStyle">@style/Widget.MaterialComponents.Slider</item>
         <item name="linearProgressIndicatorStyle">@style/MaterialLinearProgressIndicator</item>
         <item name="floatingActionButtonSmallStyle">@style/MaterialFloatingActionButton</item>
         <item name="materialDividerStyle">@style/MaterialDividerDark</item>
@@ -1433,13 +1454,16 @@
         <item name="bottomSheetButtonStyle">@style/MaterialButton</item>
         <item name="elevatedButtonStyle">@style/MaterialElevatedButton</item>
         <item name="dialogButtonStyle">@style/MaterialDialogButton</item>
+        <item name="tonalButtonStyle">@style/MaterialElevatedButton</item>
+        <item name="exposedDropdownLayoutStyle">@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu</item>
+        <item name="outlinedTextInputLayoutStyle">@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox</item>
         <item name="primaryButtonColor">@color/accent</item>
         <item name="primaryButtonTextColor">@android:color/white</item>
         <item name="primaryButtonStyle">@style/MaterialPrimaryButton</item>
         <item name="tabStyle">@style/MaterialTabLayoutDark</item>
         <item name="radioButtonStyle">@style/AppCompatRadioButton</item>
         <item name="checkboxStyle">@style/MaterialCheckBox</item>
-        <item name="sliderStyle">@style/Widget.Material3.Slider.Legacy</item>
+        <item name="sliderStyle">@style/Widget.MaterialComponents.Slider</item>
         <item name="linearProgressIndicatorStyle">@style/MaterialLinearProgressIndicatorBlue</item>
         <item name="floatingActionButtonSmallStyle">@style/MaterialFloatingActionButton</item>
         <item name="materialDividerStyle">@style/MaterialDividerBlue</item>
@@ -1570,8 +1594,14 @@
 
     <style name="MaterialFloatingActionButton" parent="Widget.MaterialComponents.FloatingActionButton">
         <item name="fabCustomSize">40dp</item>
-        <item name="tint">@android:color/black</item>
-        <item name="backgroundTint">#B3364f61</item>
+        <item name="tint">?android:attr/textColorPrimary</item>
+        <item name="backgroundTint">?attr/colorSurfaceContainer</item>
+        <item name="materialThemeOverlay">@style/MaterialFabOverlay</item>
+    </style>
+
+    <style name="MaterialFabOverlay">
+        <item name="colorSecondaryContainer">?attr/colorSurfaceContainer</item>
+        <item name="colorOnSecondaryContainer">?android:attr/textColorPrimary</item>
     </style>
 
     <style name="MaterialDividerDark" parent="Widget.MaterialComponents.MaterialDivider">

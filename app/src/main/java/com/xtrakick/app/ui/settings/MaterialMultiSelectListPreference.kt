@@ -3,13 +3,13 @@ package com.xtrakick.app.ui.settings
 import android.app.Dialog
 import android.os.Bundle
 import androidx.preference.MultiSelectListPreferenceDialogFragmentCompat
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.xtrakick.app.util.getAlertDialogBuilder
 
 class MaterialMultiSelectListPreference : MultiSelectListPreferenceDialogFragmentCompat() {
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         super.onCreateDialog(savedInstanceState)
-        val builder = MaterialAlertDialogBuilder(requireContext())
+        val builder = requireContext().getAlertDialogBuilder()
             .setTitle(preference.dialogTitle)
             .setIcon(preference.dialogIcon)
             .setPositiveButton(preference.positiveButtonText, this)

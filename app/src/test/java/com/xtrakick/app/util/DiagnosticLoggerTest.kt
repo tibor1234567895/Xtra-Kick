@@ -45,4 +45,21 @@ class DiagnosticLoggerTest {
         DiagnosticLogger.updateAppState(isForeground = false)
         assertFalse(DiagnosticLogger.isForeground)
     }
+
+    @Test
+    fun shouldLogPauseRespectsTogglesAndInitiator() {
+        // When log all is enabled, all pauses are logged
+        assertTrue(DiagnosticLogger.shouldLogPause(logAllPausesEnabled = true, logNonUserPausesEnabled = false, isUserInitiated = true))
+        assertTrue(DiagnosticLogger.shouldLogPause(logAllPausesEnabled = true, logNonUserPausesEnabled = false, isUserInitiated = false))
+        assertTrue(DiagnosticLogger.shouldLogPause(logAllPausesEnabled = true, logNonUserPausesEnabled = true, isUserInitiated = true))
+        assertTrue(DiagnosticLogger.shouldLogPause(logAllPausesEnabled = true, logNonUserPausesEnabled = true, isUserInitiated = false))
+
+        // When only log non-user is enabled, only non-user pauses are logged
+        assertTrue(DiagnosticLogger.shouldLogPause(logAllPausesEnabled = false, logNonUserPausesEnabled = true, isUserInitiated = false))
+        assertFalse(DiagnosticLogger.shouldLogPause(logAllPausesEnabled = false, logNonUserPausesEnabled = true, isUserInitiated = true))
+
+        // When both are disabled, nothing is logged
+        assertFalse(DiagnosticLogger.shouldLogPause(logAllPausesEnabled = false, logNonUserPausesEnabled = false, isUserInitiated = false))
+        assertFalse(DiagnosticLogger.shouldLogPause(logAllPausesEnabled = false, logNonUserPausesEnabled = false, isUserInitiated = true))
+    }
 }

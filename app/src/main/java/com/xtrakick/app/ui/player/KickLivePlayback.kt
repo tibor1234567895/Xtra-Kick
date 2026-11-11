@@ -117,6 +117,27 @@ object KickLivePlayback {
         return forwardBufferMs >= safeThreshold
     }
 
+    /**
+     * Kick AWS IVS HLS chunks are delivered in ~1.5s–2.0s GOP segments.
+     * The newest playable frame on the CDN is roughly 1.5s behind real-time broadcasting.
+     */
+    const val KICK_LIVE_EDGE_FLOOR_MS = 1_500L
+
+    /**
+     * Estimates the forward buffer for an unseeked live stream where position is 0.
+     * Buffer ahead of playhead is the distance between playhead latency and the chunk generation edge.
+     */
+    fun estimateLiveForwardBufferMs(
+        latencyMs: Long?,
+        rebufferMs: Int,
+        maxBufferMs: Int
+    ): Long {
+        if (latencyMs == null || latencyMs <= 0L) {
+            return rebufferMs.toLong()
+        }
+        return (latencyMs - KICK_LIVE_EDGE_FLOOR_MS).coerceIn(0L, maxBufferMs.toLong())
+    }
+
     @androidx.annotation.VisibleForTesting
     fun clearBitrateCache() {
         observedBitrates.clear()

@@ -34,6 +34,7 @@ import com.xtrakick.app.util.WebSocketRuntime
 import com.xtrakick.app.util.coil.CacheControlCacheStrategy
 import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.UsagePing
+import com.xtrakick.app.util.CrashReports
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.repository.NotificationUsersRepository
 import com.xtrakick.app.ui.following.KickFollowImporter
@@ -100,11 +101,17 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         runCatching { WebSettings.getDefaultUserAgent(this) }
         val previousUncaughtExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            DiagnosticLogger.updateAppState(WebSocketRuntime.isAppInForeground)
-            DiagnosticLogger.logCrash(throwable)
-            UsagePing.noteCrash(this)
-            previousUncaughtExceptionHandler?.uncaughtException(thread, throwable)
-                ?: kotlin.system.exitProcess(10)
+            try {
+                runCatching { CrashReports.capture(this, throwable) }
+                runCatching {
+                    DiagnosticLogger.updateAppState(WebSocketRuntime.isAppInForeground)
+                    DiagnosticLogger.logCrash(throwable)
+                }
+                runCatching { UsagePing.noteCrash(this) }
+            } finally {
+                previousUncaughtExceptionHandler?.uncaughtException(thread, throwable)
+                    ?: kotlin.system.exitProcess(10)
+            }
         }
         runCatching {
             val media3LogLevel = if (BuildConfig.DEBUG && prefs().getBoolean(AppConstants.DEBUG_PLAYER_BUFFER_LOGS, false)) {

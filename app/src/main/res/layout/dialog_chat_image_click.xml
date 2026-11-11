@@ -51,7 +51,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnCopyName"
-                style="@style/Widget.Material3.Button.TonalButton"
+                style="?attr/tonalButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginEnd="8dp"
@@ -65,7 +65,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnCopyLink"
-                style="@style/Widget.Material3.Button.TonalButton"
+                style="?attr/tonalButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/copy_link"

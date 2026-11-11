@@ -972,6 +972,11 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="debug_logs_diagnostics">Registro de diagnóstico em arquivo</string>
     <string name="diagnostic_file_logging">Gravar arquivo de log de diagnóstico</string>
     <string name="diagnostic_file_logging_summary">Falhas sempre são registradas. Quando ativado, avisos e erros selecionados do app também são gravados no armazenamento privado do app para serem consultados e compartilhados depois.</string>
+    <string name="debug_logs_pause_diagnostics">Diagnóstico e registros de pausa</string>
+    <string name="debug_log_all_pauses">Registrar todas as pausas e paradas de reprodução</string>
+    <string name="debug_log_all_pauses_summary">Capturar todas as pausas, paradas, travamentos e mudanças de estado com contexto detalhado do dispositivo, rede e áudio</string>
+    <string name="debug_log_non_user_pauses">Registrar pausas não manuais</string>
+    <string name="debug_log_non_user_pauses_summary">Marcar e registrar especificamente pausas externas à interface, como perda de foco de áudio, desconexão de fones ou eventos em segundo plano</string>
     <string name="diagnostic_log_level">Nível mínimo de diagnóstico</string>
     <string name="diagnostic_log_level_crash">Somente falhas</string>
     <string name="diagnostic_log_level_error">Erros e falhas</string>
@@ -982,6 +987,8 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="diagnostic_log_share_empty">Nenhum log de diagnóstico foi gravado ainda</string>
     <string name="diagnostic_log_status">%1$s • %2$d entradas</string>
     <string name="diagnostic_log_preview_truncated">Exibindo os últimos ~%1$d KB</string>
+    <string name="diagnostic_log_copy">Copiar</string>
+    <string name="diagnostic_log_copied">Log de diagnóstico copiado para a área de transferência</string>
     <string name="diagnostic_log_clear_action">Limpar</string>
     <string name="diagnostic_log_share_title">Compartilhar log de diagnóstico</string>
     <string name="diagnostic_log_test">Gravar entrada de teste no log de diagnóstico</string>
@@ -1238,6 +1245,7 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="clip_set_end">Definir fim</string>
     <string name="cancel">Cancelar</string>
     <string name="clip_created_subtitle">Clipe de %1$s · %2$ds</string>
+    <string name="clipped_by">Clipe criado por %1$s</string>
     <string name="copy_link">Copiar link</string>
     <string name="link_copied_to_clipboard">Link copiado para a área de transferência</string>
     <string name="share_clip">Compartilhar clipe</string>
@@ -1263,4 +1271,6 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="rewind_unavailable">O retrocesso não está disponível para esta transmissão</string>
     <string name="stream_event_tag">Evento: %1$s</string>
     <string name="videos_load_failed">Não foi possível carregar os vídeos. Tente novamente.</string>
+    <string name="crash_reports_title">Enviar relatórios de falhas</string>
+    <string name="crash_reports_summary">Ativado por padrão. Envia a pilha de chamadas da falha e dados básicos do app, Android, CPU e player para ajudar a corrigir erros. Sem identificadores de conta ou dispositivo, mensagens de exceção nem registros de diagnóstico.</string>
 </resources>

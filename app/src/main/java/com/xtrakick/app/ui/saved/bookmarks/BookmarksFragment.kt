@@ -127,6 +127,22 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                 }
                 WindowInsetsCompat.CONSUMED
             }
+            if (requireContext().prefs().getBoolean(AppConstants.UI_SCROLLTOP, true)) {
+                recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                    override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                        super.onScrollStateChanged(recyclerView, newState)
+                        val offset = recyclerView.computeVerticalScrollOffset()
+                        val extent = recyclerView.computeVerticalScrollExtent()
+                        val range = recyclerView.computeVerticalScrollRange()
+                        val scrollableRange = range - extent
+                        scrollTop.isVisible = offset >= 0 && scrollableRange > 0 && (100f * offset / scrollableRange.toFloat()) > 3f
+                    }
+                })
+                scrollTop.setOnClickListener {
+                    (parentFragment as? Scrollable)?.scrollToTop() ?: scrollToTop()
+                    it.visibility = View.GONE
+                }
+            }
         }
     }
 

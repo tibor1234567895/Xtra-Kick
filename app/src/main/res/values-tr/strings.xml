@@ -972,6 +972,11 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="debug_logs_diagnostics">Tanılama dosyası günlüğü</string>
     <string name="diagnostic_file_logging">Tanılama günlük dosyasını yaz</string>
     <string name="diagnostic_file_logging_summary">Çökmeler her zaman kaydedilir. Etkinleştirildiğinde, seçilen uygulama uyarıları/hataları daha sonra görüntülenmek ve paylaşılmak üzere özel uygulama depolamasına da yazılır.</string>
+    <string name="debug_logs_pause_diagnostics">Duraklatma tanılaması ve günlükleri</string>
+    <string name="debug_log_all_pauses">Tüm duraklatmaları ve oynatma durmalarını kaydet</string>
+    <string name="debug_log_all_pauses_summary">Her duraklatmayı, durmayı, takılmayı ve durum değişikliğini ayrıntılı cihaz, ağ ve ses bağlamıyla kaydeder</string>
+    <string name="debug_log_non_user_pauses">Kullanıcı dışı duraklatmaları kaydet</string>
+    <string name="debug_log_non_user_pauses_summary">Ses odağı kaybı, kulaklık bağlantısının kesilmesi veya arka plan olayları gibi arayüz dışı duraklatmaları özel olarak etiketleyin ve kaydedin</string>
     <string name="diagnostic_log_level">Minimum tanılama düzeyi</string>
     <string name="diagnostic_log_level_crash">Yalnızca çökme</string>
     <string name="diagnostic_log_level_error">Hata ve çökme</string>
@@ -982,6 +987,8 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="diagnostic_log_share_empty">Henüz tanılama günlüğü yazılmadı</string>
     <string name="diagnostic_log_status">%1$s • %2$d kayıt</string>
     <string name="diagnostic_log_preview_truncated">Son ~%1$d KB gösteriliyor</string>
+    <string name="diagnostic_log_copy">Kopyala</string>
+    <string name="diagnostic_log_copied">Tanılama günlüğü panoya kopyalandı</string>
     <string name="diagnostic_log_clear_action">Temizle</string>
     <string name="diagnostic_log_share_title">Tanılama günlüğünü paylaş</string>
     <string name="diagnostic_log_test">Test tanılama kaydı yaz</string>
@@ -1238,6 +1245,7 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="clip_set_end">Bitişi Ayarla</string>
     <string name="cancel">İptal</string>
     <string name="clip_created_subtitle">%1$s kaynağından kırpıldı • %2$ds</string>
+    <string name="clipped_by">%1$s tarafından kırpıldı</string>
     <string name="copy_link">Bağlantıyı kopyala</string>
     <string name="link_copied_to_clipboard">Bağlantı panoya kopyalandı</string>
     <string name="share_clip">Klibi paylaş</string>
@@ -1263,4 +1271,6 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="rewind_unavailable">Bu yayın için geri sarma kullanılamıyor</string>
     <string name="stream_event_tag">Etkinlik: %1$s</string>
     <string name="videos_load_failed">Videolar yüklenemedi. Tekrar deneyin.</string>
+    <string name="crash_reports_title">Çökme raporlarını gönder</string>
+    <string name="crash_reports_summary">Varsayılan olarak açıktır. Hataları düzeltmeye yardımcı olmak için çökme çağrı yığınını ve temel uygulama, Android, CPU ve oynatıcı ayarlarını gönderir. Hesap/cihaz kimlikleri, istisna mesajları veya tanılama günlükleri gönderilmez.</string>
 </resources>

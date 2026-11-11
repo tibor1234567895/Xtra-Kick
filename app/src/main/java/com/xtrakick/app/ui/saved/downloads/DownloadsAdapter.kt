@@ -176,20 +176,22 @@ class DownloadsAdapter(
                     } else {
                         userImage.visibility = View.GONE
                     }
-                    if (item.channelName != null) {
+                    val effectiveChannelName = item.channelName ?: item.channelLogin
+                    if (effectiveChannelName != null) {
                         username.visibility = View.VISIBLE
-                        username.text = if (item.channelLogin != null && !item.channelLogin.equals(item.channelName, true)) {
+                        username.text = if (item.channelLogin != null && item.channelName != null && !item.channelLogin.equals(item.channelName, true)) {
                             when (context.prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
                                 "0" -> "${item.channelName}(${item.channelLogin})"
                                 "1" -> item.channelName
                                 else -> item.channelLogin
                             }
                         } else {
-                            item.channelName
+                            effectiveChannelName
                         }
                         username.setOnClickListener(channelListener)
                     } else {
                         username.visibility = View.GONE
+                        username.setOnClickListener(null)
                     }
                     item.name?.let {
                         title.visibility = View.VISIBLE
@@ -197,12 +199,14 @@ class DownloadsAdapter(
                     } ?: {
                         title.visibility = View.GONE
                     }
-                    if (item.gameName != null) {
+                    val effectiveGameName = item.gameName ?: item.gameSlug
+                    if (effectiveGameName != null) {
                         gameName.visibility = View.VISIBLE
-                        gameName.text = item.gameName
+                        gameName.text = effectiveGameName
                         gameName.setOnClickListener(gameListener)
                     } else {
                         gameName.visibility = View.GONE
+                        gameName.setOnClickListener(null)
                     }
                     item.duration?.let { itemDuration ->
                         duration.visibility = View.VISIBLE

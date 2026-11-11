@@ -215,4 +215,75 @@ class IvsPlayerFragmentTest {
         assertNull(callbackField.get(fragment))
         fragment.close()
     }
+
+    @Test
+    fun computeEffectiveBufferMsReturnsZeroWhenBufferingOrIdle() {
+        val fragment = IvsPlayerFragment()
+        val computeMethod = IvsPlayerFragment::class.java.getDeclaredMethod(
+            "computeEffectiveBufferMs",
+            Player::class.java,
+            Long::class.javaPrimitiveType
+        ).apply { isAccessible = true }
+
+        val bufferingPlayer = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, _ ->
+            when (method.name) {
+                "getState" -> Player.State.BUFFERING
+                "getPosition" -> 0L
+                "getBufferedPosition" -> 8_000_000L
+                else -> null
+            }
+        } as Player
+
+        val idlePlayer = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, _ ->
+            when (method.name) {
+                "getState" -> Player.State.IDLE
+                "getPosition" -> 10_000L
+                "getBufferedPosition" -> 12_000L
+                else -> null
+            }
+        } as Player
+
+        assertEquals(0L, computeMethod.invoke(fragment, bufferingPlayer, 2_280L))
+        assertEquals(0L, computeMethod.invoke(fragment, idlePlayer, 2_280L))
+    }
+
+    @Test
+    fun computeEffectiveBufferMsReturnsFallbackOnlyWhenLivePositionIsUnseekedOrRawBufferIsHuge() {
+        val fragment = IvsPlayerFragment()
+        PlayerFragment::class.java.getDeclaredField("videoType").apply {
+            isAccessible = true
+            set(fragment, PlayerFragment.STREAM)
+        }
+        val computeMethod = IvsPlayerFragment::class.java.getDeclaredMethod(
+            "computeEffectiveBufferMs",
+            Player::class.java,
+            Long::class.javaPrimitiveType
+        ).apply { isAccessible = true }
+
+        val unseekedLivePlayer = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, _ ->
+            when (method.name) {
+                "getState" -> Player.State.PLAYING
+                "getPosition" -> 0L
+                "getBufferedPosition" -> 8_108_000L
+                else -> null
+            }
+        } as Player
+
+        val normalLivePlayer = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, _ ->
+            when (method.name) {
+                "getState" -> Player.State.PLAYING
+                "getPosition" -> 32_000L
+                "getBufferedPosition" -> 33_500L
+                else -> null
+            }
+        } as Player
+
+        assertEquals(1_000L, computeMethod.invoke(fragment, unseekedLivePlayer, 1_000L))
+        assertEquals(1_500L, computeMethod.invoke(fragment, normalLivePlayer, 1_000L))
+    }
+
+    @Test
+    fun goLiveSkipThresholdMatchesCatchupDriftThreshold() {
+        assertEquals(LiveLatencySettings.CATCHUP_DRIFT_THRESHOLD_MS, IvsPlayerFragment.GO_LIVE_SKIP_THRESHOLD_MS)
+    }
 }

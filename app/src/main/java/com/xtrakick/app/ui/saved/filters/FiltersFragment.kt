@@ -84,7 +84,7 @@ class FiltersFragment : PagedListFragment(), Scrollable {
                 }
             }
         }
-        initializeAdapter(binding, pagingAdapter, enableSwipeRefresh = false, enableScrollTopButton = false)
+        initializeAdapter(binding, pagingAdapter, enableSwipeRefresh = false, enableScrollTopButton = true)
     }
 
     override fun scrollToTop() {

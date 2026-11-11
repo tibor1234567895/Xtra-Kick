@@ -83,7 +83,7 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
                 }
             }
         }
-        initializeAdapter(binding, pagingAdapter, enableScrollTopButton = false)
+        initializeAdapter(binding, pagingAdapter)
     }
 
     override fun setupSortBar(sortBar: SortBarBinding) {

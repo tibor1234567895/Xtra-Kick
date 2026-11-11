@@ -422,6 +422,13 @@ class ClipCreatorSheet : BottomSheetDialogFragment() {
     private fun togglePlayPause() {
         val player = previewPlayer ?: return
         if (player.playWhenReady) {
+            DiagnosticLogger.logPause(
+                callingContext = context,
+                source = "ClipCreatorSheet.togglePlayPause",
+                reason = "Clip preview pause",
+                isUserInitiated = true,
+                engine = "Media3",
+            )
             player.pause()
         } else {
             val currentSec = player.currentPosition / 1000f

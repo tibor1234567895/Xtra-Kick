@@ -28,14 +28,14 @@ internal object KickWebsiteSearchMapper {
         source = AppConstants.KICK,
         channelId = item.channel.id?.toString(),
         channelLogin = item.channel.slug,
-        channelName = item.user.username,
+        channelName = item.user.username ?: item.channel.slug,
         gameId = event.category?.id?.toString(),
         gameSlug = event.category?.slug ?: KickApiHelper.toCategorySlug(event.category?.name),
         gameName = event.category?.name,
         title = item.livestream.title,
         viewerCount = item.livestream.viewCount.takeIf { item.livestream.showViewCount },
         thumbnailUrl = item.livestream.thumbnail?.imageUrl,
-        profileImageUrl = item.user.profilePictureUrl,
+        profileImageUrl = item.user.effectiveProfilePictureUrl,
         eventTitle = event.title,
         tags = buildList {
             add(event.title)
@@ -50,7 +50,7 @@ internal object KickWebsiteSearchMapper {
         return User(
             channelId = item.id,
             channelLogin = item.slug,
-            channelName = item.username ?: item.name,
+            channelName = item.username ?: item.name ?: item.slug,
             profileImageUrl = item.profileImage ?: item.profilePic,
             followersCount = item.followersCount,
             isLive = item.isLive == true
@@ -71,7 +71,7 @@ internal object KickWebsiteSearchMapper {
         return User(
             channelId = item.id?.toString(),
             channelLogin = item.slug,
-            channelName = item.user?.username,
+            channelName = item.user?.username ?: item.slug,
             profileImageUrl = item.user?.profileImage,
             followersCount = item.followersCount,
             isLive = item.isLive == true
@@ -103,7 +103,7 @@ internal object KickWebsiteSearchMapper {
             source = AppConstants.KICK,
             channelId = item.channel?.id?.toString() ?: item.channelId?.toString(),
             channelLogin = channelLogin,
-            channelName = item.channel?.user?.username,
+            channelName = item.channel?.user?.username ?: item.channel?.slug ?: channelLogin,
             playbackUrl = item.channel?.playbackUrl,
             gameId = category?.id?.toString(),
             gameSlug = category?.slug,
@@ -129,7 +129,7 @@ internal object KickWebsiteSearchMapper {
             source = AppConstants.KICK,
             channelId = channel.id?.toString() ?: channel.userId?.toString(),
             channelLogin = channelLogin,
-            channelName = channel.user?.username,
+            channelName = channel.user?.username ?: channel.slug ?: channelLogin,
             playbackUrl = livestream.playbackUrl ?: channel.playbackUrl,
             gameId = livestream.category?.id?.toString(),
             gameSlug = livestream.category?.slug,

@@ -4,7 +4,6 @@ import android.content.Context
 import android.text.format.Formatter
 import android.view.LayoutInflater
 import androidx.appcompat.app.AlertDialog
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.DialogAppUpdateBinding
 import com.xtrakick.app.model.AppUpdateInfo
@@ -67,7 +66,7 @@ object AppUpdateDialogHelper {
         val defaultDesc = context.getString(R.string.update_dialog_default_description)
         binding.changelogText.text = formatChangelog(updateInfo.releaseNotes, defaultDesc)
 
-        val dialog = MaterialAlertDialogBuilder(context)
+        val dialog = context.getAlertDialogBuilder()
             .setView(binding.root)
             .setCancelable(true)
             .create()

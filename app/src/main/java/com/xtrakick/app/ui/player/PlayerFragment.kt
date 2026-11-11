@@ -529,7 +529,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity?.isInPictureInPictureMode == true) {
             // IVS applies volume asynchronously on the service executor; reading it
             // back here can return the old value, so pass the intended volume through.
-            setPipActions(lastPipPlaying, volume)
+            setPipActions(isPlaybackPlaying(), volume)
         }
     }
 
@@ -3363,7 +3363,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
                     prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
                 ) {
-                    setPipActions(lastPipPlaying)
+                    setPipActions(isPlaybackPlaying())
                 }
             } else {
                 controllerHideOnTouch = false
@@ -3707,7 +3707,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     ctx,
                                     REQUEST_CODE_AUDIO_ONLY,
                                     Intent(MainActivity.INTENT_START_AUDIO_ONLY).setPackage(ctx.packageName),
-                                    PendingIntent.FLAG_IMMUTABLE
+                                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                                 )
                             )
                         )
@@ -3721,9 +3721,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 getString(R.string.pause),
                                 PendingIntent.getBroadcast(
                                     ctx,
-                                    REQUEST_CODE_PLAY_PAUSE,
+                                    REQUEST_CODE_PAUSE,
                                     Intent(MainActivity.INTENT_PLAY_PAUSE_PLAYER).setPackage(ctx.packageName),
-                                    PendingIntent.FLAG_IMMUTABLE
+                                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                                 )
                             )
                         } else {
@@ -3733,9 +3733,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 getString(R.string.resume),
                                 PendingIntent.getBroadcast(
                                     ctx,
-                                    REQUEST_CODE_PLAY_PAUSE,
+                                    REQUEST_CODE_PLAY,
                                     Intent(MainActivity.INTENT_PLAY_PAUSE_PLAYER).setPackage(ctx.packageName),
-                                    PendingIntent.FLAG_IMMUTABLE
+                                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                                 )
                             )
                         }
@@ -3758,9 +3758,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 actionTitle,
                                 PendingIntent.getBroadcast(
                                     ctx,
-                                    REQUEST_CODE_MUTE_UNMUTE,
+                                    if (isLowered) REQUEST_CODE_UNMUTE else REQUEST_CODE_MUTE,
                                     Intent(MainActivity.INTENT_MUTE_UNMUTE_PLAYER).setPackage(ctx.packageName),
-                                    PendingIntent.FLAG_IMMUTABLE
+                                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                                 )
                             )
                         )
@@ -3787,7 +3787,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             useController = false
         } else {
             clearPipDismissState()
-            setPipActions(lastPipPlaying)
+            setPipActions(isPlaybackPlaying())
         }
     }
 
@@ -4092,7 +4092,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         if (!isInPictureInPictureMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             canEnterPictureInPicture() && prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
         ) {
-            setPipActions(lastPipPlaying)
+            setPipActions(isPlaybackPlaying())
         }
         with(binding) {
             if (isInPictureInPictureMode) {
@@ -4126,7 +4126,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 (chatFragment?.childFragmentManager?.findFragmentByTag("imageDialog") as? BottomSheetDialogFragment)?.dismiss()
                 videoStatsOverlay.visibility = View.GONE
                 videoStatsOverlay.removeCallbacks(updateVideoStatsAction)
-                setPipActions(lastPipPlaying)
+                setPipActions(isPlaybackPlaying())
             } else {
                 useController = true
                 if (prefs.getBoolean(AppConstants.PIP_UNMUTE_ON_FULLSCREEN, false) && isVolumeReduced) {
@@ -5038,6 +5038,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             KEY_GAME_SLUG to item.gameSlug,
             KEY_GAME_NAME to item.gameName,
             KEY_VIDEO_SOURCE to AppConstants.KICK,
+            KEY_CREATOR_ID to item.creatorId,
+            KEY_CREATOR_LOGIN to item.creatorLogin,
+            KEY_CREATOR_NAME to item.creatorName,
         )
     }
 
@@ -5100,8 +5103,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         private const val REQUEST_CODE_QUALITY = 0
         private const val REQUEST_CODE_SPEED = 1
         private const val REQUEST_CODE_AUDIO_ONLY = 2
-        private const val REQUEST_CODE_PLAY_PAUSE = 3
-        private const val REQUEST_CODE_MUTE_UNMUTE = 4
+        private const val REQUEST_CODE_PAUSE = 3
+        private const val REQUEST_CODE_PLAY = 4
+        private const val REQUEST_CODE_MUTE = 5
+        private const val REQUEST_CODE_UNMUTE = 6
         private const val MIN_VIDEO_ZOOM_SCALE = 1f
         private const val MAX_VIDEO_ZOOM_SCALE = 8f
         private const val VIDEO_ZOOM_EPSILON = 0.01f
@@ -5150,6 +5155,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         protected const val KEY_GAME_ID = "gameId"
         protected const val KEY_GAME_SLUG = "gameSlug"
         protected const val KEY_GAME_NAME = "gameName"
+        protected const val KEY_CREATOR_ID = "creatorId"
+        protected const val KEY_CREATOR_LOGIN = "creatorLogin"
+        protected const val KEY_CREATOR_NAME = "creatorName"
     }
 
 }

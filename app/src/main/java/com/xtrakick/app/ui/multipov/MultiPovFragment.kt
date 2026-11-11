@@ -81,7 +81,7 @@ import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.NetworkMonitor
 import com.xtrakick.app.util.prefs
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.xtrakick.app.util.getAlertDialogBuilder
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -1028,7 +1028,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             }
             add(getString(R.string.multipov_open_solo))
         }.toTypedArray()
-        MaterialAlertDialogBuilder(requireContext())
+        requireContext().getAlertDialogBuilder()
             .setTitle(viewModel.uiState.value.focusedSlot?.stream?.channelName
                 ?: getString(R.string.multipov))
             .setItems(items) { _, which ->
@@ -1662,9 +1662,9 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                             getString(R.string.pause),
                             PendingIntent.getBroadcast(
                                 act,
-                                REQUEST_CODE_PLAY_PAUSE,
+                                REQUEST_CODE_PAUSE,
                                 Intent(MainActivity.INTENT_PLAY_PAUSE_PLAYER).setPackage(act.packageName),
-                                PendingIntent.FLAG_IMMUTABLE,
+                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                             ),
                         )
                     } else {
@@ -1674,9 +1674,9 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                             getString(R.string.resume),
                             PendingIntent.getBroadcast(
                                 act,
-                                REQUEST_CODE_PLAY_PAUSE,
+                                REQUEST_CODE_PLAY,
                                 Intent(MainActivity.INTENT_PLAY_PAUSE_PLAYER).setPackage(act.packageName),
-                                PendingIntent.FLAG_IMMUTABLE,
+                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                             ),
                         )
                     },
@@ -1698,9 +1698,9 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                             actionTitle,
                             PendingIntent.getBroadcast(
                                 act,
-                                REQUEST_CODE_MUTE_UNMUTE,
+                                if (isLowered) REQUEST_CODE_UNMUTE else REQUEST_CODE_MUTE,
                                 Intent(MainActivity.INTENT_MUTE_UNMUTE_PLAYER).setPackage(act.packageName),
-                                PendingIntent.FLAG_IMMUTABLE,
+                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                             ),
                         ),
                     )
@@ -1968,7 +1968,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         val presets = MultiPovLayoutPreset.entries.toList()
         val labels = presets.map { getString(it.labelRes(isPortrait)) }.toTypedArray()
         val selected = presets.indexOf(currentLayoutPreset()).coerceAtLeast(0)
-        MaterialAlertDialogBuilder(requireContext())
+        requireContext().getAlertDialogBuilder()
             .setTitle(R.string.multipov_layout)
             .setSingleChoiceItems(labels, selected) { dialog, which ->
                 val chosen = presets[which]
@@ -2976,7 +2976,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         val selected = qualities.indexOf(viewModel.uiState.value.streamQuality).coerceAtLeast(0)
         val titleText = activeKey?.let { "${getString(R.string.multipov_stream_quality)} ($it)" }
             ?: getString(R.string.multipov_stream_quality)
-        MaterialAlertDialogBuilder(requireContext())
+        requireContext().getAlertDialogBuilder()
             .setTitle(titleText)
             .setSingleChoiceItems(labels, selected) { dialog, which ->
                 val quality = qualities[which]
@@ -3018,7 +3018,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 add(getString(R.string.multipov_remove))
             }
         }.toTypedArray()
-        MaterialAlertDialogBuilder(requireContext())
+        requireContext().getAlertDialogBuilder()
             .setTitle(slot.stream.channelName ?: slot.stream.channelLogin)
             .setItems(items) { _, which ->
                 val label = items[which]
@@ -3077,7 +3077,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             (activity as? MainActivity)?.closeMultiPov()
             return
         }
-        MaterialAlertDialogBuilder(requireContext())
+        requireContext().getAlertDialogBuilder()
             .setTitle(R.string.multipov)
             .setMessage(R.string.multipov_close_confirm)
             .setPositiveButton(R.string.close) { _, _ ->
@@ -3135,8 +3135,10 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     companion object {
-        private const val REQUEST_CODE_PLAY_PAUSE = 3
-        private const val REQUEST_CODE_MUTE_UNMUTE = 4
+        private const val REQUEST_CODE_PAUSE = 3
+        private const val REQUEST_CODE_PLAY = 4
+        private const val REQUEST_CODE_MUTE = 5
+        private const val REQUEST_CODE_UNMUTE = 6
         private const val ARG_STREAMS = "streams"
         private const val ARG_RESOLVED_KEYS = "resolved_keys"
         private const val ARG_RESOLVED_VALUES = "resolved_values"

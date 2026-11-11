@@ -25,6 +25,11 @@ class Clip(
     var channelLogin: String? = null,
     var profileImageUrl: String? = null,
     val videoAnimatedPreviewURL: String? = null,
+
+    val creatorId: String? = null,
+    val creatorLogin: String? = null,
+    val creatorName: String? = null,
+    val creatorProfileImageUrl: String? = null,
 ) : Parcelable {
 
     val thumbnail: String?
@@ -32,4 +37,7 @@ class Clip(
     val channelLogo: String?
         get() = KickApiHelper.getTemplateUrl(profileImageUrl, "profileimage")
             ?: KickApiHelper.getDefaultProfilePicture(channelId, channelLogin ?: channelName)
+    val creatorLogo: String?
+        get() = KickApiHelper.getTemplateUrl(creatorProfileImageUrl, "profileimage")
+            ?: KickApiHelper.getDefaultProfilePicture(creatorId, creatorLogin ?: creatorName)
 }

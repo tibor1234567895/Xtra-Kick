@@ -68,7 +68,7 @@ class ChannelClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSo
                 gameName = it.gameName,
             ).show(childFragmentManager, null)
         }
-        pagingAdapter = ClipsAdapter(this, showDialog, showChannel = false)
+        pagingAdapter = ClipsAdapter(this, showDialog, showChannel = true, showGame = false)
         setAdapter(binding.recyclerView, pagingAdapter)
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
             if (activity?.findViewById<LinearLayout>(R.id.navBarContainer)?.isVisible == false) {

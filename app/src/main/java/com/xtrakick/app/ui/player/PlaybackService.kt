@@ -299,6 +299,16 @@ class PlaybackService : MediaSessionService() {
                             "background=$background " +
                             "mediaItemPresent=${player.currentMediaItem != null}"
                     )
+                    if (playbackState == androidx.media3.common.Player.STATE_ENDED || playbackState == androidx.media3.common.Player.STATE_IDLE) {
+                        DiagnosticLogger.logPause(
+                            callingContext = this@PlaybackService,
+                            source = "PlaybackService.onPlaybackStateChanged",
+                            reason = "State changed to ${playbackStateName(playbackState)}",
+                            isUserInitiated = false,
+                            engine = "Media3",
+                            details = "channel=${player.mediaMetadata.artist ?: player.mediaMetadata.title} playWhenReady=${player.playWhenReady} background=$background pos=${player.currentPosition}ms",
+                        )
+                    }
                 }
 
                 override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -306,6 +316,25 @@ class PlaybackService : MediaSessionService() {
                         "playWhenReadyChanged playWhenReady=$playWhenReady reason=$reason " +
                             "background=$background"
                     )
+                    if (!playWhenReady) {
+                        val isUser = reason == androidx.media3.common.Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
+                        val reasonStr = when (reason) {
+                            androidx.media3.common.Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "USER_REQUEST"
+                            androidx.media3.common.Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "AUDIO_FOCUS_LOSS"
+                            androidx.media3.common.Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "AUDIO_BECOMING_NOISY"
+                            androidx.media3.common.Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "REMOTE"
+                            androidx.media3.common.Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "END_OF_MEDIA_ITEM"
+                            else -> "reason_$reason"
+                        }
+                        DiagnosticLogger.logPause(
+                            callingContext = this@PlaybackService,
+                            source = "PlaybackService.onPlayWhenReadyChanged",
+                            reason = reasonStr,
+                            isUserInitiated = isUser,
+                            engine = "Media3",
+                            details = "channel=${player.mediaMetadata.artist ?: player.mediaMetadata.title} background=$background pos=${player.currentPosition}ms state=${playbackStateName(player.playbackState)}",
+                        )
+                    }
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -1032,6 +1061,16 @@ class PlaybackService : MediaSessionService() {
         val message = "playerError code=${error.errorCode} name=${error.errorCodeName} " +
             "http=$responseCode background=$background " +
             "message=${error.message}"
+        val p = mediaSession?.player
+        DiagnosticLogger.logPause(
+            callingContext = this,
+            source = "PlaybackService.logPlayerError",
+            reason = message,
+            isUserInitiated = false,
+            engine = "Media3",
+            details = "pos=${p?.currentPosition ?: -1L}ms playWhenReady=${p?.playWhenReady}",
+            throwable = error,
+        )
         if (responseCode == 403 || responseCode == 404 ||
             Media3ErrorUtils.isBehindLiveWindowError(error) ||
             (background && Media3ErrorUtils.isObsoleteSurfaceError(error))

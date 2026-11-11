@@ -99,7 +99,7 @@ class FollowedChannelsDataSource(
         return User(
             channelId = userId,
             channelLogin = userLogin,
-            channelName = userName,
+            channelName = userName ?: userLogin,
             profileImageUrl = channelLogo,
             followLocal = isLocalOnlyFollow,
             followAccount = isKickFollow,

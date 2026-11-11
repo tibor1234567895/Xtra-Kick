@@ -92,6 +92,15 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="crash_reports_enabled"
+        android:dependency="usage_stats_enabled"
+        android:summary="@string/crash_reports_summary"
+        android:title="@string/crash_reports_title"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
     <PreferenceCategory
         android:key="advanced_category"
         android:title="@string/advanced"

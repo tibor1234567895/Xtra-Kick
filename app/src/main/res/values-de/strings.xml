@@ -970,6 +970,11 @@
     <string name="debug_logs_diagnostics">Diagnose-Protokolldatei</string>
     <string name="diagnostic_file_logging">Diagnose-Protokolldatei schreiben</string>
     <string name="diagnostic_file_logging_summary">Abstürze werden immer protokolliert. Wenn aktiviert, werden ausgewählte App-Warnungen und -Fehler zusätzlich im internen App-Speicher abgelegt, um sie später anzeigen und teilen zu können.</string>
+    <string name="debug_logs_pause_diagnostics">Pausendiagnose und Protokolle</string>
+    <string name="debug_log_all_pauses">Alle Pausen und Wiedergabestopps protokollieren</string>
+    <string name="debug_log_all_pauses_summary">Erfasst jede Pause, jeden Stopp, Aussetzer und Zustandswechsel mit detailliertem Geräte-, Netzwerk- und Audiokontext</string>
+    <string name="debug_log_non_user_pauses">Nicht-benutzerdefinierte Pausen protokollieren</string>
+    <string name="debug_log_non_user_pauses_summary">Nicht-UI-Pausen wie Audiofokusverlust, Headset-Trennung oder Hintergrundereignisse gezielt kennzeichnen und aufzeichnen</string>
     <string name="diagnostic_log_level">Mindest-Diagnosestufe</string>
     <string name="diagnostic_log_level_crash">Nur Abstürze</string>
     <string name="diagnostic_log_level_error">Fehler und Abstürze</string>
@@ -980,6 +985,8 @@
     <string name="diagnostic_log_share_empty">Es wurde noch kein Diagnoseprotokoll geschrieben</string>
     <string name="diagnostic_log_status">%1$s • %2$d Einträge</string>
     <string name="diagnostic_log_preview_truncated">Die letzten ~%1$d KB werden angezeigt</string>
+    <string name="diagnostic_log_copy">Kopieren</string>
+    <string name="diagnostic_log_copied">Diagnoseprotokoll in die Zwischenablage kopiert</string>
     <string name="diagnostic_log_clear_action">Löschen</string>
     <string name="diagnostic_log_share_title">Diagnoseprotokoll teilen</string>
     <string name="diagnostic_log_test">Test-Diagnoseeintrag schreiben</string>
@@ -1236,6 +1243,7 @@
     <string name="clip_set_end">Ende festlegen</string>
     <string name="cancel">Abbrechen</string>
     <string name="clip_created_subtitle">Clip von %1$s · %2$ds</string>
+    <string name="clipped_by">Clip erstellt von %1$s</string>
     <string name="copy_link">Link kopieren</string>
     <string name="link_copied_to_clipboard">Link in Zwischenablage kopiert</string>
     <string name="share_clip">Clip teilen</string>
@@ -1261,4 +1269,6 @@
     <string name="rewind_unavailable">Zurückspulen ist für diesen Stream nicht verfügbar</string>
     <string name="stream_event_tag">Veranstaltung: %1$s</string>
     <string name="videos_load_failed">Videos konnten nicht geladen werden. Bitte erneut versuchen.</string>
+    <string name="crash_reports_title">Absturzberichte senden</string>
+    <string name="crash_reports_summary">Standardmäßig aktiviert. Sendet bei Abstürzen Stackframes und grundlegende App-, Android-, CPU- und Player-Einstellungen zur Fehlerbehebung. Keine Konto-/Gerätekennungen, Ausnahmemeldungen oder Diagnoseprotokolle.</string>
 </resources>

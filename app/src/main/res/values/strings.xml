@@ -766,6 +766,8 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="live_notification_category">%1$s is streaming %2$s</string>
     <string name="privacy">Privacy</string>
     <string name="usage_stats_title">Anonymous usage statistics</string>
+    <string name="crash_reports_title">Send crash reports</string>
+    <string name="crash_reports_summary">Enabled by default. Sends crash stack frames and basic app, Android, CPU and player settings to help fix bugs. No account/device IDs, exception messages or diagnostic logs.</string>
     <string name="usage_stats_summary">Sends one anonymous daily ping. No account or activity data is included.</string>
     <string name="live_notifications">Live notifications</string>
     <string name="live_notifications_summary">Instant push alerts when followed channels go live. This is all most people need.</string>
@@ -983,6 +985,11 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="debug_logs_diagnostics">Diagnostic file logging</string>
     <string name="diagnostic_file_logging">Write diagnostic log file</string>
     <string name="diagnostic_file_logging_summary">Crashes are always recorded. When enabled, selected app warnings/errors are also written to private app storage for viewing and sharing later.</string>
+    <string name="debug_logs_pause_diagnostics">Pause diagnostics &amp; logs</string>
+    <string name="debug_log_all_pauses">Log all pauses &amp; playback stops</string>
+    <string name="debug_log_all_pauses_summary">Capture every pause, stop, stall, and state change to diagnostics with detailed device, network, and audio context</string>
+    <string name="debug_log_non_user_pauses">Log non-user pauses</string>
+    <string name="debug_log_non_user_pauses_summary">Specifically tag and record non-UI pauses like audio focus loss, headset disconnects, or background events</string>
     <string name="diagnostic_log_level">Minimum diagnostic level</string>
     <string name="diagnostic_log_level_crash">Crash only</string>
     <string name="diagnostic_log_level_error">Error and crash</string>
@@ -993,6 +1000,8 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="diagnostic_log_share_empty">No diagnostic log has been written yet</string>
     <string name="diagnostic_log_status">%1$s • %2$d entries</string>
     <string name="diagnostic_log_preview_truncated">Showing last ~%1$d KB</string>
+    <string name="diagnostic_log_copy">Copy</string>
+    <string name="diagnostic_log_copied">Diagnostic log copied to clipboard</string>
     <string name="diagnostic_log_clear_action">Clear</string>
     <string name="diagnostic_log_share_title">Share diagnostic log</string>
     <string name="diagnostic_log_test">Write test diagnostic entry</string>
@@ -1256,6 +1265,7 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="clip_set_end">Set End</string>
     <string name="cancel">Cancel</string>
     <string name="clip_created_subtitle">Clipped from %1$s · %2$ds</string>
+    <string name="clipped_by">Clipped by %1$s</string>
     <string name="copy_link">Copy link</string>
     <string name="link_copied_to_clipboard">Link copied to clipboard</string>
     <string name="share_clip">Share clip</string>

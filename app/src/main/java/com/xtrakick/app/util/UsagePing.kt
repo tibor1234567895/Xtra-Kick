@@ -35,6 +35,7 @@ object UsagePing {
     private var watchStartElapsedRealtime: Long? = null
 
     fun maybeSend(context: Context, delayMillis: Long = 0L) {
+        CrashReports.maybeSend(context, delayMillis)
         if (BuildConfig.DEBUG) return
         val appContext = context.applicationContext
         val prefs = appContext.prefs()

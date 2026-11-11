@@ -2707,6 +2707,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         rebuildChannelPointsDialogAfterLayoutChange()
+        pinnedGiftUiHelper.onConfigurationChanged()
     }
 
     override fun onDestroyView() {

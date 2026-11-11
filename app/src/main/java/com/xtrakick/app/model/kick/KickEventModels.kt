@@ -40,7 +40,16 @@ data class KickEventStream(
 data class KickEventUser(
     val username: String? = null,
     @SerialName("profile_picture_url") val profilePictureUrl: String? = null,
-)
+    @SerialName("profile_picture") val profilePicture: String? = null,
+    @SerialName("profile_pic") val profilePic: String? = null,
+    @SerialName("profilepic") val profilepic: String? = null,
+) {
+    val effectiveProfilePictureUrl: String?
+        get() = profilePictureUrl?.takeIf { it.isNotBlank() }
+            ?: profilePicture?.takeIf { it.isNotBlank() }
+            ?: profilePic?.takeIf { it.isNotBlank() }
+            ?: profilepic?.takeIf { it.isNotBlank() }
+}
 
 @Serializable
 data class KickEventLivestream(

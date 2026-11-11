@@ -166,20 +166,22 @@ class VideosAdapter(
                         } else {
                             userImage.visibility = View.GONE
                         }
-                        if (item.channelName != null) {
+                        val effectiveChannelName = item.channelName ?: item.channelLogin
+                        if (effectiveChannelName != null) {
                             username.visibility = View.VISIBLE
-                            username.text = if (item.channelLogin != null && !item.channelLogin.equals(item.channelName, true)) {
+                            username.text = if (item.channelLogin != null && item.channelName != null && !item.channelLogin.equals(item.channelName, true)) {
                                 when (context.prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
                                     "0" -> "${item.channelName}(${item.channelLogin})"
                                     "1" -> item.channelName
                                     else -> item.channelLogin
                                 }
                             } else {
-                                item.channelName
+                                effectiveChannelName
                             }
                             username.setOnClickListener(channelListener)
                         } else {
                             username.visibility = View.GONE
+                            username.setOnClickListener(null)
                         }
                     } else {
                         userImage.visibility = View.GONE
@@ -191,31 +193,33 @@ class VideosAdapter(
                     } else {
                         title.visibility = View.GONE
                     }
-                    if (showGame && item.gameName != null) {
+                    val effectiveGameName = item.gameName ?: item.gameSlug
+                    if (showGame && effectiveGameName != null) {
                         val gameListener: (View) -> Unit = {
-                            val resolvedSlug = KickApiHelper.resolveEffectiveCategorySlug(item.gameSlug, item.gameName)
+                            val resolvedSlug = KickApiHelper.resolveEffectiveCategorySlug(item.gameSlug, effectiveGameName)
                             val resolvedId = KickApiHelper.sanitizeGameId(item.gameId, resolvedSlug)
                             fragment.findNavController().navigate(
                                 if (context.prefs().getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                                     GamePagerFragmentDirections.actionGlobalGamePagerFragment(
                                         gameId = resolvedId,
                                         gameSlug = resolvedSlug,
-                                        gameName = item.gameName
+                                        gameName = effectiveGameName
                                     )
                                 } else {
                                     GameMediaFragmentDirections.actionGlobalGameMediaFragment(
                                         gameId = resolvedId,
                                         gameSlug = resolvedSlug,
-                                        gameName = item.gameName
+                                        gameName = effectiveGameName
                                     )
                                 }
                             )
                         }
                         gameName.visibility = View.VISIBLE
-                        gameName.text = item.gameName
+                        gameName.text = effectiveGameName
                         gameName.setOnClickListener(gameListener)
                     } else {
                         gameName.visibility = View.GONE
+                        gameName.setOnClickListener(null)
                     }
                     options.setOnClickListener { it ->
                         PopupMenu(context, it).apply {

@@ -430,6 +430,15 @@ class Media3Fragment : PlayerFragment() {
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
+                    DiagnosticLogger.logPause(
+                        callingContext = context,
+                        source = "Media3Fragment.onPlayerError",
+                        reason = "PlaybackException errorCode=${error.errorCode} (${error.errorCodeName}): ${error.message}",
+                        isUserInitiated = false,
+                        engine = "Media3",
+                        details = "channel=${arguments?.getString(KEY_CHANNEL_LOGIN)} isPlaying=${player?.isPlaying}",
+                        throwable = error,
+                    )
                     logPlayerError(error)
                     when (videoType) {
                         STREAM -> {
@@ -864,6 +873,14 @@ class Media3Fragment : PlayerFragment() {
             } else if (player.isPlaying || player.playWhenReady) {
                 noteStreamPaused()
                 captureFreezeFrame()
+                DiagnosticLogger.logPause(
+                    callingContext = context,
+                    source = "Media3Fragment.playPause",
+                    reason = "User tapped Play/Pause button in UI",
+                    isUserInitiated = true,
+                    engine = "Media3",
+                    details = "channel=${arguments?.getString(KEY_CHANNEL_LOGIN)} state=${player.playbackState}",
+                )
                 player.pause()
             } else {
                 if (isPausedLiveStreamStale()) {
@@ -1350,6 +1367,14 @@ class Media3Fragment : PlayerFragment() {
     override fun close() {
         clearFreezeFrame()
         savePosition()
+        DiagnosticLogger.logPause(
+            callingContext = context,
+            source = "Media3Fragment.close",
+            reason = "Player closed",
+            isUserInitiated = true,
+            engine = "Media3",
+            details = "channel=${arguments?.getString(KEY_CHANNEL_LOGIN)}",
+        )
         player?.let { p ->
             p.pause()
             p.stop()
@@ -1362,18 +1387,6 @@ class Media3Fragment : PlayerFragment() {
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controllerFuture = null
         context?.let { PlaybackService.stopService(it) }
-    }
-
-    override fun onPause() {
-        super.onPause()
-        if (!shouldContinuePlaybackInBackground()) {
-            player?.let { p ->
-                if (p.isConnected && p.playWhenReady) {
-                    viewModel.resume = true
-                    p.pause()
-                }
-            }
-        }
     }
 
     override fun onStop() {
@@ -1400,6 +1413,14 @@ class Media3Fragment : PlayerFragment() {
                     }
                 } else {
                     viewModel.resume = player.playWhenReady
+                    DiagnosticLogger.logPause(
+                        callingContext = context,
+                        source = "Media3Fragment.onStop",
+                        reason = "shouldContinuePlaybackInBackground=false",
+                        isUserInitiated = false,
+                        engine = "Media3",
+                        details = "resume=${viewModel.resume} locked=${isScreenLockedOrOff()} pip=${activity?.isInPictureInPictureMode} channel=${arguments?.getString(KEY_CHANNEL_LOGIN)}",
+                    )
                     player.pause()
                     if (viewModel.resume) {
                         lastBackgroundPauseAtMs = 0L

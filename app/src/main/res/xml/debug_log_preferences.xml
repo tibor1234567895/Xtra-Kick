@@ -43,6 +43,27 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:title="@string/debug_logs_pause_diagnostics"
+        app:iconSpaceReserved="false">
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="debug_log_all_pauses"
+            android:summary="@string/debug_log_all_pauses_summary"
+            android:title="@string/debug_log_all_pauses"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="debug_log_non_user_pauses"
+            android:summary="@string/debug_log_non_user_pauses_summary"
+            android:title="@string/debug_log_non_user_pauses"
+            app:iconSpaceReserved="false"
+            app:singleLineTitle="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
         android:title="@string/debug_logs_chat"
         app:iconSpaceReserved="false">
 

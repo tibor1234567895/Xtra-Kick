@@ -4,7 +4,7 @@ import android.app.Dialog
 import android.content.DialogInterface
 import android.os.Bundle
 import androidx.preference.ListPreferenceDialogFragmentCompat
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.xtrakick.app.util.getAlertDialogBuilder
 
 class MaterialListPreference : ListPreferenceDialogFragmentCompat() {
 
@@ -12,7 +12,7 @@ class MaterialListPreference : ListPreferenceDialogFragmentCompat() {
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         mWhichButtonClicked = DialogInterface.BUTTON_NEGATIVE
-        val builder = MaterialAlertDialogBuilder(requireContext())
+        val builder = requireContext().getAlertDialogBuilder()
             .setTitle(preference.dialogTitle)
             .setIcon(preference.dialogIcon)
             .setPositiveButton(preference.positiveButtonText, this)

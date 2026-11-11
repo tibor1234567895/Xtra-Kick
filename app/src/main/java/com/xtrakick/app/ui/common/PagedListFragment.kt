@@ -100,7 +100,11 @@ abstract class PagedListFragment : BaseNetworkFragment(), IntegrityDialog.Callba
         }
         val extent = recyclerView.computeVerticalScrollExtent()
         val range = recyclerView.computeVerticalScrollRange()
-        val percentage = (100f * offset / (range - extent).toFloat())
+        val scrollableRange = range - extent
+        if (scrollableRange <= 0) {
+            return false
+        }
+        val percentage = (100f * offset / scrollableRange.toFloat())
         return percentage > 3f
     }
 

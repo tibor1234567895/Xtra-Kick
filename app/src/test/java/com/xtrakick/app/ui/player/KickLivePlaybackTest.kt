@@ -165,4 +165,23 @@ class KickLivePlaybackTest {
         assertFalse(KickLivePlayback.isBufferSafeForDownscaledCatchup(3_500L, 2_000))
         assertTrue(KickLivePlayback.isBufferSafeForDownscaledCatchup(4_000L, 2_000))
     }
+
+    @Test
+    fun estimateLiveForwardBufferMsCalculatesHeadroomAboveChunkFloor() {
+        // Normal live latency (2280ms) -> 2280 - 1500 = 780ms
+        assertEquals(780L, KickLivePlayback.estimateLiveForwardBufferMs(2_280L, 1_500, 15_000))
+
+        // Large drift (5000ms) -> 5000 - 1500 = 3500ms
+        assertEquals(3_500L, KickLivePlayback.estimateLiveForwardBufferMs(5_000L, 1_500, 15_000))
+
+        // Close to live edge (< 1500ms) clamps to 0L
+        assertEquals(0L, KickLivePlayback.estimateLiveForwardBufferMs(1_400L, 1_500, 15_000))
+
+        // Capped by max buffer
+        assertEquals(8_000L, KickLivePlayback.estimateLiveForwardBufferMs(12_000L, 1_500, 8_000))
+
+        // Null or invalid latency falls back to rebufferMs
+        assertEquals(1_500L, KickLivePlayback.estimateLiveForwardBufferMs(null, 1_500, 15_000))
+        assertEquals(1_500L, KickLivePlayback.estimateLiveForwardBufferMs(-1L, 1_500, 15_000))
+    }
 }

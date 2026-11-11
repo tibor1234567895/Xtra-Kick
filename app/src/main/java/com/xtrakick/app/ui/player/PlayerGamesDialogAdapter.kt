@@ -59,9 +59,10 @@ class PlayerGamesDialogAdapter(
                 } else {
                     gameImage.visibility = View.GONE
                 }
-                if (item?.gameName != null) {
+                val effectiveGameName = item?.gameName ?: item?.gameSlug
+                if (effectiveGameName != null) {
                     gameName.visibility = View.VISIBLE
-                    gameName.text = item.gameName
+                    gameName.text = effectiveGameName
                 } else {
                     gameName.visibility = View.GONE
                 }

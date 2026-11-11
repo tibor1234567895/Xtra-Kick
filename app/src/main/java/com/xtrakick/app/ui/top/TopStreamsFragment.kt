@@ -188,7 +188,7 @@ class TopStreamsFragment : PagedListFragment(), Scrollable, StreamsSortDialog.On
                 }
             }
         }
-        val enableScrollTopButton = !args.tags.isNullOrEmpty() || !args.languages.isNullOrEmpty()
+        val enableScrollTopButton = true
         initializeAdapter(binding.recyclerViewLayout, pagingAdapter, enableScrollTopButton = enableScrollTopButton)
         if (enableScrollTopButton && requireContext().prefs().getBoolean(AppConstants.UI_SCROLLTOP, true)) {
             binding.recyclerViewLayout.scrollTop.setOnClickListener {

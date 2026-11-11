@@ -1015,11 +1015,29 @@ class KickRepository @Inject constructor(
             ?: throw IOException("Invalid Kick followed response")
         val channels = root.arrayOrNull("channels").orEmpty().mapNotNull { element ->
             val item = element as? JsonObject ?: return@mapNotNull null
-            val login = item.primitiveOrNull("channel_slug")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val login = (item.primitiveOrNull("channel_slug")
+                ?: item.primitiveOrNull("slug")
+                ?: item.objOrNull("channel")?.primitiveOrNull("slug")
+                ?: item.primitiveOrNull("user_username")
+                ?: item.primitiveOrNull("username"))?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val name = item.primitiveOrNull("user_username")
+                ?: item.primitiveOrNull("username")
+                ?: item.primitiveOrNull("channel_name")
+                ?: item.primitiveOrNull("name")
+                ?: item.objOrNull("channel")?.primitiveOrNull("name")
+                ?: login
+            val profilePicture = item.primitiveOrNull("profile_picture")
+                ?: item.primitiveOrNull("profile_pic")
+                ?: item.primitiveOrNull("profilepic")
+                ?: item.primitiveOrNull("profilePic")
+                ?: item.objOrNull("channel")?.primitiveOrNull("profile_picture")
+                ?: item.objOrNull("channel")?.primitiveOrNull("profile_pic")
+                ?: item.objOrNull("user")?.primitiveOrNull("profile_picture")
+                ?: item.objOrNull("user")?.primitiveOrNull("profile_pic")
             KickFollowedChannel(
                 login = login,
-                name = item.primitiveOrNull("user_username")?.takeIf { it.isNotBlank() },
-                profilePicture = item.primitiveOrNull("profile_picture")?.takeIf { it.isNotBlank() },
+                name = name.takeIf { it.isNotBlank() },
+                profilePicture = profilePicture?.takeIf { it.isNotBlank() },
             )
         }
         KickFollowedChannelsPage(
@@ -1089,22 +1107,44 @@ class KickRepository @Inject constructor(
 
             val channelId = item.firstLongOrNull("channel_id")?.toString()
                 ?: channel?.firstLongOrNull("id")?.toString()
+            val streamChannelLogin = channel?.primitiveOrNull("slug")
+                ?: item.primitiveOrNull("channel_slug")
+                ?: channelUser?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
+                ?: channel?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
+            val streamChannelName = channelUser?.primitiveOrNull("username")
+                ?: channel?.primitiveOrNull("name")
+                ?: channel?.primitiveOrNull("username")
+                ?: item.primitiveOrNull("channel_name")
+                ?: channel?.primitiveOrNull("slug")
+                ?: streamChannelLogin
+            val streamProfileImage = channelUser?.primitiveOrNull("profile_pic")
+                ?: channelUser?.primitiveOrNull("profile_picture")
+                ?: channelUser?.primitiveOrNull("profilepic")
+                ?: channelUser?.primitiveOrNull("profilePic")
+                ?: channel?.primitiveOrNull("profile_picture")
+                ?: channel?.primitiveOrNull("profile_pic")
+                ?: channel?.primitiveOrNull("profilepic")
+                ?: channel?.primitiveOrNull("profilePic")
+            val streamThumbnail = thumbnail?.primitiveOrNull("src")
+                ?: thumbnail?.primitiveOrNull("url")
+                ?: item.primitiveOrNull("thumbnail_url")
+                ?: item.primitiveOrNull("thumbnail")
 
             Stream(
                 id = item.firstLongOrNull("id")?.toString(),
                 source = AppConstants.KICK,
                 channelId = channelId,
-                channelLogin = channel?.primitiveOrNull("slug"),
-                channelName = channelUser?.primitiveOrNull("username"),
-                playbackUrl = channel?.primitiveOrNull("playback_url"),
+                channelLogin = streamChannelLogin,
+                channelName = streamChannelName,
+                playbackUrl = channel?.primitiveOrNull("playback_url") ?: item.primitiveOrNull("playback_url"),
                 gameId = categoryId,
                 gameSlug = categorySlug,
                 gameName = categoryName,
-                title = item.primitiveOrNull("session_title"),
+                title = item.primitiveOrNull("session_title") ?: item.primitiveOrNull("title"),
                 viewerCount = item.intOrNull("viewer_count") ?: item.intOrNull("viewers"),
-                startedAt = normalizeDate(item.primitiveOrNull("start_time")),
-                thumbnailUrl = thumbnail?.primitiveOrNull("src"),
-                profileImageUrl = channelUser?.primitiveOrNull("profilepic"),
+                startedAt = normalizeDate(item.primitiveOrNull("start_time") ?: item.primitiveOrNull("created_at")),
+                thumbnailUrl = streamThumbnail,
+                profileImageUrl = streamProfileImage,
                 tags = baseTags.ifEmpty { null },
             ).takeIf { !it.channelLogin.isNullOrBlank() || !it.channelId.isNullOrBlank() }
         }
@@ -1222,11 +1262,29 @@ class KickRepository @Inject constructor(
                 ?: throw IOException("Invalid Kick followed auth response")
             val channels = root.arrayOrNull("channels").orEmpty().mapNotNull { element ->
                 val item = element as? JsonObject ?: return@mapNotNull null
-                val login = item.primitiveOrNull("channel_slug")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val login = (item.primitiveOrNull("channel_slug")
+                    ?: item.primitiveOrNull("slug")
+                    ?: item.objOrNull("channel")?.primitiveOrNull("slug")
+                    ?: item.primitiveOrNull("user_username")
+                    ?: item.primitiveOrNull("username"))?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val name = item.primitiveOrNull("user_username")
+                    ?: item.primitiveOrNull("username")
+                    ?: item.primitiveOrNull("channel_name")
+                    ?: item.primitiveOrNull("name")
+                    ?: item.objOrNull("channel")?.primitiveOrNull("name")
+                    ?: login
+                val profilePicture = item.primitiveOrNull("profile_picture")
+                    ?: item.primitiveOrNull("profile_pic")
+                    ?: item.primitiveOrNull("profilepic")
+                    ?: item.primitiveOrNull("profilePic")
+                    ?: item.objOrNull("channel")?.primitiveOrNull("profile_picture")
+                    ?: item.objOrNull("channel")?.primitiveOrNull("profile_pic")
+                    ?: item.objOrNull("user")?.primitiveOrNull("profile_picture")
+                    ?: item.objOrNull("user")?.primitiveOrNull("profile_pic")
                 KickFollowedChannel(
                     login = login,
-                    name = item.primitiveOrNull("user_username")?.takeIf { it.isNotBlank() },
-                    profilePicture = item.primitiveOrNull("profile_picture")?.takeIf { it.isNotBlank() },
+                    name = name.takeIf { it.isNotBlank() },
+                    profilePicture = profilePicture?.takeIf { it.isNotBlank() },
                 )
             }
             KickFollowedChannelsPage(
@@ -3130,7 +3188,7 @@ class KickRepository @Inject constructor(
         }
         val cached = channelCache[channelSlug.trim().lowercase(Locale.ROOT)]?.second
         val login = cached?.slug ?: channelSlug
-        val channelName = cached?.user?.username
+        val channelName = cached?.user?.username ?: cached?.slug ?: channelSlug
         val channelLogo = cached?.user?.profileImage
         val pageSize = limit.coerceIn(20, 100)
 
@@ -3199,7 +3257,7 @@ class KickRepository @Inject constructor(
     ): KickClipPage? {
         val cached = channelCache[channelSlug.trim().lowercase(Locale.ROOT)]?.second
         val login = cached?.slug ?: channelSlug
-        val channelName = cached?.user?.username
+        val channelName = cached?.user?.username ?: cached?.slug ?: channelSlug
         val channelLogo = cached?.user?.profileImage
         val pageSize = limit.coerceIn(20, 100)
         val resolvedTime = when (time?.trim()?.lowercase(Locale.ROOT)) {
@@ -3533,18 +3591,24 @@ class KickRepository @Inject constructor(
                     ?: channelId
                 val videoChannelLogin = item.primitiveOrNull("channel_slug")
                     ?: itemChannel?.primitiveOrNull("slug")
+                    ?: itemChannel?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
                     ?: itemUser?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
                     ?: channelLogin
                 val videoChannelName = item.primitiveOrNull("channel_name")
+                    ?: itemChannel?.primitiveOrNull("username")
                     ?: itemUser?.primitiveOrNull("username")
                     ?: itemChannel?.primitiveOrNull("name")
                     ?: channelName
                     ?: videoChannelLogin
                 val videoChannelLogo = item.primitiveOrNull("channel_profile_pic")
-                    ?: itemUser?.primitiveOrNull("profile_pic")
-                    ?: itemUser?.primitiveOrNull("profile_picture")
                     ?: itemChannel?.primitiveOrNull("profile_picture")
                     ?: itemChannel?.primitiveOrNull("profile_pic")
+                    ?: itemChannel?.primitiveOrNull("profilepic")
+                    ?: itemChannel?.primitiveOrNull("profilePic")
+                    ?: itemUser?.primitiveOrNull("profile_pic")
+                    ?: itemUser?.primitiveOrNull("profile_picture")
+                    ?: itemUser?.primitiveOrNull("profilepic")
+                    ?: itemUser?.primitiveOrNull("profilePic")
                     ?: channelLogo
                 val ingestVodId = item.objOrNull("livestream")?.primitiveOrNull("vod_id")
                     ?: item.primitiveOrNull("vod_id")
@@ -3648,16 +3712,35 @@ class KickRepository @Inject constructor(
                     ?: channelId
                 val clipChannelLogin = item.primitiveOrNull("channel_slug")
                     ?: itemChannel?.primitiveOrNull("slug")
+                    ?: itemChannel?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
                     ?: itemChannelUser?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
                     ?: channelLogin
                 val clipChannelName = item.primitiveOrNull("channel_name")
+                    ?: itemChannel?.primitiveOrNull("username")
                     ?: itemChannelUser?.primitiveOrNull("username")
                     ?: itemChannel?.primitiveOrNull("name")
                     ?: channelName
-                val clipProfileImage = itemChannelUser?.primitiveOrNull("profile_image")
+                    ?: clipChannelLogin
+                val clipProfileImage = itemChannel?.primitiveOrNull("profile_picture")
+                    ?: itemChannel?.primitiveOrNull("profile_pic")
+                    ?: itemChannel?.primitiveOrNull("profile_image")
+                    ?: itemChannelUser?.primitiveOrNull("profile_image")
                     ?: itemChannelUser?.primitiveOrNull("profile_pic")
                     ?: itemChannelUser?.primitiveOrNull("profile_picture")
+                    ?: item.primitiveOrNull("channel_profile_pic")
                     ?: channelLogo
+
+                val itemCreator = item.objOrNull("creator")
+                val clipCreatorId = item.primitiveOrNull("user_id")
+                    ?: itemCreator?.primitiveOrNull("id")
+                val clipCreatorLogin = itemCreator?.primitiveOrNull("slug")
+                    ?: itemCreator?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
+                val clipCreatorName = itemCreator?.primitiveOrNull("username")
+                    ?: itemCreator?.primitiveOrNull("name")
+                    ?: clipCreatorLogin
+                val clipCreatorProfileImage = itemCreator?.primitiveOrNull("profile_picture")
+                    ?: itemCreator?.primitiveOrNull("profile_pic")
+                    ?: itemCreator?.primitiveOrNull("profile_image")
                 Clip(
                     id = id,
                     channelId = clipChannelId,
@@ -3675,7 +3758,11 @@ class KickRepository @Inject constructor(
                     uploadDate = normalizeDate(createdAt),
                     thumbnailUrl = thumbnail,
                     duration = duration,
-                    profileImageUrl = clipProfileImage
+                    profileImageUrl = clipProfileImage,
+                    creatorId = clipCreatorId,
+                    creatorLogin = clipCreatorLogin,
+                    creatorName = clipCreatorName,
+                    creatorProfileImageUrl = clipCreatorProfileImage,
                 )
             }
             .distinctBy { it.id }
@@ -3998,15 +4085,39 @@ class KickRepository @Inject constructor(
             if (!clipUrl.isNullOrBlank() || !data.primitiveOrNull("id").isNullOrBlank() || !data.primitiveOrNull("slug").isNullOrBlank()) {
                 val rawCreatedAt = data.primitiveOrNull("created_at")
                     ?: data.primitiveOrNull("published_at")
+                val itemChannel = data.objOrNull("channel")
+                val itemCreator = data.objOrNull("creator")
+                val clipChannelId = data.primitiveOrNull("channel_id")
+                    ?: itemChannel?.primitiveOrNull("id")
+                val clipChannelLogin = data.primitiveOrNull("channel_slug")
+                    ?: itemChannel?.primitiveOrNull("slug")
+                    ?: itemChannel?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
+                val clipChannelName = data.primitiveOrNull("channel_name")
+                    ?: itemChannel?.primitiveOrNull("username")
+                    ?: itemChannel?.objOrNull("user")?.primitiveOrNull("username")
+                    ?: itemChannel?.primitiveOrNull("name")
+                    ?: clipChannelLogin
+                val clipProfileImage = itemChannel?.primitiveOrNull("profile_picture")
+                    ?: itemChannel?.primitiveOrNull("profile_pic")
+                    ?: itemChannel?.primitiveOrNull("profile_image")
+                    ?: itemChannel?.objOrNull("user")?.primitiveOrNull("profile_pic")
+                    ?: itemChannel?.objOrNull("user")?.primitiveOrNull("profile_picture")
+                val clipCreatorId = data.primitiveOrNull("user_id")
+                    ?: itemCreator?.primitiveOrNull("id")
+                val clipCreatorLogin = itemCreator?.primitiveOrNull("slug")
+                    ?: itemCreator?.primitiveOrNull("username")?.lowercase(Locale.ROOT)
+                val clipCreatorName = itemCreator?.primitiveOrNull("username")
+                    ?: itemCreator?.primitiveOrNull("name")
+                    ?: clipCreatorLogin
+                val clipCreatorProfileImage = itemCreator?.primitiveOrNull("profile_picture")
+                    ?: itemCreator?.primitiveOrNull("profile_pic")
+                    ?: itemCreator?.primitiveOrNull("profile_image")
+
                 return@withContext Clip(
                     id = data.primitiveOrNull("slug") ?: data.primitiveOrNull("id") ?: id,
-                    channelId = data.primitiveOrNull("channel_id")
-                        ?: data.objOrNull("channel")?.primitiveOrNull("id"),
-                    channelLogin = data.primitiveOrNull("channel_slug")
-                        ?: data.objOrNull("channel")?.primitiveOrNull("slug"),
-                    channelName = data.objOrNull("channel")?.objOrNull("user")?.primitiveOrNull("username")
-                        ?: data.objOrNull("channel")?.primitiveOrNull("username")
-                        ?: data.objOrNull("channel")?.primitiveOrNull("name"),
+                    channelId = clipChannelId,
+                    channelLogin = clipChannelLogin,
+                    channelName = clipChannelName,
                     clipUrl = clipUrl,
                     replayStartTime = normalizeDate(data.clipReplayStartTime(rawCreatedAt)),
                     videoId = data.primitiveOrNull("video_id")
@@ -4019,13 +4130,14 @@ class KickRepository @Inject constructor(
                     vodOffset = data.clipVodOffset(),
                     thumbnailUrl = extractImageUrl(data.objOrNull("thumbnail"))
                         ?: data.primitiveOrNull("thumbnail_url"),
-                    profileImageUrl = data.objOrNull("channel")?.primitiveOrNull("profile_picture")
-                        ?: data.objOrNull("channel")?.primitiveOrNull("profile_pic")
-                        ?: data.objOrNull("channel")?.objOrNull("user")?.primitiveOrNull("profile_pic")
-                        ?: data.objOrNull("channel")?.objOrNull("user")?.primitiveOrNull("profile_picture"),
+                    profileImageUrl = clipProfileImage,
                     gameId = category?.primitiveOrNull("id"),
                     gameSlug = category?.primitiveOrNull("slug"),
                     gameName = category?.primitiveOrNull("name"),
+                    creatorId = clipCreatorId,
+                    creatorLogin = clipCreatorLogin,
+                    creatorName = clipCreatorName,
+                    creatorProfileImageUrl = clipCreatorProfileImage,
                 )
             }
         }
@@ -4598,7 +4710,7 @@ class KickRepository @Inject constructor(
             source = AppConstants.KICK,
             channelId = channelId,
             channelLogin = channelLogin,
-            channelName = item.channel?.user?.username,
+            channelName = item.channel?.user?.username ?: item.channel?.slug ?: channelLogin,
             playbackUrl = item.channel?.playbackUrl,
             gameId = resolvedId,
             gameSlug = resolvedSlug,
@@ -4642,7 +4754,7 @@ class KickRepository @Inject constructor(
             source = AppConstants.KICK,
             channelId = canonicalChannelId,
             channelLogin = channel.slug,
-            channelName = channel.user?.username,
+            channelName = channel.user?.username ?: channel.slug,
             playbackUrl = livestream?.playbackUrl ?: fallback?.playbackUrl
                 ?: channel.playbackUrl?.takeIf { livestream != null },
             gameId = catId,
@@ -4662,7 +4774,7 @@ class KickRepository @Inject constructor(
         return User(
             channelId = channel.id?.toString(),
             channelLogin = channel.slug,
-            channelName = channel.user?.username,
+            channelName = channel.user?.username ?: channel.slug,
             profileImageUrl = channel.user?.profileImage,
             followersCount = channel.followersCount,
             bannerImageURL = channel.bannerUrl,

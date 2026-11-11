@@ -8,7 +8,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.result.ActivityResultLauncher
 import androidx.core.content.ContextCompat
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.xtrakick.app.R
 
 object NotificationPermissionHelper {
@@ -48,7 +47,7 @@ object NotificationPermissionHelper {
     ) {
         if (activity.isFinishing || activity.isDestroyed) return
         markPrimerShown(activity)
-        MaterialAlertDialogBuilder(activity)
+        activity.getAlertDialogBuilder()
             .setTitle(R.string.notification_permission_primer_title)
             .setMessage(R.string.notification_permission_primer_message)
             .setPositiveButton(R.string.action_enable) { dialog: DialogInterface, _: Int ->

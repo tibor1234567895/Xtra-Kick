@@ -20,9 +20,9 @@ class LiveLatencySettingsTest {
         assertEquals("15000", prefs.getString(AppConstants.PLAYER_BUFFER_MAX, null))
         assertEquals("800", prefs.getString(AppConstants.PLAYER_BUFFER_PLAYBACK, null))
         assertEquals("1500", prefs.getString(AppConstants.PLAYER_BUFFER_REBUFFER, null))
-        assertEquals("1600", prefs.getString(AppConstants.PLAYER_LIVE_TARGET_OFFSET, null))
+        assertEquals("2200", prefs.getString(AppConstants.PLAYER_LIVE_TARGET_OFFSET, null))
         assertEquals("1.0", prefs.getString(AppConstants.PLAYER_LIVE_MIN_SPEED, null))
-        assertEquals("1.08", prefs.getString(AppConstants.PLAYER_LIVE_MAX_SPEED, null))
+        assertEquals("1.15", prefs.getString(AppConstants.PLAYER_LIVE_MAX_SPEED, null))
     }
 
     @Test
@@ -42,9 +42,9 @@ class LiveLatencySettingsTest {
         assertEquals("8000", prefs.getString(AppConstants.PLAYER_BUFFER_MAX, null))
         assertEquals("500", prefs.getString(AppConstants.PLAYER_BUFFER_PLAYBACK, null))
         assertEquals("1000", prefs.getString(AppConstants.PLAYER_BUFFER_REBUFFER, null))
-        assertEquals("1000", prefs.getString(AppConstants.PLAYER_LIVE_TARGET_OFFSET, null))
+        assertEquals("1750", prefs.getString(AppConstants.PLAYER_LIVE_TARGET_OFFSET, null))
         assertEquals("1.0", prefs.getString(AppConstants.PLAYER_LIVE_MIN_SPEED, null))
-        assertEquals("1.12", prefs.getString(AppConstants.PLAYER_LIVE_MAX_SPEED, null))
+        assertEquals("1.2", prefs.getString(AppConstants.PLAYER_LIVE_MAX_SPEED, null))
     }
 
     @Test
@@ -77,29 +77,29 @@ class LiveLatencySettingsTest {
         val config = LiveLatencySettings.preset(LiveLatencySettings.PROFILE_STABLE)
 
         assertEquals(1.0f, config.minPlaybackSpeed)
-        assertEquals(1.05f, config.maxPlaybackSpeed)
+        assertEquals(1.08f, config.maxPlaybackSpeed)
     }
 
     @Test
     fun maxIvsCatchupSpeedCapsNonLowestProfiles() {
         assertEquals(
-            1.08f,
+            1.15f,
             LiveLatencySettings.maxIvsCatchupSpeed(LiveLatencySettings.PROFILE_BALANCED, 1.25f),
             0.001f
         )
         assertEquals(
-            1.08f,
+            1.15f,
             LiveLatencySettings.maxIvsCatchupSpeed(LiveLatencySettings.PROFILE_STABLE, null),
             0.001f
         )
         assertEquals(
-            1.08f,
+            1.15f,
             LiveLatencySettings.maxIvsCatchupSpeed(null, 1.30f),
             0.001f
         )
         assertEquals(
-            1.12f,
-            LiveLatencySettings.maxIvsCatchupSpeed(LiveLatencySettings.PROFILE_LOWEST, 1.25f),
+            1.25f,
+            LiveLatencySettings.maxIvsCatchupSpeed(LiveLatencySettings.PROFILE_LOWEST, 1.28f),
             0.001f
         )
     }
@@ -107,7 +107,7 @@ class LiveLatencySettingsTest {
     @Test
     fun maxIvsCatchupSpeedIgnoresNaN() {
         assertEquals(
-            1.08f,
+            1.15f,
             LiveLatencySettings.maxIvsCatchupSpeed(LiveLatencySettings.PROFILE_BALANCED, Float.NaN),
             0.001f
         )
@@ -119,8 +119,8 @@ class LiveLatencySettingsTest {
         val liveConfig = LiveLatencySettings.toLiveConfiguration(config, catchupEnabled = true)
 
         assertEquals(1.00f, liveConfig.minPlaybackSpeed, 0.001f)
-        assertEquals(1.12f, liveConfig.maxPlaybackSpeed, 0.001f)
-        assertEquals(1000L, liveConfig.targetOffsetMs)
+        assertEquals(1.20f, liveConfig.maxPlaybackSpeed, 0.001f)
+        assertEquals(1750L, liveConfig.targetOffsetMs)
     }
 
     @Test
@@ -130,7 +130,7 @@ class LiveLatencySettingsTest {
 
         assertEquals(1.0f, liveConfig.minPlaybackSpeed, 0.001f)
         assertEquals(1.0f, liveConfig.maxPlaybackSpeed, 0.001f)
-        assertEquals(1000L, liveConfig.targetOffsetMs)
+        assertEquals(1750L, liveConfig.targetOffsetMs)
     }
 }
 

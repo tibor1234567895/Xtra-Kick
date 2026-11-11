@@ -32,7 +32,7 @@ private data class LiveLatencyDefaults(
 
 object LiveLatencySettings {
     private const val TAG = "LiveLatencySettings"
-    private const val MIGRATION_KEY = "player_latency_profile_migrated_v1"
+    private const val MIGRATION_KEY = "player_latency_profile_migrated_v2"
     private const val LIVE_EDGE_SYNC_TOLERANCE_MS = 4_000L
     const val PROFILE_LOWEST = "lowest"
     const val PROFILE_BALANCED = "balanced"
@@ -45,10 +45,9 @@ object LiveLatencySettings {
     const val REBUFFER_GRACE_PERIOD_MS = 8_000L
     const val CATCHUP_DRIFT_THRESHOLD_MS = 500L
     const val CATCHUP_TARGET_MARGIN_MS = 150L
-    // Catch-up ceilings: under ~8% tempo shift is inaudible, so only the lowest
-    // profile exceeds 1.08x (max 1.12x). Slower convergence is the price.
-    const val MAX_IVS_CATCHUP_SPEED_DEFAULT = 1.08f
-    const val MAX_IVS_CATCHUP_SPEED_LOWEST_PROFILE = 1.12f
+    // Catch-up ceilings:
+    const val MAX_IVS_CATCHUP_SPEED_DEFAULT = 1.15f
+    const val MAX_IVS_CATCHUP_SPEED_LOWEST_PROFILE = 1.25f
 
     private val rawLatencyKeys = listOf(
         AppConstants.PLAYER_BUFFER_MIN,
@@ -212,10 +211,9 @@ object LiveLatencySettings {
         }
 
         val drift = (latencyMs - targetOffsetMs).coerceAtLeast(0L)
-        // Gentle curve: 1.02x + 0.06x per 1500ms drift. Past ~1.08x is audible,
-        // so don't raise the cap to converge faster.
+        // Dynamic scaling: ramps from 1.02x up to configured ceiling based on drift.
         val speedBump = (drift.toFloat() / 1500f * 0.06f)
-        val calculated = (1.02f + speedBump).coerceIn(1.02f, maxSpeedLimit.coerceIn(1.02f, 1.12f))
+        val calculated = (1.02f + speedBump).coerceIn(1.02f, maxSpeedLimit.coerceIn(1.02f, 1.30f))
         return (calculated * 100f).roundToInt() / 100f
     }
 
@@ -240,6 +238,10 @@ object LiveLatencySettings {
         removeIfLegacyDefault(prefs, edit, AppConstants.PLAYER_BUFFER_PLAYBACK, "2000")
         removeIfLegacyDefault(prefs, edit, AppConstants.PLAYER_BUFFER_REBUFFER, "2000")
         removeIfLegacyDefault(prefs, edit, AppConstants.PLAYER_LIVE_TARGET_OFFSET, "2000")
+        removeIfLegacyDefault(prefs, edit, AppConstants.PLAYER_LIVE_TARGET_OFFSET, "1600")
+        removeIfLegacyDefault(prefs, edit, AppConstants.PLAYER_LIVE_TARGET_OFFSET, "1000")
+        removeIfLegacyDefault(prefs, edit, AppConstants.PLAYER_LIVE_MAX_SPEED, "1.08")
+        removeIfLegacyDefault(prefs, edit, AppConstants.PLAYER_LIVE_MAX_SPEED, "1.12")
         edit.putBoolean(MIGRATION_KEY, true)
         edit.apply()
     }
@@ -251,27 +253,27 @@ object LiveLatencySettings {
                 maxBufferMs = 8_000,
                 playbackBufferMs = 500,
                 rebufferMs = 1_000,
-                targetOffsetMs = 1_000,
+                targetOffsetMs = 1_750,
                 minPlaybackSpeed = 1.00f,
-                maxPlaybackSpeed = 1.12f
+                maxPlaybackSpeed = 1.20f
             )
             PROFILE_STABLE -> LiveLatencyDefaults(
                 minBufferMs = 15_000,
                 maxBufferMs = 50_000,
                 playbackBufferMs = 2_000,
                 rebufferMs = 2_000,
-                targetOffsetMs = 2_000,
+                targetOffsetMs = 3_500,
                 minPlaybackSpeed = 1.00f,
-                maxPlaybackSpeed = 1.05f
+                maxPlaybackSpeed = 1.08f
             )
             else -> LiveLatencyDefaults(
                 minBufferMs = 4_000,
                 maxBufferMs = 15_000,
                 playbackBufferMs = 800,
                 rebufferMs = 1_500,
-                targetOffsetMs = 1_600,
+                targetOffsetMs = 2_200,
                 minPlaybackSpeed = 1.00f,
-                maxPlaybackSpeed = 1.08f
+                maxPlaybackSpeed = 1.15f
             )
         }
     }

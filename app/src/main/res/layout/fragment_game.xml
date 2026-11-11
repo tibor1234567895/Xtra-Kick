@@ -138,7 +138,7 @@
 
                 <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/spinner"
-                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu"
+                    style="?attr/exposedDropdownLayoutStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:visibility="gone"

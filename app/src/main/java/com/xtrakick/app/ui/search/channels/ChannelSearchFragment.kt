@@ -27,12 +27,13 @@ import com.xtrakick.app.ui.search.Searchable
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
+import com.xtrakick.app.ui.common.Scrollable
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
-class ChannelSearchFragment : PagedListFragment(), Searchable {
+class ChannelSearchFragment : PagedListFragment(), Searchable, Scrollable {
 
     private var _binding: CommonRecyclerViewLayoutBinding? = null
     private val binding get() = _binding!!
@@ -56,6 +57,22 @@ class ChannelSearchFragment : PagedListFragment(), Searchable {
             }
             WindowInsetsCompat.CONSUMED
         }
+        if (requireContext().prefs().getBoolean(AppConstants.UI_SCROLLTOP, true)) {
+            binding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                    super.onScrollStateChanged(recyclerView, newState)
+                    binding.scrollTop.isVisible = shouldShowButton(recyclerView)
+                }
+            })
+            binding.scrollTop.setOnClickListener {
+                scrollToTop()
+                it.visibility = View.GONE
+            }
+        }
+    }
+
+    override fun scrollToTop() {
+        binding.recyclerView.scrollToPosition(0)
     }
 
     override fun initialize() {

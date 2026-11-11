@@ -283,18 +283,17 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     R.id.followButton -> {
                         viewModel.isFollowing.value?.let {
                             if (it) {
+                                val effectiveTargetName = if (!args.channelLogin.isNullOrBlank() && !args.channelName.isNullOrBlank() && !args.channelLogin.equals(args.channelName, true)) {
+                                    when (requireContext().prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
+                                        "0" -> "${args.channelName}(${args.channelLogin})"
+                                        "1" -> args.channelName
+                                        else -> args.channelLogin
+                                    }
+                                } else {
+                                    args.channelName ?: args.channelLogin ?: ""
+                                }
                                 requireContext().getAlertDialogBuilder()
-                                    .setMessage(getString(R.string.unfollow_channel,
-                                        if (args.channelLogin != null && !args.channelLogin.equals(args.channelName, true)) {
-                                            when (requireContext().prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
-                                                "0" -> "${args.channelName}(${args.channelLogin})"
-                                                "1" -> args.channelName
-                                                else -> args.channelLogin
-                                            }
-                                        } else {
-                                            args.channelName
-                                        }
-                                    ))
+                                    .setMessage(getString(R.string.unfollow_channel, effectiveTargetName))
                                     .setNegativeButton(getString(R.string.no), null)
                                     .setPositiveButton(getString(R.string.yes)) { _, _ ->
                                         val kickFollow = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
@@ -449,36 +448,23 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                                 if (!errorMessage.isNullOrBlank()) {
                                     Toast.makeText(requireContext(), errorMessage, Toast.LENGTH_SHORT).show()
                                 } else {
+                                    val effectiveTargetName = if (!args.channelLogin.isNullOrBlank() && !args.channelName.isNullOrBlank() && !args.channelLogin.equals(args.channelName, true)) {
+                                        when (requireContext().prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
+                                            "0" -> "${args.channelName}(${args.channelLogin})"
+                                            "1" -> args.channelName
+                                            else -> args.channelLogin
+                                        }
+                                    } else {
+                                        args.channelName ?: args.channelLogin ?: ""
+                                    }
                                     if (following) {
                                         Toast.makeText(requireContext(),
-                                            getString(
-                                                R.string.now_following,
-                                                if (args.channelLogin != null && !args.channelLogin.equals(args.channelName, true)) {
-                                                    when (requireContext().prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
-                                                        "0" -> "${args.channelName}(${args.channelLogin})"
-                                                        "1" -> args.channelName
-                                                        else -> args.channelLogin
-                                                    }
-                                                } else {
-                                                    args.channelName
-                                                }
-                                            ),
+                                            getString(R.string.now_following, effectiveTargetName),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     } else {
                                         Toast.makeText(requireContext(),
-                                            getString(
-                                                R.string.unfollowed,
-                                                if (args.channelLogin != null && !args.channelLogin.equals(args.channelName, true)) {
-                                                    when (requireContext().prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
-                                                        "0" -> "${args.channelName}(${args.channelLogin})"
-                                                        "1" -> args.channelName
-                                                        else -> args.channelLogin
-                                                    }
-                                                } else {
-                                                    args.channelName
-                                                }
-                                            ),
+                                            getString(R.string.unfollowed, effectiveTargetName),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     }

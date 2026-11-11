@@ -6,7 +6,10 @@ import android.app.Activity
 import android.app.admin.DeviceAdminReceiver
 import android.app.admin.DevicePolicyManager
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
+import android.content.DialogInterface
 import android.content.Intent
 import com.xtrakick.app.ui.login.LoginActivity
 import android.content.pm.PackageManager
@@ -33,6 +36,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
 import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.content.FileProvider
 import androidx.core.content.res.use
@@ -90,6 +94,7 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 import com.xtrakick.app.util.BatteryOptimizationHelper
 import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.CrashReports
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.applyTheme
@@ -98,6 +103,7 @@ import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.appbar.AppBarLayout
+import com.google.android.material.button.MaterialButton
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -816,6 +822,15 @@ class SettingsActivity : AppCompatActivity() {
 
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.advanced_preferences, rootKey)
+            for (key in listOf(AppConstants.USAGE_STATS_ENABLED, AppConstants.CRASH_REPORTS_ENABLED)) {
+                findPreference<Preference>(key)?.setOnPreferenceChangeListener { _, value ->
+                    if (value == false) {
+                        requireContext().prefs().edit().putBoolean(key, false).commit()
+                        CrashReports.clear(requireContext())
+                    }
+                    true
+                }
+            }
             val changeListener = Preference.OnPreferenceChangeListener { _, _ ->
                 (requireActivity() as? SettingsActivity)?.setResult()
                 true
@@ -1880,21 +1895,41 @@ class SettingsActivity : AppCompatActivity() {
                 val padding = (20f * density).toInt()
                 setPadding(padding, (4f * density).toInt(), padding, 0)
             }
-            context.getAlertDialogBuilder()
+            val dialog = context.getAlertDialogBuilder()
                 .setTitle(R.string.diagnostic_log_share)
                 .setView(container)
-                .setPositiveButton(R.string.share) { dialog, _ ->
-                    dialog.dismiss()
+                .setPositiveButton(R.string.share) { _, _ ->
                     shareDiagnosticLog()
                 }
-                .setNeutralButton(R.string.diagnostic_log_clear_action) { dialog, _ ->
-                    dialog.dismiss()
-                    DiagnosticLogger.clear(context)
-                    Toast.makeText(context, R.string.diagnostic_log_clear_done, Toast.LENGTH_SHORT).show()
-                    refreshDiagnosticSummary()
-                }
+                .setNeutralButton(R.string.diagnostic_log_copy, null)
                 .setNegativeButton(R.string.close, null)
-                .show()
+                .create()
+
+            dialog.setOnShowListener {
+                val neutralBtn = dialog.getButton(DialogInterface.BUTTON_NEUTRAL)
+                (neutralBtn as? MaterialButton)?.setIconResource(R.drawable.baseline_content_copy_24)
+                neutralBtn?.setOnClickListener {
+                    copyDiagnosticLogToClipboard(logView)
+                }
+            }
+            dialog.show()
+        }
+
+        private fun copyDiagnosticLogToClipboard(logView: DiagnosticLogger.DiagnosticLogView) {
+            val context = context ?: return
+            lifecycleScope.launch {
+                val fullText = withContext(Dispatchers.IO) {
+                    runCatching { DiagnosticLogger.exportFile(context)?.readText() }.getOrNull()
+                }?.takeIf { it.isNotBlank() } ?: logView.preview
+
+                if (!isAdded) return@launch
+                val clipboard = ContextCompat.getSystemService(context, ClipboardManager::class.java)
+                if (clipboard != null) {
+                    val clip = ClipData.newPlainText("Xtra Diagnostic Log", fullText)
+                    clipboard.setPrimaryClip(clip)
+                    Toast.makeText(context, R.string.diagnostic_log_copied, Toast.LENGTH_SHORT).show()
+                }
+            }
         }
 
         private fun buildDiagnosticStatusText(logView: DiagnosticLogger.DiagnosticLogView): String {

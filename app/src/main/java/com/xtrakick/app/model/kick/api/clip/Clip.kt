@@ -24,4 +24,8 @@ class Clip(
     val duration: Double? = null,
     @SerialName("vod_offset")
     val vodOffset: Int? = null,
+    @SerialName("creator_id")
+    val creatorId: String? = null,
+    @SerialName("creator_name")
+    val creatorName: String? = null,
 )

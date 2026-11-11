@@ -357,6 +357,12 @@ class IvsPlayerService : Service() {
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS -> {
+                DiagnosticLogger.logNonUiPause(
+                    this@IvsPlayerService,
+                    "IvsPlayerService.audioFocus",
+                    "AUDIOFOCUS_LOSS",
+                    "state=${player?.state} latency=${player?.liveLatency}ms channel=$channelName"
+                )
                 // Permanent loss: clear the request so the idle timer can reclaim the
                 // service and a later AUDIOFOCUS_GAIN doesn't auto-resume. Restore the
                 // volume first — CAN_DUCK may have ducked it, and a manual resume from
@@ -369,6 +375,12 @@ class IvsPlayerService : Service() {
                 updateNotification()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                DiagnosticLogger.logNonUiPause(
+                    this@IvsPlayerService,
+                    "IvsPlayerService.audioFocus",
+                    "AUDIOFOCUS_LOSS_TRANSIENT",
+                    "state=${player?.state} latency=${player?.liveLatency}ms channel=$channelName"
+                )
                 suspendedByFocusLoss = true
                 pause(clearPlaybackRequest = false)
                 updatePlaybackState()
@@ -511,15 +523,27 @@ class IvsPlayerService : Service() {
         val ivsPlayer = Player.Factory.create(this).apply {
             setLogLevel(Player.LogLevel.ERROR)
             setLiveLowLatencyEnabled(true)
-            setRebufferToLive(false)
+            setRebufferToLive(true)
             setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
         }
         player = ivsPlayer
+        var lastPlaybackState = Player.State.IDLE
         ivsPlayer.addListener(
             object : Player.Listener() {
                 override fun onCue(cue: com.amazonaws.ivs.player.Cue) = Unit
 
                 override fun onStateChanged(state: Player.State) {
+                    if (lastPlaybackState == Player.State.PLAYING && state != Player.State.PLAYING) {
+                        DiagnosticLogger.logPause(
+                            callingContext = this@IvsPlayerService,
+                            source = "IvsPlayerService.onStateChanged",
+                            reason = "State transitioned from $lastPlaybackState to $state",
+                            isUserInitiated = false,
+                            engine = "AmazonIVS",
+                            details = "channel=$channelName latency=${ivsPlayer.liveLatency}ms pos=${ivsPlayer.position}ms buf=${ivsPlayer.bufferedPosition}ms bw=${ivsPlayer.bandwidthEstimate} playbackRequested=$playbackRequested surfaceAttached=$surfaceAttached boundClients=$boundClients background=$backgroundPlaybackEnabled",
+                        )
+                    }
+                    lastPlaybackState = state
                     if (state == Player.State.PLAYING || state == Player.State.BUFFERING) {
                         hasStablePlayback = true
                     }
@@ -533,7 +557,9 @@ class IvsPlayerService : Service() {
                         UsagePing.noteWatchStopped(this@IvsPlayerService)
                         stopKickViewerWatch()
                     }
-                    if (state == Player.State.READY && playbackRequested && !suspendedByFocusLoss) {
+                    if ((state == Player.State.READY || (state == Player.State.IDLE && backgroundPlaybackEnabled)) &&
+                        playbackRequested && !isPaused && !suspendedByFocusLoss
+                    ) {
                         player?.play()
                     }
                     if (state == Player.State.ENDED && boundClients == 0) {
@@ -589,6 +615,15 @@ class IvsPlayerService : Service() {
                 }
 
                 override fun onError(exception: PlayerException) {
+                    DiagnosticLogger.logPause(
+                        callingContext = this@IvsPlayerService,
+                        source = "IvsPlayerService.onError",
+                        reason = "PlayerException code=${exception.code} type=${exception.errorType} source=${exception.source}: ${exception.errorMessage}",
+                        isUserInitiated = false,
+                        engine = "AmazonIVS",
+                        details = "channel=$channelName state=${player?.state} background=$backgroundPlaybackEnabled boundClients=$boundClients retryCount=$retryCount url=$currentUrl",
+                        throwable = exception,
+                    )
                     playerDebugWarn(
                         "error code=${exception.code} type=${exception.errorType} source=${exception.source} " +
                             "backgroundPlaybackEnabled=$backgroundPlaybackEnabled message=${exception.errorMessage}"
@@ -612,7 +647,7 @@ class IvsPlayerService : Service() {
                             if (currentUrl == retryUrl && playbackRequested) {
                                 runPlayerOp("background-retry") {
                                     it.setLiveLowLatencyEnabled(true)
-                                    it.setRebufferToLive(false)
+                                    it.setRebufferToLive(true)
                                     if (!usePreloadedSource(it, retryUrl)) {
                                         it.load(Uri.parse(retryUrl))
                                     }
@@ -677,6 +712,20 @@ class IvsPlayerService : Service() {
                     }
 
                     override fun onPause() {
+                        val callerInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            val caller = session?.currentControllerInfo
+                            "caller=${caller?.packageName ?: "unknown"}(pid=${caller?.pid ?: -1},uid=${caller?.uid ?: -1})"
+                        } else {
+                            "caller=unknown(pid=-1,uid=-1)"
+                        }
+                        DiagnosticLogger.logPause(
+                            callingContext = this@IvsPlayerService,
+                            source = "IvsPlayerService.MediaSession",
+                            reason = "onPause from $callerInfo",
+                            isUserInitiated = false,
+                            engine = "AmazonIVS",
+                            details = "state=${player?.state} channel=$channelName boundClients=$boundClients background=$backgroundPlaybackEnabled $callerInfo",
+                        )
                         if (multiPovDelegate != null) {
                             multiPovDelegate?.onPause()
                         } else {
@@ -687,6 +736,29 @@ class IvsPlayerService : Service() {
                     }
 
                     override fun onStop() {
+                        val callerInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            val caller = session?.currentControllerInfo
+                            "caller=${caller?.packageName ?: "unknown"}(pid=${caller?.pid ?: -1},uid=${caller?.uid ?: -1})"
+                        } else {
+                            "caller=unknown(pid=-1,uid=-1)"
+                        }
+                        val isBufferingOrPlaying = player?.state == Player.State.BUFFERING || player?.state == Player.State.PLAYING
+                        val shouldIgnore = boundClients > 0 || (playbackRequested && isBufferingOrPlaying)
+                        DiagnosticLogger.logPause(
+                            callingContext = this@IvsPlayerService,
+                            source = "IvsPlayerService.MediaSession",
+                            reason = "onStop from $callerInfo (ignored=$shouldIgnore)",
+                            isUserInitiated = false,
+                            engine = "AmazonIVS",
+                            details = "state=${player?.state} channel=$channelName boundClients=$boundClients background=$backgroundPlaybackEnabled playbackRequested=$playbackRequested $callerInfo",
+                        )
+                        if (shouldIgnore) {
+                            // Fragment is actively bound (user in-app) or live playback is actively requested/buffering.
+                            // Automated external stop commands (e.g. OxygenOS SystemUI firing on transient buffer underruns)
+                            // must NOT interrupt or pause playback.
+                            playerDebugWarn("MediaSession.onStop ignored (boundClients=$boundClients, state=${player?.state}, playbackRequested=$playbackRequested) from $callerInfo")
+                            return
+                        }
                         if (multiPovDelegate != null) {
                             multiPovDelegate?.onPause()
                             detachMultiPovSession()
@@ -726,8 +798,27 @@ class IvsPlayerService : Service() {
                     }
 
                     override fun onMediaButtonEvent(mediaButtonEvent: Intent): Boolean {
-                        // Let the framework dispatch to onPlay/onPause/onSkip etc. via PlaybackState.
-                        // Returning false allows the default handling which posts the matching callback.
+                        val keyEvent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            mediaButtonEvent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            mediaButtonEvent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+                        }
+                        if (keyEvent != null && keyEvent.action == KeyEvent.ACTION_DOWN) {
+                            when (keyEvent.keyCode) {
+                                KeyEvent.KEYCODE_MEDIA_PAUSE,
+                                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                                KeyEvent.KEYCODE_HEADSETHOOK,
+                                KeyEvent.KEYCODE_MEDIA_STOP -> {
+                                    DiagnosticLogger.logNonUiPause(
+                                        this@IvsPlayerService,
+                                        "IvsPlayerService.MediaSession.onMediaButtonEvent",
+                                        "keyCode=${keyEvent.keyCode} source=${keyEvent.source}",
+                                        "state=${player?.state} channel=$channelName"
+                                    )
+                                }
+                            }
+                        }
                         return super.onMediaButtonEvent(mediaButtonEvent)
                     }
                 }
@@ -754,6 +845,12 @@ class IvsPlayerService : Service() {
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
                     if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY && playbackRequested) {
+                        DiagnosticLogger.logNonUiPause(
+                            this@IvsPlayerService,
+                            "IvsPlayerService.becomingNoisy",
+                            "ACTION_AUDIO_BECOMING_NOISY",
+                            "state=${player?.state} channel=$channelName"
+                        )
                         playerDebugLog("headset disconnected, pausing")
                         pause(clearPlaybackRequest = true)
                         updatePlaybackState()
@@ -812,7 +909,7 @@ class IvsPlayerService : Service() {
         // Don't acquire locks pre-emptively — wait for BUFFERING/PLAYING callback.
         runPlayerOp("playStream-load-play") {
             it.setLiveLowLatencyEnabled(true)
-            it.setRebufferToLive(false)
+            it.setRebufferToLive(true)
             it.setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
             it.setAutoQualityMode(true)
             if (targetInitialBitrate > 0) {
@@ -981,6 +1078,12 @@ class IvsPlayerService : Service() {
         val runnable = Runnable {
             deadStreamWatchdog = null
             if (isDeadStreamCandidate()) {
+                DiagnosticLogger.logNonUiPause(
+                    this@IvsPlayerService,
+                    "IvsPlayerService.deadStreamWatchdog",
+                    "deadStreamCandidate state=${player?.state}",
+                    "channel=$channelName background=$backgroundPlaybackEnabled"
+                )
                 playerDebugWarn("dead stream watchdog: stopping background playback state=${player?.state}")
                 stopPlaybackForGood()
             }
@@ -993,8 +1096,7 @@ class IvsPlayerService : Service() {
         if (surfaceAttached || boundClients > 0 || suspendedByFocusLoss || !playbackRequested || multiPovDelegate != null || isPaused) return false
         val state = player?.state ?: return false
         return state == Player.State.ENDED ||
-            ((state == Player.State.READY || state == Player.State.IDLE) &&
-                (backgroundPlaybackEnabled || !hasStablePlayback))
+            ((state == Player.State.READY || state == Player.State.IDLE) && !hasStablePlayback)
     }
 
     private fun disarmDeadStreamWatchdog() {
@@ -1103,6 +1205,8 @@ class IvsPlayerService : Service() {
 
     fun isPlaybackRequested(): Boolean = playbackRequested
 
+    fun isPaused(): Boolean = isPaused
+
     fun play() {
         session?.isActive = true
         playbackRequested = true
@@ -1120,6 +1224,14 @@ class IvsPlayerService : Service() {
     }
 
     fun pause(clearPlaybackRequest: Boolean) {
+        DiagnosticLogger.logPause(
+            callingContext = this,
+            source = "IvsPlayerService.pause",
+            reason = "pause(clearPlaybackRequest=$clearPlaybackRequest)",
+            isUserInitiated = clearPlaybackRequest,
+            engine = "AmazonIVS",
+            details = "channel=$channelName state=${player?.state} latency=${player?.liveLatency}ms pos=${player?.position}ms boundClients=$boundClients background=$backgroundPlaybackEnabled",
+        )
         isPaused = true
         if (clearPlaybackRequest) {
             playbackRequested = false
@@ -1159,6 +1271,14 @@ class IvsPlayerService : Service() {
     }
 
     fun stopPlayback() {
+        DiagnosticLogger.logPause(
+            callingContext = this,
+            source = "IvsPlayerService.stopPlayback",
+            reason = "Playback stopping and tearing down service",
+            isUserInitiated = false,
+            engine = "AmazonIVS",
+            details = "channel=$channelName state=${player?.state} boundClients=$boundClients background=$backgroundPlaybackEnabled",
+        )
         cancelBackgroundAudioSaver()
         backgroundSaverQuality = null
         watchOwner.clearMetadata()
@@ -1243,11 +1363,14 @@ class IvsPlayerService : Service() {
                     if (isStopped) {
                         0L
                     } else {
-                        PlaybackState.ACTION_STOP or
-                            PlaybackState.ACTION_PLAY or
+                        val baseActions = PlaybackState.ACTION_PLAY or
                             PlaybackState.ACTION_PAUSE or
-                            PlaybackState.ACTION_PLAY_PAUSE or
-                            seekActions
+                            PlaybackState.ACTION_PLAY_PAUSE
+                        if (live) {
+                            baseActions
+                        } else {
+                            baseActions or PlaybackState.ACTION_STOP or seekActions
+                        }
                     }
                 )
             }.build()
@@ -1463,6 +1586,12 @@ class IvsPlayerService : Service() {
                             } else {
                                 val ivsPlayer = player
                                 if (ivsPlayer?.state == Player.State.PLAYING) {
+                                    DiagnosticLogger.logNonUiPause(
+                                        this@IvsPlayerService,
+                                        "IvsPlayerService.onStartCommand.ACTION_MEDIA_BUTTON",
+                                        "keyCode=${keyEvent.keyCode} (PLAY_PAUSE/HEADSETHOOK)",
+                                        "state=${ivsPlayer.state} channel=$channelName"
+                                    )
                                     pause(clearPlaybackRequest = true)
                                 } else {
                                     if (ivsPlayer?.state == Player.State.READY || ivsPlayer?.state == Player.State.ENDED || playbackRequested) {
@@ -1498,6 +1627,12 @@ class IvsPlayerService : Service() {
                             }
                         }
                         KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP -> {
+                            DiagnosticLogger.logNonUiPause(
+                                this@IvsPlayerService,
+                                "IvsPlayerService.onStartCommand.ACTION_MEDIA_BUTTON",
+                                "keyCode=${keyEvent.keyCode} (PAUSE/STOP)",
+                                "state=${player?.state} channel=$channelName"
+                            )
                             if (multiPovDelegate != null) {
                                 multiPovDelegate?.onPause()
                             } else {
@@ -1534,6 +1669,14 @@ class IvsPlayerService : Service() {
                     } else {
                         val ivsPlayer = player
                         if (ivsPlayer?.state == Player.State.PLAYING) {
+                            DiagnosticLogger.logPause(
+                                callingContext = this@IvsPlayerService,
+                                source = "IvsPlayerService.INTENT_PLAY_PAUSE",
+                                reason = "Notification/Widget play/pause action received",
+                                isUserInitiated = true,
+                                engine = "AmazonIVS",
+                                details = "channel=$channelName",
+                            )
                             pause(clearPlaybackRequest = true)
                         } else {
                             play()

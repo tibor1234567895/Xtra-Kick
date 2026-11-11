@@ -61,6 +61,8 @@
         android:focusable="true"
         android:src="@drawable/baseline_arrow_upward_black_24"
         android:visibility="gone"
+        app:backgroundTint="?attr/colorSurfaceContainer"
+        app:tint="?android:attr/textColorPrimary"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"

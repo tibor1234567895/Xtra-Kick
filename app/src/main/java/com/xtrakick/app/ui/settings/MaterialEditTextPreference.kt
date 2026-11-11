@@ -10,7 +10,7 @@ import android.view.WindowInsets
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import androidx.preference.EditTextPreferenceDialogFragmentCompat
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.xtrakick.app.util.getAlertDialogBuilder
 
 class MaterialEditTextPreference : EditTextPreferenceDialogFragmentCompat() {
 
@@ -38,7 +38,7 @@ class MaterialEditTextPreference : EditTextPreferenceDialogFragmentCompat() {
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         mWhichButtonClicked = DialogInterface.BUTTON_NEGATIVE
-        val builder = MaterialAlertDialogBuilder(requireContext())
+        val builder = requireContext().getAlertDialogBuilder()
             .setTitle(preference.dialogTitle)
             .setIcon(preference.dialogIcon)
             .setPositiveButton(preference.positiveButtonText, this)

@@ -2,9 +2,15 @@ package com.xtrakick.app.util
 
 import android.app.ActivityManager
 import android.app.Application
+import android.app.KeyguardManager
 import android.content.Context
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Debug
+import android.os.PowerManager
 import android.util.Log
 import com.xtrakick.app.BuildConfig
 import java.io.File
@@ -88,11 +94,160 @@ object DiagnosticLogger {
     }
 
     fun testEntry() {
-        writeIfEnabled(LEVEL_WARNING, "DiagnosticLogger", "Test diagnostic log entry")
+        val appContext = context ?: return
+        write(appContext, LEVEL_WARNING, "DiagnosticLogger", "Test diagnostic log entry", null)
+        logPause(
+            callingContext = appContext,
+            source = "DiagnosticLogger.testEntry",
+            reason = "Diagnostic test triggered from Settings",
+            isUserInitiated = true,
+            engine = "TestEngine",
+            details = "Verification entry to confirm pause logging functionality",
+        )
     }
 
     fun logCrash(throwable: Throwable) {
         writeIfEnabled(LEVEL_CRASH, "Crash", "Uncaught exception", throwable, forceCrash = true)
+    }
+
+    /**
+     * Logs pauses or stops that are not directly initiated by the user tapping the
+     * in-app play/pause button (e.g. audio focus loss, headset disconnect, media session callbacks,
+     * watchdog expiry, or live buffer exhaustion).
+     */
+    fun logNonUiPause(
+        callingContext: Context?,
+        source: String,
+        reason: String,
+        details: String = "",
+    ) {
+        logPause(
+            callingContext = callingContext,
+            source = source,
+            reason = reason,
+            isUserInitiated = false,
+            engine = null,
+            details = details,
+        )
+    }
+
+    internal fun shouldLogPause(
+        logAllPausesEnabled: Boolean,
+        logNonUserPausesEnabled: Boolean,
+        isUserInitiated: Boolean,
+    ): Boolean {
+        return logAllPausesEnabled || (!isUserInitiated && logNonUserPausesEnabled)
+    }
+
+    /**
+     * Logs playback pauses, stops, stalls, errors, and state transitions.
+     * Records rich release-safe diagnostic information:
+     * - Source and trigger reason
+     * - User-initiated vs unexpected/system/player event
+     * - Player engine (IVS / Media3) and playback metadata
+     * - Live latency, playback position, buffer health, bandwidth
+     * - System state: screen lock, interactive/on, power save, thermal status, network connectivity
+     * - Audio routing: active output devices (BT A2DP, BLE, wired, speaker), audio mode, music active
+     * - Full synthetic or passed throwable callstack to pinpoint the exact caller
+     */
+    fun logPause(
+        callingContext: Context?,
+        source: String,
+        reason: String,
+        isUserInitiated: Boolean,
+        engine: String? = null,
+        details: String = "",
+        throwable: Throwable? = null,
+    ) {
+        val appContext = context ?: (callingContext?.applicationContext as? Application)
+        val prefs = appContext?.prefs()
+        val logAll = prefs?.getBoolean(AppConstants.DEBUG_LOG_ALL_PAUSES, true) ?: true
+        val logNonUser = prefs?.getBoolean(AppConstants.DEBUG_LOG_NON_USER_PAUSES, true) ?: true
+        val shouldLog = shouldLogPause(logAll, logNonUser, isUserInitiated)
+
+        val tag = if (isUserInitiated) "PlaybackPause" else "NonUiPause"
+        val level = if (isUserInitiated) "PAUSE_USER" else "PAUSE_NON_USER"
+        val callstack = throwable ?: Throwable("Playback pause: $source ($reason)")
+        val audioInfo = getAudioRoutingDetails(appContext)
+        val sysInfo = getSystemDiagnostics(appContext)
+
+        val message = buildString {
+            append("source=").append(source)
+            append(" | reason=").append(reason)
+            append(" | userInitiated=").append(isUserInitiated)
+            if (!engine.isNullOrBlank()) append(" | engine=").append(engine)
+            if (details.isNotBlank()) append(" | ").append(details)
+            if (sysInfo.isNotBlank()) append(" | sys=[").append(sysInfo).append("]")
+            if (audioInfo.isNotBlank()) append(" | audio=[").append(audioInfo).append("]")
+        }
+
+        Log.w(tag, message, callstack)
+        if (shouldLog && appContext != null) {
+            write(appContext, level, tag, message, callstack)
+        }
+    }
+
+    private fun getSystemDiagnostics(context: Context?): String {
+        if (context == null) return ""
+        return runCatching {
+            val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            val isLocked = km?.isKeyguardLocked ?: false
+            val isInteractive = pm?.isInteractive ?: true
+            val isPowerSave = pm?.isPowerSaveMode ?: false
+            val thermal = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                pm?.currentThermalStatus ?: -1
+            } else -1
+
+            val netInfo = cm?.let {
+                val active = it.activeNetwork
+                val caps = it.getNetworkCapabilities(active)
+                val type = when {
+                    caps == null -> "NONE"
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELLULAR"
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+                    else -> "OTHER"
+                }
+                val validated = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) ?: false
+                val metered = it.isActiveNetworkMetered
+                "$type(validated=$validated,metered=$metered)"
+            } ?: "unknown"
+
+            "locked=$isLocked,interactive=$isInteractive,powerSave=$isPowerSave${if (thermal >= 0) ",thermal=$thermal" else ""},net=$netInfo"
+        }.getOrDefault("")
+    }
+
+    private fun getAudioRoutingDetails(context: Context?): String {
+        if (context == null) return ""
+        return runCatching {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return ""
+            val devicesStr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                outputs.joinToString(",") { dev ->
+                    val typeName = when (dev.type) {
+                        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "BT_A2DP"
+                        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "BT_SCO"
+                        AudioDeviceInfo.TYPE_BLE_HEADSET -> "BLE_HEADSET"
+                        AudioDeviceInfo.TYPE_BLE_SPEAKER -> "BLE_SPEAKER"
+                        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "WIRED_HEADSET"
+                        AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "WIRED_HEADPHONES"
+                        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "SPEAKER"
+                        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "EARPIECE"
+                        AudioDeviceInfo.TYPE_USB_DEVICE -> "USB"
+                        AudioDeviceInfo.TYPE_USB_HEADSET -> "USB_HEADSET"
+                        else -> "type_${dev.type}"
+                    }
+                    "$typeName(${dev.productName})"
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                "isBluetoothA2dpOn=${am.isBluetoothA2dpOn}, isWiredHeadsetOn=${am.isWiredHeadsetOn}"
+            }
+            "mode=${am.mode}, musicActive=${am.isMusicActive}, outputs=[$devicesStr]"
+        }.getOrDefault("")
     }
 
     fun clear(context: Context) {

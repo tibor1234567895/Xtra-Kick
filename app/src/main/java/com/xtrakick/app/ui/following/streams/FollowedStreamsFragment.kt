@@ -73,6 +73,22 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
         binding.swipeRefresh.setOnRefreshListener {
             viewModel.refresh(isPullToRefresh = true)
         }
+        if (requireContext().prefs().getBoolean(AppConstants.UI_SCROLLTOP, true)) {
+            binding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                    super.onScrollStateChanged(recyclerView, newState)
+                    val offset = recyclerView.computeVerticalScrollOffset()
+                    val extent = recyclerView.computeVerticalScrollExtent()
+                    val range = recyclerView.computeVerticalScrollRange()
+                    val scrollableRange = range - extent
+                    binding.scrollTop.isVisible = offset >= 0 && scrollableRange > 0 && (100f * offset / scrollableRange.toFloat()) > 3f
+                }
+            })
+            binding.scrollTop.setOnClickListener {
+                (parentFragment as? Scrollable)?.scrollToTop() ?: scrollToTop()
+                it.visibility = View.GONE
+            }
+        }
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
             if (activity?.findViewById<LinearLayout>(R.id.navBarContainer)?.isVisible == false) {
                 val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())

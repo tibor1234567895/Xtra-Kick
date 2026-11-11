@@ -20,6 +20,22 @@ class ReelStripBuilderTest {
     }
 
     @Test
+    fun buildsFixedStripWithLeadInPadding() {
+        val strip = ReelStripBuilder.buildFixedReelStrip(items(12), "item-8", leadInCount = 2)
+        // 2 lead-in + 24 (2 copies) + 1 extra + 2 lead-out = 29
+        assertEquals(29, strip.items.size)
+        assertEquals(2, strip.restIndex)
+        assertEquals(21, strip.targetIndex) // 2 + 12 + 7
+        // Effective travel is unchanged: 21 - 2 = 19
+        assertEquals(19, strip.targetIndex - strip.restIndex)
+        // Verify lead-in items wrap correctly from the end of rewards
+        assertEquals("item-11-leadin-0", strip.items[0].id)
+        assertEquals("item-12-leadin-1", strip.items[1].id)
+        // Rest index points to the first reward
+        assertEquals("item-1", strip.items[2].id)
+    }
+
+    @Test
     fun duplicatedFirstItemTargetsSecondCopy() {
         val strip = ReelStripBuilder.buildFixedReelStrip(items(5), "item-2")
         assertEquals(11, strip.items.size)

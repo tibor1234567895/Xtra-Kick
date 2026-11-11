@@ -269,6 +269,8 @@ class MainViewModel @Inject constructor(
                                     uploadDate = it.createdAt,
                                     duration = it.duration,
                                     thumbnailUrl = it.thumbnailUrl,
+                                    creatorId = it.creatorId,
+                                    creatorName = it.creatorName,
                                 )
                             }
                         }.getOrNull()

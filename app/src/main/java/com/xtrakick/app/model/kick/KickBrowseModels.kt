@@ -41,7 +41,7 @@ data class KickBrowseLivestream(
         thumbnail = thumbnail,
         categories = category?.let(::listOf),
         channel = KickChannelSummary(id = channel.id, slug = channel.slug,
-            user = KickUser(username = channel.username, profilePicV2 = channel.profilePic)),
+            user = KickUser(username = channel.username ?: channel.slug, profilePicV2 = channel.effectiveProfilePic)),
     )
 }
 
@@ -51,7 +51,16 @@ data class KickBrowseChannel(
     val slug: String,
     val username: String? = null,
     @SerialName("profile_pic") val profilePic: String? = null,
-)
+    @SerialName("profile_picture") val profilePicture: String? = null,
+    @SerialName("profilepic") val profilepic: String? = null,
+    @SerialName("profilePic") val profilePicCamelCase: String? = null,
+) {
+    val effectiveProfilePic: String?
+        get() = profilePic?.takeIf { it.isNotBlank() }
+            ?: profilePicture?.takeIf { it.isNotBlank() }
+            ?: profilepic?.takeIf { it.isNotBlank() }
+            ?: profilePicCamelCase?.takeIf { it.isNotBlank() }
+}
 
 @Serializable
 data class KickBrowseLanguageCodes(val data: List<String> = emptyList())

@@ -66,7 +66,7 @@ class FollowedGamesFragment : PagedListFragment(), Scrollable {
                 }
             }
         }
-        initializeAdapter(binding, pagingAdapter, enableScrollTopButton = false)
+        initializeAdapter(binding, pagingAdapter)
     }
 
     override fun scrollToTop() {

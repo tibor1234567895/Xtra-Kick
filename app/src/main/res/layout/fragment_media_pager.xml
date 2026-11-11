@@ -100,7 +100,7 @@
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnEnableNotifications"
-                    style="@style/Widget.Material3.Button.TonalButton"
+                    style="?attr/tonalButtonStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:minHeight="36dp"

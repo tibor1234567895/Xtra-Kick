@@ -33,21 +33,23 @@
                 android:background="#000000"
                 android:visibility="gone">
 
-                <androidx.media3.ui.PlayerView
-                    android:id="@+id/stageUnboxVideo"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:contentDescription="@null"
-                    app:resize_mode="zoom"
-                    app:surface_type="texture_view"
-                    app:use_controller="false" />
-
+                <!-- Looping glitch-particle background video (bottom layer) -->
                 <androidx.media3.ui.PlayerView
                     android:id="@+id/reelBackgroundVideo"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:contentDescription="@null"
                     android:visibility="gone"
+                    app:resize_mode="zoom"
+                    app:surface_type="texture_view"
+                    app:use_controller="false" />
+
+                <!-- Unbox lid-pop one-shot video (middle layer, on top of background video) -->
+                <androidx.media3.ui.PlayerView
+                    android:id="@+id/stageUnboxVideo"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="@null"
                     app:resize_mode="zoom"
                     app:surface_type="texture_view"
                     app:use_controller="false" />

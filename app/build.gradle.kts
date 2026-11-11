@@ -226,7 +226,7 @@ android {
 }
 
 dependencies {
-    implementation("com.google.guava:guava:33.7.2-android") // exoplayer
+    implementation("com.google.guava:guava:33.8.0-android") // exoplayer
     implementation("com.google.android.gms:play-services-cronet:18.1.1")
     implementation("androidx.credentials:credentials:1.3.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.2.1")
@@ -295,7 +295,7 @@ testImplementation("org.json:json:20260814")
     testImplementation("org.robolectric:robolectric:4.17")
     // conscrypt-android ships JNI only for Android. Robolectric loads it on the JVM, so the
     // desktop build supplies the matching native library. Test runtime only.
-    testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.8.0")
+    testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.9.0")
 }
 
 // Robolectric 4.17 reaches FileDescriptor internals via jdk.internal.access.SharedSecrets,

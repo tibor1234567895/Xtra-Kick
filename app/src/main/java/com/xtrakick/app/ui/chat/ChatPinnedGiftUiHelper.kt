@@ -1,6 +1,8 @@
 package com.xtrakick.app.ui.chat
 
 import android.graphics.Color
+import android.text.Selection
+import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextPaint
@@ -10,10 +12,10 @@ import android.text.style.ClickableSpan
 import android.text.style.ForegroundColorSpan
 import android.text.util.Linkify
 import android.util.TypedValue
+import android.view.MotionEvent
 import android.view.View
 import android.widget.TextView
 import androidx.core.text.util.LinkifyCompat
-import androidx.core.view.doOnNextLayout
 import androidx.core.view.isGone
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
@@ -57,7 +59,13 @@ class ChatPinnedGiftUiHelper(
     private val resources get() = fragment.resources
 
     fun resetPinnedGiftUiState() {
-        getBinding()?.pinnedGiftTitle?.let(ChatAdapterUtils::clearImageBinding)
+        attachedTitleView?.removeOnLayoutChangeListener(titleLayoutChangeListener)
+        attachedTitleView = null
+        getBinding()?.let { b ->
+            b.pinnedGiftTitle.scrollTo(0, 0)
+            b.pinnedGiftText.scrollTo(0, 0)
+            ChatAdapterUtils.clearImageBinding(b.pinnedGiftTitle)
+        }
         pinnedGiftUiState = PinnedGiftUiState()
         cachedPinnedGiftMessageKey = null
         cachedPinnedGiftMessageResult = null
@@ -320,11 +328,40 @@ class ChatPinnedGiftUiHelper(
         }
     }
 
+    private var attachedTitleView: TextView? = null
+
+    private val titleLayoutChangeListener = View.OnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+        val widthChanged = (right - left) != (oldRight - oldLeft)
+        val heightChanged = (bottom - top) != (oldBottom - oldTop)
+        if (widthChanged || heightChanged) {
+            recheckExpandability()
+        }
+    }
+
+    fun onConfigurationChanged() {
+        val binding = getBinding() ?: return
+        binding.pinnedGiftTitle.scrollTo(0, 0)
+        binding.pinnedGiftText.scrollTo(0, 0)
+        binding.pinnedGiftTitle.post {
+            recheckExpandability()
+        }
+    }
+
+    private fun recheckExpandability() {
+        val binding = getBinding() ?: return
+        val expanded = viewModel.pinnedGiftExpanded.value
+        if (!expanded) {
+            val isExpandable = isTextViewTruncated(binding.pinnedGiftTitle) || isTextViewTruncated(binding.pinnedGiftText)
+            applyPinnedGiftExpandability(isExpandable = isExpandable, expanded = false)
+        }
+    }
+
     private fun applyPinnedGiftExpandability(isExpandable: Boolean, expanded: Boolean) {
         if (pinnedGiftUiState.titleExpandable != isExpandable) {
             pinnedGiftUiState = pinnedGiftUiState.copy(titleExpandable = isExpandable)
         }
-        updatePinnedGiftExpandUi(showExpand = isExpandable, expanded = expanded)
+        val showExpand = if (expanded) true else isExpandable
+        updatePinnedGiftExpandUi(showExpand = showExpand, expanded = expanded)
     }
 
     fun renderPinnedGift() {
@@ -347,17 +384,26 @@ class ChatPinnedGiftUiHelper(
         val expanded = viewModel.pinnedGiftExpanded.value
         val pinnedGiftMessageResult = getPinnedGiftMessageResult(pinnedGift)
         binding.pinnedGiftLayout.isVisible = true
+        binding.pinnedGiftTitle.scrollTo(0, 0)
+        binding.pinnedGiftText.scrollTo(0, 0)
         binding.pinnedGiftTitle.text = pinnedGiftMessageResult.builder
         binding.pinnedGiftText.text = buildPinnedMetadataText(pinnedGift, binding)
         binding.pinnedGiftTitle.maxLines = if (expanded) Int.MAX_VALUE else PINNED_GIFT_COLLAPSED_MAX_LINES
         binding.pinnedGiftTitle.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
-        updatePinnedGiftExpandUi(showExpand = pinnedGiftUiState.titleExpandable, expanded = expanded)
-        if (!expanded) {
-            binding.pinnedGiftTitle.doOnNextLayout {
-                val titleIsTruncated = isPinnedGiftTitleTruncated(binding.pinnedGiftTitle)
-                applyPinnedGiftExpandability(isExpandable = titleIsTruncated, expanded = false)
-            }
+        binding.pinnedGiftText.maxLines = if (expanded) Int.MAX_VALUE else 1
+        binding.pinnedGiftText.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
+        updatePinnedGiftExpandUi(showExpand = if (expanded) true else pinnedGiftUiState.titleExpandable, expanded = expanded)
+
+        if (attachedTitleView !== binding.pinnedGiftTitle) {
+            attachedTitleView?.removeOnLayoutChangeListener(titleLayoutChangeListener)
+            binding.pinnedGiftTitle.addOnLayoutChangeListener(titleLayoutChangeListener)
+            attachedTitleView = binding.pinnedGiftTitle
         }
+
+        binding.pinnedGiftTitle.post {
+            recheckExpandability()
+        }
+
         if (pinnedGiftMessageResult.images.isNotEmpty() || pinnedGiftMessageResult.imagePaint != null) {
             ChatAdapterUtils.loadImages(
                 fragment,
@@ -365,9 +411,8 @@ class ChatPinnedGiftUiHelper(
                 { updatedBuilder ->
                     binding.pinnedGiftTitle.text = updatedBuilder
                     if (!expanded) {
-                        binding.pinnedGiftTitle.doOnNextLayout {
-                            val titleIsTruncated = isPinnedGiftTitleTruncated(binding.pinnedGiftTitle)
-                            applyPinnedGiftExpandability(isExpandable = titleIsTruncated, expanded = false)
+                        binding.pinnedGiftTitle.post {
+                            recheckExpandability()
                         }
                     }
                 },
@@ -395,11 +440,16 @@ class ChatPinnedGiftUiHelper(
         }
         binding.pinnedGiftLayout.isClickable = true
         binding.pinnedGiftLayout.isFocusable = true
-        binding.pinnedGiftLayout.setOnClickListener { }
-        binding.pinnedGiftTitle.setOnClickListener { }
-        binding.pinnedGiftText.setOnClickListener { }
-        binding.pinnedGiftTitle.movementMethod = LinkMovementMethod.getInstance()
-        binding.pinnedGiftText.movementMethod = LinkMovementMethod.getInstance()
+        val onCardClick = View.OnClickListener {
+            if (pinnedGiftUiState.titleExpandable) {
+                viewModel.togglePinnedGiftExpanded()
+            }
+        }
+        binding.pinnedGiftLayout.setOnClickListener(onCardClick)
+        binding.pinnedGiftTitle.setOnClickListener(onCardClick)
+        binding.pinnedGiftText.setOnClickListener(onCardClick)
+        binding.pinnedGiftTitle.movementMethod = NonScrollingLinkMovementMethod
+        binding.pinnedGiftText.movementMethod = NonScrollingLinkMovementMethod
         binding.pinnedGiftText.linksClickable = true
         val avatarUrl = pinnedGift.avatarUrl
         if (!avatarUrl.isNullOrBlank()) {
@@ -417,7 +467,7 @@ class ChatPinnedGiftUiHelper(
         }
     }
 
-    private fun isPinnedGiftTitleTruncated(textView: TextView): Boolean {
+    private fun isTextViewTruncated(textView: TextView): Boolean {
         val layout = textView.layout ?: return false
         val maxVisibleLines = textView.maxLines.takeIf { it > 0 } ?: return false
         val visibleLineCount = minOf(layout.lineCount, maxVisibleLines)
@@ -432,7 +482,12 @@ class ChatPinnedGiftUiHelper(
         }
         val lastVisibleLine = visibleLineCount - 1
         val visibleTextEnd = layout.getLineVisibleEnd(lastVisibleLine)
-        return visibleTextEnd < textView.text.length
+        val text = textView.text
+        var effectiveLength = text.length
+        while (effectiveLength > 0 && text[effectiveLength - 1].isWhitespace()) {
+            effectiveLength--
+        }
+        return visibleTextEnd < effectiveLength
     }
 
     private fun updatePinnedGiftExpandUi(showExpand: Boolean, expanded: Boolean) {
@@ -448,5 +503,53 @@ class ChatPinnedGiftUiHelper(
     companion object {
         private const val PINNED_GIFT_COLLAPSED_MAX_LINES = 3
         private val pinnedInlineEmoteRegex = Regex("\\[emote:(\\d+):([^\\]]+)]")
+    }
+}
+
+private object NonScrollingLinkMovementMethod : LinkMovementMethod() {
+    override fun onTouchEvent(widget: TextView, buffer: Spannable, event: MotionEvent): Boolean {
+        val action = event.actionMasked
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_DOWN) {
+            val rawX = event.x.toInt()
+            val rawY = event.y.toInt()
+
+            if (rawX < widget.totalPaddingLeft ||
+                rawX > widget.width - widget.totalPaddingRight ||
+                rawY < widget.totalPaddingTop ||
+                rawY > widget.height - widget.totalPaddingBottom
+            ) {
+                Selection.removeSelection(buffer)
+                return false
+            }
+
+            val x = rawX - widget.totalPaddingLeft + widget.scrollX
+            val y = rawY - widget.totalPaddingTop + widget.scrollY
+
+            val layout = widget.layout ?: return false
+            val line = layout.getLineForVertical(y)
+
+            if (x < layout.getLineLeft(line) || x > layout.getLineRight(line)) {
+                Selection.removeSelection(buffer)
+                return false
+            }
+
+            val off = layout.getOffsetForHorizontal(line, x.toFloat())
+            val links = buffer.getSpans(off, off, ClickableSpan::class.java)
+            if (links.isNotEmpty()) {
+                val link = links[0]
+                if (action == MotionEvent.ACTION_UP) {
+                    link.onClick(widget)
+                    Selection.removeSelection(buffer)
+                } else {
+                    Selection.setSelection(buffer, buffer.getSpanStart(link), buffer.getSpanEnd(link))
+                }
+                return true
+            } else {
+                Selection.removeSelection(buffer)
+            }
+        } else if (action == MotionEvent.ACTION_CANCEL) {
+            Selection.removeSelection(buffer)
+        }
+        return false
     }
 }
