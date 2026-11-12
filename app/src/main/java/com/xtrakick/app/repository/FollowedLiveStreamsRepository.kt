@@ -176,6 +176,10 @@ class FollowedLiveStreamsRepository @Inject constructor(
             return LoadResult(items = emptyList(), fromCache = false)
         }
 
+        val savedLogins = follows.mapNotNull { it.userLogin?.trim()?.lowercase(Locale.ROOT) }.toHashSet()
+        val previouslyLiveLogins = freshCache(24L * 60L * 60L * 1000L)
+            .orEmpty().mapNotNull { it.channelLogin?.trim()?.lowercase(Locale.ROOT) }.toHashSet()
+
         val resolved = LinkedHashMap<String, Stream>()
 
         fun putStream(stream: Stream) {
@@ -212,8 +216,9 @@ class FollowedLiveStreamsRepository @Inject constructor(
         var officialLiveSucceeded = false
         if (kickRepository.hasKickAccountFollowCapability()) {
             try {
-                val officialLive = withTimeoutOrNull(30_000L) { kickRepository.getUserLiveFollowedStreams() }
-                    ?: throw java.io.IOException("Followed-live request timed out")
+                val officialLive = (withTimeoutOrNull(30_000L) { kickRepository.getUserLiveFollowedStreams() }
+                    ?: throw java.io.IOException("Followed-live request timed out"))
+                    .filter { it.channelLogin?.trim()?.lowercase(Locale.ROOT) in savedLogins }
                 officialLive.forEach(::putStream)
                 val liveLogins = officialLive.mapNotNull { it.channelLogin?.trim()?.lowercase(Locale.ROOT) }
                 if (liveLogins.isNotEmpty()) {
@@ -237,11 +242,10 @@ class FollowedLiveStreamsRepository @Inject constructor(
             stream.channelId?.trim()?.let(alreadyResolvedIds::add)
         }
         val unresolvedFollows = follows.filter { follow ->
-            // If the official web session path succeeded, Kick follows were already checked;
-            // only local-only follows still need resolution. If the official path failed (e.g.
-            // 401 on an OAuth session or network error), all follows need resolution.
-            if (officialLiveSucceeded && !follow.isLocalOnlyFollow) return@filter false
             val login = follow.userLogin?.trim()?.lowercase(Locale.ROOT)
+            // A previously live saved channel may have been unfollowed elsewhere. Check its
+            // live status independently until the staged follow snapshot can be applied.
+            if (officialLiveSucceeded && !follow.isLocalOnlyFollow && login !in previouslyLiveLogins) return@filter false
             val id = follow.userId?.trim()
             (login == null || login !in alreadyResolvedLogins) && (id == null || id !in alreadyResolvedIds)
         }

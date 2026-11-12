@@ -15,6 +15,52 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 class LocalFollowChannelRepositoryTest {
     @Test
+    fun syncReconcilesKickMembershipAndPreservesLocalBookmarks() = runBlocking {
+        val database = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), AppDatabase::class.java).build()
+        try {
+            val repository = LocalFollowChannelRepository(database.localFollowsChannel(), database)
+            repository.upsertLocalFollows(listOf(
+                LocalFollowChannel("1", "local", sourceMask = 1),
+                LocalFollowChannel("2", "removed", sourceMask = 2),
+                LocalFollowChannel("3", "both", sourceMask = 3),
+                LocalFollowChannel("4", "kept", sourceMask = 2),
+            ))
+            val keptId = repository.getFollow("4", "kept")!!.id
+            val snapshot = listOf(LocalFollowChannel(userLogin = "KEPT"), LocalFollowChannel(userLogin = "new"))
+            org.junit.Assert.assertTrue(repository.reconcileKickFollows(snapshot) { true })
+            val saved = repository.loadFollows().associateBy { it.userLogin }
+            assertEquals(setOf("local", "both", "kept", "new"), saved.keys)
+            assertEquals(1, saved["both"]?.sourceMask)
+            assertEquals(keptId, saved["kept"]?.id)
+            assertEquals(2, saved["new"]?.sourceMask)
+
+            val version = repository.changeVersion
+            repository.reconcileKickFollows(snapshot) { true }
+            assertEquals(version, repository.changeVersion)
+            repository.reconcileKickFollows(emptyList()) { true }
+            assertEquals(setOf("local", "both"), repository.loadFollows().map { it.userLogin }.toSet())
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun syncRollsBackIfAccountOrVisibilityChangesBeforeCommit() = runBlocking {
+        val database = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), AppDatabase::class.java).build()
+        try {
+            val repository = LocalFollowChannelRepository(database.localFollowsChannel(), database)
+            repository.saveFollow(LocalFollowChannel(userLogin = "original", sourceMask = 2))
+            val version = repository.changeVersion
+            var checks = 0
+            org.junit.Assert.assertFalse(repository.reconcileKickFollows(listOf(LocalFollowChannel(userLogin = "new"))) { ++checks == 1 })
+            assertEquals(listOf("original"), repository.loadFollows().map { it.userLogin })
+            assertEquals(version, repository.changeVersion)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun batchImportMergesRepeatedIdentitiesAndKeepsSourceFlags() = runBlocking {
         val database = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), AppDatabase::class.java).build()
         try {

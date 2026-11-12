@@ -63,6 +63,7 @@ import androidx.navigation.ui.setupWithNavController
 import com.xtrakick.app.R
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.KickApp
+import com.xtrakick.app.ui.following.KickFollowSync
 import com.xtrakick.app.util.AppUpdateDialogHelper
 import com.xtrakick.app.databinding.ActivityMainBinding
 import com.xtrakick.app.databinding.DialogUpdateDownloadBinding
@@ -186,6 +187,9 @@ class MainActivity : AppCompatActivity() {
     }
     @Inject
     lateinit var localFollowChannelRepository: LocalFollowChannelRepository
+
+    @Inject
+    lateinit var kickFollowSync: KickFollowSync
     @Inject
     lateinit var kickRepository: KickRepository
     @Inject
@@ -273,6 +277,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 AuthStateHelper.authStateChanged.collectLatest { loggedIn ->
+                    kickFollowSync.requestSync()
                     if (loggedIn) {
                         viewModel.syncFcmSubscriptions()
                     }
@@ -676,6 +681,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        kickFollowSync.setFollowingVisible(navController.currentDestination?.id in listOf(R.id.followPagerFragment, R.id.followMediaFragment))
+        kickFollowSync.requestSync()
         hasUserLeaveHint = false
         hasLockedScreenSinceLastPip = false
         playerFragment?.clearPipDismissState()
@@ -687,6 +694,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        if (!isChangingConfigurations) kickFollowSync.setFollowingVisible(false)
         if (!hasUserLeaveHint ||
             (getSystemService(POWER_SERVICE) as? PowerManager)?.isInteractive == false ||
             (getSystemService(KEYGUARD_SERVICE) as? KeyguardManager)?.isKeyguardLocked == true
@@ -1359,6 +1367,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun initNavigation() {
         navController = (supportFragmentManager.findFragmentById(R.id.navHostFragment) as NavHostFragment).navController
+        navController.addOnDestinationChangedListener { _, destination, _ ->
+            kickFollowSync.setFollowingVisible(
+                destination.id in listOf(R.id.followPagerFragment, R.id.followMediaFragment)
+            )
+            if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) kickFollowSync.requestSync()
+        }
         val tabList = prefs.getString(AppConstants.UI_NAVIGATION_TAB_LIST, null).let { tabPref ->
             val defaultTabs = AppConstants.DEFAULT_NAVIGATION_TAB_LIST.split(',')
             if (tabPref != null) {

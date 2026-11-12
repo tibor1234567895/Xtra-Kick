@@ -641,15 +641,18 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     watchLive.setOnClickListener { activity.startStream(stream) }
                 }
                 applyWatchLiveButtonStyle(isLive = false)
-                if (stream?.user?.lastBroadcast != null) {
-                    KickApiHelper.formatTimeString(requireContext(), stream.user.lastBroadcast!!).let {
-                        if (it != null)  {
-                            lastBroadcast.visibility = View.VISIBLE
-                            lastBroadcast.text = getString(R.string.last_broadcast_date, it)
-                        } else {
-                            lastBroadcast.visibility = View.GONE
-                        }
+                val lastBroadcastDate = stream?.user?.lastBroadcast ?: viewModel.user.value?.lastBroadcast
+                if (lastBroadcastDate != null) {
+                    val formatted = KickApiHelper.formatRelativeTimeString(lastBroadcastDate)
+                        ?: KickApiHelper.formatTimeString(requireContext(), lastBroadcastDate)
+                    if (formatted != null) {
+                        lastBroadcast.visibility = View.VISIBLE
+                        lastBroadcast.text = getString(R.string.last_broadcast_date, formatted)
+                    } else {
+                        lastBroadcast.visibility = View.GONE
                     }
+                } else {
+                    lastBroadcast.visibility = View.GONE
                 }
             }
             // Fall back to the logo the page was opened with: Kick's channel
@@ -760,34 +763,23 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
     private fun applyWatchLiveButtonStyle(isLive: Boolean) {
         val ctx = context ?: return
         with(binding.watchLive) {
-            val typedValue = TypedValue()
             if (isLive) {
                 // Primary theme-styled button for active live stream
-                val btnColor = if (ctx.theme.resolveAttribute(R.attr.primaryButtonColor, typedValue, true)) {
-                    typedValue.data
-                } else {
-                    ContextCompat.getColor(ctx, R.color.accent)
-                }
-                val txtColor = if (ctx.theme.resolveAttribute(R.attr.primaryButtonTextColor, typedValue, true)) {
-                    typedValue.data
-                } else {
-                    Color.WHITE
-                }
+                val btnColor = MaterialColors.getColor(ctx, R.attr.primaryButtonColor, ContextCompat.getColor(ctx, R.color.accent))
+                val txtColor = MaterialColors.getColor(ctx, R.attr.primaryButtonTextColor, Color.WHITE)
                 backgroundTintList = ColorStateList.valueOf(btnColor)
                 setTextColor(txtColor)
                 iconTint = ColorStateList.valueOf(txtColor)
                 strokeWidth = 0
             } else {
                 // Outlined secondary style when offline
+                val priColor = MaterialColors.getColor(ctx, android.R.attr.textColorPrimary, Color.WHITE)
+                val secColor = MaterialColors.getColor(ctx, android.R.attr.textColorSecondary, ContextCompat.getColor(ctx, R.color.secondaryTextColorDark))
+                val outlineColor = MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOutline, secColor)
                 backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-                val secColor = if (ctx.theme.resolveAttribute(android.R.attr.textColorSecondary, typedValue, true)) {
-                    typedValue.data
-                } else {
-                    ContextCompat.getColor(ctx, R.color.secondaryTextColorDark)
-                }
-                setTextColor(secColor)
-                iconTint = ColorStateList.valueOf(secColor)
-                strokeColor = ColorStateList.valueOf(secColor)
+                setTextColor(priColor)
+                iconTint = ColorStateList.valueOf(priColor)
+                strokeColor = ColorStateList.valueOf(outlineColor)
                 strokeWidth = (1 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
             }
         }
@@ -864,6 +856,15 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                 userType.setShadowLayer(4f, 0f, 0f, Color.BLACK)
             } else {
                 userType.visibility = View.GONE
+            }
+            val lastBroadcastDate = user.lastBroadcast ?: viewModel.stream.value?.user?.lastBroadcast
+            if (lastBroadcastDate != null && (viewModel.stream.value == null || viewModel.stream.value?.viewerCount == null)) {
+                val formatted = KickApiHelper.formatRelativeTimeString(lastBroadcastDate)
+                    ?: KickApiHelper.formatTimeString(requireContext(), lastBroadcastDate)
+                if (formatted != null) {
+                    lastBroadcast.visibility = View.VISIBLE
+                    lastBroadcast.text = getString(R.string.last_broadcast_date, formatted)
+                }
             }
             if (args.updateLocal) {
                 viewModel.updateLocalUser(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), requireContext().filesDir.path, user)

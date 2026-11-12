@@ -33,7 +33,7 @@ import kotlinx.coroutines.launch
 
 class GamesAdapter(
     private val fragment: Fragment,
-    private val resolveViewersCount: (suspend (Game) -> Int?)? = null,
+    private val resolveGameMetadata: (suspend (Game) -> Game?)? = null,
     private val selectTag: (Tag) -> Unit,
 ) : PagingDataAdapter<Game, GamesAdapter.PagingViewHolder>(
     object : DiffUtil.ItemCallback<Game>() {
@@ -74,12 +74,13 @@ class GamesAdapter(
         private val binding: FragmentGamesListItemBinding,
         private val fragment: Fragment,
     ) : RecyclerView.ViewHolder(binding.root) {
-        private var viewersJob: Job? = null
+        private var metadataJob: Job? = null
 
         fun bind(item: Game?) {
-            viewersJob?.cancel()
-            viewersJob = null
+            metadataJob?.cancel()
+            metadataJob = null
             binding.viewers.visibility = View.GONE
+            showTags(item?.tags)
             with(binding) {
                 if (item != null) {
                     val context = fragment.requireContext()
@@ -124,13 +125,14 @@ class GamesAdapter(
                         gameName.visibility = View.GONE
                     }
                     showViewers(item.viewersCount)
-                    val resolve = resolveViewersCount
-                    if (item.viewersCount == null && resolve != null) {
-                        viewersJob = fragment.viewLifecycleOwner.lifecycleScope.launch {
+                    val resolve = resolveGameMetadata
+                    if ((item.viewersCount == null || item.tags == null) && resolve != null) {
+                        metadataJob = fragment.viewLifecycleOwner.lifecycleScope.launch {
                             try {
-                                val count = resolve(item)
+                                val metadata = resolve(item)
                                 ensureActive()
-                                showViewers(count)
+                                showViewers(item.viewersCount ?: metadata?.viewersCount)
+                                showTags(item.tags ?: metadata?.tags)
                             } catch (error: CancellationException) {
                                 throw error
                             } catch (_: Exception) {
@@ -148,42 +150,48 @@ class GamesAdapter(
                     } else {
                         broadcastersCount.visibility = View.GONE
                     }
-                    if (!item.tags.isNullOrEmpty() && context.prefs().getBoolean(AppConstants.UI_TAGS, true)) {
-                        tagsLayout.removeAllViews()
-                        tagsLayout.visibility = View.VISIBLE
-                        val tagsFlowLayout = Flow(context).apply {
-                            layoutParams = ConstraintLayout.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.WRAP_CONTENT
-                            ).apply {
-                                topToTop = tagsLayout.id
-                                bottomToBottom = tagsLayout.id
-                                startToStart = tagsLayout.id
-                                endToEnd = tagsLayout.id
-                            }
-                            setWrapMode(Flow.WRAP_CHAIN)
+                }
+            }
+        }
+
+        private fun showTags(tags: List<Tag>?) {
+            val context = binding.root.context
+            with(binding) {
+                tagsLayout.removeAllViews()
+                if (!tags.isNullOrEmpty() && context.prefs().getBoolean(AppConstants.UI_TAGS, true)) {
+                    tagsLayout.visibility = View.VISIBLE
+                    val tagsFlowLayout = Flow(context).apply {
+                        layoutParams = ConstraintLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                        ).apply {
+                            topToTop = tagsLayout.id
+                            bottomToBottom = tagsLayout.id
+                            startToStart = tagsLayout.id
+                            endToEnd = tagsLayout.id
                         }
-                        tagsLayout.addView(tagsFlowLayout)
-                        val ids = mutableListOf<Int>()
-                        for (tag in item.tags!!) {
-                            val text = TextView(context)
-                            val id = View.generateViewId()
-                            text.id = id
-                            ids.add(id)
-                            text.text = tag.name
-                            val tagName = tag.name ?: tag.id.orEmpty()
-                            TagFilterHelper.applyTagStyle(text, tagName, activeTags)
-                            if (tag.id != null) {
-                                text.setOnClickListener {
-                                    selectTag(tag)
-                                }
-                            }
-                            tagsLayout.addView(text)
-                        }
-                        tagsFlowLayout.referencedIds = ids.toIntArray()
-                    } else {
-                        tagsLayout.visibility = View.GONE
+                        setWrapMode(Flow.WRAP_CHAIN)
                     }
+                    tagsLayout.addView(tagsFlowLayout)
+                    val ids = mutableListOf<Int>()
+                    for (tag in tags) {
+                        val text = TextView(context)
+                        val id = View.generateViewId()
+                        text.id = id
+                        ids.add(id)
+                        text.text = tag.name
+                        val tagName = tag.name ?: tag.id.orEmpty()
+                        TagFilterHelper.applyTagStyle(text, tagName, activeTags)
+                        if (tag.id != null) {
+                            text.setOnClickListener {
+                                selectTag(tag)
+                            }
+                        }
+                        tagsLayout.addView(text)
+                    }
+                    tagsFlowLayout.referencedIds = ids.toIntArray()
+                } else {
+                    tagsLayout.visibility = View.GONE
                 }
             }
         }

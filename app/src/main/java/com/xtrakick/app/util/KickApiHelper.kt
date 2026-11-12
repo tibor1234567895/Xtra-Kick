@@ -5,6 +5,7 @@ import android.icu.number.Notation
 import android.icu.number.NumberFormatter
 import android.icu.number.Precision
 import android.icu.text.CompactDecimalFormat
+import android.icu.text.RelativeDateTimeFormatter
 import android.os.Build
 import android.text.format.DateUtils
 import androidx.appcompat.app.AppCompatDelegate
@@ -318,13 +319,23 @@ object KickApiHelper {
         return parseIso8601DateUTC(iso8601date)?.let { formatTime(context, it) }
     }
 
-    fun formatRelativeTimeString(iso8601date: String): String? {
+    fun formatRelativeTimeString(iso8601date: String, now: Long = System.currentTimeMillis()): String? {
         val date = parseIso8601DateUTC(iso8601date) ?: return null
-        return DateUtils.getRelativeTimeSpanString(
-            date,
-            System.currentTimeMillis(),
-            DateUtils.MINUTE_IN_MILLIS
-        ).toString()
+        val diff = now - date
+        if (diff < 0) return null
+        if (diff >= DateUtils.WEEK_IN_MILLIS) {
+            return DateUtils.getRelativeTimeSpanString(date, now, DateUtils.MINUTE_IN_MILLIS).toString()
+        }
+        val (unitMillis, unit) = when {
+            diff >= DateUtils.DAY_IN_MILLIS -> DateUtils.DAY_IN_MILLIS to RelativeDateTimeFormatter.RelativeUnit.DAYS
+            diff >= DateUtils.HOUR_IN_MILLIS -> DateUtils.HOUR_IN_MILLIS to RelativeDateTimeFormatter.RelativeUnit.HOURS
+            else -> DateUtils.MINUTE_IN_MILLIS to RelativeDateTimeFormatter.RelativeUnit.MINUTES
+        }
+        return RelativeDateTimeFormatter.getInstance(Locale.getDefault()).format(
+            (diff / unitMillis).toDouble(),
+            RelativeDateTimeFormatter.Direction.LAST,
+            unit,
+        )
     }
 
     fun formatTime(context: Context, date: Long): String {

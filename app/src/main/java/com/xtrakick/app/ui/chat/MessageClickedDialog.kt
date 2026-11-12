@@ -277,18 +277,7 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
         val fallbackLogin = chatMessage.userLogin ?: chatMessage.userName
         val fallbackAvatar = KickApiHelper.getDefaultProfilePicture(fallbackId, fallbackLogin)
         val fallbackBanner = KickApiHelper.getDefaultBanner(fallbackId, fallbackLogin)
-
-        binding.bannerImage.visibility = android.view.View.VISIBLE
-        binding.bannerScrim.visibility = android.view.View.VISIBLE
-        binding.closeButton.isVisible = false
-        binding.closeButtonInline.isVisible = true
-        requireContext().imageLoader.enqueue(
-            ImageRequest.Builder(requireContext())
-                .data(fallbackBanner)
-                .crossfade(true)
-                .target(binding.bannerImage)
-                .build()
-        )
+        updateBanner(fallbackBanner)
 
         binding.userImage.visibility = android.view.View.VISIBLE
         requireContext().imageLoader.enqueue(
@@ -385,22 +374,39 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
         }
     }
 
+    private fun updateBanner(bannerUrl: String?) {
+        val hasBanner = !bannerUrl.isNullOrBlank()
+        with(binding) {
+            bannerContainer.isVisible = true
+            if (hasBanner) {
+                bannerContainer.layoutParams.height = (100 * resources.displayMetrics.density).toInt()
+                bannerImage.isVisible = true
+                bannerScrim.isVisible = true
+                closeButton.isVisible = true
+                closeButtonInline.isVisible = false
+                requireContext().imageLoader.enqueue(
+                    ImageRequest.Builder(requireContext())
+                        .data(bannerUrl)
+                        .crossfade(true)
+                        .target(bannerImage)
+                        .build()
+                )
+            } else {
+                bannerContainer.layoutParams.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                bannerImage.isVisible = false
+                bannerScrim.isVisible = false
+                closeButton.isVisible = false
+                closeButtonInline.isVisible = true
+            }
+        }
+    }
+
     private fun updateUserLayout(user: User) {
         with(binding) {
             userLayout.visibility = android.view.View.VISIBLE
             val bannerUrl = user.bannerUrl ?: user.bannerImageURL
                 ?: KickApiHelper.getDefaultBanner(user.channelId, user.channelLogin ?: user.channelName)
-            bannerImage.visibility = android.view.View.VISIBLE
-            bannerScrim.visibility = android.view.View.VISIBLE
-            closeButton.isVisible = false
-            closeButtonInline.isVisible = true
-            requireContext().imageLoader.enqueue(
-                ImageRequest.Builder(requireContext())
-                    .data(bannerUrl)
-                    .crossfade(true)
-                    .target(bannerImage)
-                    .build()
-            )
+            updateBanner(bannerUrl)
 
             val logoUrl = user.channelLogo
                 ?: KickApiHelper.getDefaultProfilePicture(user.channelId, user.channelLogin ?: user.channelName)

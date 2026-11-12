@@ -199,7 +199,7 @@ class ClipsAdapter(
                         context.getString(R.string.clipped_by, creatorDisplayName)
                     } else null
                     val combinedClipper = when {
-                        clipperString != null && !relativeDate.isNullOrBlank() -> "$clipperString • $relativeDate"
+                        !relativeDate.isNullOrBlank() && clipperString != null -> "$relativeDate • $clipperString"
                         clipperString != null -> clipperString
                         !relativeDate.isNullOrBlank() -> relativeDate
                         else -> null

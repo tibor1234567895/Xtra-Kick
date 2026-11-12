@@ -1,7 +1,9 @@
 package com.xtrakick.app.model.kick
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNames
 import java.util.Locale
 
 @Serializable
@@ -17,15 +19,16 @@ data class KickBrowsePage(
 data class KickBrowsePagination(@SerialName("next_cursor") val nextCursor: String? = null)
 
 @Serializable
+@OptIn(ExperimentalSerializationApi::class)
 data class KickBrowseLivestream(
     val id: String,
     val title: String? = null,
-    val language: String? = null,
+    @JsonNames("language_code") val language: String? = null,
     @SerialName("is_mature") val isMature: Boolean? = null,
     @SerialName("viewer_count") val viewerCount: Int? = null,
     @SerialName("show_view_count") val showViewCount: Boolean = true,
     @SerialName("start_time") val startTime: String? = null,
-    val tags: List<String>? = null,
+    @JsonNames("custom_tags") val tags: List<String>? = null,
     val thumbnail: KickThumbnail? = null,
     val category: KickCategory? = null,
     val channel: KickBrowseChannel,

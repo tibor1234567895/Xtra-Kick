@@ -76,9 +76,8 @@ class FollowedStreamsViewModel @Inject constructor(
             localFollowsChannel.followsChanged
                 .debounce(500L)
                 .collect {
-                    if (refreshJob?.isActive != true) {
-                        refresh()
-                    }
+                    refreshJob?.cancel()
+                    refresh(silent = true)
                 }
         }
     }

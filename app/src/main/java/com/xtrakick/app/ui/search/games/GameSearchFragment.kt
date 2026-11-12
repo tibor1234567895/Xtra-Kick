@@ -51,7 +51,7 @@ class GameSearchFragment : PagedListFragment(), Searchable, Scrollable {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        pagingAdapter = GamesAdapter(this, resolveViewersCount = viewModel::resolveViewersCount) {
+        pagingAdapter = GamesAdapter(this, resolveGameMetadata = viewModel::resolveGameMetadata) {
             findNavController().navigate(
                 GamesFragmentDirections.actionGlobalGamesFragment(
                     tags = arrayOf(it)

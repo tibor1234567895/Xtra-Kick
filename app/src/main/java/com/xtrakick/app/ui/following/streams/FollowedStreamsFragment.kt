@@ -30,15 +30,19 @@ import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.common.Sortable
 import com.xtrakick.app.ui.common.StreamsCompactListAdapter
 import com.xtrakick.app.ui.common.StreamsListAdapter
+import com.xtrakick.app.ui.following.KickFollowSync
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, IntegrityDialog.CallbackListener, FollowedStreamsSortDialog.OnFilter {
+
+    @Inject lateinit var kickFollowSync: KickFollowSync
 
     private var _binding: CommonRecyclerViewLayoutBinding? = null
     private val binding get() = _binding!!
@@ -71,7 +75,10 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
         (binding.recyclerView.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
         binding.swipeRefresh.isEnabled = true
         binding.swipeRefresh.setOnRefreshListener {
-            viewModel.refresh(isPullToRefresh = true)
+            viewLifecycleOwner.lifecycleScope.launch {
+                kickFollowSync.refreshNow()
+                viewModel.refresh(isPullToRefresh = true)
+            }
         }
         if (requireContext().prefs().getBoolean(AppConstants.UI_SCROLLTOP, true)) {
             binding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -173,6 +180,7 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
                     }
                     kotlinx.coroutines.delay(intervalSeconds * 1000L)
                     if (isAdded && !isHidden && isResumed) {
+                        kickFollowSync.requestSync()
                         viewModel.refresh(silent = true)
                     }
                 }

@@ -877,7 +877,7 @@ class ChatViewModel @Inject constructor(
             val isLoggedIn = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(applicationContext)
             if (isLoggedIn) {
                 loadUserEmotes(channelId)
-                loadActiveChatters(channelId)
+                loadActiveChatters(channelId, channelLogin)
             }
         }
     }
@@ -3905,11 +3905,11 @@ class ChatViewModel @Inject constructor(
      * stream was opened, so seed @-mention autocomplete with the active roster
      * up front. Best-effort: a failure just leaves the delta-built list in place.
      */
-    private fun loadActiveChatters(channelId: String?) {
+    private fun loadActiveChatters(channelId: String?, channelLogin: String? = null) {
         if (channelId.isNullOrBlank()) return
         viewModelScope.launch {
             runCatching {
-                kickRepository.getActiveChatters(channelId)
+                kickRepository.getActiveChatters(channelId, channelLogin)
             }.onSuccess { names ->
                 names.forEach { addChatter(it) }
             }.onFailure {

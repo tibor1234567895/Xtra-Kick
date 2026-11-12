@@ -13,81 +13,75 @@
         android:orientation="vertical"
         android:paddingBottom="?attr/dialogPadding">
 
-        <FrameLayout
+        <LinearLayout
+            android:id="@+id/userLayout"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content">
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="?attr/dialogPadding"
+            android:paddingEnd="?attr/dialogPadding"
+            android:paddingTop="6dp"
+            android:paddingBottom="4dp"
+            android:visibility="gone"
+            tools:visibility="visible">
 
-            <com.google.android.material.imageview.ShapeableImageView
-                android:id="@+id/bannerImage"
-                android:layout_width="match_parent"
-                android:layout_height="96dp"
-                android:scaleType="centerCrop"
-                android:visibility="gone"
-                app:shapeAppearance="?attr/shapeAppearanceCornerLarge"
-                tools:src="@tools:sample/backgrounds/scenic"
-                tools:visibility="visible" />
-
-            <View
-                android:id="@+id/bannerScrim"
-                android:layout_width="match_parent"
-                android:layout_height="96dp"
-                android:background="#A6000000" />
-
-            <LinearLayout
+            <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:gravity="end"
-                android:orientation="horizontal"
-                android:paddingStart="?attr/dialogPadding"
-                android:paddingTop="?attr/dialogPadding"
-                android:paddingEnd="?attr/dialogPadding">
+                android:backgroundTint="?attr/colorSurfaceContainerHigh"
+                app:cardCornerRadius="18dp"
+                app:strokeWidth="0dp">
 
-                <ImageButton
-                    android:id="@+id/closeButton"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="@android:string/cancel"
-                    android:padding="8dp"
-                    android:src="@drawable/baseline_close_black_36"
-                    app:tint="@android:color/white" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/userLayout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_gravity="bottom"
-                android:layout_marginTop="0dp"
-                android:orientation="vertical"
-                android:paddingStart="?attr/dialogPadding"
-                android:paddingEnd="?attr/dialogPadding"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
-                android:visibility="gone"
-                tools:visibility="visible">
-
-                <com.google.android.material.card.MaterialCardView
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:backgroundTint="?attr/colorSurfaceContainerHigh"
-                    app:cardCornerRadius="18dp"
-                    app:strokeWidth="0dp">
+                    android:orientation="vertical">
 
-                    <LinearLayout
+                    <FrameLayout
+                        android:id="@+id/bannerContainer"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:paddingStart="16dp"
-                        android:paddingTop="10dp"
-                        android:paddingEnd="16dp"
-                        android:paddingBottom="10dp">
+                        android:layout_height="100dp">
+
+                        <ImageView
+                            android:id="@+id/bannerImage"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:scaleType="centerCrop"
+                            android:visibility="gone"
+                            tools:src="@tools:sample/backgrounds/scenic"
+                            tools:visibility="visible" />
+
+                        <View
+                            android:id="@+id/bannerScrim"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:background="@drawable/scrim_banner_bottom"
+                            android:visibility="gone"
+                            tools:visibility="visible" />
+
+                        <ImageButton
+                            android:id="@+id/closeButton"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:layout_gravity="top|end"
+                            android:layout_marginTop="6dp"
+                            android:layout_marginEnd="6dp"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:contentDescription="@android:string/cancel"
+                            android:padding="6dp"
+                            android:src="@drawable/baseline_close_black_36"
+                            app:tint="@android:color/white" />
 
                         <LinearLayout
+                            android:id="@+id/userHeaderRow"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
+                            android:layout_gravity="bottom"
                             android:gravity="center_vertical"
-                            android:orientation="horizontal">
+                            android:orientation="horizontal"
+                            android:paddingStart="14dp"
+                            android:paddingEnd="14dp"
+                            android:paddingBottom="10dp">
 
                             <ImageView
                                 android:id="@+id/userImage"
@@ -109,6 +103,10 @@
                                 android:textAppearance="?attr/textAppearanceTitleMedium"
                                 android:textColor="@android:color/white"
                                 android:textStyle="bold"
+                                android:shadowColor="#CC000000"
+                                android:shadowDx="0"
+                                android:shadowDy="1"
+                                android:shadowRadius="4"
                                 tools:text="Silas_2"
                                 tools:visibility="visible" />
 
@@ -121,8 +119,19 @@
                                 android:contentDescription="@android:string/cancel"
                                 android:padding="5dp"
                                 android:src="@drawable/baseline_close_black_36"
-                                app:tint="@android:color/white" />
+                                app:tint="@android:color/white"
+                                android:visibility="gone" />
                         </LinearLayout>
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingStart="16dp"
+                        android:paddingTop="8dp"
+                        android:paddingEnd="16dp"
+                        android:paddingBottom="10dp">
 
                         <TextView
                             android:id="@+id/messagePreview"
@@ -283,9 +292,9 @@
                             </HorizontalScrollView>
                         </LinearLayout>
                     </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
-            </LinearLayout>
-        </FrameLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/primaryActionLayout"
@@ -377,7 +386,7 @@
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/recyclerView"
                 android:layout_width="match_parent"
-                android:layout_height="244dp"
+                android:layout_height="130dp"
                 tools:listitem="@layout/chat_list_item" />
         </LinearLayout>
 

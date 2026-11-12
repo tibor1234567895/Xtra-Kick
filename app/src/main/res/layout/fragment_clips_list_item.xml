@@ -42,9 +42,11 @@
         <com.xtrakick.app.ui.view.TextWithShadow
             android:id="@+id/date"
             style="@style/ThumbnailItem"
+            android:layout_marginEnd="5dp"
+            android:layout_marginBottom="5dp"
             android:visibility="gone"
+            app:layout_constraintBottom_toBottomOf="@id/thumbnail"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
             tools:text="April 20, 2017" />
 
         <com.xtrakick.app.ui.view.TextWithShadow
@@ -136,7 +138,7 @@
                 android:textAppearance="?attr/textAppearanceBodyMedium"
                 android:textColor="?android:attr/textColorSecondary"
                 android:visibility="gone"
-                tools:text="Clipped by Astroloss • 1 day ago"
+                tools:text="3 days ago • Clipped by Astroloss"
                 tools:visibility="visible" />
         </LinearLayout>
 

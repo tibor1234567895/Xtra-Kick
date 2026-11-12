@@ -57,13 +57,14 @@ class FollowedLiveStreamsRepositoryTest {
     private var publicGate: CountDownLatch? = null
     private var publicEntered: CountDownLatch? = null
     private var cancelPublic = false
+    private var officialLiveResponse = "[]"
     private val client = OkHttpClient.Builder().addInterceptor { chain ->
         val request = chain.request()
         requests += request
         val path = request.url.encodedPath
         var status = 200
         val body = when {
-            path == "/api/v1/user/livestreams" -> "[]"
+            path == "/api/v1/user/livestreams" -> officialLiveResponse
             path == "/public/v1/livestreams" -> {
                 if (cancelPublic) throw kotlinx.coroutines.CancellationException("Refresh cancelled")
                 publicEntered?.countDown()
@@ -106,6 +107,31 @@ class FollowedLiveStreamsRepositoryTest {
 
     private suspend fun addFollows() {
         for (index in 1..27) follows.saveFollow(LocalFollowChannel("${1000 + index}", "follow$index"))
+    }
+
+    @Test
+    fun officialLiveDoesNotIntroduceUnimportedFollowsDuringVisit() = runBlocking {
+        login("google")
+        follows.saveFollow(LocalFollowChannel("1001", "follow1", sourceMask = 2))
+        officialLiveResponse = """[
+            {"id":2001,"channel":{"id":1,"slug":"follow1","user_id":1001}},
+            {"id":2002,"channel":{"id":2,"slug":"follow2","user_id":1002}}
+        ]"""
+        assertEquals(listOf("follow1"), repository().loadLiveFollowed(true, true).items.map { it.channelLogin })
+    }
+
+    @Test
+    fun previouslyLiveSavedChannelSurvivesExternalUnfollowUntilSyncApplies() = runBlocking {
+        login("google")
+        follows.saveFollow(LocalFollowChannel("1001", "follow1", sourceMask = 2))
+        officialLiveResponse = """[{"id":2001,"channel":{"id":1,"slug":"follow1","user_id":1001}}]"""
+        val loader = repository()
+        loader.loadLiveFollowed(true, true)
+        officialLiveResponse = "[]"
+        assertEquals(listOf("follow1"), loader.loadLiveFollowed(true, true).items.map { it.channelLogin })
+        assertTrue(requests.any { it.url.encodedPath == "/api/v2/channels/follow1" })
+        follows.reconcileKickFollows(emptyList()) { true }
+        assertTrue(loader.loadLiveFollowed(true, true).items.isEmpty())
     }
 
     private fun login(state: String) {

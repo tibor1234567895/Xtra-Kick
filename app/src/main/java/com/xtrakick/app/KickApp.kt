@@ -37,7 +37,6 @@ import com.xtrakick.app.util.UsagePing
 import com.xtrakick.app.util.CrashReports
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.repository.NotificationUsersRepository
-import com.xtrakick.app.ui.following.KickFollowImporter
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.OkHttpClient
@@ -128,14 +127,6 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
             runCatching { notificationUsersRepository.get().migrateLegacyKeys() }
                 .onFailure { android.util.Log.w("KickApp", "notification key migration failed", it) }
         }
-        // One-time backfill: mark locally stored follows that also exist on Kick.
-        // Fire-and-forget, must not delay cold start. No-op when already done or logged out.
-        CoroutineScope(Dispatchers.IO).launch {
-            runCatching {
-                val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-                kickFollowImporter.get().ensureKickSourceMarks(networkLibrary)
-            }.onFailure { android.util.Log.w("KickApp", "kick follow source-mark backfill failed", it) }
-        }
         UsagePing.maybeSend(this, delayMillis = 15_000L)
         var startedActivities = 0
         registerActivityLifecycleCallbacks(
@@ -172,9 +163,6 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
 
     @Inject
     lateinit var notificationUsersRepository: Lazy<NotificationUsersRepository>
-
-    @Inject
-    lateinit var kickFollowImporter: Lazy<KickFollowImporter>
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()

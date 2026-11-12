@@ -9,6 +9,7 @@ import androidx.paging.cachedIn
 import com.xtrakick.app.model.ui.RecentSearch
 import com.xtrakick.app.model.ui.Game
 import com.xtrakick.app.repository.KickRepository
+import com.xtrakick.app.repository.KickWebsiteSearchMapper
 import com.xtrakick.app.repository.RecentSearchRepository
 import com.xtrakick.app.repository.datasource.SearchGamesDataSource
 import com.xtrakick.app.util.AppConstants
@@ -23,6 +24,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.Locale
 import javax.inject.Inject
 
 @HiltViewModel
@@ -33,7 +37,9 @@ class GameSearchViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _query = MutableStateFlow("")
-    private var viewerCounts: Deferred<Map<String, Int>>? = null
+    private var searchMetadata: Deferred<Map<String, Game>>? = null
+    private val categoryMetadata = mutableMapOf<String, Deferred<Game?>>()
+    private val metadataRequests = Semaphore(3)
     val query: StateFlow<String> = _query
     val recentSearches = recentSearchRepository.loadRecentSearchFlow(RecentSearch.TYPE_GAME)
 
@@ -52,28 +58,42 @@ class GameSearchViewModel @Inject constructor(
 
     fun setQuery(newQuery: String) {
         if (_query.value != newQuery) {
-            viewerCounts?.cancel()
-            viewerCounts = null
+            searchMetadata?.cancel()
+            searchMetadata = null
+            categoryMetadata.values.forEach { it.cancel() }
+            categoryMetadata.clear()
             _query.value = newQuery
         }
     }
 
-    suspend fun resolveViewersCount(game: Game): Int? {
+    suspend fun resolveGameMetadata(game: Game): Game? {
         val query = _query.value
-        val counts = viewerCounts ?: viewModelScope.async {
+        val search = searchMetadata ?: viewModelScope.async {
             try {
                 kickRepository.searchWebsite(query).categories.mapNotNull { category ->
                     val id = category.id?.toString() ?: return@mapNotNull null
-                    val viewers = category.viewers ?: return@mapNotNull null
-                    id to viewers
+                    id to KickWebsiteSearchMapper.toGame(category)
                 }.toMap()
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
                 emptyMap()
             }
-        }.also { viewerCounts = it }
-        return counts.await()[game.gameId]
+        }.also { searchMetadata = it }
+        val match = search.await()[game.gameId]
+        if (match?.viewersCount != null && match.tags != null) return match
+        val slug = (game.gameSlug ?: match?.gameSlug)?.trim()?.takeIf { it.isNotEmpty() } ?: return match
+        val details = categoryMetadata.getOrPut(slug.lowercase(Locale.ROOT)) {
+            viewModelScope.async {
+                metadataRequests.withPermit {
+                    kickRepository.getSubcategory(slug)?.let(KickWebsiteSearchMapper::toGame)
+                }
+            }
+        }.await() ?: return match
+        return details.apply {
+            if (viewersCount == null) viewersCount = match?.viewersCount
+            if (tags == null) tags = match?.tags
+        }
     }
 
     fun saveRecentSearch(query: String) {

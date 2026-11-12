@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.os.Looper
 import android.view.ContextThemeWrapper
 import android.view.LayoutInflater
+import android.view.SurfaceHolder
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
@@ -32,6 +33,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -93,6 +95,24 @@ class Media3FragmentTest {
     fun close() {
         database.close()
         executor.shutdownNow()
+    }
+
+    @Test
+    fun destroyViewWithRegisteredSurfaceCallbackClearsBindingAndCanBeRepeated() {
+        val callback = object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) = Unit
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
+            override fun surfaceDestroyed(holder: SurfaceHolder) = Unit
+        }
+        val binding = ReflectionHelpers.getField<FragmentPlayerBinding>(fragment, "_binding")
+        binding.playerSurface.holder.addCallback(callback)
+        ReflectionHelpers.setField(fragment, "surfaceHolderCallback", callback)
+
+        fragment.onDestroyView()
+
+        assertNull(ReflectionHelpers.getField<Any?>(fragment, "surfaceHolderCallback"))
+        assertNull(ReflectionHelpers.getField<Any?>(fragment, "_binding"))
+        fragment.onDestroyView()
     }
 
     @Test

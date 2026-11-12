@@ -54,6 +54,7 @@ class KickChannelMetadataTest {
     private val requestedPaths = CopyOnWriteArrayList<String>()
     private var failEventBrowse = false
     private var eventBrowseGate: CountDownLatch? = null
+    private var categoryMetadataGate: CountDownLatch? = null
     private val client = OkHttpClient.Builder().addInterceptor { chain ->
         requestedPaths += chain.request().url.encodedPath
         if (chain.request().url.encodedPath == "/api/v1/events/browse") eventBrowseGate?.await(5, TimeUnit.SECONDS)
@@ -62,11 +63,17 @@ class KickChannelMetadataTest {
         }
         val body = when (chain.request().url.encodedPath) {
             "/api/search" -> if (chain.request().url.queryParameter("searched_word") == "gta") {
-                """{"categories":[{"id":8,"slug":"grand-theft-auto-v","name":"GTA","viewers":99000},
-                {"id":13155,"slug":"grand-theft-auto-vi","name":"GTA VI","viewers":0}]}"""
+                """{"categories":[{"id":8,"slug":"grand-theft-auto-v","name":"GTA","viewers":99000,"tags":["Action","Open World"]},
+                {"id":13155,"slug":"grand-theft-auto-vi","name":"GTA VI","viewers":0,"tags":[]},
+                {"id":202,"slug":"partial-game","name":"Partial","viewers":55}]}"""
             } else {
-                """{"categories":[{"id":1552,"slug":"counter-strike-2","name":"Counter-Strike 2","viewers":30000}]}"""
+                """{"categories":[{"id":1552,"slug":"counter-strike-2","name":"Counter-Strike 2","viewers":30000,"tags":["Shooter"]}]}"""
             }
+            "/api/v1/subcategories/gtr-2-fia-gt-racing-game" ->
+                """{"id":14915,"slug":"gtr-2-fia-gt-racing-game","viewers":0,"tags":["Racing","Simulator"]}"""
+            "/api/v1/subcategories/partial-game" ->
+                """{"id":202,"slug":"partial-game","tags":["Action"]}"""
+            "/api/v1/subcategories/unavailable-game" -> throw java.io.IOException("Category unavailable")
             "/stream/livestreams/en" -> """
                 {"data":[{"id":17,"channel_id":101487073,"language":"English",
                 "channel":{"id":101487073,"slug":"eslcs"},
@@ -100,7 +107,12 @@ class KickChannelMetadataTest {
                 "id":8,"name":"Test game","slug":"test-game"}],
                 "thumbnail":{"url":"https://example.com/live.jpg"}}}
             """
-            else -> """{"id":8,"slug":"test-game","name":"Test game","viewers":42,"tags":["Action","Shooter"]}"""
+            else -> {
+                if (chain.request().url.encodedPath.startsWith("/api/v1/subcategories/bounded-")) {
+                    categoryMetadataGate?.await(5, TimeUnit.SECONDS)
+                }
+                """{"id":8,"slug":"test-game","name":"Test game","viewers":42,"tags":["Action","Shooter"]}"""
+            }
         }
         Response.Builder()
             .request(chain.request())
@@ -351,7 +363,7 @@ class KickChannelMetadataTest {
     }
 
     @Test
-    fun gameSearchSharesOneViewerLookupPerQueryAndDistinguishesUnknownCountsFromRealZero() = runBlocking {
+    fun gameSearchSharesMetadataAndHydratesBroadMatchesWithoutInventingZeroCounts() = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
         val store = ViewModelStore()
@@ -359,31 +371,96 @@ class KickChannelMetadataTest {
             val viewModel = GameSearchViewModel(context, RecentSearchRepository(database.recentSearchDao()), repository)
             store.put("search", viewModel)
             viewModel.setQuery("gta")
-            val populated = async { viewModel.resolveViewersCount(Game(gameId = "8")) }
-            val empty = async { viewModel.resolveViewersCount(Game(gameId = "13155")) }
-            val unknown = async { viewModel.resolveViewersCount(Game(gameId = "999")) }
+            val populated = async { viewModel.resolveGameMetadata(Game(gameId = "8")) }
+            val empty = async { viewModel.resolveGameMetadata(Game(gameId = "13155")) }
+            val unknown = async { viewModel.resolveGameMetadata(Game(gameId = "999")) }
+            val broadGame = Game(gameId = "14915", gameSlug = "gtr-2-fia-gt-racing-game")
+            val broad = async { viewModel.resolveGameMetadata(broadGame) }
+            val duplicate = async { viewModel.resolveGameMetadata(broadGame) }
+            val partial = async { viewModel.resolveGameMetadata(Game(gameId = "202", gameSlug = "partial-game")) }
+            val unavailable = async { viewModel.resolveGameMetadata(Game(gameId = "999", gameSlug = "unavailable-game")) }
+            val results = listOf(populated, empty, unknown, broad, duplicate, partial, unavailable)
             withTimeout(5_000) {
-                while (!populated.isCompleted || !empty.isCompleted || !unknown.isCompleted) {
+                while (results.any { !it.isCompleted }) {
                     shadowOf(Looper.getMainLooper()).idle()
                     delay(10)
                 }
             }
-            assertEquals(99000, populated.await())
-            assertEquals(0, empty.await())
+            assertEquals(99000, populated.await()?.viewersCount)
+            assertEquals(listOf("Action", "Open World"), populated.await()?.tags?.map { it.name })
+            assertEquals(0, empty.await()?.viewersCount)
+            assertTrue(empty.await()?.tags?.isEmpty() == true)
             assertNull(unknown.await())
+            assertEquals(0, broad.await()?.viewersCount)
+            assertEquals(listOf("Racing", "Simulator"), broad.await()?.tags?.map { it.name })
+            assertEquals(broad.await(), duplicate.await())
+            assertEquals(55, partial.await()?.viewersCount)
+            assertEquals(listOf("Action"), partial.await()?.tags?.map { it.name })
+            assertNull(unavailable.await())
             assertEquals(1, requestedPaths.count { it == "/api/search" })
+            assertEquals(1, requestedPaths.count { it == "/api/v1/subcategories/gtr-2-fia-gt-racing-game" })
+            assertFalse(requestedPaths.any { it.endsWith("/grand-theft-auto-v") || it.endsWith("/grand-theft-auto-vi") })
+
+            val cached = async { viewModel.resolveGameMetadata(broadGame) }
+            withTimeout(5_000) {
+                while (!cached.isCompleted) {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    delay(10)
+                }
+            }
+            assertEquals(0, cached.await()?.viewersCount)
+            assertEquals(1, requestedPaths.count { it == "/api/v1/subcategories/gtr-2-fia-gt-racing-game" })
 
             viewModel.setQuery("counter strike")
-            val changed = async { viewModel.resolveViewersCount(Game(gameId = "1552")) }
+            val changed = async { viewModel.resolveGameMetadata(Game(gameId = "1552")) }
             withTimeout(5_000) {
                 while (!changed.isCompleted) {
                     shadowOf(Looper.getMainLooper()).idle()
                     delay(10)
                 }
             }
-            assertEquals(30000, changed.await())
+            assertEquals(30000, changed.await()?.viewersCount)
+            assertEquals(listOf("Shooter"), changed.await()?.tags?.map { it.name })
             assertEquals(2, requestedPaths.count { it == "/api/search" })
         } finally {
+            store.clear()
+            database.close()
+        }
+    }
+
+    @Test
+    fun gameSearchBoundsDetailRequestsAndCancelsThemWhenQueryChanges() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        val store = ViewModelStore()
+        val gate = CountDownLatch(1)
+        categoryMetadataGate = gate
+        try {
+            val viewModel = GameSearchViewModel(context, RecentSearchRepository(database.recentSearchDao()), repository)
+            store.put("search", viewModel)
+            viewModel.setQuery("gta")
+            val requests = (1..6).map { index ->
+                async { viewModel.resolveGameMetadata(Game(gameId = "$index", gameSlug = "bounded-$index")) }
+            }
+            withTimeout(5_000) {
+                while (requestedPaths.count { it.contains("/bounded-") } < 3) {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    delay(10)
+                }
+            }
+            assertEquals(3, requestedPaths.count { it.contains("/bounded-") })
+            viewModel.setQuery("counter strike")
+            gate.countDown()
+            withTimeout(5_000) {
+                while (requests.any { !it.isCompleted }) {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    delay(10)
+                }
+            }
+            assertTrue(requests.all { it.isCancelled })
+            assertEquals(3, requestedPaths.count { it.contains("/bounded-") })
+        } finally {
+            gate.countDown()
             store.clear()
             database.close()
         }

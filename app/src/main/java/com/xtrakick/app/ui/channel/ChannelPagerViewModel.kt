@@ -104,6 +104,19 @@ class ChannelPagerViewModel @Inject constructor(
                         val channelLogin = requireNotNull(args.channelLogin)
                         val channel = kickRepository.getChannel(channelLogin)
                         val stream = kickRepository.toStream(channel)
+                        var lastBroadcast = stream.startedAt
+                            ?: channel.previousLivestreams?.firstOrNull()?.createdAt?.let { kickRepository.normalizeDate(it) }
+                        if (lastBroadcast == null && channel.livestream == null) {
+                            lastBroadcast = try {
+                                kickRepository.getChannelVideosPage(
+                                    channelSlug = channelLogin,
+                                    channelId = channel.id?.toString(),
+                                    limit = 1,
+                                )?.videos?.firstOrNull()?.uploadDate
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
                         Stream(
                             id = stream.id,
                             source = stream.source,
@@ -126,7 +139,7 @@ class ChannelPagerViewModel @Inject constructor(
                                 profileImageUrl = channel.user?.profileImage,
                                 followersCount = channel.followersCount,
                                 bannerImageURL = channel.bannerUrl,
-                                lastBroadcast = stream.startedAt,
+                                lastBroadcast = lastBroadcast,
                                 isLive = channel.livestream != null,
                             )
                         )
@@ -183,7 +196,23 @@ class ChannelPagerViewModel @Inject constructor(
                 val loadedUser = if (!args.channelLogin.isNullOrBlank()) {
                     try {
                         val channelLogin = requireNotNull(args.channelLogin)
-                        kickRepository.getChannel(channelLogin).let { kickRepository.toUser(it) }
+                        val baseUser = kickRepository.getChannel(channelLogin).let { kickRepository.toUser(it) }
+                        if (baseUser.lastBroadcast == null) {
+                            val resolvedLastBroadcast = _stream.value?.user?.lastBroadcast
+                                ?: try {
+                                    kickRepository.getChannelVideosPage(
+                                        channelSlug = channelLogin,
+                                        channelId = baseUser.channelId,
+                                        limit = 1,
+                                    )?.videos?.firstOrNull()?.uploadDate
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            if (resolvedLastBroadcast != null) {
+                                baseUser.lastBroadcast = resolvedLastBroadcast
+                            }
+                        }
+                        baseUser
                     } catch (_: Exception) {
                         null
                     }

@@ -1501,9 +1501,9 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun onDestroyView() {
-        super.onDestroyView()
-        surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
+        surfaceHolderCallback?.let { bindingOrNull?.playerSurface?.holder?.removeCallback(it) }
         surfaceHolderCallback = null
+        super.onDestroyView()
         screenOffResumeFuture?.let { runCatching { MediaController.releaseFuture(it) } }
         screenOffResumeFuture = null
         player?.let {

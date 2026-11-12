@@ -89,6 +89,16 @@ class KickClipParsingTest {
     }
 
     @Test
+    fun normalizeDateHandlesKickTimestamps() {
+        assertEquals("2026-11-12T14:30:00Z", repository.normalizeDate("2026-11-12T14:30:00"))
+        assertEquals("2026-11-12T14:30:00Z", repository.normalizeDate("2026-11-12 14:30:00"))
+        assertEquals("2026-11-12T14:30:00.123456Z", repository.normalizeDate("2026-11-12T14:30:00.123456Z"))
+        assertEquals("2026-11-12T14:30:00+01:00", repository.normalizeDate("2026-11-12T14:30:00+01:00"))
+        assertEquals(null, repository.normalizeDate(null))
+        assertEquals(null, repository.normalizeDate(" "))
+    }
+
+    @Test
     fun categoryClipsPageExtractsChannelAndCreatorCorrectly() = runBlocking {
         val page = repository.getCategoryClipsPage(
             categorySlug = "grand-theft-auto-v",

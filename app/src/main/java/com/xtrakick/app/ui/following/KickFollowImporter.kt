@@ -3,14 +3,13 @@ package com.xtrakick.app.ui.following
 import android.content.Context
 import android.util.Log
 import android.widget.Toast
-import androidx.core.content.edit
 import com.xtrakick.app.R
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.KickWebResponseException
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.prefs
+import com.xtrakick.app.util.tokenPrefs
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -104,6 +103,7 @@ class KickFollowImporter @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val localFollowsChannel: LocalFollowChannelRepository,
     private val kickRepository: KickRepository,
+    private val kickFollowSync: KickFollowSync,
 ) {
 
     // Outlives the login screen so a post-login import keeps running after LoginActivity finishes.
@@ -137,6 +137,7 @@ class KickFollowImporter @Inject constructor(
     }
 
     private suspend fun runImport(block: suspend () -> Int): Int {
+        kickFollowSync.beginImport()
         _importState.value = KickFollowImportState.Importing(0)
         return try {
             val count = block()
@@ -148,6 +149,8 @@ class KickFollowImporter @Inject constructor(
         } catch (error: Exception) {
             _importState.value = KickFollowImportState.Error(error.message)
             throw error
+        } finally {
+            kickFollowSync.endImport()
         }
     }
 
@@ -194,33 +197,8 @@ class KickFollowImporter @Inject constructor(
             message.contains("unauthenticated", ignoreCase = true)
     }
 
-    /** One-time backfill: mark locally stored follows that also exist on Kick. Safe to re-run. */
-    suspend fun ensureKickSourceMarks(networkLibrary: String?): Int {
-        if (context.prefs().getBoolean(AppConstants.KICK_FOLLOW_MARK_DONE, false)) return 0
-        if (!com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(context)) return 0
-        fun markDone() = context.prefs().edit().putBoolean(AppConstants.KICK_FOLLOW_MARK_DONE, true).apply()
-        val channels = try {
-            kickRepository.getFollowedChannelsWithStoredAuth(networkLibrary)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            return 0
-        }
-        if (channels.isEmpty()) {
-            // Only mark done if confirmed logged in and returned empty from authenticated call
-            if (com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(context)) {
-                markDone()
-            }
-            return 0
-        }
-        val marked = localFollowsChannel.markKickFollows(channels.map { it.login })
-        markDone()
-        Log.i(LOG_TAG, "Kick follow source-mark backfill marked=$marked of ${channels.size}")
-        return marked
-    }
-
     internal suspend fun importFollows(follows: List<KickImportedFollow>): Int {
-        val ownLogin = context.prefs().getString(AppConstants.KICK_USER_LOGIN, null)
+        val ownLogin = context.tokenPrefs().getString(AppConstants.KICK_USER_LOGIN, null)
             ?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
         val dedupedFollows = follows
             .asSequence()

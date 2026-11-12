@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 @Singleton
 class LocalFollowChannelRepository @Inject constructor(
@@ -21,10 +23,66 @@ class LocalFollowChannelRepository @Inject constructor(
 
     private val _followsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val followsChanged: SharedFlow<Unit> = _followsChanged.asSharedFlow()
+    private val revision = AtomicLong()
+    val changeVersion: Long get() = revision.get()
 
     fun notifyFollowsChanged() {
+        revision.incrementAndGet()
         _followsChanged.tryEmit(Unit)
     }
+
+    suspend fun reconcileKickFollows(items: List<LocalFollowChannel>, canApply: () -> Boolean): Boolean = withContext(Dispatchers.IO) {
+        var changed = false
+        try {
+            val applied = database.withTransaction {
+                if (!canApply()) return@withTransaction false
+                val existing = dedupeFollows(localFollowsChannelDao.getAll())
+                val byLogin = existing.mapNotNull { item ->
+                    item.userLogin?.trim()?.lowercase(Locale.ROOT)?.let { it to item }
+                }.toMap()
+                val incoming = items.associateBy { it.userLogin?.trim()?.lowercase(Locale.ROOT) }
+                require(null !in incoming && "" !in incoming) { "Missing synced Kick login" }
+                items.forEach { item ->
+                    val saved = byLogin[item.userLogin?.trim()?.lowercase(Locale.ROOT)]
+                    if (saved == null) {
+                        item.sourceMask = AppConstants.FOLLOW_SOURCE_MASK_KICK
+                        localFollowsChannelDao.insert(item)
+                        changed = true
+                    } else {
+                        val name = item.userName ?: saved.userName
+                        val logo = item.channelLogo ?: saved.channelLogo
+                        val mask = saved.sourceMask or AppConstants.FOLLOW_SOURCE_MASK_KICK
+                        if (name != saved.userName || logo != saved.channelLogo || mask != saved.sourceMask) {
+                            saved.userName = name
+                            saved.channelLogo = logo
+                            saved.sourceMask = mask
+                            localFollowsChannelDao.update(saved)
+                            changed = true
+                        }
+                    }
+                }
+                existing.forEach { item ->
+                    if (item.isKickFollow && item.userLogin?.trim()?.lowercase(Locale.ROOT) !in incoming) {
+                        if ((item.sourceMask and AppConstants.FOLLOW_SOURCE_MASK_LOCAL) != 0) {
+                            item.sourceMask = item.sourceMask and AppConstants.FOLLOW_SOURCE_MASK_KICK.inv()
+                            localFollowsChannelDao.update(item)
+                        } else {
+                            localFollowsChannelDao.delete(item)
+                        }
+                        changed = true
+                    }
+                }
+                if (!canApply()) throw FollowSyncChanged()
+                true
+            }
+            if (applied && changed) notifyFollowsChanged()
+            applied
+        } catch (_: FollowSyncChanged) {
+            false
+        }
+    }
+
+    private class FollowSyncChanged : RuntimeException()
 
     suspend fun loadFollows() = withContext(Dispatchers.IO) {
         database.withTransaction { dedupeFollows(localFollowsChannelDao.getAll()) }

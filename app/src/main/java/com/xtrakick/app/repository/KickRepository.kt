@@ -1002,7 +1002,7 @@ class KickRepository @Inject constructor(
         }
     }
 
-    suspend fun getFollowedChannelsWebPage(cursor: String? = null): KickFollowedChannelsPage = withContext(Dispatchers.IO) {
+    suspend fun getFollowedChannelsWebPage(cursor: String? = null, requireComplete: Boolean = false): KickFollowedChannelsPage = withContext(Dispatchers.IO) {
         val url = buildString {
             append("https://kick.com/api/v2/channels/followed-page")
             if (!cursor.isNullOrBlank()) {
@@ -1011,43 +1011,8 @@ class KickRepository @Inject constructor(
             }
         }
         Log.i(tag, "Kick follow import request url=$url cursor=${cursor ?: "<initial>"}")
-        val root = json.parseToJsonElement(executeKickWebSessionRequest(url)) as? JsonObject
-            ?: throw IOException("Invalid Kick followed response")
-        val channels = root.arrayOrNull("channels").orEmpty().mapNotNull { element ->
-            val item = element as? JsonObject ?: return@mapNotNull null
-            val login = (item.primitiveOrNull("channel_slug")
-                ?: item.primitiveOrNull("slug")
-                ?: item.objOrNull("channel")?.primitiveOrNull("slug")
-                ?: item.primitiveOrNull("user_username")
-                ?: item.primitiveOrNull("username"))?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val name = item.primitiveOrNull("user_username")
-                ?: item.primitiveOrNull("username")
-                ?: item.primitiveOrNull("channel_name")
-                ?: item.primitiveOrNull("name")
-                ?: item.objOrNull("channel")?.primitiveOrNull("name")
-                ?: login
-            val profilePicture = item.primitiveOrNull("profile_picture")
-                ?: item.primitiveOrNull("profile_pic")
-                ?: item.primitiveOrNull("profilepic")
-                ?: item.primitiveOrNull("profilePic")
-                ?: item.objOrNull("channel")?.primitiveOrNull("profile_picture")
-                ?: item.objOrNull("channel")?.primitiveOrNull("profile_pic")
-                ?: item.objOrNull("user")?.primitiveOrNull("profile_picture")
-                ?: item.objOrNull("user")?.primitiveOrNull("profile_pic")
-            KickFollowedChannel(
-                login = login,
-                name = name.takeIf { it.isNotBlank() },
-                profilePicture = profilePicture?.takeIf { it.isNotBlank() },
-            )
-        }
-        KickFollowedChannelsPage(
-            channels = channels,
-            nextCursor = root.primitiveOrNull("nextCursor"),
-        ).also { page ->
-            Log.i(
-                tag,
-                "Kick follow import response url=$url channels=${page.channels.size} nextCursor=${page.nextCursor ?: "<end>"}",
-            )
+        KickFollowSnapshot.parsePage(executeKickWebSessionRequest(url), requireComplete).also { page ->
+            Log.i(tag, "Kick follow import response channels=${page.channels.size} hasNextPage=${page.nextCursor != null}")
         }
     }
 
@@ -1075,6 +1040,31 @@ class KickRepository @Inject constructor(
             cursor = nextCursor?.takeIf { it != cursor }
         } while (!cursor.isNullOrBlank())
         collected.values.toList()
+    }
+
+    suspend fun getFollowedChannelsForSync(networkLibrary: String?, expectedAccountId: String): List<KickFollowedChannel> = withContext(Dispatchers.IO) {
+        suspend fun websiteAccountId(): String? {
+            val root = json.parseToJsonElement(executeKickWebSessionRequest("https://kick.com/api/v1/user")) as? JsonObject
+            return (root?.get("id") as? JsonPrimitive)?.contentOrNull
+        }
+        val websiteMatches = try {
+            websiteAccountId() == expectedAccountId
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            false
+        }
+        if (websiteMatches) {
+            val channels = KickFollowSnapshot.collect { cursor -> getFollowedChannelsWebPage(cursor, requireComplete = true) }
+            if (websiteAccountId() != expectedAccountId) throw IOException("Kick follow session changed")
+            channels
+        } else {
+            val authHeader = getKickPublicApiHeadersWithRefresh(networkLibrary)[AppConstants.HEADER_TOKEN]
+                ?.takeIf { it.isNotBlank() } ?: throw IOException("Kick follow login unavailable")
+            val user = resolveKickCurrentUser(authHeader.removePrefix("Bearer "))
+            if (user?.id != expectedAccountId) throw IOException("Kick follow account mismatch")
+            KickFollowSnapshot.collect { cursor -> getFollowedChannelsAuthorizedPage(authHeader, cursor, requireComplete = true) }
+        }
     }
 
     suspend fun getUserLiveFollowedStreams(): List<Stream> = withContext(Dispatchers.IO) {
@@ -1237,9 +1227,9 @@ class KickRepository @Inject constructor(
         }
     }
 
-    private fun getFollowedChannelsAuthorizedPage(authHeader: String, cursor: String?): KickFollowedChannelsPage {
+    private fun getFollowedChannelsAuthorizedPage(authHeader: String, cursor: String?, requireComplete: Boolean = false): KickFollowedChannelsPage {
         val url = buildString {
-            append("https://kick.com/api/v2/channels/followed")
+            append(if (requireComplete) "https://kick.com/api/v2/channels/followed-page" else "https://kick.com/api/v2/channels/followed")
             if (!cursor.isNullOrBlank()) {
                 append("?cursor=")
                 append(urlEncode(cursor))
@@ -1258,39 +1248,7 @@ class KickRepository @Inject constructor(
             if (!response.isSuccessful) {
                 throw IOException("Kick followed auth request failed (${response.code}) for $url: ${body.take(200)}")
             }
-            val root = json.parseToJsonElement(body) as? JsonObject
-                ?: throw IOException("Invalid Kick followed auth response")
-            val channels = root.arrayOrNull("channels").orEmpty().mapNotNull { element ->
-                val item = element as? JsonObject ?: return@mapNotNull null
-                val login = (item.primitiveOrNull("channel_slug")
-                    ?: item.primitiveOrNull("slug")
-                    ?: item.objOrNull("channel")?.primitiveOrNull("slug")
-                    ?: item.primitiveOrNull("user_username")
-                    ?: item.primitiveOrNull("username"))?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                val name = item.primitiveOrNull("user_username")
-                    ?: item.primitiveOrNull("username")
-                    ?: item.primitiveOrNull("channel_name")
-                    ?: item.primitiveOrNull("name")
-                    ?: item.objOrNull("channel")?.primitiveOrNull("name")
-                    ?: login
-                val profilePicture = item.primitiveOrNull("profile_picture")
-                    ?: item.primitiveOrNull("profile_pic")
-                    ?: item.primitiveOrNull("profilepic")
-                    ?: item.primitiveOrNull("profilePic")
-                    ?: item.objOrNull("channel")?.primitiveOrNull("profile_picture")
-                    ?: item.objOrNull("channel")?.primitiveOrNull("profile_pic")
-                    ?: item.objOrNull("user")?.primitiveOrNull("profile_picture")
-                    ?: item.objOrNull("user")?.primitiveOrNull("profile_pic")
-                KickFollowedChannel(
-                    login = login,
-                    name = name.takeIf { it.isNotBlank() },
-                    profilePicture = profilePicture?.takeIf { it.isNotBlank() },
-                )
-            }
-            KickFollowedChannelsPage(
-                channels = channels,
-                nextCursor = root.primitiveOrNull("nextCursor"),
-            )
+            KickFollowSnapshot.parsePage(body, requireComplete)
         }
     }
 
@@ -3887,23 +3845,42 @@ class KickRepository @Inject constructor(
         throw lastError ?: IOException("Kick live chat history fetch failed")
     }
 
+    internal suspend fun resolveNumericChannelId(channelId: String?, channelLogin: String?): String? {
+        val login = channelLogin?.trim()?.takeIf { it.isNotBlank() }
+        val cached = login?.let { getCachedChannel(it)?.id?.toString() }
+        if (!cached.isNullOrBlank()) return cached
+        if (login != null) {
+            val fetched = runCatching { getChannel(login, prefetchBadgeCatalog = false) }.getOrNull()?.id?.toString()
+            if (!fetched.isNullOrBlank()) return fetched
+        }
+        return channelId?.trim()?.takeIf { it.isNotBlank() }
+    }
+
     /**
      * Requires a logged-in web session. Bots are skipped — the consumer is
      * @-mention autocomplete, which only wants human participants.
      */
-    suspend fun getActiveChatters(channelId: String): List<String> = withContext(Dispatchers.IO) {
-        val raw = executeKickWebSessionRequest(
-            "https://web.kick.com/api/v1/channels/${urlEncode(channelId)}/chat/active-chatters"
-        )
+    suspend fun getActiveChatters(channelId: String, channelLogin: String? = null): List<String> = withContext(Dispatchers.IO) {
+        val targetId = resolveNumericChannelId(channelId, channelLogin) ?: channelId
+        val raw = runCatching {
+            executeKickWebSessionRequest(
+                "https://web.kick.com/api/v1/channels/${urlEncode(targetId)}/chat/active-chatters"
+            )
+        }.getOrElse {
+            if (targetId != channelId && channelId.isNotBlank()) {
+                executeKickWebSessionRequest(
+                    "https://web.kick.com/api/v1/channels/${urlEncode(channelId)}/chat/active-chatters"
+                )
+            } else throw it
+        }
         parseActiveChattersResponse(raw)
     }
 
     suspend fun getChannelViewerList(channelId: String?, channelLogin: String? = null): ChannelViewerList = withContext(Dispatchers.IO) {
         val login = channelLogin?.trim()?.takeIf { it.isNotBlank() }
-        // The active-chatters endpoint is keyed by the numeric channel id, so a
-        // login-only caller has to resolve it first.
-        val cid = channelId?.trim()?.takeIf { it.isNotBlank() }
-            ?: login?.let { runCatching { getChannel(it) }.getOrNull()?.id?.toString() }
+        // The active-chatters endpoint is keyed by the numeric channel id, so ensure
+        // we resolve it from channelLogin if available (e.g. when channelId is broadcaster user id).
+        val cid = resolveNumericChannelId(channelId, login)
         if (cid.isNullOrBlank()) {
             val fallbackList = if (!login.isNullOrBlank()) listOf(login) else emptyList()
             return@withContext ChannelViewerList(
@@ -3916,13 +3893,20 @@ class KickRepository @Inject constructor(
             )
         }
 
-        val url = "https://web.kick.com/api/v1/channels/${urlEncode(cid)}/chat/active-chatters"
-        val raw = runCatching {
-            executeKickWebSessionRequest(url)
-        }.getOrElse {
+        val fetch = suspend { targetCid: String ->
+            val url = "https://web.kick.com/api/v1/channels/${urlEncode(targetCid)}/chat/active-chatters"
             runCatching {
-                getRaw(url, isKickWeb = true)
-            }.getOrNull()
+                executeKickWebSessionRequest(url)
+            }.getOrElse {
+                runCatching {
+                    getRaw(url, isKickWeb = true)
+                }.getOrNull()
+            }
+        }
+
+        var raw = fetch(cid)
+        if (raw.isNullOrBlank() && !channelId.isNullOrBlank() && channelId != cid) {
+            raw = fetch(channelId)
         }
 
         if (raw.isNullOrBlank()) {
@@ -4771,6 +4755,8 @@ class KickRepository @Inject constructor(
     }
 
     fun toUser(channel: KickChannelResponse): User {
+        val lastBroadcastIso = channel.livestream?.createdAt?.let { normalizeDate(it) }
+            ?: channel.previousLivestreams?.firstOrNull()?.createdAt?.let { normalizeDate(it) }
         return User(
             channelId = channel.id?.toString(),
             channelLogin = channel.slug,
@@ -4778,6 +4764,7 @@ class KickRepository @Inject constructor(
             profileImageUrl = channel.user?.profileImage,
             followersCount = channel.followersCount,
             bannerImageURL = channel.bannerUrl,
+            lastBroadcast = lastBroadcastIso,
             isLive = channel.livestream != null
         )
     }
@@ -7042,7 +7029,7 @@ class KickRepository @Inject constructor(
         return String(chars)
     }
 
-    private fun normalizeDate(input: String?): String? {
+    internal fun normalizeDate(input: String?): String? {
         if (input.isNullOrBlank()) return null
         return when {
             input.contains('T') -> if (input.endsWith("Z") || input.contains("+")) input else "${input}Z"

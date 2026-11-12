@@ -25,12 +25,16 @@ import com.xtrakick.app.ui.common.FragmentHost
 import com.xtrakick.app.ui.common.PagedListFragment
 import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.common.Sortable
+import com.xtrakick.app.ui.following.KickFollowSync
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, FollowedChannelsSortDialog.OnFilter {
+
+    @Inject lateinit var kickFollowSync: KickFollowSync
 
     private var _binding: CommonRecyclerViewLayoutBinding? = null
     private val binding get() = _binding!!
@@ -84,6 +88,12 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
             }
         }
         initializeAdapter(binding, pagingAdapter)
+        binding.swipeRefresh.setOnRefreshListener {
+            viewLifecycleOwner.lifecycleScope.launch {
+                kickFollowSync.refreshNow()
+                pagingAdapter.refresh()
+            }
+        }
     }
 
     override fun setupSortBar(sortBar: SortBarBinding) {

@@ -16,10 +16,12 @@ class KickLivestreamsResponse(
 )
 
 @Serializable
+@OptIn(ExperimentalSerializationApi::class)
 class KickLivestream(
     val id: Long? = null,
     @SerialName("channel_id")
     val channelId: Long? = null,
+    @JsonNames("language_code")
     val language: String? = null,
     @SerialName("is_mature")
     val isMature: Boolean? = null,
@@ -30,6 +32,7 @@ class KickLivestream(
     @SerialName("viewer_count")
     val viewerCount: Int? = null,
     val thumbnail: KickThumbnail? = null,
+    @JsonNames("custom_tags")
     val tags: List<String>? = null,
     val channel: KickChannelSummary? = null,
     val categories: List<KickCategory>? = null,
@@ -79,6 +82,8 @@ class KickChannelResponse(
     val offlineBannerImage: KickBanner? = null,
     val chatroom: KickChatroom? = null,
     val livestream: KickChannelLivestream? = null,
+    @SerialName("previous_livestreams")
+    val previousLivestreams: List<KickChannelLivestream>? = null,
     val user: KickUser? = null,
 ) {
     /** Channel page backdrop: the banner, falling back to the offline banner image. */
