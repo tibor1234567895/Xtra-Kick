@@ -182,6 +182,7 @@ class PlaybackService : MediaSessionService() {
     private var backgroundPrepareRetryCount = 0
     private var videoId: Long? = null
     private var currentVideoIdString: String? = null
+    private var playbackUsageId: String? = null
     private var offlineVideoId: Int? = null
     private lateinit var activeLatencyConfig: LiveLatencyConfig
     private var sleepTimer: Timer? = null
@@ -345,6 +346,7 @@ class PlaybackService : MediaSessionService() {
                     )
                     if (isPlaying) {
                         UsagePing.noteWatchStarted()
+                        UsagePing.notePlaybackStarted(this@PlaybackService, KickLivePlayback.ENGINE_EXO_ONLY, playbackUsageId)
                         backgroundPrepareRetryCount = 0
                         startKickViewerWatchIfNeeded()
                         stopIdleTimer()
@@ -489,6 +491,8 @@ class PlaybackService : MediaSessionService() {
                         return when (customCommand.customAction) {
                             START_STREAM -> {
                                 val uri = customCommand.customExtras.getString(URI)
+                                playbackUsageId = "stream:${customCommand.customExtras.getString(LIVESTREAM_ID)
+                                    ?: customCommand.customExtras.getString(CHANNEL_LOGIN) ?: uri}"
                                 val title = customCommand.customExtras.getString(TITLE)
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
@@ -636,6 +640,7 @@ class PlaybackService : MediaSessionService() {
                                 val newId = customCommand.customExtras.getLong(VIDEO_ID).takeIf { it != 0L }
                                 val newIdString = customCommand.customExtras.getString(VIDEO_ID_STRING)
                                     ?: newId?.toString()
+                                playbackUsageId = "video:${newIdString ?: uri}"
                                 val isSameVideo = !newIdString.isNullOrBlank() && newIdString == currentVideoIdString
                                 val position = if (isSameVideo && session.player.currentMediaItem != null) {
                                     session.player.currentPosition
@@ -694,6 +699,7 @@ class PlaybackService : MediaSessionService() {
                             }
                             START_CLIP -> {
                                 val uri = customCommand.customExtras.getString(URI)
+                                playbackUsageId = "clip:${customCommand.customExtras.getString(CLIP_ID) ?: uri}"
                                 val title = customCommand.customExtras.getString(TITLE)
                                 val channelName = customCommand.customExtras.getString(CHANNEL_NAME)
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
@@ -761,6 +767,7 @@ class PlaybackService : MediaSessionService() {
                                 val channelLogo = customCommand.customExtras.getString(CHANNEL_LOGO)
                                 watchOwner.clearMetadata()
                                 val newId = customCommand.customExtras.getInt(VIDEO_ID).takeIf { it != 0 }
+                                playbackUsageId = "offline:${newId ?: uri}"
                                 val position = if (offlineVideoId == newId && session.player.currentMediaItem != null) {
                                     session.player.currentPosition
                                 } else {
@@ -827,6 +834,7 @@ class PlaybackService : MediaSessionService() {
                                 )))
                             }
                             STOP_PLAYBACK -> {
+                                UsagePing.notePlaybackEnded(KickLivePlayback.ENGINE_EXO_ONLY)
                                 DiagnosticLogger.i(TAG, "STOP_PLAYBACK custom command received")
                                 watchOwner.clearMetadata()
                                 clearActiveLiveChannel()
@@ -1035,6 +1043,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         isRunning = false
+        UsagePing.notePlaybackEnded(KickLivePlayback.ENGINE_EXO_ONLY)
         UsagePing.noteWatchStopped(this)
         watchOwner.release()
         clearActiveLiveChannel()
@@ -1150,6 +1159,7 @@ class PlaybackService : MediaSessionService() {
         const val URI = "uri"
         const val VIDEO_ID = "videoId"
         const val VIDEO_ID_STRING = "videoIdString"
+        const val CLIP_ID = "clipId"
         const val PLAYBACK_POSITION = "playbackPosition"
         const val TITLE = "title"
         const val CHANNEL_NAME = "channelName"

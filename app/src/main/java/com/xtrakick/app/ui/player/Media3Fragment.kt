@@ -789,6 +789,7 @@ class Media3Fragment : PlayerFragment() {
                 SessionCommand(
                     PlaybackService.START_CLIP, bundleOf(
                         PlaybackService.URI to url,
+                        PlaybackService.CLIP_ID to requireArguments().getString(KEY_CLIP_ID),
                         PlaybackService.TITLE to requireArguments().getString(KEY_TITLE),
                         PlaybackService.CHANNEL_NAME to requireArguments().getString(KEY_CHANNEL_NAME),
                         PlaybackService.CHANNEL_LOGO to requireArguments().getString(KEY_CHANNEL_LOGO),

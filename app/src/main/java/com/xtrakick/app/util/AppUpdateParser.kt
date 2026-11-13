@@ -32,4 +32,7 @@ internal fun parseAppUpdateInfo(response: JsonObject?, lastChecked: Long): AppUp
     return null
 }
 
+internal fun shouldForceAppUpdateCheck(hasPendingCrash: Boolean, lastForcedCheck: Long, now: Long): Boolean =
+    hasPendingCrash && (lastForcedCheck == 0L || now - lastForcedCheck >= 86_400_000L)
+
 private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull

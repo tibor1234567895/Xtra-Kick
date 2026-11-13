@@ -4,12 +4,28 @@ import com.xtrakick.app.model.AppUpdateInfo
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppUpdateParsingTest {
+    @Test
+    fun crashUpdateCheckBecomesDueAfterExactlyOneDay() {
+        val lastCheck = 1_800_000_000_000L
+        assertFalse(shouldForceAppUpdateCheck(true, lastCheck, lastCheck + 86_400_000L - 1))
+        assertTrue(shouldForceAppUpdateCheck(true, lastCheck, lastCheck + 86_400_000L))
+        assertTrue(shouldForceAppUpdateCheck(true, lastCheck, lastCheck + 2 * 86_400_000L))
+    }
+
+    @Test
+    fun crashUpdateCheckRequiresAPendingCrashAndHandlesFirstLaunchAndClockRollback() {
+        assertTrue(shouldForceAppUpdateCheck(true, 0L, 1L))
+        assertFalse(shouldForceAppUpdateCheck(false, 0L, 1_800_000_000_000L))
+        assertFalse(shouldForceAppUpdateCheck(true, 1_800_000_000_000L, 1_700_000_000_000L))
+    }
+
     @Test
     fun malformedAssetsCannotHideALaterUsableApk() {
         val info = parseReleasePayload("""{

@@ -48,8 +48,15 @@ jobs:
     - name: Decode release keystore
       run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > app/release-keystore.jks
 
+    - name: Prepare release version
+      id: version
+      run: |
+        python3 -B -m unittest discover -s gradle -p test_release_version.py
+        code=$(python3 -B gradle/release_version.py ci --run-number "$GITHUB_RUN_NUMBER" --output build/release-version.json)
+        echo "code=$code" >> "$GITHUB_OUTPUT"
+
     - name: Build Release with Gradle
-      run: ./gradlew assembleRelease --build-cache --parallel
+      run: ./gradlew assembleRelease -PreleaseVersionCode=${{ steps.version.outputs.code }} --build-cache --parallel
 
     - name: Verify release signature
       run: |
@@ -108,7 +115,7 @@ jobs:
     - name: Create release
       env:
         GH_TOKEN: ${{ github.token }}
-      run: gh release create latest --title "Latest" --notes-file notes.txt --latest=true 'app/build/outputs/apk/release/*.apk'
+      run: gh release create latest --title "Latest" --notes-file notes.txt --latest=true 'app/build/outputs/apk/release/*.apk' build/release-version.json
 
     - name: Submit Release APK to VirusTotal
       continue-on-error: true

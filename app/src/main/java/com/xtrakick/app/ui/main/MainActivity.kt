@@ -91,6 +91,8 @@ import com.xtrakick.app.ui.player.PlayerFragment
 import com.xtrakick.app.ui.top.TopStreamsFragmentDirections
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.CrashReports
+import com.xtrakick.app.util.shouldForceAppUpdateCheck
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.KickApiHelper
@@ -238,9 +240,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         migrateSettings()
-        // The updater flags an update when the release asset is newer than the last check time.
-        // CI re-uploads the APK without bumping versionCode, so detect (re)installs instead:
-        // anything published before the install moment is the build being installed, i.e. seen.
+        // Release timestamps also handle reinstalling the same APK without showing it again.
         val lastInstallTime = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0)).lastUpdateTime
         } else {
@@ -360,15 +360,24 @@ class MainActivity : AppCompatActivity() {
             if (checkedUpdatesOnLaunch) return
             if (!prefs.getBoolean(AppConstants.UPDATE_CHECK_ENABLED, true)) return
 
-            val frequencyDays = prefs.getString(AppConstants.UPDATE_CHECK_FREQUENCY, "7")?.toLongOrNull() ?: 7L
+            val frequencyDays = prefs.getString(AppConstants.UPDATE_CHECK_FREQUENCY, "1")?.toLongOrNull() ?: 1L
             val frequencyMs = frequencyDays * 86_400_000L
             val lastCheckTimestamp = tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, 0L)
             val now = System.currentTimeMillis()
+            // A queued crash report from a previous run means the user is hitting a
+            // crasher — surface a newer release immediately instead of waiting out
+            // the frequency window (max once per cooldown so crash loops stay quiet).
+            val lastForcedCheck = tokenPrefs().getLong(AppConstants.UPDATE_LAST_FORCED_CHECK_TIMESTAMP, 0L)
+            val forcedCheck = shouldForceAppUpdateCheck(CrashReports.hasPending(applicationContext), lastForcedCheck, now)
+            val dueCheck = frequencyDays <= 0L || lastCheckTimestamp + frequencyMs < now
 
-            if (frequencyDays <= 0L || lastCheckTimestamp + frequencyMs < now) {
+            if (dueCheck || forcedCheck) {
                 checkedUpdatesOnLaunch = true
                 tokenPrefs().edit {
                     putLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, now)
+                    if (forcedCheck) {
+                        putLong(AppConstants.UPDATE_LAST_FORCED_CHECK_TIMESTAMP, now)
+                    }
                 }
                 val skippedReleaseTime = tokenPrefs().getLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, 0L)
                 val lastInstallTime = tokenPrefs().getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)

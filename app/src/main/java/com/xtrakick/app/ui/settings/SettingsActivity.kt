@@ -1593,7 +1593,7 @@ class SettingsActivity : AppCompatActivity() {
             }
             findPreference<ListPreference>("update_check_frequency")?.apply {
                 if (value == null) {
-                    value = "0"
+                    value = "1"
                 }
             }
             findPreference<SwitchPreferenceCompat>("update_use_browser")?.setOnPreferenceChangeListener { _, newValue ->

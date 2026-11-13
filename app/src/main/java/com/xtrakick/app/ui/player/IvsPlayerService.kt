@@ -296,6 +296,7 @@ class IvsPlayerService : Service() {
         if (multiPovDelegate == null) return
         if (isPlaying) {
             UsagePing.noteWatchStarted()
+            UsagePing.notePlaybackStarted(this, KickLivePlayback.ENGINE_IVS, playbackUsageId)
             requestAudioFocus()
             acquirePlaybackLocks()
             startKickViewerWatchIfNeeded()
@@ -335,7 +336,10 @@ class IvsPlayerService : Service() {
         watchOwner.stop()
     }
 
+    private var playbackUsageId: String? = null
+
     fun setKickViewerMetadata(channelId: String?, livestreamId: String?, channelLogin: String?) {
+        playbackUsageId = livestreamId ?: channelLogin ?: channelId ?: currentUrl
         watchOwner.setMetadata(channelId, livestreamId, channelLogin)
     }
     private var dynamicsProcessingAudioSessionId: Int? = null
@@ -549,6 +553,7 @@ class IvsPlayerService : Service() {
                     }
                     if (state == Player.State.PLAYING) {
                         UsagePing.noteWatchStarted()
+                        UsagePing.notePlaybackStarted(this@IvsPlayerService, KickLivePlayback.ENGINE_IVS, playbackUsageId)
                         retryCount = 0
                         suspendedByFocusLoss = false
                         startKickViewerWatchIfNeeded()
@@ -1271,6 +1276,7 @@ class IvsPlayerService : Service() {
     }
 
     fun stopPlayback() {
+        UsagePing.notePlaybackEnded(KickLivePlayback.ENGINE_IVS)
         DiagnosticLogger.logPause(
             callingContext = this,
             source = "IvsPlayerService.stopPlayback",
@@ -1790,6 +1796,7 @@ class IvsPlayerService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        UsagePing.notePlaybackEnded(KickLivePlayback.ENGINE_IVS)
         UsagePing.noteWatchStopped(this)
         becomingNoisyReceiver?.let { runCatching { unregisterReceiver(it) } }
         becomingNoisyReceiver = null

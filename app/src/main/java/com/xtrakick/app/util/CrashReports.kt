@@ -132,6 +132,13 @@ object CrashReports {
         synchronized(this) { directory(context).listFiles().orEmpty().forEach { it.delete() } }
     }
 
+    /** True when at least one crash report from a previous run is still queued. */
+    fun hasPending(context: Context): Boolean {
+        val appContext = context.applicationContext
+        if (!enabled(appContext)) return false
+        return runCatching { pendingFiles(directory(appContext)).isNotEmpty() }.getOrDefault(false)
+    }
+
     internal fun sendPending(dir: File, isEnabled: () -> Boolean, send: (ByteArray) -> Int) {
         for (file in pendingFiles(dir)) {
             if (!isEnabled()) {

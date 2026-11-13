@@ -10,6 +10,21 @@ This is a small personal project maintained by one developer in occasional spare
 - Release APKs include both 64-bit ARM (`arm64-v8a`) and 32-bit ARM (`armeabi-v7a`) libraries in one download.
 - Debug builds default to ARM64. For architecture testing, override with `-PTARGET_ABI=armeabi-v7a` or `-PTARGET_ABI=arm64-v8a,armeabi-v7a`.
 
+## Building locally
+
+Local release builds require Python 3 and reuse the latest published APK's version code.
+Online builds refresh that code from the release's `release-version.json` asset and cache
+it in `.gradle/published-release-version.json`. Offline builds (`--offline`) or network
+failures use the last cached code; the first local release build needs internet access.
+After a new GitHub release, build online once to refresh the cache. Debug builds use a
+fixed code and do not contact GitHub for versioning.
+
+GitHub Actions assigns new release codes from its workflow run number, passes the code
+through `-PreleaseVersionCode`, and publishes the matching metadata alongside the APK.
+Local builds do not increment this sequence. Replacing a local release with the latest
+published APK requires the same signing key; an older published release can still be
+blocked if its code is lower than the installed one.
+
 ## What it can do
 
 ### Playback

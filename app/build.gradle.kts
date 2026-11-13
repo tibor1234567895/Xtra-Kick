@@ -126,8 +126,8 @@ android {
         applicationId = "com.github.andreyasadchy.xtrakick"
         minSdk = 26
         targetSdk = 36
-        versionCode = 121
-        versionName = "2.54.0"
+        versionCode = 122
+        versionName = "2.55.0"
     }
 
     buildTypes {
@@ -223,6 +223,23 @@ android {
         "lib/armeabi-v7a/libtranslate_jni.so",
         "lib/armeabi-v7a/liblanguage_id_l2c_jni.so",
     ))
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        val python = if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3"
+        val arguments = listOf(
+            python, "-B", rootProject.file("gradle/release_version.py").absolutePath,
+            "local", "--cache", rootProject.file(".gradle/published-release-version.json").absolutePath,
+        ) + if (gradle.startParameter.isOffline) listOf("--offline") else emptyList()
+        val publishedCode = providers.exec { commandLine(arguments) }.standardOutput.asText.map { it.trim() }
+        val code = providers.gradleProperty("releaseVersionCode").orElse(publishedCode).map {
+            val value = it.toIntOrNull()
+            require(value != null && value in 1..2_100_000_000) { "Invalid releaseVersionCode: $it" }
+            value
+        }
+        variant.outputs.forEach { it.versionCode.set(code) }
+    }
 }
 
 dependencies {

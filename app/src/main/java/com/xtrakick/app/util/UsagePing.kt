@@ -5,7 +5,8 @@ import android.os.Build
 import android.os.SystemClock
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.ui.player.KickLivePlayback
-import com.xtrakick.app.util.prefs
+import java.net.HttpURLConnection
+import java.net.URL
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Instant
@@ -16,13 +17,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Anonymous usage ping. Sends a single random per-install identifier plus the
  * app version, Android API level, locale country, player engine, coarse watch
- * time bucket, crash count, and the number of sessions started since the last
- * successful ping to the OAuth backend, at most once per calendar day. Release
- * builds only, and skipped entirely when the user disables anonymous usage stats
- * in settings. When the user is logged in, a one-way SHA-256 of the user id is
- * included so reinstalls by a known account can be reconciled server-side; it
- * cannot be linked to an account without the backend salt. No account, device,
- * or behavioral data is included; failures are silent.
+ * time bucket, crash count, the number of sessions and playback starts (per
+ * engine) since the last successful ping to the OAuth backend, at most once per
+ * calendar day. Release builds only, and skipped entirely when the user
+ * disables anonymous usage stats in settings. When the user is logged in, a
+ * one-way SHA-256 of the user id is included so reinstalls by a known account
+ * can be reconciled server-side; it cannot be linked to an account without the
+ * backend salt. Playback identifiers stay in memory and are never sent;
+ * failures are silent.
  */
 object UsagePing {
 
@@ -31,6 +33,7 @@ object UsagePing {
     private val dayFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC)
     private val inFlight = AtomicBoolean(false)
     private val random = SecureRandom()
+    private val lastPlaybackIds = mutableMapOf<String, String>()
     @Volatile
     private var watchStartElapsedRealtime: Long? = null
 
@@ -56,7 +59,11 @@ object UsagePing {
         ).apply { isDaemon = true; start() }
     }
 
-    private fun sendOnce(context: Context, today: String) {
+    internal fun sendOnce(
+        context: Context,
+        today: String,
+        openConnection: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
+    ) {
         if (!inFlight.compareAndSet(false, true)) return
         try {
             val prefs = context.prefs()
@@ -71,6 +78,10 @@ object UsagePing {
             }
             val sessions = prefs.getInt(AppConstants.USAGE_SESSIONS_UNREPORTED, 0).coerceIn(0, 100_000)
             val crashes = prefs.getInt(AppConstants.USAGE_UNREPORTED_CRASHES, 0).coerceIn(0, 10_000)
+            val (playbackStartsIvs, playbackStartsExo) = synchronized(this) {
+                prefs.getInt(AppConstants.USAGE_PLAYBACK_STARTS_UNREPORTED_IVS, 0).coerceIn(0, 100_000) to
+                    prefs.getInt(AppConstants.USAGE_PLAYBACK_STARTS_UNREPORTED_EXO, 0).coerceIn(0, 100_000)
+            }
             val storedWatchMinutes = prefs.getInt(AppConstants.USAGE_WATCH_TIME_UNREPORTED_MINUTES, 0).coerceIn(0, 100_000)
             val activeWatchMinutes = synchronized(this) {
                 val start = watchStartElapsedRealtime
@@ -100,6 +111,8 @@ object UsagePing {
                 if (accountHash != null) append(",\"ah\":\"").append(accountHash).append('"')
                 if (sessions > 0) append(",\"s\":").append(sessions)
                 append(",\"pe\":\"").append(playerEngine).append('"')
+                if (playbackStartsIvs > 0) append(",\"si\":").append(playbackStartsIvs)
+                if (playbackStartsExo > 0) append(",\"se\":").append(playbackStartsExo)
                 if (crashes > 0) append(",\"c\":").append(crashes)
                 append(",\"wt\":\"").append(watchTimeBucket).append('"')
                 append("}")
@@ -111,7 +124,7 @@ object UsagePing {
                 url = url,
                 body = body.toByteArray(Charsets.UTF_8),
             )
-            val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            val connection = openConnection(URL(url))
             try {
                 connection.requestMethod = "POST"
                 connection.connectTimeout = REQUEST_TIMEOUT_MS.toInt()
@@ -127,6 +140,16 @@ object UsagePing {
                     // only subtract what was actually reported.
                     val reportedSessions = (prefs.getInt(AppConstants.USAGE_SESSIONS_UNREPORTED, 0) - sessions).coerceAtLeast(0)
                     val reportedCrashes = (prefs.getInt(AppConstants.USAGE_UNREPORTED_CRASHES, 0) - crashes).coerceAtLeast(0)
+                    if (connection.getHeaderField("X-Playback-Starts-Accepted") == "1") {
+                        synchronized(this) {
+                            val remainingIvs = (prefs.getInt(AppConstants.USAGE_PLAYBACK_STARTS_UNREPORTED_IVS, 0) - playbackStartsIvs).coerceAtLeast(0)
+                            val remainingExo = (prefs.getInt(AppConstants.USAGE_PLAYBACK_STARTS_UNREPORTED_EXO, 0) - playbackStartsExo).coerceAtLeast(0)
+                            prefs.edit()
+                                .putInt(AppConstants.USAGE_PLAYBACK_STARTS_UNREPORTED_IVS, remainingIvs)
+                                .putInt(AppConstants.USAGE_PLAYBACK_STARTS_UNREPORTED_EXO, remainingExo)
+                                .apply()
+                        }
+                    }
                     val reportedMinutes = (prefs.getInt(AppConstants.USAGE_WATCH_TIME_UNREPORTED_MINUTES, 0) - storedWatchMinutes).coerceAtLeast(0)
                     prefs.edit()
                         .putInt(AppConstants.USAGE_SESSIONS_UNREPORTED, reportedSessions)
@@ -157,6 +180,30 @@ object UsagePing {
                 .putInt(AppConstants.USAGE_SESSIONS_UNREPORTED, (prefs.getInt(AppConstants.USAGE_SESSIONS_UNREPORTED, 0) + 1).coerceAtMost(100_000))
                 .apply()
         }
+    }
+
+    fun notePlaybackStarted(context: Context, engine: String, playbackId: String?) {
+        if (playbackId.isNullOrBlank()) return
+        runCatching {
+            val prefs = context.applicationContext.prefs()
+            synchronized(this) {
+                if (lastPlaybackIds[engine] == playbackId) return
+                lastPlaybackIds[engine] = playbackId
+                if (!prefs.getBoolean(AppConstants.USAGE_STATS_ENABLED, true)) return
+                val key = when (engine) {
+                    KickLivePlayback.ENGINE_EXO_ONLY -> AppConstants.USAGE_PLAYBACK_STARTS_UNREPORTED_EXO
+                    KickLivePlayback.ENGINE_IVS -> AppConstants.USAGE_PLAYBACK_STARTS_UNREPORTED_IVS
+                    else -> return
+                }
+                prefs.edit()
+                    .putInt(key, (prefs.getInt(key, 0) + 1).coerceAtMost(100_000))
+                    .apply()
+            }
+        }
+    }
+
+    fun notePlaybackEnded(engine: String) {
+        synchronized(this) { lastPlaybackIds.remove(engine) }
     }
 
     fun noteCrash(context: Context) {
