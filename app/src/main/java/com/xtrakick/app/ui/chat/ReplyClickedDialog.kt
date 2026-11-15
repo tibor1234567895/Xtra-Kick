@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat.getSystemService
 import com.xtrakick.app.util.bundleOf
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.xtrakick.app.ui.view.SafeLinearLayoutManager
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.DialogChatMessageClickBinding
 import com.xtrakick.app.model.chat.ChatMessage
@@ -81,7 +82,7 @@ class ReplyClickedDialog : BottomSheetDialogFragment() {
             recyclerView.let {
                 it.adapter = adapter
                 it.itemAnimator = null
-                it.layoutManager = LinearLayoutManager(context).apply { stackFromEnd = true }
+                it.layoutManager = SafeLinearLayoutManager(context).apply { stackFromEnd = true }
                 it.setOnTouchListener(object : View.OnTouchListener {
                     override fun onTouch(v: View, event: MotionEvent): Boolean {
                         when (event.action) {

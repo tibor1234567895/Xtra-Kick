@@ -35,6 +35,13 @@ class KickFollowSync internal constructor(
     private val now: () -> Long,
     private val log: (String) -> Unit,
 ) {
+    companion object {
+        const val BACKGROUND_SYNC_INTERVAL_MS = 60L * 60_000L // 1 hour
+        const val MANUAL_REFRESH_COOLDOWN_MS = 5L * 60_000L   // 5 minutes
+        const val INITIAL_RETRY_DELAY_MS = 60_000L            // 1 minute
+        const val MAX_RETRY_DELAY_MS = 30L * 60_000L          // 30 minutes
+    }
+
     internal data class Session(val accountId: String, val credential: String)
     private data class Snapshot(val session: Session, val version: Long, val channels: List<KickRepository.KickFollowedChannel>)
 
@@ -76,8 +83,9 @@ class KickFollowSync internal constructor(
     private var session: Session? = null
     private var pending: Snapshot? = null
     private var job: Job? = null
+    private var lastFetchedAt: Long? = null
     private var nextCheckAt = 0L
-    private var retryDelay = 60_000L
+    private var retryDelay = INITIAL_RETRY_DELAY_MS
     @Volatile private var activeImports = 0
     private val applyMutex = Mutex()
 
@@ -92,7 +100,9 @@ class KickFollowSync internal constructor(
         activeImports++
         job?.cancel()
         pending = null
+        lastFetchedAt = null
         nextCheckAt = 0L
+        retryDelay = INITIAL_RETRY_DELAY_MS
     }
 
     fun endImport() {
@@ -105,16 +115,25 @@ class KickFollowSync internal constructor(
         if (account != session) {
             job?.cancel()
             pending = null
+            lastFetchedAt = null
             nextCheckAt = 0L
-            retryDelay = 60_000L
+            retryDelay = INITIAL_RETRY_DELAY_MS
             session = account
         }
         if (account == null) return null
         job?.takeIf { it.isActive }?.let { return it }
+        if (pending?.let { it.version != currentVersion() } == true) {
+            pending = null
+            lastFetchedAt = null
+            nextCheckAt = 0L
+        }
         if (!force && now() < nextCheckAt) return null
         val requestedVisit = visit
         return scope.launch {
-            if (applyPending(if (force) requestedVisit else null) && now() < nextCheckAt) return@launch
+            applyPending(if (force) requestedVisit else null)
+            val minWait = if (force) MANUAL_REFRESH_COOLDOWN_MS else BACKGROUND_SYNC_INTERVAL_MS
+            val last = lastFetchedAt
+            if (last != null && now() < last + minWait) return@launch
             val version = currentVersion()
             try {
                 val channels = withTimeoutOrNull(45_000L) { fetch(account) }
@@ -123,16 +142,17 @@ class KickFollowSync internal constructor(
                     nextCheckAt = 0L
                     return@launch
                 }
+                lastFetchedAt = now()
                 pending = Snapshot(account, version, channels)
-                nextCheckAt = now() + 10L * 60_000L
-                retryDelay = 60_000L
+                nextCheckAt = now() + BACKGROUND_SYNC_INTERVAL_MS
+                retryDelay = INITIAL_RETRY_DELAY_MS
                 log("Fetched ${channels.size} follows; staged=$followingVisible")
                 applyPending(if (force) requestedVisit else null)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 nextCheckAt = now() + retryDelay
-                retryDelay = (retryDelay * 2).coerceAtMost(10L * 60_000L)
+                retryDelay = (retryDelay * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
                 val reason = when (error) {
                     is KickFollowSnapshotException -> error.message
                     is KickWebResponseException -> "HTTP ${error.statusCode}"
@@ -141,6 +161,12 @@ class KickFollowSync internal constructor(
                 log("Sync unavailable ($reason); keeping saved follows")
             }
         }.also { job = it }
+    }
+
+    suspend fun applyPendingNow(): Boolean {
+        if (activeImports > 0) return false
+        if (currentSession() == null) return false
+        return applyPending(visit)
     }
 
     suspend fun refreshNow() {
@@ -156,6 +182,7 @@ class KickFollowSync internal constructor(
         fun stillCurrent() = currentSession() == snapshot.session && currentVersion() == snapshot.version
         if (!stillCurrent()) {
             pending = null
+            lastFetchedAt = null
             nextCheckAt = 0L
             return@withLock false
         }
@@ -175,6 +202,7 @@ class KickFollowSync internal constructor(
         } else if (pending == null && stillCurrent()) {
             pending = snapshot
         } else {
+            lastFetchedAt = null
             nextCheckAt = 0L
         }
         applied

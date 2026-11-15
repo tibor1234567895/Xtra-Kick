@@ -25,6 +25,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.fragment.app.setFragmentResultListener
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.xtrakick.app.ui.view.SafeLinearLayoutManager
 import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.crossfade
@@ -150,7 +151,7 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
         binding.recyclerView.let {
             it.adapter = adapter
             it.itemAnimator = null
-            it.layoutManager = LinearLayoutManager(context)
+            it.layoutManager = SafeLinearLayoutManager(context)
             it.setOnTouchListener { _, event ->
                 when (event.action) {
                     android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE -> behavior.isDraggable = false

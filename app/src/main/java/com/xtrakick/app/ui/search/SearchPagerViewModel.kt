@@ -2,19 +2,33 @@ package com.xtrakick.app.ui.search
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.xtrakick.app.model.ui.RecentSearch
 import com.xtrakick.app.repository.KickRepository
+import com.xtrakick.app.repository.RecentSearchRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class SearchPagerViewModel @Inject constructor(
     private val kickRepository: KickRepository,
+    private val recentSearchRepository: RecentSearchRepository,
 ) : ViewModel() {
 
     val userResult = MutableStateFlow<Pair<String?, String?>?>(null)
+    val hasRecentSearches = combine(
+        listOf(RecentSearch.TYPE_CHANNEL, RecentSearch.TYPE_GAME, RecentSearch.TYPE_STREAM, RecentSearch.TYPE_VIDEO)
+            .map(recentSearchRepository::loadRecentSearchFlow)
+    ) { histories -> histories.any { it.isNotEmpty() } }
     private var isLoading = false
+
+    fun deleteRecentSearches() {
+        viewModelScope.launch {
+            recentSearchRepository.deleteAll()
+        }
+    }
 
     /**
      * Checks whether a channel exists via the public Kick channel endpoint.

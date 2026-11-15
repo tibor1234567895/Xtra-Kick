@@ -20,7 +20,6 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -42,6 +41,7 @@ import com.xtrakick.app.model.kick.auth.KickBackendRevokeRequest
 import com.xtrakick.app.repository.AuthRepository
 import com.xtrakick.app.repository.KickAuthRequestException
 import com.xtrakick.app.repository.LocalFollowChannelRepository
+import com.xtrakick.app.ui.common.BaseStateActivity
 import com.xtrakick.app.ui.following.KickFollowImporter
 import com.xtrakick.app.ui.settings.SettingsActivity
 import com.xtrakick.app.util.AuthStateHelper
@@ -57,7 +57,7 @@ import org.json.JSONObject
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class LoginActivity : AppCompatActivity() {
+class LoginActivity : BaseStateActivity() {
 
     private data class PendingKickCallback(
         val code: String,

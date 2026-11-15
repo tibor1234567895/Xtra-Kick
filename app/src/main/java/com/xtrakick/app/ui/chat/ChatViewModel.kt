@@ -489,7 +489,7 @@ class ChatViewModel @Inject constructor(
         val press = giftTrainSimulatorPressCount++
         val gifter = giftTrainSimulatorGifters[press % giftTrainSimulatorGifters.size]
         val batch = List(5) { giftTrainSimulatorGiftees[(press * 5 + it) % giftTrainSimulatorGiftees.size] }
-        updateGiftTrain(KickGiftTrainSnapshot(gifterName = gifter, giftees = batch))
+        updateGiftTrain(KickGiftTrainSnapshot(gifterName = gifter, giftees = batch, gifterColor = "#00E701"))
 
         val now = System.currentTimeMillis()
         viewModelScope.launch {
@@ -1823,13 +1823,13 @@ class ChatViewModel @Inject constructor(
         return emitKickMessages(due, replayStartTimeMs)
     }
 
-    private fun mapKickMessages(rawMessages: List<KickMessage>): List<ChatMessage> {
+    private fun mapKickMessages(rawMessages: List<KickMessage>, chatScopeId: String? = null): List<ChatMessage> {
         val nameDisplay = applicationContext.prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")
         val showClearMsg = applicationContext.prefs().getBoolean(AppConstants.CHAT_SHOW_CLEARMSG, true)
         val showClearChat = applicationContext.prefs().getBoolean(AppConstants.CHAT_SHOW_CLEARCHAT, true)
         val mappedMessages = mutableListOf<ChatMessage>()
         rawMessages.forEach { rawMessage ->
-            val chatMessage = kickRepository.toChatMessage(rawMessage)
+            val chatMessage = kickRepository.toChatMessage(rawMessage, chatScopeId = chatScopeId)
             when {
                 kickRepository.isKickSingleMessageDelete(rawMessage) -> {
                     if (!showClearMsg) {
@@ -1876,12 +1876,13 @@ class ChatViewModel @Inject constructor(
         channelLogin: String? = null
     ): List<ChatMessage> {
         val debugKickRealtimeChat = BuildConfig.DEBUG && applicationContext.prefs().getBoolean(AppConstants.DEBUG_KICK_REALTIME_CHAT, false)
+        val resolvedScope = currentKickChatroomId ?: channelLogin?.let { "login:$it" } ?: channelId?.let { "channel:$it" }
         for (source in messageSources) {
             try {
                 val response = kickRepository.getRecentMessages(source)
                 val rawMessages = response.messages
                 val rawCount = rawMessages.size
-                val messages = mapKickMessages(rawMessages)
+                val messages = mapKickMessages(rawMessages, resolvedScope ?: source)
                     .sortedBy { it.timestamp }
                 if (debugKickRealtimeChat) {
                     Log.d("KickRecentChat", "source=$source rawCount=$rawCount mappedCount=${messages.size}")
@@ -1952,7 +1953,7 @@ class ChatViewModel @Inject constructor(
                     hadSuccessfulResponse = true
                     val rawMessages = response.messages
                     val rawCount = rawMessages.size
-                    val messages = mapKickMessages(rawMessages)
+                    val messages = mapKickMessages(rawMessages, currentKickChatroomId ?: currentChatChannelLogin?.let { "login:$it" } ?: "channel:$source")
                         .sortedBy { it.timestamp }
                     logKickReplayChat(
                         stage = "response",
@@ -2070,7 +2071,7 @@ class ChatViewModel @Inject constructor(
                 val response = kickRepository.getLiveChatHistory(source)
                 val rawMessages = response.messages
                 val rawCount = rawMessages.size
-                val messages = mapKickMessages(rawMessages)
+                val messages = mapKickMessages(rawMessages, currentKickChatroomId ?: currentChatChannelLogin?.let { "login:$it" } ?: "channel:$source")
                     .sortedBy { it.timestamp }
                 if (debugKickRealtimeChat) {
                     Log.d(
@@ -3359,7 +3360,8 @@ class ChatViewModel @Inject constructor(
             if (shouldRefreshRoomState) {
                 loadKickInitialRoomStateIfNeeded(channelId, channelLogin, forceRefresh = true)
             }
-            kickRepository.parseKickRealtimeEvent(eventName, messageJson)?.let { parsedEvent ->
+            val activeScopeId = currentKickChatroomId ?: "login:$channelLogin"
+            kickRepository.parseKickRealtimeEvent(eventName, messageJson, chatScopeId = activeScopeId)?.let { parsedEvent ->
                 parsedEvent.giftTrain?.let(::updateGiftTrain)
                 if (!parsedEvent.clearTargetUserId.isNullOrBlank() ||
                     !parsedEvent.clearTargetUserLogin.isNullOrBlank() ||
@@ -3405,7 +3407,11 @@ class ChatViewModel @Inject constructor(
                 return
             }
             val kickMessage = realtimeMessage.message
-            val chatMessage = kickRepository.toChatMessage(kickMessage, realtimeMessage.eventName)
+            val chatMessage = kickRepository.toChatMessage(
+                message = kickMessage,
+                eventName = realtimeMessage.eventName,
+                chatScopeId = currentKickChatroomId ?: "login:$channelLogin",
+            )
             if (kickRepository.isKickSingleMessageDelete(kickMessage, realtimeMessage.eventName)) {
                 if (!showClearMsg) {
                     return

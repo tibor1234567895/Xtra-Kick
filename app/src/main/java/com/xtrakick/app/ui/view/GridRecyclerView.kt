@@ -21,11 +21,11 @@ class GridRecyclerView : RecyclerView {
     private val portraitColumns = prefs.getString(AppConstants.PORTRAIT_COLUMN_COUNT, "1")!!.toInt()
     private val landscapeColumns = prefs.getString(AppConstants.LANDSCAPE_COLUMN_COUNT, "2")!!.toInt()
 
-    private val gridLayoutManager: GridLayoutManager
+    private val gridLayoutManager: SafeGridLayoutManager
 
     init {
         val columns = getColumnsForConfiguration(resources.configuration)
-        gridLayoutManager = GridLayoutManager(context, columns)
+        gridLayoutManager = SafeGridLayoutManager(context, columns)
         layoutManager = gridLayoutManager
         addItemDecoration(columns)
     }

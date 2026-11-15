@@ -49,6 +49,7 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
     private val viewModel: SearchPagerViewModel by viewModels()
     private var firstLaunch = true
     private var stopObservingLift: (() -> Unit)? = null
+    private var hasRecentSearches = false
 
     override val currentFragment: Fragment?
         get() = childFragmentManager.findFragmentByTag("f${binding.viewPager.currentItem}")
@@ -147,6 +148,14 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
             toolbar.setupWithNavController(navController, appBarConfiguration)
             toolbar.setOnMenuItemClickListener { menuItem ->
                 when (menuItem.itemId) {
+                    R.id.deleteRecentSearches -> {
+                        requireContext().getAlertDialogBuilder()
+                            .setMessage(R.string.delete_recent_searches_message)
+                            .setPositiveButton(R.string.yes) { _, _ -> viewModel.deleteRecentSearches() }
+                            .setNegativeButton(R.string.no, null)
+                            .show()
+                        true
+                    }
                     R.id.searchUser -> {
                         val binding = DialogUserResultBinding.inflate(layoutInflater)
                         requireContext().getAlertDialogBuilder().apply {
@@ -197,6 +206,14 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
                     else -> false
                 }
             }
+            viewLifecycleOwner.lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    viewModel.hasRecentSearches.collectLatest {
+                        hasRecentSearches = it
+                        updateDeleteRecentSearchesVisibility()
+                    }
+                }
+            }
             searchView.requestFocus()
             WindowCompat.getInsetsController(requireActivity().window, searchView).show(WindowInsetsCompat.Type.ime())
             ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
@@ -221,6 +238,7 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
 
             override fun onQueryTextChange(newText: String): Boolean {
                 job?.cancel()
+                updateDeleteRecentSearchesVisibility()
                 if (newText.isNotEmpty()) {
                     job = lifecycleScope.launch {
                         delay(750)
@@ -238,6 +256,13 @@ class SearchPagerFragment : BaseNetworkFragment(), FragmentHost {
 
     fun setQuery(query: String?) {
         binding.searchView.setQuery(query, true)
+    }
+
+    private fun updateDeleteRecentSearchesVisibility() {
+        val binding = _binding ?: return
+        binding.toolbar.menu.findItem(R.id.deleteRecentSearches)?.isVisible =
+            hasRecentSearches && binding.searchView.query.isBlank() &&
+                requireContext().prefs().getBoolean(AppConstants.UI_STORE_RECENT_SEARCHES, true)
     }
 
     private var userResult: String? = null

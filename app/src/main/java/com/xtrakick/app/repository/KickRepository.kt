@@ -29,6 +29,7 @@ import com.xtrakick.app.model.kick.KickBrowsePage
 import com.xtrakick.app.model.kick.KickBrowseLivestream
 import com.xtrakick.app.model.kick.KickBrowseLanguageCodes
 import com.xtrakick.app.model.kick.KickChannelResponse
+import com.xtrakick.app.model.kick.KickChannelLink
 import com.xtrakick.app.model.kick.KickChannelLivestream
 import com.xtrakick.app.model.kick.KickLiveNotificationEvent
 import com.xtrakick.app.model.kick.KickLivestream
@@ -323,8 +324,6 @@ class KickRepository @Inject constructor(
     private val moderationNestedObjectKeys = listOf(
         "message", "target_message", "deleted_message", "target", "data", "payload", "metadata"
     )
-    @Volatile
-    private var activeKickChatScopeId: String? = null
     private val channelRequestLock = Any()
     private val kickUlidRandom = SecureRandom()
     private val inFlightChannelRequests = mutableMapOf<String, CompletableDeferred<KickChannelResponse>>()
@@ -1161,6 +1160,10 @@ class KickRepository @Inject constructor(
         return channelCache[normalizedKey]?.second
     }
 
+    suspend fun getChannelLinks(channelSlug: String): List<KickChannelLink> {
+        return get("https://kick.com/api/v2/channels/${urlEncode(channelSlug.trim())}/links")
+    }
+
     suspend fun getChannel(
         channelSlug: String,
         prefetchBadgeCatalog: Boolean = true,
@@ -1171,7 +1174,6 @@ class KickRepository @Inject constructor(
         if (!forceRefresh) {
             channelCache[normalizedKey]?.let { (cachedAt, cachedChannel) ->
                 if (now - cachedAt <= channelCacheTtlMs) {
-                    activeKickChatScopeId = cachedChannel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() }
                     return cachedChannel
                 }
             }
@@ -1189,7 +1191,6 @@ class KickRepository @Inject constructor(
                 getRaw("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}")
             )
             return decoded.also { channel ->
-                activeKickChatScopeId = channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() }
                 val cachedAt = System.currentTimeMillis()
                 channelCache[normalizedKey] = cachedAt to channel
                 channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
@@ -2110,7 +2111,11 @@ class KickRepository @Inject constructor(
         return realtimeEventParsers.shouldRefreshRoomStateFromRealtimeEvent(eventName, messageJson)
     }
 
-    fun parseKickRealtimeEvent(eventName: String?, messageJson: String): KickRealtimeParsedEvent? {
+    fun parseKickRealtimeEvent(
+        eventName: String?,
+        messageJson: String,
+        chatScopeId: String? = null,
+    ): KickRealtimeParsedEvent? {
         val normalizedEvent = eventName?.trim()?.lowercase(Locale.ROOT).orEmpty()
         if (normalizedEvent.isBlank()) {
             return null
@@ -2120,7 +2125,7 @@ class KickRepository @Inject constructor(
                 val event = decodeKickOfficialRealtimePayload<KickOfficialChatMessageSentEvent>(messageJson) ?: return null
                 val kickMessage = officialChatEventToKickMessage(event)
                 KickRealtimeParsedEvent(
-                    chatMessage = toChatMessage(kickMessage, eventName)
+                    chatMessage = toChatMessage(kickMessage, eventName, chatScopeId)
                 )
             }
             "channel.subscription.gifts" -> {
@@ -2180,7 +2185,7 @@ class KickRepository @Inject constructor(
                 val kickMessage = officialModerationEventToKickMessage(event)
                 val targetUser = event.bannedUser
                 KickRealtimeParsedEvent(
-                    chatMessage = toChatMessage(kickMessage, eventName),
+                    chatMessage = toChatMessage(kickMessage, eventName, chatScopeId),
                     clearTargetUserId = targetUser?.userId?.toString(),
                     clearTargetUserLogin = targetUser?.channelSlug,
                     clearTargetUserName = targetUser?.username,
@@ -2348,6 +2353,7 @@ class KickRepository @Inject constructor(
                     giftTrain = KickGiftTrainSnapshot(
                         gifterName = gifterName,
                         giftees = giftedUsernames,
+                        gifterColor = gifterColor,
                     ),
                 )
             }
@@ -4764,6 +4770,7 @@ class KickRepository @Inject constructor(
             profileImageUrl = channel.user?.profileImage,
             followersCount = channel.followersCount,
             bannerImageURL = channel.bannerUrl,
+            createdAt = channel.user?.createdAt?.let(::normalizeDate),
             lastBroadcast = lastBroadcastIso,
             isLive = channel.livestream != null
         )
@@ -4782,6 +4789,7 @@ class KickRepository @Inject constructor(
     private fun officialChatEventToKickMessage(event: KickOfficialChatMessageSentEvent): KickMessage {
         return KickMessage(
             id = event.messageId,
+            chatroomId = event.chatroomId,
             content = event.content,
             createdAt = event.createdAt,
             replyTo = event.repliesTo?.let(::encodeOfficialReplyInfo),
@@ -4813,6 +4821,7 @@ class KickRepository @Inject constructor(
         return KickGiftTrainSnapshot(
             gifterName = gifter?.username?.takeIf(String::isNotBlank) ?: gifter?.channelSlug?.takeIf(String::isNotBlank),
             giftees = gifteeNames,
+            gifterColor = gifter?.identity?.usernameColor,
         )
     }
 
@@ -4999,7 +5008,11 @@ class KickRepository @Inject constructor(
         return communityMsg to allMessages
     }
 
-    fun toChatMessage(message: KickMessage, eventName: String? = null): ChatMessage {
+    fun toChatMessage(
+        message: KickMessage,
+        eventName: String? = null,
+        chatScopeId: String? = null,
+    ): ChatMessage {
         val moderationType = resolveKickModerationType(message, eventName)
         val deletedMessageObject = message.deletedMessage.asJsonObjectOrNull()
         val targetUser = extractKickTargetUser(message)
@@ -5014,7 +5027,9 @@ class KickRepository @Inject constructor(
             resolveType = ::resolveKickBadgeType,
             normalizeType = ::normalizeKickBadgeType,
         )
-        val effectiveChatScopeId = activeKickChatScopeId ?: message.chatId?.toString()?.takeIf { it.isNotBlank() }
+        val effectiveChatScopeId = (chatScopeId?.trim()?.takeIf { it.isNotBlank() }
+            ?: message.chatroomId?.toString()
+            ?: message.chatId?.toString())?.let(::normalizeKickBadgeScope)
         val dedupedBadges = LinkedHashMap<String, Pair<KickBadgeSource, Badge>>()
         allBadges.forEach { badge ->
             val type = resolveKickBadgeType(badge) ?: return@forEach
@@ -5988,12 +6003,27 @@ class KickRepository @Inject constructor(
         return channel.chatroom?.id?.toString()
     }
 
+    private fun extractKickChannelScopeIds(channel: KickChannelResponse): List<String> {
+        return listOfNotNull(
+            channel.chatroom?.id?.let { "chatroom:$it" },
+            channel.id?.let { "channel:$it" },
+            channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { "login:$it" },
+            (channel.userId ?: channel.user?.id)?.let { "user:$it" },
+        ).distinct()
+    }
+
+    private fun normalizeKickBadgeScope(scope: String): String {
+        val normalized = scope.trim().lowercase(Locale.ROOT)
+        return when {
+            ':' in normalized -> normalized
+            normalized.toLongOrNull() != null -> "chatroom:$normalized"
+            else -> "login:$normalized"
+        }
+    }
+
     internal fun cacheKickBadgeUrls(channel: KickChannelResponse): Boolean {
         var changed = false
-        val scopeIds = listOfNotNull(
-            channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() },
-            channel.id?.toString()?.takeIf { it.isNotBlank() }
-        ).distinct()
+        val scopeIds = extractKickChannelScopeIds(channel)
         val channelBadges = buildList {
             addAll(channel.subscriberBadges.orEmpty())
             addAll(channel.founderBadges.orEmpty())
@@ -6049,15 +6079,16 @@ class KickRepository @Inject constructor(
 
     internal fun resolveKickBadgeUrl(type: String, version: String, chatScopeId: String? = null): String? {
         val channelSpecific = isKickChannelSpecificBadgeType(type)
+        val normalizedScopeId = chatScopeId?.takeIf { it.isNotBlank() }?.let(::normalizeKickBadgeScope)
         kickBadgeTypeCandidates(type).forEach { candidate ->
-            if (chatScopeId != null) {
-                kickBadgeUrls["kick:chat:$chatScopeId:$candidate:$version"]?.takeIf { !isFallbackBadgeUrl(it) }?.let { return it }
+            if (normalizedScopeId != null) {
+                kickBadgeUrls["kick:chat:$normalizedScopeId:$candidate:$version"]?.takeIf { !isFallbackBadgeUrl(it) }?.let { return it }
                 if (channelSpecific) {
-                    resolveClosestChannelScopedBadgeUrl(chatScopeId, candidate, version)?.let { return it }
+                    resolveClosestChannelScopedBadgeUrl(normalizedScopeId, candidate, version)?.let { return it }
                 }
-                kickBadgeUrls["kick:chat:$chatScopeId:$candidate:default"]?.takeIf { !isFallbackBadgeUrl(it) }?.let { return it }
+                kickBadgeUrls["kick:chat:$normalizedScopeId:$candidate:default"]?.takeIf { !isFallbackBadgeUrl(it) }?.let { return it }
             }
-            if (channelSpecific && chatScopeId != null) {
+            if (channelSpecific && normalizedScopeId != null) {
                 return@forEach
             }
             kickBadgeUrls["kick:$candidate:$version"]?.takeIf { !isFallbackBadgeUrl(it) }?.let { return it }
@@ -6266,10 +6297,7 @@ class KickRepository @Inject constructor(
 
     internal suspend fun prefetchKickBadgeCatalog(channel: KickChannelResponse) {
         val slug = channel.slug?.trim()?.takeIf { it.isNotBlank() } ?: return
-        val scopeIds = listOfNotNull(
-            channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() },
-            channel.id?.toString()?.takeIf { it.isNotBlank() }
-        ).distinct()
+        val scopeIds = extractKickChannelScopeIds(channel)
         // Kick's API only resolves the slug-based endpoints below. The numeric
         // channel-id paths and chatroom-id paths (api/v1|v2/chatrooms/{id},
         // api/v2/channels/{id}/..., api/v2/channels/{slug}/badges) do not exist
@@ -6319,10 +6347,7 @@ class KickRepository @Inject constructor(
     ): Int {
         if (unresolvedTargetTypes.isEmpty()) return 0
         var contributed = 0
-        val scopeIds = listOfNotNull(
-            channel.chatroom?.id?.toString()?.takeIf { it.isNotBlank() },
-            channel.id?.toString()?.takeIf { it.isNotBlank() }
-        ).distinct()
+        val scopeIds = extractKickChannelScopeIds(channel)
         val pageSlugs = linkedSetOf<String>().apply {
             channel.slug?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
             add("kick")

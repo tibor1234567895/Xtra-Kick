@@ -175,6 +175,11 @@ class MultiPovIvsPlaybackController(
 
     fun attachSurface(key: String, textureView: TextureView, aspectFrame: AspectRatioFrameLayout? = null) {
         surfaces[key] = textureView
+        if (!textureView.isAvailable) {
+            surfaceTextures[key]?.let { retained ->
+                runCatching { textureView.setSurfaceTexture(retained) }
+            }
+        }
         if (aspectFrame != null) {
             aspectFrames[key] = aspectFrame
             aspectFrame.setAspectRatio(16f / 9f)

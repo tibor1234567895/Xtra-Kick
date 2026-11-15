@@ -1271,4 +1271,6 @@
     <string name="videos_load_failed">Videos konnten nicht geladen werden. Bitte erneut versuchen.</string>
     <string name="crash_reports_title">Absturzberichte senden</string>
     <string name="crash_reports_summary">Standardmäßig aktiviert. Sendet bei Abstürzen Stackframes und grundlegende App-, Android-, CPU- und Player-Einstellungen zur Fehlerbehebung. Keine Konto-/Gerätekennungen, Ausnahmemeldungen oder Diagnoseprotokolle.</string>
+    <string name="show_channel_panels">Detaillierte Kanalinformationen anzeigen</string>
+    <string name="show_channel_panels_summary">Kanalinfos und Bilder im Bereich „Über“ laden</string>
 </resources>

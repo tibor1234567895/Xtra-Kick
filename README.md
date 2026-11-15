@@ -64,21 +64,21 @@ blocked if its code is lower than the installed one.
 - Bookmarks for VODs.
 - Multi-view: watch several streams at once in a grid.
 - Themes including dark, AMOLED black, Material You dynamic color, and layout customization.
-- Multi-language UI support (English and Spanish) with in-app language selection (Settings → Appearance → App language) and system per-app language integration on Android 13+.
+- Multi-language UI support (English, German, Spanish, Portuguese-Brazil, and Turkish) with in-app language selection (Settings → Appearance → App language) and system per-app language integration on Android 13+.
 
 ## Limitations
 
 - Unofficial. Everything relies on Kick's public API, website endpoints, and undocumented interfaces. Any of these can change or break without notice.
 - Logging in with your Kick account via official OAuth 2.0 PKCE web authorization works out of the box in the signed release APK. When building from source yourself, you need to configure your own OAuth client ID and backend URL. Without login you cannot send chat or use authenticated features.
 - Some features depend on unofficial endpoints that are less reliable than official ones.
-- Limited UI translations (English and Spanish supported). Streams, videos, and clips can also be filtered by broadcast language using the browse filters.
+- Limited UI translations (English, German, Spanish, Portuguese-Brazil, and Turkish supported). Streams, videos, and clips can also be filtered by broadcast language using the browse filters.
 - No Chromecast support.
 
 ## Security notes
 
 - Login uses OAuth 2.0 with PKCE against Kick's authorization server, routed through a small backend service operated by the maintainer. The backend is open source: [Xtra-Kick-OAuth-Backend](https://github.com/tibor1234567895/Xtra-Kick-OAuth-Backend). Tokens are stored locally and refreshed automatically; logout revokes them.
 - Follow import and web authorization run in WebViews restricted to kick.com and id.kick.com origins only.
-- The app sends one anonymous daily usage ping. No account or activity data is included. You can turn it off in Settings → Advanced → Privacy.
+- The app sends a daily usage ping with app/Android version, approximate country, session counts, player engine, and watch-time buckets. When signed in, a one-way account hash helps distinguish reinstalls; account names and tokens are not included. You can turn it off in Settings → System & Advanced → Privacy.
 - The app is not affiliated with or endorsed by Kick. You use your account at your own discretion.
 
 ## License

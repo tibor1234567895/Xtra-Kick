@@ -217,4 +217,12 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
+    <SwitchPreferenceCompat
+        android:defaultValue="true"
+        android:key="ui_show_channel_panels"
+        android:title="@string/show_channel_panels"
+        android:summary="@string/show_channel_panels_summary"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
 </androidx.preference.PreferenceScreen>

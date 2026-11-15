@@ -7,10 +7,33 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class KickFollowSyncTest {
+    @Test
+    fun discardingAStagedSnapshotAllowsAnImmediateReplacementFetch() = runBlocking {
+        val fixture = Fixture(this)
+        fixture.sync.requestSync()!!.join()
+        fixture.version++
+        assertFalse(fixture.sync.applyPendingNow())
+        fixture.sync.requestSync()!!.join()
+        assertEquals(2, fixture.fetchCount)
+        fixture.sync.refreshNow()
+        assertEquals(1, fixture.applied.size)
+    }
+    @Test
+    fun localEditsBypassTheBackgroundGateForAnInvalidStagedSnapshot() = runBlocking {
+        val fixture = Fixture(this)
+        fixture.sync.requestSync()!!.join()
+        fixture.version++
+        fixture.sync.requestSync()!!.join()
+        assertEquals(2, fixture.fetchCount)
+        assertEquals(0, fixture.applied.size)
+    }
+
     private class Fixture(scope: CoroutineScope) {
         var session: KickFollowSync.Session? = KickFollowSync.Session("one", "token")
         var version = 0L
@@ -66,7 +89,7 @@ class KickFollowSyncTest {
         gate.complete(emptyList())
         first.join()
         assertEquals(null, fixture.sync.requestSync())
-        fixture.clock = 600_001L
+        fixture.clock = KickFollowSync.BACKGROUND_SYNC_INTERVAL_MS + 1L
         fixture.sync.requestSync()!!.join()
         assertEquals(2, fixture.fetchCount)
     }
@@ -159,5 +182,67 @@ class KickFollowSyncTest {
         fixture.sync.requestSync()!!.join()
         assertEquals(2, fixture.fetchCount)
         assertEquals(1, fixture.applied.size)
+    }
+
+    @Test
+    fun subsequentRefreshWithoutPendingSnapshotDoesNotFetchAgainWithinCooldown() = runBlocking {
+        val fixture = Fixture(this)
+        fixture.sync.requestSync()!!.join()
+        fixture.sync.refreshNow()
+        assertEquals(1, fixture.fetchCount)
+        assertEquals(1, fixture.applied.size)
+
+        // Second refresh 30 seconds later (within 10-minute cooldown)
+        fixture.clock = 30_000L
+        fixture.sync.refreshNow()
+        assertEquals(1, fixture.fetchCount)
+        assertEquals(1, fixture.applied.size)
+    }
+
+    @Test
+    fun refreshAfterCooldownExpiresFetchesAgain() = runBlocking {
+        val fixture = Fixture(this)
+        fixture.sync.requestSync()!!.join()
+        fixture.sync.refreshNow()
+        assertEquals(1, fixture.fetchCount)
+        assertEquals(1, fixture.applied.size)
+
+        // Move clock past 5-minute manual cooldown
+        fixture.clock = KickFollowSync.MANUAL_REFRESH_COOLDOWN_MS + 1L
+        fixture.sync.refreshNow()
+        assertEquals(2, fixture.fetchCount)
+        assertEquals(2, fixture.applied.size)
+    }
+
+    @Test
+    fun manualRefreshAllowsSyncWhileBackgroundSyncWaitsForLongerInterval() = runBlocking {
+        val fixture = Fixture(this)
+        fixture.sync.requestSync()!!.join()
+        assertEquals(1, fixture.fetchCount)
+
+        // Advance 10 minutes: past manual cooldown (5 min) but well within background sync interval (1 hour)
+        fixture.clock = 10L * 60_000L
+        assertEquals(null, fixture.sync.requestSync(force = false))
+        assertEquals(1, fixture.fetchCount)
+
+        // Manual refresh allows sync
+        fixture.sync.refreshNow()
+        assertEquals(2, fixture.fetchCount)
+    }
+
+    @Test
+    fun applyPendingNowAppliesStagedSnapshotWithoutNetwork() = runBlocking {
+        val fixture = Fixture(this)
+        fixture.sync.requestSync()!!.join()
+        assertEquals(1, fixture.fetchCount)
+        assertEquals(0, fixture.applied.size)
+
+        assertTrue(fixture.sync.applyPendingNow())
+        assertEquals(1, fixture.applied.size)
+        assertEquals(1, fixture.fetchCount)
+
+        assertFalse(fixture.sync.applyPendingNow())
+        assertEquals(1, fixture.applied.size)
+        assertEquals(1, fixture.fetchCount)
     }
 }

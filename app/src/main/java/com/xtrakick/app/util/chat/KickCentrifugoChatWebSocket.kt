@@ -139,6 +139,13 @@ class KickCentrifugoChatWebSocket(
         }
 
         override suspend fun onMessage(webSocket: WebSocket, message: String) {
+            for (record in message.lineSequence()) {
+                if (record.isBlank()) continue
+                handleRecord(webSocket, record.trim())
+            }
+        }
+
+        private suspend fun handleRecord(webSocket: WebSocket, message: String) {
             if (message == "{}") {
                 webSocket.write("{}")
                 return

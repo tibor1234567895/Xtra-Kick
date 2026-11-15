@@ -9,7 +9,7 @@ import android.widget.Toast
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DiffUtil
-import androidx.recyclerview.widget.LinearLayoutManager
+import com.xtrakick.app.ui.view.SafeLinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetBehavior
@@ -75,7 +75,7 @@ class MutedUsersDialog : BottomSheetDialogFragment() {
         behavior.peekHeight = maxHeight
 
         adapter = MutedUsersAdapter(::unmuteUser)
-        binding.mutedListRv.layoutManager = LinearLayoutManager(requireContext())
+        binding.mutedListRv.layoutManager = SafeLinearLayoutManager(requireContext())
         binding.mutedListRv.adapter = adapter
 
         binding.refreshButton.setOnClickListener { loadData() }
@@ -149,25 +149,31 @@ class MutedUsersDialog : BottomSheetDialogFragment() {
         if (row.onKickAccount && id == null) return
         unmuteInFlight = true
         viewLifecycleOwner.lifecycleScope.launch {
-            val accountResult = if (row.onKickAccount && id != null) {
-                runCatching { kickRepository.setKickAccountMutedUser(id, mute = false) }
-                    .onFailure { Log.w(TAG, "Account unmute failed for $id: ${it.message}") }
-                    .getOrNull() == true
-            } else {
-                true
-            }
-            if (accountResult) {
-                kickAccountMutedUsersStore.onAccountUnmuteApplied(requireNotNull(id))
+            try {
+                if (row.onKickAccount && id != null) {
+                    val unmuted = try {
+                        kickRepository.setKickAccountMutedUser(id, mute = false)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Account unmute failed for $id: ${e.message}")
+                        false
+                    }
+                    if (!unmuted) {
+                        Toast.makeText(
+                            requireContext(),
+                            getString(R.string.muted_users_unmute_failed, row.username),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        return@launch
+                    }
+                    kickAccountMutedUsersStore.onAccountUnmuteApplied(id)
+                }
                 mutedChatUsersRepository.removeMutedUser(id, row.username, row.username)
                 rebuildRows()
-            } else {
-                Toast.makeText(
-                    requireContext(),
-                    getString(R.string.muted_users_unmute_failed, row.username),
-                    Toast.LENGTH_SHORT,
-                ).show()
+            } finally {
+                unmuteInFlight = false
             }
-            unmuteInFlight = false
         }
     }
 

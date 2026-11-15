@@ -1273,4 +1273,6 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="videos_load_failed">Não foi possível carregar os vídeos. Tente novamente.</string>
     <string name="crash_reports_title">Enviar relatórios de falhas</string>
     <string name="crash_reports_summary">Ativado por padrão. Envia a pilha de chamadas da falha e dados básicos do app, Android, CPU e player para ajudar a corrigir erros. Sem identificadores de conta ou dispositivo, mensagens de exceção nem registros de diagnóstico.</string>
+    <string name="show_channel_panels">Mostrar informações detalhadas do canal</string>
+    <string name="show_channel_panels_summary">Carregar painéis e imagens do canal em Sobre</string>
 </resources>

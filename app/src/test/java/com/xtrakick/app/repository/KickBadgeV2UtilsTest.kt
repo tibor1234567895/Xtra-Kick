@@ -149,4 +149,28 @@ class KickBadgeV2UtilsTest {
         assertEquals("20", badge?.let(::kickMessageBadgeVersion))
         assertNull(message.sender?.identity?.badges)
     }
+
+    @Test
+    fun `pusher message payload parses chatroom_id`() {
+        val message = json.decodeFromString<KickMessage>(
+            """
+            {
+              "id": "e331b2e1-45a0-4ff6-9883-9b8849646b9a",
+              "chatroom_id": 2579856,
+              "content": "clown check",
+              "sender": {
+                "id": 999123,
+                "identity": {
+                  "badges": [
+                    { "type": "subscriber", "count": 1 }
+                  ]
+                }
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(2579856L, message.chatroomId)
+        assertNull(message.chatId)
+    }
 }

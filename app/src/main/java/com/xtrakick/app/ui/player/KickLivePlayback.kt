@@ -91,12 +91,37 @@ object KickLivePlayback {
         }
     }
 
+    const val DEFAULT_SEGMENT_DURATION_MS = 2_000L
+
     /**
-     * Minimum forward buffer required to safely trigger an adaptive step-up to target quality.
-     * Tied to the user's active rebuffer threshold (min 1,500ms).
+     * Estimates the time (in ms) required to download a single media segment of the target bitrate.
      */
-    fun minRecoveryBufferMs(rebufferMs: Int?): Long {
-        return (rebufferMs?.toLong() ?: 1_500L).coerceAtLeast(1_500L)
+    fun estimateSegmentDownloadTimeMs(
+        bandwidthEstimateBps: Long,
+        targetBitrateBps: Int,
+        segmentDurationMs: Long = DEFAULT_SEGMENT_DURATION_MS
+    ): Long {
+        if (bandwidthEstimateBps <= 0L || targetBitrateBps <= 0) return 0L
+        return ((targetBitrateBps.toDouble() * segmentDurationMs) / bandwidthEstimateBps).toLong()
+    }
+
+    /**
+     * Determines if the current forward buffer is healthy enough to switch to a higher quality without stalling.
+     * Physics-based: Compares forward buffer against the predicted download time of the next segment (with a
+     * 1.5x safety multiplier), while respecting the live-edge forward buffer floor (750ms).
+     */
+    fun isBufferHealthyForRecovery(
+        forwardBufferMs: Long,
+        bandwidthEstimateBps: Long,
+        targetBitrateBps: Int,
+        segmentDurationMs: Long = DEFAULT_SEGMENT_DURATION_MS,
+        minSafeFloorMs: Long = LiveLatencySettings.MIN_SAFE_FORWARD_BUFFER_MS
+    ): Boolean {
+        if (forwardBufferMs < minSafeFloorMs) return false
+        if (bandwidthEstimateBps <= 0L) return true
+        val downloadTimeMs = estimateSegmentDownloadTimeMs(bandwidthEstimateBps, targetBitrateBps, segmentDurationMs)
+        val requiredBufferMs = (downloadTimeMs * 1.5).toLong().coerceAtLeast(minSafeFloorMs)
+        return forwardBufferMs >= requiredBufferMs
     }
 
     /**

@@ -15,20 +15,6 @@ import com.xtrakick.app.model.chat.ChatMessage
 
 object ChatListParityUtils {
 
-    // rebindRangeAfterPrepend / rebindRangeAfterHeadRemoval used to live here and both
-    // unconditionally returned null: with stable ChatMessage.visualParitySlot values, neither
-    // a prepend nor a head removal invalidates existing row colors, so no adapter rebind is
-    // ever required. Their call sites took a main-thread lock on chatMessages purely to
-    // compute arguments for a result that was always discarded.
-
-    fun appendPositionAfterHeadRemoval(lastIndexAfterAppend: Int, removedCount: Int): Int {
-        return if (removedCount > 0) {
-            lastIndexAfterAppend.coerceAtLeast(0)
-        } else {
-            lastIndexAfterAppend
-        }
-    }
-
     fun resolveVisualParityPosition(messages: List<ChatMessage>, position: Int): Int {
         if (position < 0 || messages.isEmpty()) {
             return 0

@@ -1522,7 +1522,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
                 updateChannelName(channelLogin, channelName)
                 val onViewerListClick = View.OnClickListener {
-                    if (prefs.getBoolean(AppConstants.PLAYER_VIEWERLIST, false)) {
+                    if (prefs.getBoolean(AppConstants.PLAYER_VIEWERLIST, true)) {
                         showController(force = true)
                         showViewerList()
                     }
@@ -2162,6 +2162,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     if (it != null) {
                                         val wasFollowing = follow.tag as? Boolean
                                         follow.tag = it
+                                        updateChatOnlyInfo()
                                         if (it) {
                                             follow.setImageResource(R.drawable.baseline_favorite_black_24)
                                             if (wasFollowing == false) {
@@ -2424,6 +2425,69 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
             }
         }
+        updateChatOnlyLayout(restoreVideoLayout = false)
+    }
+
+    protected fun updateChatOnlyLayout(restoreVideoLayout: Boolean = true) {
+        val binding = _binding ?: return
+        val wasChatOnly = binding.chatOnlyHeader.isVisible
+        val chatOnly = viewModel.quality == CHAT_ONLY_QUALITY && isMaximized
+        binding.chatOnlyHeader.isVisible = chatOnly
+        binding.chatOnlyDivider.isVisible = chatOnly
+        binding.playerLayout.isVisible = !chatOnly
+        if (chatOnly) {
+            chatProgressAnimator?.cancel()
+            binding.chatLayout.isPortrait = false
+            binding.chatLayout.translationX = 0f
+            binding.chatLayout.isVisible = true
+            binding.chatLayout.updateLayoutParams<FrameLayout.LayoutParams> {
+                width = ViewGroup.LayoutParams.MATCH_PARENT
+                height = ViewGroup.LayoutParams.MATCH_PARENT
+                gravity = Gravity.NO_GRAVITY
+            }
+            binding.chatOnlyChannel.text = arguments?.getString(KEY_CHANNEL_NAME)
+                ?: arguments?.getString(KEY_CHANNEL_LOGIN)
+            binding.chatOnlyWatch.setOnClickListener {
+                changeQuality(viewModel.previousQuality?.takeUnless { it == CHAT_ONLY_QUALITY || it == AUDIO_ONLY_QUALITY } ?: AUTO_QUALITY)
+            }
+            binding.chatOnlySettings.setOnClickListener { binding.playerControls.quality.performClick() }
+            binding.chatOnlyChannel.setOnClickListener { binding.playerControls.channel.performClick() }
+            binding.chatOnlyCategory.setOnClickListener { binding.playerControls.category.performClick() }
+            binding.chatOnlyViewers.setOnClickListener {
+                if (prefs.getBoolean(AppConstants.PLAYER_VIEWERLIST, true)) showViewerList()
+            }
+            binding.chatOnlyFollow.setOnClickListener { binding.playerControls.follow.performClick() }
+            binding.chatOnlyFollow.setOnLongClickListener { binding.playerControls.follow.performLongClick() }
+            binding.chatOnlyMenu.setOnClickListener { binding.playerControls.menu.performClick() }
+            updateChatOnlyInfo()
+        } else if (wasChatOnly && restoreVideoLayout) {
+            binding.chatOnlyUptime.stop()
+            initLayout()
+        }
+    }
+
+    private fun updateChatOnlyInfo() {
+        val binding = _binding ?: return
+        if (!binding.chatOnlyHeader.isVisible) return
+        val controls = binding.playerControls
+        binding.chatOnlyTitle.text = controls.title.text
+        binding.chatOnlyTitle.isVisible = controls.title.isVisible && !controls.title.text.isNullOrBlank()
+        binding.chatOnlyCategory.text = controls.category.text
+        binding.chatOnlyCategory.isVisible = controls.category.isVisible && !controls.category.text.isNullOrBlank()
+        val count = lastViewerCount ?: viewModel.stream.value?.viewerCount
+        binding.chatOnlyViewers.isVisible = count != null
+        binding.chatOnlyViewers.text = count?.let {
+            resources.getQuantityString(R.plurals.viewers, it, KickApiHelper.formatCount(it, prefs.getBoolean(AppConstants.UI_TRUNCATEVIEWCOUNT, true)))
+        }
+        binding.chatOnlyUptime.visibility = if (controls.uptimeLayout.isVisible) View.VISIBLE else View.INVISIBLE
+        if (controls.uptimeLayout.isVisible) {
+            binding.chatOnlyUptime.base = controls.uptimeTimer.base
+            binding.chatOnlyUptime.start()
+        } else binding.chatOnlyUptime.stop()
+        binding.chatOnlyFollow.isVisible = controls.follow.isVisible
+        binding.chatOnlyFollow.setImageResource(
+            if (viewModel.isFollowing.value == true) R.drawable.baseline_favorite_black_24 else R.drawable.baseline_favorite_border_black_24
+        )
     }
 
     fun setResizeMode() {
@@ -2828,6 +2892,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 activeIcon.visibility = View.GONE
             }
         }
+        updateChatOnlyInfo()
     }
 
     fun updateLiveStatus(live: Boolean, serverTime: Long?, channelLogin: String?) {
@@ -2855,6 +2920,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 uptimeLayout.visibility = View.GONE
             }
         }
+        updateChatOnlyInfo()
     }
 
     fun updateLatency(liveOffsetMs: Long?, targetOffsetMs: Long? = null) {
@@ -2920,6 +2986,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 visibility = View.GONE
             }
         }
+        updateChatOnlyInfo()
     }
 
     fun updateChannelName(channelLogin: String?, channelName: String?) {
@@ -2955,6 +3022,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 visibility = View.GONE
             }
         }
+        updateChatOnlyInfo()
     }
 
     fun restartPlayer() {
@@ -3030,20 +3098,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         val channelSlug = requireArguments().getString(KEY_CHANNEL_LOGIN)?.trim()?.takeIf { it.isNotBlank() } ?: return
         val streamId = requireArguments().getString(KEY_STREAM_ID)
         val startedAtStr = requireArguments().getString(KEY_STARTED_AT) ?: viewModel.stream.value?.startedAt
-        val startedAtMs = startedAtStr?.let { KickApiHelper.parseIso8601DateUTC(it) } ?: 0L
-        val now = System.currentTimeMillis()
-        val liveDurationMs = if (startedAtMs > 0L) {
-            (now - startedAtMs).coerceAtLeast(0L)
-        } else {
-            (getDuration() ?: 0L).coerceAtLeast(0L)
-        }
-
-        val targetPositionMs = if (rewindSeconds < 0L) {
-            0L
-        } else {
-            (liveDurationMs - rewindSeconds * 1000L).coerceAtLeast(0L)
-        }
-
         binding.bufferingIndicator.isVisible = true
         viewLifecycleOwner.lifecycleScope.launch {
             val vodInfo = viewModel.getLiveVodInfo(channelSlug, streamId)
@@ -3054,7 +3108,20 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
                 return@launch
             }
-            val effectiveStartedAt = startedAtStr ?: vodInfo.startedAt ?: viewModel.stream.value?.startedAt
+            val effectiveStartedAt = sequenceOf(startedAtStr, vodInfo.startedAt, viewModel.stream.value?.startedAt)
+                .filterNotNull()
+                .firstOrNull { (KickApiHelper.parseIso8601DateUTC(it) ?: 0L) > 0L }
+            val targetPositionMs = liveRewindTargetPosition(
+                rewindSeconds,
+                effectiveStartedAt?.let { KickApiHelper.parseIso8601DateUTC(it) },
+                System.currentTimeMillis(),
+                getDuration(),
+            )
+            if (targetPositionMs == null) {
+                binding.bufferingIndicator.isVisible = false
+                context?.let { Toast.makeText(it, R.string.rewind_unavailable, Toast.LENGTH_SHORT).show() }
+                return@launch
+            }
             if (!effectiveStartedAt.isNullOrBlank() && requireArguments().getString(KEY_STARTED_AT) != effectiveStartedAt) {
                 requireArguments().putString(KEY_STARTED_AT, effectiveStartedAt)
             }
@@ -3353,6 +3420,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     fun changePlayerMode() {
+        updateChatOnlyLayout()
         with(binding) {
             if (canEnterPictureInPicture()) {
                 if (!controllerHideOnTouch && !controllerIsAnimating && controllerAutoHide && !binding.playerControls.progressBar.isPressed) {
@@ -3629,7 +3697,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private fun isGenuinePip(): Boolean =
         wasInPictureInPictureMode && pipEnteredAtMs > 0L && (SystemClock.uptimeMillis() - pipEnteredAtMs >= MIN_PIP_DURATION_MS)
 
-    protected fun shouldContinuePlaybackInBackground(): Boolean {
+    internal fun shouldContinuePlaybackInBackground(): Boolean {
         if ((activity as? MainActivity)?.isLaunchingSettings() == true) {
             return true
         }
@@ -4468,6 +4536,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     fun minimize() {
+        if (viewModel.quality == CHAT_ONLY_QUALITY) {
+            (activity as? MainActivity)?.closePlayer()
+            return
+        }
         disengageHoldToSpeed()
         with(binding) {
             resetVideoZoom(false)
@@ -4724,7 +4796,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         if (videoType == STREAM && channelLogin.isBlank()) return
         if (videoType == VIDEO && directVodId.isNullOrBlank()) return
 
-        val positionSeconds = if (videoType == VIDEO) {
+        val positionSeconds = if (videoType == VIDEO || viewModel.isLiveRewound) {
             val posMs = getCurrentPosition() ?: 0L
             (posMs / 1000L).coerceAtLeast(0L)
         } else {
@@ -5077,6 +5149,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     override fun onDestroyView() {
+        @Suppress("DEPRECATION")
+        activity?.window?.decorView?.setOnSystemUiVisibilityChangeListener(null)
         cancelPendingSkip()
         disengageHoldToSpeed()
         if (screenReceiverRegistered) {
@@ -5094,6 +5168,21 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     companion object {
+        internal fun liveRewindTargetPosition(
+            rewindSeconds: Long,
+            startedAtMs: Long?,
+            nowMs: Long,
+            durationMs: Long?,
+        ): Long? {
+            if (rewindSeconds < 0L) return 0L
+            val duration = if (startedAtMs != null && startedAtMs > 0L && startedAtMs <= nowMs) {
+                nowMs - startedAtMs
+            } else {
+                durationMs?.takeIf { it > 0L } ?: return null
+            }
+            return (duration - rewindSeconds * 1000L).coerceAtLeast(0L)
+        }
+
         protected const val AUTO_QUALITY = "auto"
         protected const val AUDIO_ONLY_QUALITY = "audio_only"
         protected const val CHAT_ONLY_QUALITY = "chat_only"

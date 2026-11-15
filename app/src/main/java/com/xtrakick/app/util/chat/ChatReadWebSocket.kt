@@ -4,11 +4,10 @@ import com.xtrakick.app.util.WebSocket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Timer
 import javax.net.ssl.X509TrustManager
-import kotlin.concurrent.schedule
 import kotlin.random.Random
 
 class ChatReadWebSocket(
@@ -17,13 +16,21 @@ class ChatReadWebSocket(
     private val listener: Listener,
 ) {
     private var webSocket: WebSocket? = null
-    private var pingTimer: Timer? = null
-    private var pongTimer: Timer? = null
+    private var connectionScope: CoroutineScope? = null
+    private var pingTimer: Job? = null
+    private var pongTimer: Job? = null
 
     fun connect(coroutineScope: CoroutineScope): Job {
         webSocket = WebSocket("wss://chat.kick.com", trustManager, WebSocketListener())
         return coroutineScope.launch(Dispatchers.IO) {
-            webSocket?.start()
+            connectionScope = this
+            try {
+                webSocket?.start()
+            } finally {
+                pingTimer?.cancel()
+                pongTimer?.cancel()
+                connectionScope = null
+            }
         }
     }
 
@@ -34,24 +41,20 @@ class ChatReadWebSocket(
         webSocket?.disconnect()
     }
 
-    private suspend fun startPingTimer() = withContext(Dispatchers.IO) {
-        pingTimer = Timer().apply {
-            schedule(270000) {
-                launch {
-                    webSocket?.write("PING")
-                    startPongTimer()
-                }
-            }
+    private fun startPingTimer() {
+        pingTimer?.cancel()
+        pingTimer = connectionScope?.launch {
+            delay(270_000L)
+            webSocket?.write("PING")
+            startPongTimer()
         }
     }
 
-    private suspend fun startPongTimer() = withContext(Dispatchers.IO) {
-        pongTimer = Timer().apply {
-            schedule(10000) {
-                launch {
-                    webSocket?.disconnect()
-                }
-            }
+    private fun startPongTimer() {
+        pongTimer?.cancel()
+        pongTimer = connectionScope?.launch {
+            delay(10_000L)
+            webSocket?.disconnect()
         }
     }
 
@@ -107,6 +110,8 @@ class ChatReadWebSocket(
         }
 
         override suspend fun onDisconnect(webSocket: WebSocket, message: String, fullMsg: String?) {
+            pingTimer?.cancel()
+            pongTimer?.cancel()
             listener.onDisconnect(message, fullMsg)
         }
     }

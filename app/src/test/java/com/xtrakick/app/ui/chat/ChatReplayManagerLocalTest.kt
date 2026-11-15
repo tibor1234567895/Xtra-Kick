@@ -17,6 +17,26 @@ import kotlinx.coroutines.withTimeout
 
 class ChatReplayManagerLocalTest {
     @Test
+    fun clipPreloadIncludesMessagesBeforePreviewZeroWithoutEmittingFutureMessages() = runBlocking {
+        val emitted = mutableListOf<String?>()
+        val scope = CoroutineScope(coroutineContext + Job())
+        val replay = ChatReplayManagerLocal({ 0L }, { 1f }, scope, object : ChatReplayManager.Listener {
+            override suspend fun onChatMessages(messages: List<ChatMessage>) { emitted += messages.map { it.id } }
+            override suspend fun onChatMessage(message: ChatMessage) { emitted += message.id }
+        })
+        try {
+            replay.setMessages(listOf(-91_000L, -30_000L, -1_000L, 0L, 1_000L)
+                .map { ChatMessage(id = it.toString(), timestamp = it) }, 0L)
+            replay.startLoad()
+            withTimeout(2000) { while (emitted.size < 3) delay(5) }
+            assertEquals(listOf("-30000", "-1000", "0"), emitted)
+        } finally {
+            replay.stop()
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun emittedMessagesPreserveDeletionDonationAndGiftData() = runBlocking {
         var position = 0L
         val emitted = mutableListOf<ChatMessage>()

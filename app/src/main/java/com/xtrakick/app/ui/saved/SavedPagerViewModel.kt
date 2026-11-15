@@ -79,7 +79,8 @@ class SavedPagerViewModel @Inject constructor(
                 if (existingVideo == null) {
                     val videoDirectoryUri = uri.toString().substringBeforeLast("%2F")
                     val videoDirectoryName = videoDirectoryUri.substringAfterLast("%2F").substringAfterLast("%3A")
-                    val playlist = applicationContext.contentResolver.openInputStream(uri)!!.use {
+                    val input = applicationContext.contentResolver.openInputStream(uri) ?: return@forEach
+                    val playlist = input.use {
                         PlaylistUtils.parseMediaPlaylist(it)
                     }
                     var totalDuration = 0L
@@ -88,7 +89,8 @@ class SavedPagerViewModel @Inject constructor(
                         totalDuration += (segment.duration * 1000f).toLong()
                         segments.add(segment.copy(uri = videoDirectoryUri + "%2F" + segment.uri.substringAfterLast("%2F").substringAfterLast("/")))
                     }
-                    applicationContext.contentResolver.openOutputStream(uri)!!.use {
+                    val output = applicationContext.contentResolver.openOutputStream(uri) ?: return@forEach
+                    output.use {
                         PlaylistUtils.writeMediaPlaylist(playlist.copy(
                             initSegmentUri = playlist.initSegmentUri?.let { uri -> videoDirectoryUri + "%2F" + uri.substringAfterLast("%2F").substringAfterLast("/") },
                             segments = segments
@@ -106,7 +108,7 @@ class SavedPagerViewModel @Inject constructor(
                     var gameName: String? = null
                     chatFileUri?.let { chatFileUri ->
                         try {
-                            applicationContext.contentResolver.openInputStream(chatFileUri.toUri())!!.bufferedReader().use { fileReader ->
+                            applicationContext.contentResolver.openInputStream(chatFileUri.toUri())?.bufferedReader()?.use { fileReader ->
                                 JsonReader(fileReader).use { reader ->
                                     reader.beginObject()
                                     while (reader.hasNext()) {

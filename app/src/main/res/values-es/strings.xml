@@ -1278,4 +1278,6 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="videos_load_failed">No se pudieron cargar los vídeos. Inténtalo de nuevo.</string>
     <string name="crash_reports_title">Enviar informes de fallos</string>
     <string name="crash_reports_summary">Activado de forma predeterminada. Envía la pila de llamadas del fallo y datos básicos de la app, Android, CPU y reproductor para corregir errores. Sin identificadores de cuenta o dispositivo, mensajes de excepción ni registros de diagnóstico.</string>
+    <string name="show_channel_panels">Mostrar información detallada del canal</string>
+    <string name="show_channel_panels_summary">Cargar paneles e imágenes del canal en Acerca de</string>
 </resources>

@@ -13,10 +13,11 @@ import androidx.core.view.isVisible
 import androidx.core.widget.addTextChangedListener
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DiffUtil
-import androidx.recyclerview.widget.LinearLayoutManager
+import com.xtrakick.app.ui.view.SafeLinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.DialogPlayerViewerListBinding
@@ -77,13 +78,6 @@ class PlayerViewerListDialog : BottomSheetDialogFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        val behavior = BottomSheetBehavior.from(view.parent as View)
-        behavior.skipCollapsed = true
-        behavior.state = BottomSheetBehavior.STATE_EXPANDED
-        val maxHeight = (resources.displayMetrics.heightPixels * 0.75).toInt()
-        view.layoutParams = view.layoutParams.apply { height = maxHeight }
-        behavior.peekHeight = maxHeight
-
         val channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)
         val channelName = requireArguments().getString(KEY_CHANNEL_NAME) ?: channelLogin
         binding.channelSubtitle.text = channelName.orEmpty()
@@ -100,7 +94,7 @@ class PlayerViewerListDialog : BottomSheetDialogFragment() {
             ).show()
         }
 
-        binding.viewerListRv.layoutManager = LinearLayoutManager(requireContext())
+        binding.viewerListRv.layoutManager = SafeLinearLayoutManager(requireContext())
         binding.viewerListRv.adapter = adapter
 
         binding.refreshButton.setOnClickListener { loadData() }
@@ -118,6 +112,19 @@ class PlayerViewerListDialog : BottomSheetDialogFragment() {
         }
 
         loadData()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val sheetDialog = dialog as? BottomSheetDialog ?: return
+        val sheet = sheetDialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet) ?: return
+        val maxHeight = (resources.displayMetrics.heightPixels * 0.75).toInt()
+        sheet.layoutParams = sheet.layoutParams.apply { height = maxHeight }
+        sheetDialog.behavior.apply {
+            skipCollapsed = true
+            peekHeight = maxHeight
+            state = BottomSheetBehavior.STATE_EXPANDED
+        }
     }
 
     private fun loadData() {

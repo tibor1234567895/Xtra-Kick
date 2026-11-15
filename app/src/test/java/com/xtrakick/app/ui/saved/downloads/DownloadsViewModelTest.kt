@@ -15,8 +15,15 @@ import androidx.work.WorkManager
 import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.repository.OfflineRepository
+import com.xtrakick.app.repository.DownloadFileCoordinator
 import com.xtrakick.app.util.m3u8.PlaylistUtils
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +52,97 @@ import java.util.concurrent.CopyOnWriteArrayList
 @Config(application = android.app.Application::class)
 @RunWith(RobolectricTestRunner::class)
 class DownloadsViewModelTest {
+    @Test fun completedRecordingsHaveIndependentFileOwnershipFromTheCurrentRecording() = runBlocking {
+        val old = OfflineVideo(live = true, channelLogin = "same", status = OfflineVideo.STATUS_DOWNLOADED)
+        old.id = repository.saveVideo(old).toInt()
+        val current = OfflineVideo(live = true, channelLogin = "same", status = OfflineVideo.STATUS_DOWNLOADING)
+        current.id = repository.saveVideo(current).toInt()
+        val started = CompletableDeferred<Unit>()
+        val worker = scope.launch {
+            repository.withVideoFiles(current, wait = true) {
+                started.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        try {
+            withTimeout(5000) {
+                started.await()
+                assertEquals("converted", repository.withVideoFiles(old) { "converted" })
+                repository.withVideoDeletion(old) { repository.deleteVideo(it, true) }
+                assertTrue(worker.isActive)
+                assertTrue(repository.getVideoById(current.id) != null)
+            }
+        } finally { worker.cancel(); worker.join() }
+    }
+
+    @Test fun deletingACompletedRecordingLeavesTheChannelsNextWorkEnqueued() = runBlocking {
+        initializeWorkManager()
+        val old = OfflineVideo(live = true, channelLogin = "same", status = OfflineVideo.STATUS_DOWNLOADED)
+        old.id = repository.saveVideo(old).toInt()
+        val request = androidx.work.OneTimeWorkRequestBuilder<com.xtrakick.app.ui.download.StreamDownloadWorker>()
+            .setInitialDelay(1, TimeUnit.DAYS).build()
+        val workManager = WorkManager.getInstance(context)
+        workManager.enqueueUniqueWork("same", androidx.work.ExistingWorkPolicy.KEEP, request)
+            .result.get(5, TimeUnit.SECONDS)
+        viewModel.delete(old, keepFiles = true)
+        withTimeout(5000) { while (repository.getVideoById(old.id) != null) delay(10) }
+        assertEquals(androidx.work.WorkInfo.State.ENQUEUED,
+            workManager.getWorkInfoById(request.id).get(5, TimeUnit.SECONDS)!!.state)
+        workManager.cancelUniqueWork("same").result.get(5, TimeUnit.SECONDS)
+        Unit
+    }
+
+    @Test
+    fun deletionWaitsForWriterCleanupAndRejectsQueuedWriters() = runBlocking {
+        val coordinator = DownloadFileCoordinator()
+        val started = CompletableDeferred<Unit>()
+        val cleanupStarted = CompletableDeferred<Unit>()
+        val finishCleanup = CompletableDeferred<Unit>()
+        val writer = launch {
+            coordinator.use("video:1", deleting = false, wait = true) {
+                started.complete(Unit)
+                try {
+                    awaitCancellation()
+                } finally {
+                    withContext(NonCancellable) {
+                        cleanupStarted.complete(Unit)
+                        finishCleanup.await()
+                    }
+                }
+            }
+        }
+        started.await()
+        val deletion = async {
+            coordinator.use("video:1", deleting = true, wait = true) { "deleted" }
+        }
+        cleanupStarted.await()
+        val queued = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            coordinator.use("video:1", deleting = false, wait = true) { "must not run" }
+        }
+        assertFalse(deletion.isCompleted)
+        finishCleanup.complete(Unit)
+        assertEquals("deleted", deletion.await())
+        assertEquals(null, queued.await())
+        writer.join()
+    }
+
+    @Test
+    fun statusWriteFromAnOldRowPreservesPlaybackPositionAndChatProgress() = runBlocking {
+        val video = OfflineVideo(url = chatFile.path)
+        video.id = repository.saveVideo(video).toInt()
+        val stale = repository.getVideoById(video.id)!!
+        repository.updateVideoPosition(video.id, 1234L)
+        repository.updateChatDownloadProgress(repository.getVideoById(video.id)!!.apply {
+            chatBytes = 99L
+            chatProgress = 7
+        })
+        repository.updateStatus(stale.apply { status = OfflineVideo.STATUS_DOWNLOADED })
+        val saved = repository.getVideoById(video.id)!!
+        assertEquals(1234L, saved.lastWatchPosition)
+        assertEquals(99L, saved.chatBytes)
+        assertEquals(7, saved.chatProgress)
+    }
+
     @Test fun sharedStorageDeletionCannotRemoveAnAssetInAnotherContainer() = runBlocking {
         initializeWorkManager()
         val playlistUri = "content://download.chat.test/document/primary%3AVOD%2Fvideo.m3u8"

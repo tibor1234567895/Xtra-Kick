@@ -10,8 +10,13 @@ import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowGameRepository
 import com.xtrakick.app.util.KickApiHelper
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.util.Locale
 
@@ -32,6 +37,8 @@ class FollowedGamesDataSource(
 
         val updatedGames = try {
             refreshFollowsFromKick(follows)
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             null
         }
@@ -59,32 +66,35 @@ class FollowedGamesDataSource(
         val topSubcategories = runCatching {
             kickRepository.getSubcategories(page = 1, limit = 100).data
         }.getOrDefault(emptyList())
+        currentCoroutineContext().ensureActive()
 
+        val subcategoriesById = HashMap<String, KickSubcategory>(topSubcategories.size)
         val subcategoriesBySlug = HashMap<String, KickSubcategory>(topSubcategories.size)
         val subcategoriesByName = HashMap<String, KickSubcategory>(topSubcategories.size)
         for (sub in topSubcategories) {
+            sub.id?.toString()?.let { subcategoriesById[it] = sub }
             sub.slug?.trim()?.lowercase(Locale.ROOT)?.let { subcategoriesBySlug[it] = sub }
             sub.name?.trim()?.lowercase(Locale.ROOT)?.let { subcategoriesByName[it] = sub }
         }
 
-        // Identify follows not covered by the top 100 categories and fetch them in parallel
-        val missingSlugs = follows.mapNotNull { follow ->
+        val missingFollows = follows.filter { follow ->
             val slug = follow.gameSlug?.trim()?.lowercase(Locale.ROOT)
-                ?: KickApiHelper.toCategorySlug(follow.gameName)?.lowercase(Locale.ROOT)
             val name = follow.gameName?.trim()?.lowercase(Locale.ROOT)
-            if (slug != null && !subcategoriesBySlug.containsKey(slug) && (name == null || !subcategoriesByName.containsKey(name))) {
-                slug
-            } else null
-        }.distinct()
+            !subcategoriesById.containsKey(follow.gameId) &&
+                (slug == null || !subcategoriesBySlug.containsKey(slug)) &&
+                (name == null || !subcategoriesByName.containsKey(name))
+        }.distinctBy { it.gameId ?: it.gameSlug?.lowercase(Locale.ROOT) ?: it.gameName?.lowercase(Locale.ROOT) }
 
-        if (missingSlugs.isNotEmpty()) {
+        if (missingFollows.isNotEmpty()) {
+            val requests = Semaphore(4)
             coroutineScope {
-                missingSlugs.map { slug ->
+                missingFollows.map { follow ->
                     async {
-                        runCatching { kickRepository.getSubcategory(slug) }.getOrNull()
+                        requests.withPermit { resolveFollow(follow) }
                     }
                 }.awaitAll()
             }.filterNotNull().forEach { sub ->
+                sub.id?.toString()?.let { subcategoriesById[it] = sub }
                 sub.slug?.trim()?.lowercase(Locale.ROOT)?.let { subcategoriesBySlug[it] = sub }
                 sub.name?.trim()?.lowercase(Locale.ROOT)?.let { subcategoriesByName[it] = sub }
             }
@@ -95,7 +105,8 @@ class FollowedGamesDataSource(
             val slug = follow.gameSlug?.trim()?.lowercase(Locale.ROOT)
                 ?: KickApiHelper.toCategorySlug(follow.gameName)?.lowercase(Locale.ROOT)
             val name = follow.gameName?.trim()?.lowercase(Locale.ROOT)
-            val sub = (slug?.let { subcategoriesBySlug[it] }) ?: (name?.let { subcategoriesByName[it] })
+            val sub = subcategoriesById[follow.gameId]
+                ?: (slug?.let { subcategoriesBySlug[it] }) ?: (name?.let { subcategoriesByName[it] })
 
             if (sub != null) {
                 var changed = false
@@ -148,6 +159,30 @@ class FollowedGamesDataSource(
         }
 
         return games
+    }
+
+    private suspend fun resolveFollow(follow: LocalFollowGame): KickSubcategory? {
+        val slug = follow.gameSlug?.trim()?.takeIf { it.isNotBlank() }
+            ?: KickApiHelper.toCategorySlug(follow.gameName)
+        val direct = slug?.let { kickRepository.getSubcategory(it) }
+        currentCoroutineContext().ensureActive()
+        if (direct != null) return direct
+        val query = follow.gameName?.trim()?.takeIf { it.isNotBlank() } ?: slug ?: return null
+        val matches = try {
+            kickRepository.searchWebsite(query).categories
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return null
+        }
+        val match = matches.firstOrNull { follow.gameId != null && it.id?.toString() == follow.gameId }
+            ?: matches.firstOrNull { !follow.gameName.isNullOrBlank() && it.name.equals(follow.gameName, ignoreCase = true) }
+            ?: matches.firstOrNull { slug != null && it.slug.equals(slug, ignoreCase = true) }
+            ?: return null
+        val canonicalSlug = match.slug?.trim()?.takeIf { it.isNotBlank() }
+        val resolved = canonicalSlug?.let { kickRepository.getSubcategory(it) } ?: match
+        currentCoroutineContext().ensureActive()
+        return resolved
     }
 
     override fun getRefreshKey(state: PagingState<Int, Game>): Int? {

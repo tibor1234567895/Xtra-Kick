@@ -7,7 +7,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlin.math.max
 
-class GridAutofitLayoutManager : GridLayoutManager {
+class GridAutofitLayoutManager : SafeGridLayoutManager {
 
     private var columnWidth = 0
     private var widthChanged = true
@@ -20,7 +20,7 @@ class GridAutofitLayoutManager : GridLayoutManager {
         setColumnWidth(columnWidth)
     }
 
-    override fun onLayoutChildren(recycler: RecyclerView.Recycler?, state: RecyclerView.State) {
+    override fun onLayoutChildren(recycler: RecyclerView.Recycler?, state: RecyclerView.State?) {
         if (widthChanged && width > 0 && height > 0) {
             val totalSpace: Int = if (orientation == VERTICAL) {
                 width - paddingRight - paddingLeft

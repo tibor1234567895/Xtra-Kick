@@ -26,7 +26,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.setupWithNavController
-import androidx.recyclerview.widget.LinearLayoutManager
+import com.xtrakick.app.ui.view.SafeLinearLayoutManager
 import com.google.android.material.snackbar.Snackbar
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.FragmentNotificationChannelsBinding
@@ -69,7 +69,7 @@ class NotificationChannelsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         adapter = NotificationChannelsAdapter(onOpen = ::openChannel, onToggle = ::onToggleChannel)
-        binding.recyclerView.layoutManager = LinearLayoutManager(requireContext())
+        binding.recyclerView.layoutManager = SafeLinearLayoutManager(requireContext())
         binding.recyclerView.adapter = adapter
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
             val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())

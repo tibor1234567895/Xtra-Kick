@@ -61,7 +61,7 @@ class FcmSyncManager @Inject constructor(
             }.getOrNull() ?: return@withContext false
 
             val rawChannels = notificationUsersDao.getAll().map { it.channelId.trim() }.filter { it.isNotBlank() }
-            val kickUserId = context.prefs().getString(AppConstants.USER_ID, null).orEmpty()
+            val kickUserId = context.tokenPrefs().getString(AppConstants.USER_ID, null).orEmpty()
 
             val allChannelIds = LinkedHashSet<String>(rawChannels)
             val follows = runCatching { localFollowChannelRepository?.loadFollows() }.getOrNull().orEmpty()

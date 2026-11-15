@@ -12,11 +12,23 @@ import android.os.SystemClock
 import android.view.SurfaceHolder
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentHostCallback
+import androidx.room.Room
 import com.amazonaws.ivs.player.Player
 import com.amazonaws.ivs.player.Quality
+import com.xtrakick.app.db.AppDatabase
+import com.xtrakick.app.repository.AuthRepository
+import com.xtrakick.app.repository.KickOfficialApiClient
+import com.xtrakick.app.repository.KickPublicApiRepository
+import com.xtrakick.app.repository.KickRepository
+import com.xtrakick.app.repository.KickRewardsRepository
+import com.xtrakick.app.repository.LocalFollowChannelRepository
+import com.xtrakick.app.repository.NotificationUsersRepository
+import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
+import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -34,12 +46,142 @@ import org.robolectric.shadows.ShadowMediaSession
 import org.robolectric.util.ReflectionHelpers
 import java.lang.reflect.Proxy
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 @Config(application = Application::class)
 @RunWith(RobolectricTestRunner::class)
 class IvsPlayerFragmentTest {
+
+    @Test
+    fun playbackServicesReceiveTaskRemovalCallbacks() {
+        val context = RuntimeEnvironment.getApplication()
+        for (service in listOf(IvsPlayerService::class.java, PlaybackService::class.java)) {
+            val info = context.packageManager.getServiceInfo(android.content.ComponentName(context, service), 0)
+            assertEquals(0, info.flags and android.content.pm.ServiceInfo.FLAG_STOP_WITH_TASK)
+        }
+    }
+
+    @Test
+    fun skipsWhileReplayLoadsAdjustThePendingPosition() {
+        val fragment = IvsPlayerFragment()
+        ReflectionHelpers.setField(fragment, "pendingSeekPosition", 570_000L)
+        assertEquals(570_000L, fragment.getCurrentPosition())
+        fragment.seek(fragment.getCurrentPosition()!! - 30_000L)
+        assertEquals(540_000L, fragment.getCurrentPosition())
+        fragment.seek(fragment.getCurrentPosition()!! + 10_000L)
+        assertEquals(550_000L, fragment.getCurrentPosition())
+    }
+
+    @Test
+    fun rewindUsesResolvedStartTimeAndRejectsUnknownTimeline() {
+        assertEquals(570_000L, PlayerFragment.liveRewindTargetPosition(30L, 1_000_000L, 1_600_000L, null))
+        assertEquals(90_000L, PlayerFragment.liveRewindTargetPosition(30L, null, 1_600_000L, 120_000L))
+        assertNull(PlayerFragment.liveRewindTargetPosition(30L, null, 1_600_000L, null))
+        assertNull(PlayerFragment.liveRewindTargetPosition(30L, 1_700_000L, 1_600_000L, 0L))
+        assertEquals(0L, PlayerFragment.liveRewindTargetPosition(-1L, null, 1_600_000L, null))
+        assertEquals(0L, PlayerFragment.liveRewindTargetPosition(300L, null, 1_600_000L, 120_000L))
+    }
+
+    @Test
+    fun replayLoadDisablesLivePoliciesAndReturningLiveRestoresThem() {
+        val service = Robolectric.buildService(IvsPlayerService::class.java).get()
+        val context = RuntimeEnvironment.getApplication()
+        val executor = Executors.newSingleThreadExecutor()
+        val json = Json { ignoreUnknownKeys = true }
+        val client = OkHttpClient.Builder().addInterceptor { error("Unexpected network request") }.build()
+        val auth = AuthRepository(null, null, executor, client, json)
+        val kick = KickRepository(
+            context, client, null, executor, json, auth,
+            KickOfficialApiClient(context, client, json),
+        )
+        service.kickRepository = kick
+        service.rewardsRepository = KickRewardsRepository(kick, json)
+        val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        val publicApi = KickPublicApiRepository(null, null, executor, client, json)
+        val follows = LocalFollowChannelRepository(database.localFollowsChannel(), database)
+        val notifications = NotificationUsersRepository(
+            context, database.notificationsDao(), kick, dagger.Lazy { error("Unused FCM") },
+        )
+        service.shownNotificationsRepository = ShownNotificationsRepository(
+            context, database.shownNotificationsDao(), kick, publicApi, notifications, follows,
+        )
+        val calls = mutableListOf<Pair<String, Any?>>()
+        val player = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, args ->
+            when (method.name) {
+                "setLiveLowLatencyEnabled", "setRebufferToLive", "load", "play" -> {
+                    calls += method.name to args?.firstOrNull()
+                    null
+                }
+                "getState" -> Player.State.READY
+                "getDuration", "getPosition", "getBufferedPosition", "getLiveLatency" -> 0L
+                "getPlaybackRate" -> 1f
+                else -> null
+            }
+        } as Player
+        ReflectionHelpers.setField(service, "player", player)
+        try {
+            service.playStream("https://example.com/replay.m3u8", null, null, null, isLiveRewound = true)
+            org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf("setLiveLowLatencyEnabled" to false, "setRebufferToLive" to false), calls.take(2))
+            assertTrue(calls.any { it.first == "load" })
+            assertTrue(calls.any { it.first == "play" })
+
+            calls.clear()
+            service.enterChatOnly()
+            org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
+            assertFalse(service.isPlaybackRequested())
+            service.play()
+            org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
+            assertFalse(calls.any { it.first == "play" })
+
+            calls.clear()
+            service.playStream("https://example.com/live.m3u8", null, null, null)
+            org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf("setLiveLowLatencyEnabled" to true, "setRebufferToLive" to true), calls.take(2))
+        } finally {
+            ReflectionHelpers.getField<Handler>(service, "playerHandler").removeCallbacksAndMessages(null)
+            executor.shutdownNow()
+            database.close()
+        }
+    }
+
+    @Test
+    fun sdkOperationsFromOtherThreadsRunOnMainAndStalePostsAreDiscarded() {
+        val service = Robolectric.buildService(IvsPlayerService::class.java).get()
+        val calls = mutableListOf<Looper?>()
+        val player = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, _ ->
+            if (method.name == "play") calls += Looper.myLooper()
+            null
+        } as Player
+        ReflectionHelpers.setField(service, "player", player)
+        val sender = Thread { service.runPlayerOp("test") { it.play() } }
+        sender.start()
+        sender.join(1_000L)
+        org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(listOf(Looper.getMainLooper()), calls)
+
+        service.runPlayerOp("stale") { it.play() }
+        ReflectionHelpers.setField(service, "player", null)
+        org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(1, calls.size)
+    }
+
+    @Test
+    fun terminalSdkReleaseRunsOnTheSameMainLooper() {
+        val service = Robolectric.buildService(IvsPlayerService::class.java).get()
+        val calls = mutableListOf<Pair<String, Looper?>>()
+        val player = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, _ ->
+            calls += method.name to Looper.myLooper()
+            if (method.name == "getState") Player.State.READY else null
+        } as Player
+        IvsPlayerService::class.java.getDeclaredMethod("releasePlayer", Player::class.java).apply {
+            isAccessible = true
+        }.invoke(service, player)
+        org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(calls.any { it.first == "release" })
+        assertTrue(calls.all { it.second == Looper.getMainLooper() })
+    }
 
     @Test
     @Config(shadows = [RecordingMediaSession::class])
@@ -77,7 +219,7 @@ class IvsPlayerFragmentTest {
             assertEquals(-1L, requireNotNull(published.metadata).getLong(MediaMetadata.METADATA_KEY_DURATION))
         } finally {
             session.release()
-            ReflectionHelpers.getField<ExecutorService>(service, "playerExecutor").shutdownNow()
+            ReflectionHelpers.getField<Handler>(service, "playerHandler").removeCallbacksAndMessages(null)
         }
     }
 
@@ -132,12 +274,10 @@ class IvsPlayerFragmentTest {
                 isAccessible = true
             }.invoke(fragment, quality)
 
+            org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
             assertEquals(listOf(quality, true), qualityArguments.get(5, TimeUnit.SECONDS))
         } finally {
-            val executor = IvsPlayerService::class.java.getDeclaredField("playerExecutor").apply {
-                isAccessible = true
-            }.get(service) as ExecutorService
-            executor.shutdownNow()
+            ReflectionHelpers.getField<Handler>(service, "playerHandler").removeCallbacksAndMessages(null)
         }
     }
 

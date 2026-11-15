@@ -23,6 +23,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.util.concurrent.Executors
+import java.util.Collections
 
 @Config(application = android.app.Application::class)
 @RunWith(RobolectricTestRunner::class)
@@ -31,6 +32,8 @@ class FollowedGamesDataSourceTest {
     private lateinit var database: AppDatabase
     private lateinit var localFollowsGameRepository: LocalFollowGameRepository
     private lateinit var kickRepository: KickRepository
+    private val endpointResponses = mutableMapOf<String, String>()
+    private val requestedPaths = Collections.synchronizedList(mutableListOf<String>())
     private var subcategoriesJson = """
         {
             "current_page": 1,
@@ -69,13 +72,15 @@ class FollowedGamesDataSourceTest {
         val client = OkHttpClient.Builder().addInterceptor { chain ->
             val request = chain.request()
             val path = request.url.encodedPath
-            if (path == "/api/v1/subcategories") {
+            requestedPaths.add(path)
+            val body = endpointResponses[path] ?: subcategoriesJson.takeIf { path == "/api/v1/subcategories" }
+            if (body != null) {
                 Response.Builder()
                     .request(request)
                     .protocol(Protocol.HTTP_1_1)
                     .code(200)
                     .message("OK")
-                    .body(subcategoriesJson.toResponseBody("application/json".toMediaType()))
+                    .body(body.toResponseBody("application/json".toMediaType()))
                     .build()
             } else {
                 Response.Builder()
@@ -103,6 +108,66 @@ class FollowedGamesDataSourceTest {
     fun tearDown() {
         database.close()
         executor.shutdown()
+    }
+
+    @Test
+    fun `categories outside top list keep canonical request case`() = runBlocking {
+        localFollowsGameRepository.saveFollow(LocalFollowGame(gameId = "92", gameSlug = "DayZ", gameName = "DayZ"))
+        endpointResponses["/api/v1/subcategories/DayZ"] =
+            """{"id":92,"slug":"DayZ","name":"DayZ","viewers":161,"tags":["Survival"]}"""
+
+        val result = FollowedGamesDataSource(localFollowsGameRepository, kickRepository).load(
+            PagingSource.LoadParams.Refresh(key = null, loadSize = 30, placeholdersEnabled = false)
+        ) as PagingSource.LoadResult.Page
+
+        assertEquals(161, result.data.single().viewersCount)
+        assertEquals("Survival", result.data.single().tags!!.single().name)
+        assertTrue(requestedPaths.contains("/api/v1/subcategories/DayZ"))
+        assertTrue(!requestedPaths.contains("/api/v1/subcategories/dayz"))
+        assertTrue(!requestedPaths.contains("/api/search"))
+    }
+
+    @Test
+    fun `historical lowercase slugs recover by matching search category and update local follow`() = runBlocking {
+        localFollowsGameRepository.saveFollow(
+            LocalFollowGame(gameId = "93", gameSlug = "project-zomboid", gameName = "Project Zomboid")
+        )
+        endpointResponses["/api/search"] = """{"categories":[
+            {"id":94,"slug":"Project-Zomboid-Modded","name":"Project Zomboid Modded","viewers":999},
+            {"id":93,"slug":"Project-Zomboid","name":"Project Zomboid","viewers":190,"tags":["Horror"]}
+        ]}"""
+        endpointResponses["/api/v1/subcategories/Project-Zomboid"] =
+            """{"id":93,"slug":"Project-Zomboid","name":"Project Zomboid","viewers":191,"tags":["Survival"]}"""
+
+        val result = FollowedGamesDataSource(localFollowsGameRepository, kickRepository).load(
+            PagingSource.LoadParams.Refresh(key = null, loadSize = 30, placeholdersEnabled = false)
+        ) as PagingSource.LoadResult.Page
+
+        assertEquals("Project-Zomboid", result.data.single().gameSlug)
+        assertEquals(191, result.data.single().viewersCount)
+        assertEquals("Survival", result.data.single().tags!!.single().name)
+        assertEquals("Project-Zomboid", localFollowsGameRepository.loadFollows().single().gameSlug)
+        assertTrue(requestedPaths.contains("/api/v1/subcategories/project-zomboid"))
+        assertTrue(requestedPaths.contains("/api/v1/subcategories/Project-Zomboid"))
+    }
+
+    @Test
+    fun `unrelated search results do not replace followed category`() = runBlocking {
+        localFollowsGameRepository.saveFollow(
+            LocalFollowGame(gameId = "93", gameSlug = "project-zomboid", gameName = "Project Zomboid")
+        )
+        endpointResponses["/api/search"] = """{"categories":[
+            {"id":94,"slug":"Project-Zomboid-Modded","name":"Project Zomboid Modded","viewers":999,"tags":["Wrong"]}
+        ]}"""
+
+        val result = FollowedGamesDataSource(localFollowsGameRepository, kickRepository).load(
+            PagingSource.LoadParams.Refresh(key = null, loadSize = 30, placeholdersEnabled = false)
+        ) as PagingSource.LoadResult.Page
+
+        assertEquals("93", result.data.single().gameId)
+        assertEquals("project-zomboid", result.data.single().gameSlug)
+        assertEquals(null, result.data.single().tags)
+        assertEquals("project-zomboid", localFollowsGameRepository.loadFollows().single().gameSlug)
     }
 
     @Test

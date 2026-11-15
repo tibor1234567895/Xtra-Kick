@@ -6,15 +6,59 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 import java.net.ServerSocket
 import kotlin.concurrent.thread
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class NetworkUtilsTest {
+    @Test
+    fun downloadDeadlineCancelsTheConcreteRequest() = runBlocking {
+        var cancellations = 0
+        val error = runCatching {
+            NetworkUtils.awaitDownloadRequest<Unit>(timeoutMs = 10) { continuation, _ ->
+                val cancel: () -> Unit = {
+                    cancellations++
+                    continuation.resumeWithException(IOException("Timed out"))
+                }
+                cancel
+            }
+        }.exceptionOrNull()
+        assertTrue(error is IOException)
+        assertEquals(1, cancellations)
+    }
+
+    @Test
+    fun cancelledDownloadWaitsForTerminalCallbackBeforeReturning() = runBlocking {
+        val started = CompletableDeferred<Continuation<Unit>>()
+        val cancellationRequested = CompletableDeferred<Unit>()
+        val transfer = launch {
+            NetworkUtils.awaitDownloadRequest<Unit> { continuation, _ ->
+                started.complete(continuation)
+                val cancel: () -> Unit = { cancellationRequested.complete(Unit); Unit }
+                cancel
+            }
+        }
+        withTimeout(5_000L) {
+            val terminal = started.await()
+            transfer.cancel()
+            cancellationRequested.await()
+            assertFalse(transfer.isCompleted)
+            terminal.resume(Unit)
+            transfer.join()
+        }
+    }
+
     @Test
     fun cancellationClosesSocketWhileReadingBody() = runBlocking {
         ServerSocket(0).use { server ->

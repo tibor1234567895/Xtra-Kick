@@ -102,7 +102,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     /**
-     * Serializes player mutations onto the service executor (direct call when unbound),
+     * Serializes player mutations onto the SDK main looper (direct call when unbound),
      * so fragment touches can't race the service's load/play on another thread.
      */
     private fun runIvsOp(opName: String, block: (Player) -> Unit) {
@@ -137,7 +137,7 @@ class IvsPlayerFragment : PlayerFragment() {
             val targetQuality = viewModel.previousQuality ?: viewModel.qualities.keys.firstOrNull { it != AUDIO_ONLY_QUALITY }
             changeQuality(targetQuality)
         }
-        if (player != null && viewModel.quality != null && viewModel.quality != AUTO_QUALITY && !backgroundSaverApplied) {
+        if (player != null && viewModel.quality != null && viewModel.quality != AUTO_QUALITY && viewModel.quality != CHAT_ONLY_QUALITY && !backgroundSaverApplied) {
             val lockQuality = isQualityLockEnabled()
             if (lockQuality && player?.isAutoQualityMode == true) {
                 changeQuality(viewModel.quality)
@@ -145,9 +145,7 @@ class IvsPlayerFragment : PlayerFragment() {
                 applyQualityCeiling("quality-unlock", qualitiesByKey[viewModel.quality])
             }
         }
-        if (surfaceCreated && viewModel.quality != AUDIO_ONLY_QUALITY) {
-            attachSurfaceIfAvailable()
-        }
+        attachSurfaceIfAvailable()
         if (resumeOnStart && player?.state != Player.State.PLAYING) {
             playbackService?.let { resumePlaybackOrReload(it, "onResume") }
         }
@@ -158,13 +156,12 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun onStart() {
         super.onStart()
+        surfaceHolderCallback?.let { binding.playerSurface.holder.removeCallback(it) }
         val callback = object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 surfaceCreated = true
                 val service = playbackService
-                if (viewModel.quality != AUDIO_ONLY_QUALITY) {
-                    service?.attachSurface(holder.surface)
-                }
+                attachSurfaceIfAvailable()
                 if (resumeOnStart && player?.state != Player.State.PLAYING) {
                     service?.let { resumePlaybackOrReload(it, "surfaceCreated") }
                 }
@@ -205,10 +202,11 @@ class IvsPlayerFragment : PlayerFragment() {
                 // its own resolve instead of briefly resuming the previous stream.
                 currentUrl = currentUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL) ?: boundService.currentUrl
                 boundService.setBackgroundPlaybackEnabled(false)
-                if (surfaceCreated && viewModel.quality != AUDIO_ONLY_QUALITY) {
-                    boundService.attachSurface(binding.playerSurface.holder.surface)
-                }
-                if (viewModel.quality == AUDIO_ONLY_QUALITY) {
+                attachSurfaceIfAvailable()
+                if (viewModel.quality == CHAT_ONLY_QUALITY) {
+                    boundService.enterChatOnly()
+                    binding.playerSurface.visibility = View.GONE
+                } else if (viewModel.quality == AUDIO_ONLY_QUALITY) {
                     binding.playerSurface.visibility = View.GONE
                     applyAudioSaverCeiling()
                 } else {
@@ -462,6 +460,7 @@ class IvsPlayerFragment : PlayerFragment() {
             }
             val duration = player?.duration?.takeIf { it > 0 } ?: 0L
             progressBar.setDuration(duration)
+            if (viewModel.quality == CHAT_ONLY_QUALITY) playPause.visibility = View.GONE
         }
         setPipActions(isPlaying)
         controllerAutoHide = isPlaying
@@ -504,6 +503,7 @@ class IvsPlayerFragment : PlayerFragment() {
             }
         }
         map[AUDIO_ONLY_QUALITY] = getString(R.string.audio_only) to null
+        map[CHAT_ONLY_QUALITY] = getString(R.string.chat_only) to null
         if (map != viewModel.qualities) {
             val previousQuality = viewModel.quality
             viewModel.qualities = map
@@ -537,6 +537,9 @@ class IvsPlayerFragment : PlayerFragment() {
     override fun startStream(url: String?) {
         clearCaptions()
         val resolvedUrl = url?.takeIf { it.isNotBlank() } ?: return
+        if (viewModel.isLiveRewound && pendingSeekPosition == null && currentUrl == resolvedUrl) {
+            pendingSeekPosition = player?.position?.takeIf { it > 0L }
+        }
         hideOfflineOverlay()
         recoveryInProgress = false
         qualityAppliedForCurrentStream = false
@@ -548,6 +551,13 @@ class IvsPlayerFragment : PlayerFragment() {
         }
         currentUrl = resolvedUrl
         requireArguments().putString(KEY_RESOLVED_STREAM_URL, resolvedUrl)
+        if (viewModel.quality == CHAT_ONLY_QUALITY) {
+            playbackService?.enterChatOnly()
+            binding.playerSurface.visibility = View.GONE
+            viewModel.loaded.value = true
+            updatePlayingState()
+            return
+        }
         rebufferBreaker.reset()
         lastBandwidthKbps = null
         lastBufferRecoveryTimeMs = 0L
@@ -573,6 +583,7 @@ class IvsPlayerFragment : PlayerFragment() {
             channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN)
                 .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
             initialBitrate = initialBitrate,
+            isLiveRewound = viewModel.isLiveRewound,
         )
         updatePlayingState()
     }
@@ -586,7 +597,7 @@ class IvsPlayerFragment : PlayerFragment() {
         KickApiHelper.parseIso8601DateUTC(startedAt)?.let { playbackService?.updateStreamStartedAt(it) }
     }
 
-    override fun getCurrentPosition(): Long? = player?.position
+    override fun getCurrentPosition(): Long? = pendingSeekPosition ?: player?.position
 
     override fun pausePlaybackForOverlay() {
         DiagnosticLogger.logPause(
@@ -610,6 +621,7 @@ class IvsPlayerFragment : PlayerFragment() {
     override fun getCurrentVolume(): Float? = player?.volume
 
     override fun playPause() {
+        if (viewModel.quality == CHAT_ONLY_QUALITY) return
         when (player?.state) {
             Player.State.PLAYING -> {
                 noteStreamPaused()
@@ -647,6 +659,10 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun seek(position: Long) {
+        if (pendingSeekPosition != null) {
+            pendingSeekPosition = position.coerceAtLeast(0L)
+            return
+        }
         clearCaptions()
         runIvsOp("fragment-seek") { it.seekTo(position) }
         activeChatFragment()?.seekTo(position)
@@ -663,7 +679,8 @@ class IvsPlayerFragment : PlayerFragment() {
             viewModel.liveStreamUrl = currentUrl
         }
         viewModel.isLiveRewound = true
-        player?.setRebufferToLive(false)
+        cancelPendingSkip()
+        resetCatchupState()
         pendingSeekPosition = targetPositionMs
         startStream(vodUrl)
         updateLiveRewindUi(isRewound = true)
@@ -672,6 +689,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun returnLiveEdge() {
+        cancelPendingSkip()
         val liveUrl = viewModel.liveStreamUrl ?: requireArguments().getString(KEY_RESOLVED_STREAM_URL)
         viewModel.isLiveRewound = false
         pendingSeekPosition = null
@@ -763,8 +781,11 @@ class IvsPlayerFragment : PlayerFragment() {
                     !backgroundSaverApplied &&
                     !isQualityLockEnabled()
                 ) {
-                    val minRecoveryBufferMs = KickLivePlayback.minRecoveryBufferMs(latencyConfig.rebufferMs)
-                    val isBufferHealthy = forwardBufferMs >= minRecoveryBufferMs
+                    val isBufferHealthy = KickLivePlayback.isBufferHealthyForRecovery(
+                        forwardBufferMs = forwardBufferMs,
+                        bandwidthEstimateBps = ivsPlayer.bandwidthEstimate,
+                        targetBitrateBps = targetQuality.bitrate
+                    )
                     val hasSufficientBandwidth = KickLivePlayback.hasSufficientBandwidth(
                         bandwidthEstimateBps = ivsPlayer.bandwidthEstimate,
                         targetBitrateBps = targetQuality.bitrate
@@ -780,7 +801,7 @@ class IvsPlayerFragment : PlayerFragment() {
                             downscaleRecoveryTicks = 0
                             lastQualityNudgeTimeMs = now
                             playerDebugLog(
-                                "IVS auto-recovery: buffer=${forwardBufferMs}ms (min ${minRecoveryBufferMs}ms), " +
+                                "IVS auto-recovery: buffer=${forwardBufferMs}ms, " +
                                     "bw=${ivsPlayer.bandwidthEstimate / 1000}kbps -> nudging up to ${targetQuality.name}"
                             )
                             nudgeQualityToTarget(targetQuality)
@@ -972,13 +993,39 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun changeQuality(selectedQuality: String?) {
+        if (selectedQuality == CHAT_ONLY_QUALITY) {
+            if (viewModel.quality != CHAT_ONLY_QUALITY) viewModel.previousQuality = viewModel.quality
+            viewModel.quality = CHAT_ONLY_QUALITY
+            viewModel.restoreQuality = false
+            resumeOnStart = false
+            backgroundAudioTransitionRequested = false
+            cancelPendingSkip()
+            cancelQualityNudge()
+            resetCatchupState()
+            clearCaptions()
+            playbackService?.enterChatOnly()
+            binding.playerSurface.visibility = View.GONE
+            binding.bufferingIndicator.isVisible = false
+            persistSelectedQuality(selectedQuality)
+            updatePlayingState()
+            changePlayerMode()
+            setQualityText()
+            return
+        }
+        val wasChatOnly = viewModel.quality == CHAT_ONLY_QUALITY
+        if (wasChatOnly) {
+            viewModel.quality = selectedQuality
+            viewModel.restoreQuality = false
+            updateChatOnlyLayout()
+            currentUrl?.let { startStream(it) }
+        }
         if (selectedQuality == AUDIO_ONLY_QUALITY) {
             startAudioOnly()
             viewModel.restoreQuality = false
             return
         }
         val wasAudioOnly = viewModel.quality == AUDIO_ONLY_QUALITY
-        if (!wasAudioOnly) {
+        if (!wasAudioOnly && !wasChatOnly) {
             viewModel.previousQuality = viewModel.quality
         } else {
             // Explicit choice sticks across lock/unlock and background returns.
@@ -1019,7 +1066,16 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     private fun getTargetQuality(): Quality? {
-        return if (viewModel.quality == AUTO_QUALITY) maxLadderQuality else qualitiesByKey[viewModel.quality]
+        if (viewModel.quality != AUTO_QUALITY) {
+            return qualitiesByKey[viewModel.quality]
+        }
+        val ivsPlayer = player ?: return maxLadderQuality
+        val bw = ivsPlayer.bandwidthEstimate
+        if (bw <= 0L) return maxLadderQuality
+        // qualitiesByKey maintains descending ladder order (highest rendition first).
+        return qualitiesByKey.values.firstOrNull {
+            KickLivePlayback.hasSufficientBandwidth(bw, it.bitrate)
+        } ?: maxLadderQuality
     }
 
     private fun isDownscaled(activeQuality: Quality, targetQuality: Quality?): Boolean {
@@ -1090,15 +1146,19 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun startAudioOnly() {
+        if (viewModel.quality == CHAT_ONLY_QUALITY) {
+            changeQuality(AUDIO_ONLY_QUALITY)
+            return
+        }
         super.startAudioOnly()
         if (viewModel.quality != AUDIO_ONLY_QUALITY) {
             backgroundAudioTransitionRequested = true
             viewModel.restoreQuality = true
             viewModel.previousQuality = viewModel.quality
             viewModel.quality = AUDIO_ONLY_QUALITY
-            playbackService?.attachSurface(null)
-            binding.playerSurface.visibility = View.GONE
         }
+        playbackService?.attachSurface(null)
+        binding.playerSurface.visibility = View.GONE
         applyAudioSaverCeiling()
         changePlayerMode()
         setQualityText()
@@ -1161,14 +1221,22 @@ class IvsPlayerFragment : PlayerFragment() {
     private fun restoreForegroundCeiling() {
         backgroundSaverApplied = false
         val service = playbackService ?: return
-        lastQualityNudgeTimeMs = SystemClock.uptimeMillis()
         playerDebugLog("restoreForegroundCeiling restoring to viewModel.quality=${viewModel.quality}")
         if (viewModel.quality == AUDIO_ONLY_QUALITY) {
             applyAudioSaverCeiling()
             return
         }
         val target = if (viewModel.quality == AUTO_QUALITY) null else qualitiesByKey[viewModel.quality]
-        service.restoreForegroundQuality(target, isQualityLockEnabled())
+        val wasDownshifted = service.restoreForegroundQuality(target, isQualityLockEnabled())
+        if (wasDownshifted && target != null && !isQualityLockEnabled()) {
+            // Player was actively downscaled to saver quality (480p) while in background.
+            // Reset recovery timer and pre-seed recovery ticks so watchdog restores target immediately
+            // upon confirming healthy buffer and bandwidth.
+            lastQualityNudgeTimeMs = 0L
+            downscaleRecoveryTicks = DOWNSCALE_RECOVERY_REQUIRED_TICKS
+        } else {
+            lastQualityNudgeTimeMs = SystemClock.uptimeMillis()
+        }
     }
 
     override fun toggleAudioCompressor() {
@@ -1283,6 +1351,8 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun onStop() {
+        surfaceHolderCallback?.let { bindingOrNull?.playerSurface?.holder?.removeCallback(it) }
+        surfaceHolderCallback = null
         clearCaptions()
         super.onStop()
         if (shouldClosePlaybackAfterPipDismiss()) {
@@ -1551,6 +1621,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     private fun reloadIvsLiveStreamWithFreshUrl(reason: String): Boolean {
+        if (viewModel.isLiveRewound || viewModel.quality == CHAT_ONLY_QUALITY) return false
         val resolvedUrl = resolveStreamUrl()
         if (resolvedUrl.isNullOrBlank()) {
             return false
@@ -1571,7 +1642,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     private fun shouldContinueIvsInBackground(player: Player): Boolean {
-        return !currentUrl.isNullOrBlank() &&
+        return viewModel.quality != CHAT_ONLY_QUALITY && !currentUrl.isNullOrBlank() &&
             player.state != Player.State.ENDED &&
             if (backgroundAudioTransitionRequested) {
                 true
@@ -1589,6 +1660,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     private fun attachSurfaceIfAvailable() {
+        if (viewModel.quality == AUDIO_ONLY_QUALITY || viewModel.quality == CHAT_ONLY_QUALITY) return
         val surface = binding.playerSurface.holder.surface
         if (surfaceCreated && surface?.isValid == true) {
             playbackService?.attachSurface(surface)

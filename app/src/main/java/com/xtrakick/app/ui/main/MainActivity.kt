@@ -37,7 +37,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -73,6 +72,7 @@ import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.model.ui.Video
 import com.xtrakick.app.ui.channel.ChannelPagerFragmentDirections
 import com.xtrakick.app.ui.login.LoginActivity
+import com.xtrakick.app.ui.common.BaseStateActivity
 import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.CompactDialogs.constrainSheets
 import com.xtrakick.app.ui.common.Scrollable
@@ -117,7 +117,7 @@ import kotlin.concurrent.schedule
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class MainActivity : AppCompatActivity() {
+class MainActivity : BaseStateActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
@@ -731,7 +731,7 @@ class MainActivity : AppCompatActivity() {
         val connectivityManager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
         connectivityManager.unregisterNetworkCallback(networkCallback)
         unregisterReceiver(pipActionReceiver)
-        if (isFinishing) {
+        if (isFinishing && playerFragment?.shouldContinuePlaybackInBackground() != true) {
             playerFragment?.close()
         }
         super.onDestroy()

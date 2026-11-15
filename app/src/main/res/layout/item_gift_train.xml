@@ -14,11 +14,13 @@
     android:paddingBottom="6dp">
 
     <View
+        android:id="@+id/giftTrainCardAccent"
         android:layout_width="3dp"
         android:layout_height="match_parent"
         android:background="@color/giftTrainAccent" />
 
     <ImageView
+        android:id="@+id/giftTrainCardIcon"
         android:layout_width="16dp"
         android:layout_height="16dp"
         android:layout_marginStart="6dp"

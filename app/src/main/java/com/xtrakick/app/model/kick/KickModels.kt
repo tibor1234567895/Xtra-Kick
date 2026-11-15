@@ -171,6 +171,15 @@ class KickThumbnail(
 }
 
 @Serializable
+class KickChannelLink(
+    val title: String? = null,
+    val description: String? = null,
+    val link: String? = null,
+    val image: KickThumbnail? = null,
+    val order: Int = 0,
+)
+
+@Serializable
 class KickBanner(
     val url: String? = null,
     val src: String? = null,
@@ -214,6 +223,8 @@ class KickSearchChannel(
 @Serializable
 class KickChatroom(
     val id: Long? = null,
+    @SerialName("created_at")
+    val createdAt: String? = null,
     val badges: List<KickChannelBadge>? = null,
     @SerialName("subscriber_badges")
     val subscriberBadges: List<KickChannelBadge>? = null,
@@ -261,6 +272,7 @@ class KickUser(
     val discord: String? = null,
     val tiktok: String? = null,
     val facebook: String? = null,
+    val club: String? = null,
     @SerialName("profilepic")
     val profilePic: String? = null,
     @SerialName("profile_pic")
@@ -293,6 +305,8 @@ class KickMessage(
     val id: String? = null,
     @SerialName("chat_id")
     val chatId: Long? = null,
+    @SerialName("chatroom_id")
+    val chatroomId: Long? = null,
     @SerialName("user_id")
     val userId: Long? = null,
     val content: String? = null,

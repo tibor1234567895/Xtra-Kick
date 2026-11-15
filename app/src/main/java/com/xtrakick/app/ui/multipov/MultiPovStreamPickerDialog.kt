@@ -11,7 +11,7 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.recyclerview.widget.LinearLayoutManager
+import com.xtrakick.app.ui.view.SafeLinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.DialogMultipovPickerBinding
@@ -70,7 +70,7 @@ class MultiPovStreamPickerDialog : BottomSheetDialogFragment() {
         behavior.skipCollapsed = true
         behavior.state = BottomSheetBehavior.STATE_EXPANDED
 
-        binding.resultsList.layoutManager = LinearLayoutManager(requireContext())
+        binding.resultsList.layoutManager = SafeLinearLayoutManager(requireContext())
         binding.resultsList.adapter = adapter
         binding.sectionLabel.isVisible = true
         binding.sectionLabel.setText(R.string.multipov_picker_followed_live)

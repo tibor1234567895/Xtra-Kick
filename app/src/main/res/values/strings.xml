@@ -1291,4 +1291,6 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="rewind_unavailable">Rewind is not available for this stream</string>
     <string name="stream_event_tag">Event: %1$s</string>
     <string name="videos_load_failed">Could not load videos. Try again.</string>
+    <string name="show_channel_panels">Show detailed channel information</string>
+    <string name="show_channel_panels_summary">Load channel panels and images in About</string>
 </resources>

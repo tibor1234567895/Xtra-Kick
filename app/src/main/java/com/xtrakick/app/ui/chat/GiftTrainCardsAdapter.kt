@@ -1,5 +1,6 @@
 package com.xtrakick.app.ui.chat
 
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.text.SpannableStringBuilder
@@ -9,6 +10,7 @@ import android.text.style.StyleSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.xtrakick.app.R
@@ -17,16 +19,20 @@ import com.xtrakick.app.R
 class GiftTrainCardsAdapter : RecyclerView.Adapter<GiftTrainCardsAdapter.GifteeViewHolder>() {
 
     private var gifterName: String? = null
+    private var gifterColor: Int = Color.WHITE
     private var giftees: List<String> = emptyList()
 
-    fun submit(gifterName: String?, giftees: List<String>) {
+    fun submit(gifterName: String?, giftees: List<String>, gifterColor: Int) {
         this.gifterName = gifterName
+        this.gifterColor = gifterColor
         this.giftees = giftees
         notifyDataSetChanged()
     }
 
     class GifteeViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val text: TextView = view.findViewById(R.id.giftTrainCardText)
+        val accent: View = view.findViewById(R.id.giftTrainCardAccent)
+        val icon: ImageView = view.findViewById(R.id.giftTrainCardIcon)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): GifteeViewHolder {
@@ -41,8 +47,10 @@ class GiftTrainCardsAdapter : RecyclerView.Adapter<GiftTrainCardsAdapter.GifteeV
         val giftee = giftees[position]
         val gifter = gifterName ?: context.getString(R.string.kick_gift_train_someone)
         val full = context.getString(R.string.kick_gifted_sub_to, gifter, giftee)
+        holder.accent.setBackgroundColor(gifterColor)
+        holder.icon.imageTintList = ColorStateList.valueOf(gifterColor)
         holder.text.text = SpannableStringBuilder(full).apply {
-            highlight(gifter, context.getColor(R.color.giftTrainAccent))
+            highlight(gifter, gifterColor)
             highlight(giftee, Color.WHITE)
         }
     }

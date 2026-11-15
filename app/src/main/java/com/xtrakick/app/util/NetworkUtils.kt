@@ -1,6 +1,12 @@
 package com.xtrakick.app.util
 
 import android.net.http.HttpEngine
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.EmptyCoroutineContext
 import android.net.http.HttpException
 import android.net.http.UploadDataProvider
 import android.net.http.UploadDataSink
@@ -57,6 +63,75 @@ import kotlin.coroutines.resumeWithException
 // - progress reporting interceptors / callbacks
 // - a coroutine cancellable wrapper around OkHttp Call.execute()
 object NetworkUtils {
+    internal suspend fun <T> awaitDownloadRequest(
+        timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+        start: (Continuation<T>, () -> Unit) -> (() -> Unit),
+    ): T = coroutineScope {
+        val result = CompletableDeferred<T>()
+        val deadline = AtomicLong(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs))
+        val callback = object : Continuation<T> {
+            override val context = EmptyCoroutineContext
+            override fun resumeWith(value: Result<T>) {
+                value.fold(result::complete, result::completeExceptionally)
+            }
+        }
+        ensureActive()
+        val cancel = start(callback) {
+            deadline.set(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs))
+        }
+        val timeout = launch {
+            while (isActive && !result.isCompleted) {
+                val remaining = TimeUnit.NANOSECONDS.toMillis(deadline.get() - System.nanoTime())
+                if (remaining <= 0L) {
+                    cancel()
+                    break
+                }
+                delay(remaining.coerceAtLeast(1L))
+            }
+        }
+        try {
+            result.await()
+        } finally {
+            timeout.cancel()
+            // Keep the documented TLS cancellation grace, then await the concrete
+            // request's terminal callback before a caller can close its output.
+            withContext(NonCancellable) {
+                if (!result.isCompleted) {
+                    delay(2_000L)
+                    if (!result.isCompleted) cancel()
+                    result.join()
+                }
+            }
+        }
+    }
+
+    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
+    suspend fun downloadHttpEngine(
+        engine: HttpEngine, url: String, executor: ExecutorService,
+        range: String? = null, output: OutputStream? = null,
+        onContentLength: ((Long) -> Unit)? = null,
+    ): Pair<UrlResponseInfo, ByteArray> = awaitDownloadRequest { continuation, touch ->
+        val request = engine.newUrlRequestBuilder(url, executor,
+            HttpEngineUtils.byteArrayUrlCallback(continuation, ProgressListener { touch() }, output, onContentLength))
+            .apply { if (range != null) addHeader("Range", range) }.build()
+        val cancel: () -> Unit = { request.cancel() }
+        request.start()
+        cancel
+    }
+
+    suspend fun downloadCronet(
+        engine: CronetEngine, url: String, executor: ExecutorService,
+        range: String? = null, output: OutputStream? = null,
+        onContentLength: ((Long) -> Unit)? = null,
+    ): Pair<CronetUrlResponseInfo, ByteArray> = awaitDownloadRequest { continuation, touch ->
+        val request = engine.newUrlRequestBuilder(url,
+            ByteArrayCronetUrlCallback(continuation, ProgressListener { touch() }, output, onContentLength), executor)
+            .apply { if (range != null) addHeader("Range", range) }.build()
+        val cancel: () -> Unit = { request.cancel() }
+        request.start()
+        cancel
+    }
+
     // With cancelCallOnCancellation = false the HTTP call finishes normally even when
     // the coroutine is cancelled; the caller's result is discarded. Used by downloads
     // whose segment writes are idempotent so that stopping a download does not
@@ -104,6 +179,7 @@ object NetworkUtils {
         private val continuation: Continuation<Pair<CronetUrlResponseInfo, ByteArray>>,
         private val progressListener: ProgressListener? = null,
         private val output: OutputStream? = null,
+        private val onContentLength: ((Long) -> Unit)? = null,
     ) : CronetUrlRequest.Callback() {
         private lateinit var mResponseBodyStream: ByteArrayOutputStream
         private lateinit var mResponseBodyChannel: WritableByteChannel
@@ -114,6 +190,8 @@ object NetworkUtils {
         }
 
         override fun onResponseStarted(request: CronetUrlRequest, info: CronetUrlResponseInfo) {
+            onContentLength?.invoke(info.allHeaders.entries.firstOrNull { it.key.equals("Content-Length", true) }
+                ?.value?.firstOrNull()?.toLongOrNull() ?: -1L)
             mResponseBodyStream = ByteArrayOutputStream()
             mResponseBodyChannel = Channels.newChannel(output ?: mResponseBodyStream)
             request.read(ByteBuffer.allocateDirect(BYTE_BUFFER_CAPACITY))

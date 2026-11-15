@@ -419,10 +419,20 @@ class MainViewModel @Inject constructor(
 
     fun downloadVideo(networkLibrary: String?, filesDir: String, id: String?, title: String?, uploadDate: String?, type: String?, channelId: String?, channelLogin: String?, channelName: String?, channelLogo: String?, thumbnail: String?, gameId: String?, gameSlug: String?, gameName: String?, url: String, downloadPath: String, quality: String, from: Long, to: Long, downloadChat: Boolean, downloadChatEmotes: Boolean, playlistToFile: Boolean, wifiOnly: Boolean) {
         viewModelScope.launch {
+            val resolvedLogo = if (!channelLogin.isNullOrBlank() &&
+                (channelLogo.isNullOrBlank() || channelLogo.startsWith("https://kick.com/img/default-profile-pictures/"))) {
+                try {
+                    kickRepository.getChannel(channelLogin, prefetchBadgeCatalog = false).user?.profileImage ?: channelLogo
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    channelLogo
+                }
+            } else channelLogo
             val downloadedThumbnail = viewModelScope.cacheMediaImage(filesDir, "thumbnails", id, thumbnail) { url, output ->
                 playerRepository.downloadTo(networkLibrary, url, output)
             }
-            val downloadedLogo = viewModelScope.cacheMediaImage(filesDir, "profile_pics", channelId, channelLogo) { url, output ->
+            val downloadedLogo = viewModelScope.cacheMediaImage(filesDir, "profile_pics", channelId, resolvedLogo) { url, output ->
                 playerRepository.downloadTo(networkLibrary, url, output)
             }
             val videoId = offlineRepository.saveVideo(

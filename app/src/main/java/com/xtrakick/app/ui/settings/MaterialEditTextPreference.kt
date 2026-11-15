@@ -6,9 +6,10 @@ import android.content.DialogInterface
 import android.os.Build
 import android.os.Bundle
 import android.view.View
-import android.view.WindowInsets
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.preference.EditTextPreferenceDialogFragmentCompat
 import com.xtrakick.app.util.getAlertDialogBuilder
 
@@ -52,16 +53,18 @@ class MaterialEditTextPreference : EditTextPreferenceDialogFragmentCompat() {
         }
         onPrepareDialogBuilder(builder)
 
-        // Create the dialog
-        val dialog: Dialog = builder.create()
-        requestInputMethod(dialog)
-        return dialog
+        return builder.create()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        dialog?.let { requestInputMethod(it) }
     }
 
     private fun requestInputMethod(dialog: Dialog) {
-        val window = dialog.window
+        val window = dialog.window ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window!!.decorView.windowInsetsController!!.show(WindowInsets.Type.ime())
+            WindowCompat.getInsetsController(window, window.decorView).show(WindowInsetsCompat.Type.ime())
         } else {
             scheduleShowSoftInputInner()
         }
@@ -74,5 +77,11 @@ class MaterialEditTextPreference : EditTextPreferenceDialogFragmentCompat() {
     override fun onDismiss(dialog: DialogInterface) {
         super.onDismiss(dialog)
         onDialogClosed(mWhichButtonClicked == DialogInterface.BUTTON_POSITIVE)
+    }
+
+    override fun onDestroyView() {
+        mEditText?.removeCallbacks(mShowSoftInputRunnable)
+        mEditText = null
+        super.onDestroyView()
     }
 }

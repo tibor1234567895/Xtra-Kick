@@ -110,6 +110,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     private var currentChatKey: String? = null
     /** Slot keys + layout/orientation signature used to decide when to rebuild the grid. */
     private var lastGridSignature: List<String> = emptyList()
+    private val immersiveLayoutRestores = mutableListOf<() -> Unit>()
+    private var appliedImmersiveKey: String? = null
     private var isPortrait = true
     /** Current IME bottom inset (px) in portrait; 0 when the keyboard is hidden. */
     private var keyboardInsetBottom = 0
@@ -578,7 +580,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
 
             viewersLayout.isVisible = true
             viewersLayout.setOnClickListener {
-                if (prefs.getBoolean(AppConstants.PLAYER_VIEWERLIST, false)) {
+                if (prefs.getBoolean(AppConstants.PLAYER_VIEWERLIST, true)) {
                     showFocusedViewerList()
                 }
             }
@@ -883,7 +885,8 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 updateLatencyDisplay(offset)
                 // Pull back to live when drift gets big. Quality untouched.
                 // Cooldown so we don't seek-loop on a struggling connection.
-                if (offset != null && offset > 5_000L) {
+                if (viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+                    && offset != null && offset > 5_000L) {
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastAutoCatchupMs > 10_000L) {
                         lastAutoCatchupMs = now
@@ -1406,7 +1409,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         // Free bandwidth/decoders for the full-screen stream.
         playbackController?.pauseSecondaries()
         updateExpandButtonIcon()
-        render(viewModel.uiState.value, forceGridRebuild = true)
+        render(viewModel.uiState.value)
     }
 
     private fun exitImmersive() {
@@ -1415,7 +1418,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         immersiveKey = null
         playbackController?.resumeSecondaries()
         updateExpandButtonIcon()
-        render(viewModel.uiState.value, forceGridRebuild = true)
+        render(viewModel.uiState.value)
         showControlsTemporarily()
     }
 
@@ -1482,6 +1485,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     }
 
     override fun onDestroyView() {
+        restoreImmersiveLayout()
         showStatusBar()
         backgroundPauseRunnable?.let { view?.removeCallbacks(it) }
         backgroundPauseRunnable = null
@@ -1886,7 +1890,6 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         // Rebuild only when slots/order/layout/orientation change — not on focus (that freezes tiles).
         val gridSignature = state.slots.map { it.key } + listOfNotNull(
             currentLayoutPreset().prefValue,
-            immersiveKey?.let { "imm:$it" },
             if (isPortrait) "port" else "land",
         )
         val gridChanged = forceGridRebuild || gridSignature != lastGridSignature
@@ -1895,6 +1898,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             lastGridSignature = gridSignature
             // Tiles recreated — bindTileChrome below restores persistent ring/badges.
         }
+        applyImmersiveLayout()
 
         state.slots.forEach { slot ->
             val tile = tileBindings[slot.key]
@@ -1997,6 +2001,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         val binding = _binding ?: return
         val grid = binding.tileGrid
         val controller = playbackController ?: return
+        restoreImmersiveLayout()
 
         // Reuse surviving tile views so their surfaces never drop: only gone
         // slots are detached. Reparenting keeps TextureViews (and frames) alive.
@@ -2009,13 +2014,6 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         grid.orientation = LinearLayout.VERTICAL
         grid.clipChildren = true
         grid.clipToPadding = true
-
-        // Immersive: one stream fills the entire video section.
-        val immersiveSlot = immersiveKey?.let { key -> state.slots.firstOrNull { it.key == key } }
-        if (immersiveSlot != null) {
-            addFullBleedTile(grid, immersiveSlot)
-            return
-        }
 
         // PiP mode: focused stream fills the floating window.
         if (isInPipMode()) {
@@ -2046,6 +2044,37 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 buildPrimaryLeftGrid(grid, slots, landscape)
             else ->
                 buildEqualGrid(grid, slots, landscape)
+        }
+    }
+
+    private fun restoreImmersiveLayout() {
+        immersiveLayoutRestores.asReversed().forEach { it() }
+        immersiveLayoutRestores.clear()
+        appliedImmersiveKey = null
+    }
+
+    private fun applyImmersiveLayout() {
+        if (appliedImmersiveKey == immersiveKey) return
+        restoreImmersiveLayout()
+        val key = immersiveKey ?: return
+        val grid = _binding?.tileGrid ?: return
+        var child: View = tileBindings[key]?.root ?: return
+        appliedImmersiveKey = key
+        // Keep the focused TextureView attached while its existing ancestors expand.
+        while (child !== grid) {
+            val parent = child.parent as? LinearLayout ?: break
+            for (index in 0 until parent.childCount) {
+                val sibling = parent.getChildAt(index)
+                if (sibling === child) continue
+                val visibility = sibling.visibility
+                immersiveLayoutRestores.add { sibling.visibility = visibility }
+                sibling.visibility = View.GONE
+            }
+            val target = child
+            val params = target.layoutParams
+            immersiveLayoutRestores.add { target.layoutParams = params }
+            target.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            child = parent
         }
     }
 

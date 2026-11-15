@@ -166,6 +166,7 @@ class ClipCreatorSheet : BottomSheetDialogFragment() {
                 val (defaultStart, defaultDuration) = KickClipApi.computeClipRange(
                     sourceDuration,
                     KickClipApi.CLIP_DEFAULT_LENGTH_SECONDS,
+                    fromStart = positionSeconds != null && positionSeconds > 0L,
                 )
                 previousLow = defaultStart.toFloat()
                 previousHigh = (defaultStart + defaultDuration).toFloat().coerceAtMost(sourceDuration.toFloat())

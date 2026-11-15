@@ -9,28 +9,6 @@ import org.junit.Test
 
 class ChatListParityUtilsTest {
 
-    // The two tests that used to live here only asserted that rebindRangeAfterPrepend and
-    // rebindRangeAfterHeadRemoval returned null — the functions were unconditional no-ops and
-    // have been deleted. The stable-slot behaviour they were meant to protect is covered by
-    // headRemovalKeepsExistingMessageParityStable and
-    // prependAssignsSlotsRelativeToExistingMessagesWithoutChangingThem below.
-
-    @Test
-    fun appendAfterHeadRemovalUsesPostRemovalPosition() {
-        assertEquals(
-            99,
-            ChatListParityUtils.appendPositionAfterHeadRemoval(lastIndexAfterAppend = 99, removedCount = 1)
-        )
-    }
-
-    @Test
-    fun appendWithoutHeadRemovalUsesInsertedTailPosition() {
-        assertEquals(
-            100,
-            ChatListParityUtils.appendPositionAfterHeadRemoval(lastIndexAfterAppend = 100, removedCount = 0)
-        )
-    }
-
     @Test
     fun replyPreviewAndReplyMessageShareVisualParity() {
         val messages = listOf(

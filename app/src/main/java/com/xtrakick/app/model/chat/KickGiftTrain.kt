@@ -5,6 +5,7 @@ data class KickGiftTrainSnapshot(
     val gifterName: String? = null,
     val giftees: List<String> = emptyList(),
     val totalGifted: Int? = null,
+    val gifterColor: String? = null,
 )
 
 /** A merged, time-boxed gift train rendered in the banner above the chat. */
@@ -13,6 +14,7 @@ data class KickGiftTrain(
     val giftees: List<String>,
     val totalGifted: Int,
     val lastUpdatedAtMs: Long,
+    val gifterColor: String? = null,
 ) {
     /** Bigger trains stay longer; a single gift clears quickly. */
     val displayDurationMs: Long

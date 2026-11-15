@@ -40,6 +40,13 @@ class KickClipApiTest {
     }
 
     @Test
+    fun positionedPreviewStartsAtTheWatchedMoment() {
+        assertEquals(0 to 30, KickClipApi.computeClipRange(180, 30, fromStart = true))
+        assertEquals(0 to 20, KickClipApi.computeClipRange(20, 30, fromStart = true))
+        assertEquals(150 to 30, KickClipApi.computeClipRange(180, 30))
+    }
+
+    @Test
     fun computeRangeEndsAtLiveEdgeWhenSourceIsLongEnough() {
         val (start, duration) = KickClipApi.computeClipRange(sourceDurationSeconds = 300, requestedDurationSeconds = 90)
         assertEquals(210, start)

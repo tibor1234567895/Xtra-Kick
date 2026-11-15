@@ -35,11 +35,9 @@ import com.xtrakick.app.repository.OfflineRepository
 import com.xtrakick.app.repository.PlayerRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.hasPersistedUriPermission
-import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.m3u8.PlaylistUtils
 import com.xtrakick.app.util.m3u8.Segment
 import com.xtrakick.app.util.prefs
@@ -55,9 +53,9 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -84,8 +82,6 @@ import com.xtrakick.app.util.NetworkUtils.useCancellable
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.chromium.net.CronetEngine
-import org.chromium.net.apihelpers.RedirectHandlers
-import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -95,10 +91,10 @@ import java.net.URI
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicIntegerArray
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
-import kotlin.coroutines.suspendCoroutine
 
 internal fun canReuseDownloadedTrack(name: String, downloadedTracks: Set<String>, isReadable: () -> Boolean): Boolean =
     name in downloadedTracks && isReadable()
@@ -189,22 +185,28 @@ class VideoDownloadWorker @AssistedInject constructor(
     }
 
     override suspend fun doWork(): Result {
+        val video = offlineRepository.getVideoById(inputData.getInt(KEY_VIDEO_ID, 0)) ?: return Result.failure()
+        return offlineRepository.withVideoFiles(video, wait = true) { runDownload() } ?: Result.failure()
+    }
+
+    private suspend fun runDownload(): Result {
         offlineVideo = offlineRepository.getVideoById(inputData.getInt(KEY_VIDEO_ID, 0)) ?: return Result.failure()
         val forceChatRedownload = inputData.getBoolean(KEY_FORCE_CHAT_REDOWNLOAD, false)
+        var ownedChatScope: CoroutineScope? = null
         try {
-            offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
+            offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
             setForeground(createForegroundInfo())
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         val sourceUrl = offlineVideo.sourceUrl!!
         if (isStopped) {
-            runCatching { offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
+            runCatching { offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
             return Result.failure()
         }
         val downloadPath = offlineVideo.downloadPath
         if (downloadPath != null && downloadPath.toUri().scheme == ContentResolver.SCHEME_CONTENT &&
             !context.hasPersistedUriPermission(downloadPath, read = true, write = true)) {
             DiagnosticLogger.e("VideoDownloadWorker", "Shared directory permission missing or revoked for $downloadPath")
-            offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_BLOCKED })
+            offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_BLOCKED })
             return Result.failure()
         }
         if (PlaylistUtils.isHlsUrl(sourceUrl)) {
@@ -216,7 +218,7 @@ class VideoDownloadWorker @AssistedInject constructor(
             // range is resolved below.
             val chatPrerequisitesReady = !offlineVideo.clipId.isNullOrBlank() ||
                 (offlineVideo.sourceStartPosition != null && offlineVideo.duration != null)
-            val chatScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val chatScope = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { ownedChatScope = it }
             var earlyChatJob: Job? = if (chatPrerequisitesReady) {
                 chatScope.launch {
                     startChatJobSafely(path, forceChatRedownload)
@@ -226,28 +228,15 @@ class VideoDownloadWorker @AssistedInject constructor(
             var playlistUrl = sourceUrl
             var playlist = when {
                 networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                    val response = suspendCoroutine { continuation ->
-                        httpEngine!!.get().newUrlRequestBuilder(sourceUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                    }
+                    val response = NetworkUtils.downloadHttpEngine(httpEngine!!.get(), sourceUrl, cronetExecutor)
                     response.second.inputStream().use {
                         PlaylistUtils.parseMediaPlaylist(it)
                     }
                 }
                 networkLibrary == "Cronet" && cronetEngine != null -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                        cronetEngine!!.get().newUrlRequestBuilder(sourceUrl, request.callback, cronetExecutor).build().start()
-                        val response = request.future.get().responseBody as ByteArray
-                        response.inputStream().use {
-                            PlaylistUtils.parseMediaPlaylist(it)
-                        }
-                    } else {
-                        val response = suspendCoroutine { continuation ->
-                            cronetEngine!!.get().newUrlRequestBuilder(sourceUrl, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                        }
-                        response.second.inputStream().use {
-                            PlaylistUtils.parseMediaPlaylist(it)
-                        }
+                    val response = NetworkUtils.downloadCronet(cronetEngine!!.get(), sourceUrl, cronetExecutor).second
+                    response.inputStream().use {
+                        PlaylistUtils.parseMediaPlaylist(it)
                     }
                 }
                 else -> {
@@ -260,23 +249,23 @@ class VideoDownloadWorker @AssistedInject constructor(
             }
             if (playlist.segments.isEmpty()) {
                 playlistUrl = getFirstVariantPlaylistUrl(networkLibrary, sourceUrl) ?: run {
-                    runCatching { offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
+                    runCatching { offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
                     return Result.failure()
                 }
                 playlist = (playerRepository.loadTextFromUrl(networkLibrary, playlistUrl) ?: run {
-                    runCatching { offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
+                    runCatching { offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
                     return Result.failure()
                 })
                     .byteInputStream()
                     .use { PlaylistUtils.parseMediaPlaylist(it) }
                 if (playlist.segments.isEmpty()) {
-                    runCatching { offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
+                    runCatching { offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
                     return Result.failure()
                 }
             }
             if (playlist.encrypted) {
                 Log.e("VideoDownloadWorker", "Aborting download: playlist is HLS-encrypted (#EXT-X-KEY); downloaded segments would be unplayable")
-                offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
+                offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
                 return Result.failure()
             }
             val targetDuration = playlist.targetDuration * 1000L
@@ -322,7 +311,7 @@ class VideoDownloadWorker @AssistedInject constructor(
             // same values alongside their own fields.
             if (offlineVideo.clipId.isNullOrBlank() && earlyChatJob == null) {
                 val chatStartPosition = relativeStartTimes[fromIndex]
-                offlineRepository.updateVideo(offlineVideo.apply {
+                offlineRepository.updateSourceRange(offlineVideo.apply {
                     sourceStartPosition = chatStartPosition
                     duration = relativeStartTimes[toIndex] + durations[toIndex] - chatStartPosition - 1000L
                 })
@@ -370,9 +359,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                         val initUrl = resolveSegmentUrl(urlPath, playlist.initSegmentUri)
                         when {
                             networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                val response = suspendCoroutine { continuation ->
-                                    httpEngine!!.get().newUrlRequestBuilder(initUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                }
+                                val response = NetworkUtils.downloadHttpEngine(httpEngine!!.get(), initUrl, cronetExecutor)
                                 check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading init segment" }
                                 if (isShared) {
                                     context.contentResolver.openOutputStream(fileUri.toUri(), "wa")!!.use {
@@ -386,20 +373,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 response.second.size.toLong()
                             }
                             networkLibrary == "Cronet" && cronetEngine != null -> {
-                                val response = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                    val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                    val requestBuilder = cronetEngine!!.get().newUrlRequestBuilder(initUrl, request.callback, cronetExecutor)
-                                    requestBuilder.build().start()
-                                    val cronetResponse = request.future.get()
-                                    check(cronetResponse.urlResponseInfo.httpStatusCode in 200..299) { "HTTP ${cronetResponse.urlResponseInfo.httpStatusCode} downloading init segment" }
-                                    cronetResponse.responseBody as ByteArray
-                                } else {
-                                    val response = suspendCoroutine { continuation ->
-                                        cronetEngine!!.get().newUrlRequestBuilder(initUrl, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                    }
-                                    check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading init segment" }
-                                    response.second
-                                }
+                                val cronetResponse = NetworkUtils.downloadCronet(cronetEngine!!.get(), initUrl, cronetExecutor)
+                                check(cronetResponse.first.httpStatusCode in 200..299) { "HTTP ${cronetResponse.first.httpStatusCode} downloading init segment" }
+                                val response = cronetResponse.second
                                 if (isShared) {
                                     context.contentResolver.openOutputStream(fileUri.toUri(), "wa")!!.use {
                                         it.write(response)
@@ -428,7 +404,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                             }
                         }
                     } else null
-                    offlineRepository.updateVideo(offlineVideo.apply {
+                    offlineRepository.updateVideoPlaylist(offlineVideo.apply {
                         url = fileUri
                         duration = (relativeStartTimes[toIndex] + durations[toIndex] - startPosition) - 1000L
                         sourceStartPosition = startPosition
@@ -467,11 +443,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                             when {
                                 networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
                                     val rangeHeader = segmentRangeHeader(it)
-                                    val response = suspendCoroutine { continuation ->
-                                        val requestBuilder = httpEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation))
-                                        if (rangeHeader != null) requestBuilder.addHeader("Range", rangeHeader)
-                                        requestBuilder.build().start()
-                                    }
+                                    val response = NetworkUtils.downloadHttpEngine(httpEngine!!.get(), segmentTargetUrl, cronetExecutor, range = rangeHeader)
                                     check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
                                     val body = applySegmentRange(response.second, response.first.httpStatusCode, it)
                                     stagingFile.outputStream().use {
@@ -481,21 +453,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 }
                                 networkLibrary == "Cronet" && cronetEngine != null -> {
                                     val rangeHeader = segmentRangeHeader(it)
-                                    val (statusCode, body) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                        val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                        val requestBuilder = cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, request.callback, cronetExecutor)
-                                        if (rangeHeader != null) requestBuilder.addHeader("Range", rangeHeader)
-                                        requestBuilder.build().start()
-                                        val cronetResponse = request.future.get()
-                                        cronetResponse.urlResponseInfo.httpStatusCode to (cronetResponse.responseBody as ByteArray)
-                                    } else {
-                                        val response = suspendCoroutine { continuation ->
-                                            val requestBuilder = cronetEngine!!.get().newUrlRequestBuilder(segmentTargetUrl, getByteArrayCronetCallback(continuation), cronetExecutor)
-                                            if (rangeHeader != null) requestBuilder.addHeader("Range", rangeHeader)
-                                            requestBuilder.build().start()
-                                        }
-                                        response.first.httpStatusCode to response.second
-                                    }
+                                    val cronetResponse = NetworkUtils.downloadCronet(cronetEngine!!.get(), segmentTargetUrl, cronetExecutor, range = rangeHeader)
+                                    val statusCode = cronetResponse.first.httpStatusCode
+                                    val body = cronetResponse.second
                                     check(statusCode in 200..299) { "HTTP $statusCode downloading segment ${it.uri}" }
                                     val bytes = applySegmentRange(body, statusCode, it)
                                     stagingFile.outputStream().use {
@@ -535,7 +495,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                     stagingFile.inputStream().use { it.copyTo(stream) }
                                 }
                             }
-                            offlineRepository.updateVideo(offlineVideo.apply {
+                            offlineRepository.updateVideoProgress(offlineVideo.apply {
                                 bytes += stagedBytes
                                 progress += 1
                             })
@@ -572,7 +532,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                 openDownloadOutput(playlistFileUri, isShared).use { PlaylistUtils.writeMediaPlaylist(localPlaylist, it) }
                 val completedNames = selectedSegments.take(offlineVideo.progress).mapTo(mutableSetOf()) { assetNames.getValue(it.uri) }
                 val startPosition = relativeStartTimes[fromIndex]
-                offlineRepository.updateVideo(offlineVideo.apply {
+                offlineRepository.updateVideoRange(offlineVideo.apply {
                     url = playlistFileUri
                     duration = relativeStartTimes[toIndex] + durations[toIndex] - startPosition - 1000L
                     sourceStartPosition = startPosition
@@ -605,40 +565,24 @@ class VideoDownloadWorker @AssistedInject constructor(
                         }
                     }
                     count.first { it == id }
-                    offlineRepository.updateVideo(offlineVideo.apply { progress += 1 })
+                    offlineRepository.updateProgress(offlineVideo.apply { progress += 1 })
                     count.update { it + 1 }
                     updateDownloadNotification()
                 }
             }
-            // Video phase complete: finalize the item's status right away. The chat
-            // walk may keep running for minutes on long VODs and must not hold the
-            // list at "DOWNLOADING: 100%" (chat can be repaired independently).
-            if (offlineVideo.progress >= offlineVideo.maxProgress) {
-                offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADED })
-                updateDownloadNotification(force = true)
+            jobs.joinAll()
+            if (earlyChatJob != null) {
+                earlyChatJob.join()
+            } else {
+                startChatJobSafely(path, forceChatRedownload)
             }
-            try {
-                jobs.joinAll()
-                if (earlyChatJob != null) {
-                    earlyChatJob.join()
-                } else {
-                    startChatJobSafely(path, forceChatRedownload)
-                }
-            } finally {
-                // Grace period: the chat loop exits via isStopped after its current
-                // request completes; cancelling immediately would kill the TLS
-                // connection mid-flight (see chatCancelScope).
-                chatCancelScope.launch {
-                    delay(2_000)
-                    chatScope.cancel()
-                }
-            }
+
         } else {
             val path = offlineVideo.downloadPath!!
             val isShared = path.toUri().scheme == ContentResolver.SCHEME_CONTENT
             val chatPrerequisitesReady = !offlineVideo.clipId.isNullOrBlank() ||
                 (offlineVideo.sourceStartPosition != null && offlineVideo.duration != null)
-            val chatScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val chatScope = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { ownedChatScope = it }
             val earlyChatJob = if (chatPrerequisitesReady) {
                 chatScope.launch {
                     startChatJobSafely(path, forceChatRedownload)
@@ -663,47 +607,34 @@ class VideoDownloadWorker @AssistedInject constructor(
                     val dir = DownloadStorage.containerFile(path, offlineVideo)
                     "$dir${File.separator}$fileName"
                 }
-                offlineRepository.updateVideo(offlineVideo.apply {
+                offlineRepository.updateUrl(offlineVideo.apply {
                     url = fileUri
                 })
                 fileUri
             }
             if (offlineVideo.progress < offlineVideo.maxProgress) {
                 openDownloadOutput(videoFileUri, isShared).use { output ->
-                    downloadAsset(networkLibrary, sourceUrl, output)
+                    downloadAsset(networkLibrary, sourceUrl, output, reportProgress = true)
                 }
-                offlineRepository.updateVideo(offlineVideo.apply { progress = offlineVideo.maxProgress })
+                offlineRepository.updateProgress(offlineVideo.apply { progress = offlineVideo.maxProgress })
                 setForeground(createForegroundInfo())
-                // Video bytes are done: finalize the status right away so
-                // the chat walk below can't hold the list at
-                // "DOWNLOADING: 100%" (same fix as the HLS branch above).
-                offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADED })
             }
-            try {
-                val chatJob = earlyChatJob
-                if (chatJob != null) {
-                    chatJob.join()
-                } else {
-                    startChatJobSafely(path, forceChatRedownload)
-                }
-            } finally {
-                // Grace period: the chat loop exits via isStopped after its current
-                // request completes; cancelling immediately would kill the TLS
-                // connection mid-flight (see chatCancelScope).
-                chatCancelScope.launch {
-                    delay(2_000)
-                    chatScope.cancel()
-                }
+            val chatJob = earlyChatJob
+            if (chatJob != null) {
+                chatJob.join()
+            } else {
+                startChatJobSafely(path, forceChatRedownload)
             }
+
         }
         // Both the video jobs and the chat job have joined above, so neither can
         // progress anymore: a completed video is final even if the chat walk ended
         // early (the force-chat-redownload flow can repair chat). Basing the status
         // on chat progress here would stick the item at "DOWNLOADING: 100%" forever.
         if (offlineVideo.progress < offlineVideo.maxProgress) {
-            offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
+            offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
         } else {
-            offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADED })
+            offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADED })
             runCatching {
                 val infoJson = DownloadStorage.buildInfoJson(offlineVideo, context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown")
                 val urlStr = offlineVideo.url
@@ -765,9 +696,16 @@ class VideoDownloadWorker @AssistedInject constructor(
             Log.e("VideoDownloadWorker", "Video download failed: ${e.message}", e)
             DiagnosticLogger.e("VideoDownloadWorker", "Video download failed: ${e.message}", e)
             runCatching {
-                offlineRepository.updateVideo(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
+                offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
             }
             return Result.failure()
+        } finally {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                val job = ownedChatScope?.coroutineContext?.get(Job)
+                if (job?.children?.any { it.isActive } == true) delay(2_000L)
+                job?.cancel()
+                job?.join()
+            }
         }
     }
 
@@ -779,12 +717,6 @@ class VideoDownloadWorker @AssistedInject constructor(
         val words = linkedSetOf<String>()
         var pages = 0
     }
-
-    // Schedules chatScope cancellation slightly after stop so the in-flight chat
-    // request can finish normally. Abrupt mid-TLS cancellation right after the stop
-    // press was repeatedly followed by native SIGSEGV crashes on the chat thread's
-    // network stack.
-    private val chatCancelScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // Chat failures must neither fail the video download nor leave it stuck in
     // STATUS_DOWNLOADING; the force-chat-redownload flow can repair chat later.
@@ -800,7 +732,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                 throw CancellationException("chat job cancelled", e)
             }
             Log.e("VideoDownloadWorker", "chat download failed", e)
-            offlineRepository.updateVideo(offlineVideo.apply {
+            offlineRepository.updateChatProgress(offlineVideo.apply {
                 chatProgress = offlineVideo.maxChatProgress
             })
         }
@@ -813,11 +745,16 @@ class VideoDownloadWorker @AssistedInject constructor(
             // playback); VODs use the stored source position.
             val clipStartMs: Long? = if (isClip) {
                 runCatching {
-                    offlineVideo.sourceUrl?.takeIf { it.isNotBlank() }?.let { kickRepository.getClipPlaylistStartTimeMs(it) }
-                }.getOrNull() ?: offlineVideo.uploadDate
+                    offlineVideo.sourceUrl?.takeIf { PlaylistUtils.isHlsUrl(it) }
+                        ?.let { kickRepository.getClipPlaylistStartTimeMs(it) }
+                        ?: kickRepository.getClip(offlineVideo.clipId ?: offlineVideo.videoId ?: return@runCatching null)?.let { clip ->
+                            clip.clipUrl?.let { kickRepository.getClipPlaylistStartTimeMs(it) }
+                                ?: clip.replayStartTime?.let { KickApiHelper.parseIso8601DateUTC(it) }
+                        }
+                }.getOrNull()
             } else null
             suspend fun markChatComplete() {
-                offlineRepository.updateVideo(offlineVideo.apply {
+                offlineRepository.updateChatProgress(offlineVideo.apply {
                     chatProgress = maxChatProgress
                 })
             }
@@ -845,6 +782,7 @@ class VideoDownloadWorker @AssistedInject constructor(
             videoId.let {
                 val isShared = path.toUri().scheme == ContentResolver.SCHEME_CONTENT
                 val startTimeSeconds = (startPosition / 1000).toInt()
+                val historyStartSeconds = if (isClip) startTimeSeconds - 60 else startTimeSeconds
                 val requestedDurationSeconds = offlineVideo.fromTime?.let { from ->
                     offlineVideo.toTime?.let { to -> ((to - from).coerceAtLeast(0L) / 1000L).toInt() }
                 } ?: 0
@@ -890,7 +828,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                         File(parent).mkdirs()
                         "$parent${File.separator}$fileName"
                     }
-                    offlineRepository.updateVideo(offlineVideo.apply {
+                    offlineRepository.updateChatLocation(offlineVideo.apply {
                         maxChatProgress = durationSeconds
                         chatUrl = resolved
                     })
@@ -903,7 +841,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                         val dir = DownloadStorage.containerFile(path, offlineVideo)
                         "$dir${File.separator}$fileName"
                     }
-                    offlineRepository.updateVideo(offlineVideo.apply {
+                    offlineRepository.updateChatLocation(offlineVideo.apply {
                         maxChatProgress = durationSeconds
                         chatUrl = fileUri
                     })
@@ -919,6 +857,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                 val channelLogin = offlineVideo.channelLogin
                 val cheerEmoteList = emptyList<CheerEmote>()
                 val emoteList = emptyList<Emote>()
+                var completedChatBytes = 0L
                 if (isShared) {
                     context.contentResolver.openFileDescriptor(fileUri.toUri(), "rw")?.use {
                         FileOutputStream(it.fileDescriptor).use { output ->
@@ -975,7 +914,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                             ?: channelId?.takeIf { it.isNotBlank() }
                         if (chatSourceId.isNullOrBlank()) {
                             Log.w("OfflineChatDownload", "skipping chat download because no chat source id was available for videoId=$videoId")
-                            offlineRepository.updateVideo(offlineVideo.apply {
+                            offlineRepository.updateChatProgress(offlineVideo.apply {
                                 chatProgress = offlineVideo.maxChatProgress
                             })
                             return@use
@@ -988,8 +927,8 @@ class VideoDownloadWorker @AssistedInject constructor(
                         // only collect data; DB progress runs on a poller and the catalogs
                         // plus file writing happen after the chains join.
                         val walkChains = 4
-                        val sliceDurationSeconds = ((endTimeSeconds - startTimeSeconds) + walkChains - 1) / walkChains
-                        val sliceStartsSec = IntArray(walkChains) { startTimeSeconds + it * sliceDurationSeconds }
+                        val sliceDurationSeconds = ((endTimeSeconds - historyStartSeconds) + walkChains - 1) / walkChains
+                        val sliceStartsSec = IntArray(walkChains) { historyStartSeconds + it * sliceDurationSeconds }
                         val sliceEndsSec = IntArray(walkChains) { minOf(sliceStartsSec[it] + sliceDurationSeconds, endTimeSeconds) }
                         // Per-chain oldest offset reached; progress sums per-slice coverage
                         // (a global minimum would credit unsliced ranges as done instantly).
@@ -1020,7 +959,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 val messageObjects = messages.mapNotNull { message ->
                                     val offsetSeconds = getKickChatOffsetSeconds(message, actualStartTimeMs)
                                         ?: return@mapNotNull null
-                                    if (offsetSeconds !in startTimeSeconds..endTimeSeconds) {
+                                    if (offsetSeconds !in historyStartSeconds..endTimeSeconds) {
                                         return@mapNotNull null
                                     }
                                     if (!commentIds.add(message.id ?: "kick:${message.hashCode()}")) {
@@ -1050,8 +989,10 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 while (isActive) {
                                     val covered = (0 until walkChains).sumOf { i ->
                                         (sliceEndsSec[i] - chainOldest[i]).coerceIn(0, sliceEndsSec[i] - sliceStartsSec[i])
-                                    }.coerceIn(0, offlineVideo.maxChatProgress)
-                                    offlineRepository.updateVideo(offlineVideo.apply { chatProgress = covered })
+                                    }.coerceIn(0, (offlineVideo.maxChatProgress - 1).coerceAtLeast(0))
+                                    if (covered != offlineVideo.chatProgress) {
+                                        offlineRepository.updateChatProgress(offlineVideo.apply { chatProgress = covered })
+                                    }
                                     delay(400)
                                 }
                             }
@@ -1116,22 +1057,11 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 decodeDataUriToByteArray(url)
                             } else when {
                                 networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                    val response = suspendCoroutine { continuation ->
-                                        httpEngine!!.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                    }
+                                    val response = NetworkUtils.downloadHttpEngine(httpEngine!!.get(), url, cronetExecutor)
                                     response.second
                                 }
                                 networkLibrary == "Cronet" && cronetEngine != null -> {
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                        val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                        cronetEngine!!.get().newUrlRequestBuilder(url, request.callback, cronetExecutor).build().start()
-                                        request.future.get().responseBody as ByteArray
-                                    } else {
-                                        val response = suspendCoroutine { continuation ->
-                                            cronetEngine!!.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                        }
-                                        response.second
-                                    }
+                                    NetworkUtils.downloadCronet(cronetEngine!!.get(), url, cronetExecutor).second
                                 }
                                 else -> {
                                     okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
@@ -1268,12 +1198,13 @@ class VideoDownloadWorker @AssistedInject constructor(
                             writer.endArray().also { position += 1 }
                         }
                         writer.endObject().also { position += 1 }
-                        offlineRepository.updateVideo(offlineVideo.apply {
-                            chatProgress = offlineVideo.maxChatProgress
-                            chatBytes = position
-                        })
+                        completedChatBytes = position
                     }
                 }
+                offlineRepository.updateChatDownloadProgress(offlineVideo.apply {
+                    chatProgress = offlineVideo.maxChatProgress
+                    chatBytes = completedChatBytes
+                })
             }
         }
     }
@@ -1354,9 +1285,9 @@ class VideoDownloadWorker @AssistedInject constructor(
         }
     }
 
-    private fun getKickChatOffsetSeconds(message: KickMessage, startTimeMs: Long): Int? {
+    internal fun getKickChatOffsetSeconds(message: KickMessage, startTimeMs: Long): Int? {
         val createdAtMs = message.createdAt?.let(KickApiHelper::parseIso8601DateUTC) ?: return null
-        return ((createdAtMs - startTimeMs).coerceAtLeast(0L) / 1000L).toInt()
+        return Math.floorDiv(createdAtMs - startTimeMs, 1000L).toInt()
     }
 
     private fun createKickChatCommentJson(
@@ -1366,7 +1297,10 @@ class VideoDownloadWorker @AssistedInject constructor(
         downloadEmotes: Boolean = false
     ): JsonObject? {
         val offsetSeconds = getKickChatOffsetSeconds(message, startTimeMs) ?: return null
-        val chatMessage = kickRepository.toChatMessage(message)
+        val chatMessage = kickRepository.toChatMessage(
+            message,
+            chatScopeId = offlineVideo.channelLogin?.let { "login:$it" } ?: offlineVideo.channelId?.let { "channel:$it" },
+        )
         val content = chatMessage.message
             ?: chatMessage.systemMsg
             ?: chatMessage.fullMsg
@@ -1539,42 +1473,59 @@ class VideoDownloadWorker @AssistedInject constructor(
             ?: throw IOException("Cannot open download output")
         else FileOutputStream(target)
 
-    private suspend fun downloadAsset(networkLibrary: String?, url: String, output: OutputStream) {
-        var bytesWritten = 0L
+    private suspend fun downloadAsset(networkLibrary: String?, url: String, output: OutputStream, reportProgress: Boolean = false) = coroutineScope {
+        val bytesWritten = AtomicLong()
+        val contentLength = AtomicLong(-1L)
         val countedOutput = object : java.io.FilterOutputStream(output) {
             override fun write(value: Int) {
                 out.write(value)
-                bytesWritten++
+                bytesWritten.incrementAndGet()
             }
             override fun write(buffer: ByteArray, offset: Int, length: Int) {
                 out.write(buffer, offset, length)
-                bytesWritten += length
+                bytesWritten.addAndGet(length.toLong())
             }
         }
-        val status = when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    httpEngine!!.get().newUrlRequestBuilder(url, cronetExecutor,
-                        HttpEngineUtils.byteArrayUrlCallback(continuation, output = countedOutput)).build().start()
+        val progressJob = if (reportProgress) launch {
+            while (isActive) {
+                val total = contentLength.get()
+                transferProgress(bytesWritten.get(), total, offlineVideo.maxProgress)?.let { progress ->
+                    if (progress != offlineVideo.progress) {
+                        offlineRepository.updateProgress(offlineVideo.apply { this.progress = progress })
+                        updateDownloadNotification()
+                    }
                 }
-                response.first.httpStatusCode
+                delay(250L)
             }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                val response = suspendCoroutine { continuation ->
-                    cronetEngine!!.get().newUrlRequestBuilder(url,
-                        NetworkUtils.ByteArrayCronetUrlCallback(continuation, output = countedOutput), cronetExecutor).build().start()
+        } else null
+        try {
+            val status = when {
+                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                    val response = NetworkUtils.downloadHttpEngine(httpEngine!!.get(), url, cronetExecutor, output = countedOutput, onContentLength = contentLength::set)
+                    response.first.httpStatusCode
                 }
-                response.first.httpStatusCode
+                networkLibrary == "Cronet" && cronetEngine != null -> {
+                    val response = NetworkUtils.downloadCronet(cronetEngine!!.get(), url, cronetExecutor, output = countedOutput, onContentLength = contentLength::set)
+                    response.first.httpStatusCode
+                }
+                else -> okHttpClient.newCall(Request.Builder().url(url).build()).useCancellable(cancelCallOnCancellation = false) { response ->
+                    contentLength.set(response.body.contentLength())
+                    if (response.isSuccessful) response.body.byteStream().use { it.copyTo(countedOutput) }
+                    response.code
+                }
             }
-            else -> okHttpClient.newCall(Request.Builder().url(url).build()).useCancellable(cancelCallOnCancellation = false) { response ->
-                if (response.isSuccessful) response.body.byteStream().use { it.copyTo(countedOutput) }
-                response.code
-            }
+            check(status in 200..299 && bytesWritten.get() > 0) { "Download failed: HTTP $status, ${bytesWritten.get()} bytes" }
+        } finally {
+            progressJob?.cancel()
+            progressJob?.join()
         }
-        check(status in 200..299 && bytesWritten > 0) { "Download failed: HTTP $status, $bytesWritten bytes" }
     }
 
     companion object {
+        internal fun transferProgress(bytesRead: Long, totalBytes: Long, maximum: Int): Int? =
+            if (totalBytes <= 0 || maximum <= 0) null
+            else ((bytesRead.toDouble() / totalBytes) * maximum).toInt().coerceIn(0, maximum - 1)
+
         const val GROUP_KEY = "com.xtrakick.app.DOWNLOADS"
 
         const val KEY_VIDEO_ID = "KEY_VIDEO_ID"
@@ -1586,8 +1537,6 @@ class VideoDownloadWorker @AssistedInject constructor(
         // A staging file only lives while its own segment downloads, so anything this old
         // is guaranteed to be a leftover from a crashed or killed run.
         private const val STALE_STAGING_FILE_AGE_MS = 60L * 60L * 1000L
-
-        // Serialized across worker instances: the provider rejects concurrent creates.
 
         // Per-video work chains: downloads run in parallel, not in one shared queue.
         fun workName(videoId: Int) = "download-$videoId"

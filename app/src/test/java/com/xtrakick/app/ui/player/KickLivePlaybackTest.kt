@@ -130,11 +130,52 @@ class KickLivePlaybackTest {
     }
 
     @Test
-    fun minRecoveryBufferMsEnforces1500Floor() {
-        assertEquals(1_500L, KickLivePlayback.minRecoveryBufferMs(1_000))
-        assertEquals(1_500L, KickLivePlayback.minRecoveryBufferMs(1_500))
-        assertEquals(2_000L, KickLivePlayback.minRecoveryBufferMs(2_000))
-        assertEquals(1_500L, KickLivePlayback.minRecoveryBufferMs(null))
+    fun estimateSegmentDownloadTimeMsCalculatesAccurately() {
+        // 9 Mbps segment with 2000ms duration on 130 Mbps Wi-Fi: (9M * 2000) / 130M = ~138ms
+        val timeMs = KickLivePlayback.estimateSegmentDownloadTimeMs(
+            bandwidthEstimateBps = 130_000_000L,
+            targetBitrateBps = 9_000_000,
+            segmentDurationMs = 2_000L
+        )
+        assertEquals(138L, timeMs)
+
+        // Invalid or zero estimates return 0L
+        assertEquals(0L, KickLivePlayback.estimateSegmentDownloadTimeMs(0L, 9_000_000))
+        assertEquals(0L, KickLivePlayback.estimateSegmentDownloadTimeMs(130_000_000L, 0))
+    }
+
+    @Test
+    fun isBufferHealthyForRecoveryEvaluatesPhysicsAccurately() {
+        val targetBitrate = 9_000_000 // 9 Mbps (1080p60)
+        val highBandwidth = 130_000_000L // 130 Mbps
+        val lowBandwidth = 11_000_000L // 11 Mbps
+
+        // On 130 Mbps Wi-Fi, a 1.14s (1140ms) buffer is comfortably healthy
+        assertTrue(
+            KickLivePlayback.isBufferHealthyForRecovery(
+                forwardBufferMs = 1_140L,
+                bandwidthEstimateBps = highBandwidth,
+                targetBitrateBps = targetBitrate
+            )
+        )
+
+        // On 11 Mbps, downloading a 2s 9 Mbps chunk takes ~1.63s; 1.14s buffer is NOT safe
+        assertFalse(
+            KickLivePlayback.isBufferHealthyForRecovery(
+                forwardBufferMs = 1_140L,
+                bandwidthEstimateBps = lowBandwidth,
+                targetBitrateBps = targetBitrate
+            )
+        )
+
+        // Forward buffer below the absolute minimum safe floor (750ms) is never healthy
+        assertFalse(
+            KickLivePlayback.isBufferHealthyForRecovery(
+                forwardBufferMs = 500L,
+                bandwidthEstimateBps = highBandwidth,
+                targetBitrateBps = targetBitrate
+            )
+        )
     }
 
     @Test

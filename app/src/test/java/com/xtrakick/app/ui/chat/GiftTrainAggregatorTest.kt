@@ -7,6 +7,15 @@ import org.junit.Test
 
 class GiftTrainAggregatorTest {
 
+    @Test
+    fun mergedTrainKeepsLatestProvidedGifterColor() {
+        val aggregator = GiftTrainAggregator()
+        val snapshot = KickGiftTrainSnapshot(gifterName = "gifter", gifterColor = "#123456")
+        assertEquals("#123456", aggregator.onGiftEvent(snapshot, 0L).single().gifterColor)
+        assertEquals("#123456", aggregator.onGiftEvent(snapshot.copy(gifterColor = null), 1L).single().gifterColor)
+        assertEquals("#654321", aggregator.onGiftEvent(snapshot.copy(gifterColor = "#654321"), 2L).single().gifterColor)
+    }
+
     private val aggregator = GiftTrainAggregator()
     private val snapshot = KickGiftTrainSnapshot(gifterName = "rembbu", giftees = listOf("kkosu", "CJPJAM", "itnog"))
 

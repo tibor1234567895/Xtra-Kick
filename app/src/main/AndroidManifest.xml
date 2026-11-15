@@ -42,6 +42,13 @@
         android:supportsRtl="true"
         android:theme="@style/DarkTheme"
         tools:ignore="UnusedAttribute">
+        <!-- Transport uses JobScheduler on API 21+; its legacy alarm receiver
+             crashes on broadcasts without URI data. Our minimum SDK is 26. -->
+        <receiver
+            android:name="com.google.android.datatransport.runtime.scheduling.jobscheduling.AlarmManagerSchedulerBroadcastReceiver"
+            tools:node="remove"
+            tools:ignore="MissingClass" />
+
         <activity
             android:name=".ui.main.MainActivity"
             android:launchMode="singleTask"
@@ -124,7 +131,7 @@
         <service
             android:name=".ui.player.IvsPlayerService"
             android:foregroundServiceType="mediaPlayback"
-            android:stopWithTask="true"
+            android:stopWithTask="false"
             android:exported="true"
             tools:ignore="ExportedService">
             <intent-filter>
@@ -138,7 +145,7 @@
         <service
             android:name=".ui.player.PlaybackService"
             android:foregroundServiceType="mediaPlayback"
-            android:stopWithTask="true"
+            android:stopWithTask="false"
             android:exported="true"
             tools:ignore="ExportedService">
             <!-- No MediaBrowserService action: PlaybackService is a MediaSessionService, which

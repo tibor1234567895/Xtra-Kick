@@ -63,8 +63,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.net.ssl.X509TrustManager
 
@@ -99,7 +97,7 @@ class IvsPlayerService : Service() {
         }
     }
 
-    var player: Player? = null
+    @Volatile var player: Player? = null
         private set
 
     var title: String? = null
@@ -128,6 +126,8 @@ class IvsPlayerService : Service() {
     private var isPaused = false
     private var retryCount = 0
     private var startedAtMs = 0L
+    private var isLiveRewound = false
+    private var chatOnly = false
     private var surfaceAttached = false
     private var attachedSurfaceRef: android.view.Surface? = null
     private var suspendedByFocusLoss = false
@@ -137,27 +137,20 @@ class IvsPlayerService : Service() {
     private var wifiLockSafetyRunnable: Runnable? = null
     private var dynamicsProcessing: DynamicsProcessing? = null
 
-    /**
-     * Serializes every player mutation (load/play/pause/seek/volume/surface) onto one
-     * thread: the IVS engine fires callbacks on its own threads, so touching the player
-     * from main + callbacks concurrently races load/play/seek ordering into rebuffering.
-     */
-    private val playerExecutor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "IvsPlayerOp")
-    }
+    private val playerHandler = Handler(Looper.getMainLooper())
+    private var servicePlayerListener: Player.Listener? = null
+    @Volatile private var destroying = false
+    @Volatile private var watchPlaybackActive = false
 
     fun runPlayerOp(opName: String, block: (Player) -> Unit) {
         val current = player ?: return
-        try {
-            playerExecutor.execute {
-                try {
-                    block(current)
-                } catch (e: Exception) {
-                    playerDebugWarn("player op $opName failed: ${e.message}")
-                }
+        playerHandler.post {
+            if (destroying || player !== current) return@post
+            try {
+                block(current)
+            } catch (e: Exception) {
+                playerDebugWarn("player op $opName failed: ${e.message}")
             }
-        } catch (e: Exception) {
-            playerDebugWarn("player op $opName rejected: ${e.message}")
         }
     }
 
@@ -225,7 +218,7 @@ class IvsPlayerService : Service() {
         }
     }
 
-    /** Thread-safe; call on the player executor to keep load/play ordering. */
+    /** Called on the SDK main-looper owner to keep load/play ordering. */
     private fun evictPreloadedSources() {
         val evicted = synchronized(preloadedSources) {
             val all = preloadedSources.values.toList()
@@ -294,6 +287,7 @@ class IvsPlayerService : Service() {
 
     fun setMultiPovPlayingState(isPlaying: Boolean) {
         if (multiPovDelegate == null) return
+        watchPlaybackActive = isPlaying
         if (isPlaying) {
             UsagePing.noteWatchStarted()
             UsagePing.notePlaybackStarted(this, KickLivePlayback.ENGINE_IVS, playbackUsageId)
@@ -316,9 +310,7 @@ class IvsPlayerService : Service() {
             trustManager = trustManager,
             debugLogging = BuildConfig.DEBUG,
             isRewardsEnabled = { prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true) },
-            isPlaying = {
-                multiPovDelegate?.isPlaying() ?: (player?.state == Player.State.PLAYING)
-            },
+            isPlaying = { watchPlaybackActive },
             rewardsRepository = rewardsRepository,
         )
     }
@@ -333,6 +325,7 @@ class IvsPlayerService : Service() {
     }
 
     private fun stopKickViewerWatch() {
+        watchPlaybackActive = false
         watchOwner.stop()
     }
 
@@ -537,6 +530,15 @@ class IvsPlayerService : Service() {
                 override fun onCue(cue: com.amazonaws.ivs.player.Cue) = Unit
 
                 override fun onStateChanged(state: Player.State) {
+                    if (chatOnly) {
+                        stopKickViewerWatch()
+                        if (state == Player.State.PLAYING || state == Player.State.BUFFERING) {
+                            runPlayerOp("chat-only-pause") { it.pause() }
+                        }
+                        releasePlaybackLocks()
+                        return
+                    }
+                    if (multiPovDelegate == null) watchPlaybackActive = state == Player.State.PLAYING && !isPaused
                     if (lastPlaybackState == Player.State.PLAYING && state != Player.State.PLAYING) {
                         DiagnosticLogger.logPause(
                             callingContext = this@IvsPlayerService,
@@ -556,11 +558,14 @@ class IvsPlayerService : Service() {
                         UsagePing.notePlaybackStarted(this@IvsPlayerService, KickLivePlayback.ENGINE_IVS, playbackUsageId)
                         retryCount = 0
                         suspendedByFocusLoss = false
-                        startKickViewerWatchIfNeeded()
+                        if (multiPovDelegate == null) startKickViewerWatchIfNeeded()
                         requestAudioFocus()
                     } else {
                         UsagePing.noteWatchStopped(this@IvsPlayerService)
-                        stopKickViewerWatch()
+                        if (multiPovDelegate == null &&
+                            (state != Player.State.BUFFERING || !playbackRequested || isPaused || suspendedByFocusLoss)) {
+                            stopKickViewerWatch()
+                        }
                     }
                     if ((state == Player.State.READY || (state == Player.State.IDLE && backgroundPlaybackEnabled)) &&
                         playbackRequested && !isPaused && !suspendedByFocusLoss
@@ -620,6 +625,7 @@ class IvsPlayerService : Service() {
                 }
 
                 override fun onError(exception: PlayerException) {
+                    if (multiPovDelegate == null) stopKickViewerWatch()
                     DiagnosticLogger.logPause(
                         callingContext = this@IvsPlayerService,
                         source = "IvsPlayerService.onError",
@@ -651,8 +657,8 @@ class IvsPlayerService : Service() {
                         applicationHandler?.postDelayed({
                             if (currentUrl == retryUrl && playbackRequested) {
                                 runPlayerOp("background-retry") {
-                                    it.setLiveLowLatencyEnabled(true)
-                                    it.setRebufferToLive(true)
+                                    it.setLiveLowLatencyEnabled(!isLiveRewound)
+                                    it.setRebufferToLive(!isLiveRewound)
                                     if (!usePreloadedSource(it, retryUrl)) {
                                         it.load(Uri.parse(retryUrl))
                                     }
@@ -681,7 +687,7 @@ class IvsPlayerService : Service() {
                 override fun onQualityChanged(quality: com.amazonaws.ivs.player.Quality) {
                     playerDebugLog("onQualityChanged -> ${quality.name} (${quality.width}x${quality.height}, ${quality.bitrate} bps)")
                 }
-            }
+            }.also { servicePlayerListener = it }
         )
         val rewindMs = (prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10) * 1000
         val fastForwardMs = (prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10) * 1000
@@ -886,7 +892,10 @@ class IvsPlayerService : Service() {
         livestreamId: String? = null,
         channelLogin: String? = null,
         initialBitrate: Int = 0,
+        isLiveRewound: Boolean = false,
     ) {
+        this.isLiveRewound = isLiveRewound
+        chatOnly = false
         this.currentUrl = url
         this.title = title
         this.channelName = channelName
@@ -913,8 +922,8 @@ class IvsPlayerService : Service() {
             ?: KickLivePlayback.resolveInitialBitrate(prefs().getString(AppConstants.PLAYER_QUALITY, null))
         // Don't acquire locks pre-emptively — wait for BUFFERING/PLAYING callback.
         runPlayerOp("playStream-load-play") {
-            it.setLiveLowLatencyEnabled(true)
-            it.setRebufferToLive(true)
+            it.setLiveLowLatencyEnabled(!isLiveRewound)
+            it.setRebufferToLive(!isLiveRewound)
             it.setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
             it.setAutoQualityMode(true)
             if (targetInitialBitrate > 0) {
@@ -1124,7 +1133,7 @@ class IvsPlayerService : Service() {
         if (surface == null) {
             // Android's SurfaceHolder.Callback.surfaceDestroyed requires that the surface
             // is no longer being accessed before surfaceDestroyed returns. If setSurface(null)
-            // is only posted asynchronously to playerExecutor, Android tears down the native
+            // is only posted asynchronously to the SDK owner, Android tears down the native
             // BLASTBufferQueue while MediaCodec is still rendering, causing a fatal
             // MediaCodec$CodecException (rendering to non-initialized surface / UNKNOWN_ERROR 0x80000000).
             // Detach synchronously right here on the calling thread (matching Amazon's PlayerView).
@@ -1184,15 +1193,15 @@ class IvsPlayerService : Service() {
         deferredAudioSaverRunnable = null
     }
 
-    fun restoreForegroundQuality(target: Quality?, shouldLock: Boolean) {
+    fun restoreForegroundQuality(target: Quality?, shouldLock: Boolean): Boolean {
         val hadPendingDownshift = deferredAudioSaverRunnable != null
         cancelBackgroundAudioSaver()
         val previousSaver = backgroundSaverQuality
         backgroundSaverQuality = null
-        if (previousSaver == null) return
+        if (previousSaver == null) return false
         if (hadPendingDownshift) {
             playerDebugLog("restoreForegroundQuality: downshift was still pending, cancelled without touching player")
-            return
+            return false
         }
         playerDebugLog("restoring foreground quality: target=${target?.name}, shouldLock=$shouldLock")
         runPlayerOp("foreground-ceiling-restore") {
@@ -1204,6 +1213,7 @@ class IvsPlayerService : Service() {
                 it.setAutoMaxQuality(target)
             }
         }
+        return true
     }
 
     fun isBackgroundPlaybackEnabled(): Boolean = backgroundPlaybackEnabled
@@ -1213,6 +1223,7 @@ class IvsPlayerService : Service() {
     fun isPaused(): Boolean = isPaused
 
     fun play() {
+        if (chatOnly) return
         session?.isActive = true
         playbackRequested = true
         isPaused = false
@@ -1243,6 +1254,7 @@ class IvsPlayerService : Service() {
             abandonAudioFocus()
         }
         disarmDeadStreamWatchdog()
+        stopKickViewerWatch()
         runPlayerOp("pause") { it.pause() }
         releasePlaybackLocks()
         armIdleStop()
@@ -1250,7 +1262,17 @@ class IvsPlayerService : Service() {
         updateNotification()
     }
 
+    fun enterChatOnly() {
+        chatOnly = true
+        setBackgroundPlaybackEnabled(false)
+        pause(clearPlaybackRequest = true)
+        attachSurface(null)
+        runPlayerOp("chat-only-evict") { evictPreloadedSources() }
+        dismissMediaNotificationAndSession()
+    }
+
     fun resetForReload() {
+        watchPlaybackActive = false
         cancelBackgroundAudioSaver()
         backgroundSaverQuality = null
         backgroundPlaybackEnabled = false
@@ -1276,6 +1298,7 @@ class IvsPlayerService : Service() {
     }
 
     fun stopPlayback() {
+        watchPlaybackActive = false
         UsagePing.notePlaybackEnded(KickLivePlayback.ENGINE_IVS)
         DiagnosticLogger.logPause(
             callingContext = this,
@@ -1291,7 +1314,7 @@ class IvsPlayerService : Service() {
         clearActiveLiveChannel()
         // Drop the stale URL synchronously so a fragment binding mid-switch can't
         // adopt the previous stream (black screen + spinner until the fresh URL
-        // resolves). Queued player ops on the executor run after this.
+        // resolves). Queued player ops on the main looper run after this.
         currentUrl = null
         backgroundPlaybackEnabled = false
         playbackRequested = false
@@ -1740,7 +1763,7 @@ class IvsPlayerService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         if (multiPovDelegate != null) {
             detachMultiPovSession()
-        } else if (!backgroundPlaybackEnabled) {
+        } else if (!backgroundPlaybackEnabled || !playbackRequested || isPaused) {
             stopPlayback()
         }
     }
@@ -1795,6 +1818,8 @@ class IvsPlayerService : Service() {
     }
 
     override fun onDestroy() {
+        destroying = true
+        watchPlaybackActive = false
         isRunning = false
         UsagePing.notePlaybackEnded(KickLivePlayback.ENGINE_IVS)
         UsagePing.noteWatchStopped(this)
@@ -1814,62 +1839,38 @@ class IvsPlayerService : Service() {
         session?.release()
         abandonAudioFocus()
         releaseDynamicsProcessing()
-        // Pause when active, wait up to 1s for a safe release state, then detach
-        // and release. Releasing straight from PLAYING/BUFFERING stalls the next load.
+        playerHandler.removeCallbacksAndMessages(null)
         val doomed = player
         player = null
-        playerExecutor.shutdown()
-        Thread({
-            val target = doomed ?: return@Thread
-            try {
-                try {
-                    playerExecutor.awaitTermination(SAFE_RELEASE_WAIT_MS, TimeUnit.MILLISECONDS)
-                } catch (_: InterruptedException) {
-                    playerExecutor.shutdownNow()
-                }
-                try {
-                    val state = target.state
-                    if (state == Player.State.PLAYING || state == Player.State.BUFFERING) {
-                        target.pause()
-                    }
-                } catch (_: Exception) {
-                }
-                val deadline = SystemClock.uptimeMillis() + SAFE_RELEASE_WAIT_MS
-                while (SystemClock.uptimeMillis() < deadline) {
-                    val state = try {
-                        target.state
-                    } catch (_: Exception) {
-                        null
-                    } ?: break
-                    if (state == Player.State.IDLE ||
-                        state == Player.State.READY ||
-                        state == Player.State.ENDED
-                    ) {
-                        break
-                    }
-                    try {
-                        Thread.sleep(SAFE_RELEASE_POLL_MS)
-                    } catch (_: InterruptedException) {
-                        break
-                    }
-                }
-                try {
-                    target.setSurface(null)
-                } catch (_: Exception) {
-                }
-                evictPreloadedSources()
-                try {
-                    target.release()
-                } catch (_: Exception) {
-                }
-            } catch (_: Exception) {
-            }
-        }, "IvsPlayerRelease").start()
+        servicePlayerListener?.let { listener -> runCatching { doomed?.removeListener(listener) } }
+        servicePlayerListener = null
+        doomed?.let(::releasePlayer)
         releasePlaybackLocks()
         wakeLock = null
         wifiLock = null
         prefs().unregisterOnSharedPreferenceChangeListener(rewardsPreferenceChangeListener)
         super.onDestroy()
+    }
+
+    private fun releasePlayer(target: Player) {
+        val deadline = SystemClock.uptimeMillis() + SAFE_RELEASE_WAIT_MS
+        runCatching {
+            if (target.state == Player.State.PLAYING || target.state == Player.State.BUFFERING) target.pause()
+        }
+        playerHandler.post(object : Runnable {
+            override fun run() {
+                val state = runCatching { target.state }.getOrNull()
+                val safe = state == null || state == Player.State.IDLE ||
+                    state == Player.State.READY || state == Player.State.ENDED
+                if (!safe && SystemClock.uptimeMillis() < deadline) {
+                    playerHandler.postDelayed(this, SAFE_RELEASE_POLL_MS)
+                    return
+                }
+                runCatching { target.setSurface(null) }
+                evictPreloadedSources()
+                runCatching { target.release() }
+            }
+        })
     }
 
     companion object {

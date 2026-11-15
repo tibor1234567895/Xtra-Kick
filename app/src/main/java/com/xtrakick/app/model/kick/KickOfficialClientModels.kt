@@ -139,6 +139,8 @@ data class KickOfficialReplyInfo(
 data class KickOfficialChatMessageSentEvent(
     @SerialName("message_id")
     val messageId: String? = null,
+    @SerialName("chatroom_id")
+    val chatroomId: Long? = null,
     @SerialName("replies_to")
     val repliesTo: KickOfficialReplyInfo? = null,
     val broadcaster: KickOfficialEventUser? = null,

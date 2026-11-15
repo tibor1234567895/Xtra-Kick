@@ -64,18 +64,21 @@ class KickViewerWatchWebSocket(
             val activeLivestreamId = resolvedLivestream?.id?.toString()?.takeIf { it.isNotBlank() }
                 ?: resolvedChannel?.livestream?.id?.toString()?.takeIf { it.isNotBlank() }
                 ?: livestreamId?.takeIf { it.isNotBlank() && it != channelId }
-                ?: livestreamId?.takeIf { it.isNotBlank() }
 
             val activeChannelId = resolvedChannel?.id?.toString()?.takeIf { it.isNotBlank() }
                 ?: channelId?.toLongOrNull()?.toString()
                 ?: channelId?.takeIf { it.isNotBlank() }
 
-            if (activeLivestreamId.isNullOrBlank()) {
+            if (activeLivestreamId?.toLongOrNull()?.let { it > 0L } != true) {
                 Log.w(tag, "Kick numeric livestream id could not be resolved for channel=$channelLogin")
                 return@launch
             }
 
-            val effectiveChannelId = activeChannelId ?: channelId?.takeIf { it.isNotBlank() } ?: activeLivestreamId
+            val effectiveChannelId = activeChannelId?.takeIf { it.toLongOrNull()?.let { id -> id > 0L } == true }
+                ?: run {
+                    Log.w(tag, "Numeric channel id unavailable for channel=$channelLogin")
+                    return@launch
+                }
             resolvedLivestreamId = activeLivestreamId
             resolvedChannelId = effectiveChannelId
 

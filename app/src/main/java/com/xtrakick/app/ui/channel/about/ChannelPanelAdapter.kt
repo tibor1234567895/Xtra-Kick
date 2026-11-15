@@ -19,7 +19,10 @@ import com.xtrakick.app.R
 import com.xtrakick.app.databinding.FragmentChannelPanelListItemBinding
 import com.xtrakick.app.model.ui.ChannelPanel
 import com.xtrakick.app.util.HeadingFixPlugin
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import io.noties.markwon.Markwon
+import io.noties.markwon.AbstractMarkwonPlugin
+import io.noties.markwon.MarkwonConfiguration
 import io.noties.markwon.SoftBreakAddsNewLinePlugin
 import io.noties.markwon.linkify.LinkifyPlugin
 
@@ -30,7 +33,8 @@ class ChannelPanelAdapter(
         override fun areItemsTheSame(oldItem: ChannelPanel, newItem: ChannelPanel): Boolean {
             return oldItem.title == newItem.title &&
                     oldItem.imageUrl == newItem.imageUrl &&
-                    oldItem.description == newItem.description
+                    oldItem.description == newItem.description &&
+                    oldItem.linkUrl == newItem.linkUrl
         }
 
         override fun areContentsTheSame(oldItem: ChannelPanel, newItem: ChannelPanel): Boolean {
@@ -51,7 +55,23 @@ class ChannelPanelAdapter(
         .usePlugin(SoftBreakAddsNewLinePlugin.create())
         .usePlugin(LinkifyPlugin.create())
         .usePlugin(HeadingFixPlugin())
+        .usePlugin(object : AbstractMarkwonPlugin() {
+            override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
+                builder.linkResolver { _, link -> openWebLink(link) }
+            }
+        })
         .build()
+
+    private fun openWebLink(link: String?) {
+        val url = link?.toHttpUrlOrNull() ?: return
+        try {
+            fragment.startActivity(Intent(Intent.ACTION_VIEW, url.toString().toUri()).apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+            })
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(fragment.requireContext(), R.string.no_browser_found, Toast.LENGTH_LONG).show()
+        }
+    }
 
     inner class ViewHolder(
         private val binding: FragmentChannelPanelListItemBinding,
@@ -60,32 +80,26 @@ class ChannelPanelAdapter(
             with(binding) {
                 if (item != null) {
                     val context = fragment.requireContext()
+                    imageView.setOnClickListener(null)
+                    title.setOnClickListener(null)
+                    if (item.linkUrl != null) title.setOnClickListener { openWebLink(item.linkUrl) }
                     if (item.title != null) {
                         title.visibility = View.VISIBLE
                         title.text = item.title
                     } else {
                         title.visibility = View.GONE
                     }
+                    context.imageLoader.enqueue(
+                        ImageRequest.Builder(context).apply {
+                            data(item.imageUrl)
+                            crossfade(true)
+                            target(imageView)
+                        }.build()
+                    )
                     if (item.imageUrl != null) {
                         imageLayout.visibility = View.VISIBLE
-                        context.imageLoader.enqueue(
-                            ImageRequest.Builder(context).apply {
-                                data(item.imageUrl)
-                                crossfade(true)
-                                target(imageView)
-                            }.build()
-                        )
                         if (item.linkUrl != null) {
-                            imageView.setOnClickListener {
-                                try {
-                                    val intent = Intent(Intent.ACTION_VIEW, item.linkUrl.toUri()).apply {
-                                        addCategory(Intent.CATEGORY_BROWSABLE)
-                                    }
-                                    context.startActivity(intent)
-                                } catch (e: ActivityNotFoundException) {
-                                    Toast.makeText(context, R.string.no_browser_found, Toast.LENGTH_LONG).show()
-                                }
-                            }
+                            imageView.setOnClickListener { openWebLink(item.linkUrl) }
                         }
                     } else {
                         imageLayout.visibility = View.GONE

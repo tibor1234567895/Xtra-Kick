@@ -577,20 +577,20 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
                     String newResolutionString = obj.optString("RESOLUTION");
                     String id = obj.optString("STABLE-VARIANT-ID");
                     float newFrameRate = obj.optInt("FRAME-RATE");
-                    int newWidth;
-                    int newHeight;
-                    if (!newResolutionString.isBlank()) {
-                      String[] widthAndHeight = Util.split(newResolutionString, "x");
-                      newWidth = Integer.parseInt(widthAndHeight[0]);
-                      newHeight = Integer.parseInt(widthAndHeight[1]);
-                      if (newWidth <= 0 || newHeight <= 0) {
-                        // Resolution string is invalid.
-                        newWidth = Format.NO_VALUE;
-                        newHeight = Format.NO_VALUE;
+                    int newWidth = Format.NO_VALUE;
+                    int newHeight = Format.NO_VALUE;
+                    String[] dimensions = Util.split(newResolutionString, "x");
+                    if (dimensions.length == 2) {
+                      try {
+                        int parsedWidth = Integer.parseInt(dimensions[0]);
+                        int parsedHeight = Integer.parseInt(dimensions[1]);
+                        if (parsedWidth > 0 && parsedHeight > 0) {
+                          newWidth = parsedWidth;
+                          newHeight = parsedHeight;
+                        }
+                      } catch (NumberFormatException ignored) {
+                        // Invalid optional dimensions remain unknown.
                       }
-                    } else {
-                      newWidth = Format.NO_VALUE;
-                      newHeight = Format.NO_VALUE;
                     }
                     Uri newUri = Uri.parse(uri.toString().replace(
                             label + "/index-",

@@ -96,6 +96,7 @@ object AppConstants {
     const val UI_FOLLOWING_TABS = "ui_following_tabs"
     const val UI_SAVED_TABS = "ui_saved_tabs"
     const val UI_CHANNEL_TABS = "ui_channel_tabs"
+    const val UI_SHOW_CHANNEL_PANELS = "ui_show_channel_panels"
     const val UI_GAME_TABS = "ui_game_tabs"
     const val UI_SEARCH_TABS = "ui_search_tabs"
     const val UI_NAME_DISPLAY = "ui_name_display"

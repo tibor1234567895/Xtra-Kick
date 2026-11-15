@@ -76,7 +76,7 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
         binding.swipeRefresh.isEnabled = true
         binding.swipeRefresh.setOnRefreshListener {
             viewLifecycleOwner.lifecycleScope.launch {
-                kickFollowSync.refreshNow()
+                kickFollowSync.applyPendingNow()
                 viewModel.refresh(isPullToRefresh = true)
             }
         }

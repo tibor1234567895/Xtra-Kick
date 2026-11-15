@@ -23,6 +23,8 @@ import androidx.core.text.getSpans
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
 import com.xtrakick.app.R
 import com.xtrakick.app.model.chat.ChatMessage
 import com.xtrakick.app.model.chat.CheerEmote
@@ -41,7 +43,7 @@ import com.xtrakick.app.util.chat.ChatListParityUtils
 import java.util.Random
 
 class ChatAdapter(
-    private val messages: List<ChatMessage>,
+    initialMessages: List<ChatMessage>,
     private val localChatEmotes: List<ChatEmote>,
     private val thirdPartyEmotes: List<Emote>,
     private val globalBadges: List<ChatBadge>,
@@ -89,7 +91,20 @@ class ChatAdapter(
     private val messageClickListener: ((String?, ChatMessage?) -> Unit)?,
     private val replyClickListener: (() -> Unit)?,
     private val imageClickListener: ((String?, String?, String?, Boolean?, Int?, Boolean?, String?) -> Unit)?,
-) : RecyclerView.Adapter<ChatAdapter.ViewHolder>() {
+) : ListAdapter<ChatMessage, ChatAdapter.ViewHolder>(object : DiffUtil.ItemCallback<ChatMessage>() {
+    override fun areItemsTheSame(oldItem: ChatMessage, newItem: ChatMessage): Boolean =
+        oldItem === newItem || (oldItem.id != null && oldItem.id == newItem.id && oldItem.isReply == newItem.isReply)
+
+    // Content updates replace immutable messages; ChatMessage deliberately uses identity equality.
+    @android.annotation.SuppressLint("DiffUtilEquals")
+    override fun areContentsTheSame(oldItem: ChatMessage, newItem: ChatMessage): Boolean = oldItem === newItem
+}) {
+
+    private val messages: List<ChatMessage> get() = currentList
+
+    init {
+        submitList(synchronized(initialMessages) { initialMessages.toList() })
+    }
 
     companion object {
         const val PAYLOAD_REFORMAT = "payload_reformat"
@@ -184,9 +199,7 @@ class ChatAdapter(
 
     fun invalidateFormatting() {
         renderGeneration += 1L
-        synchronized(messages) {
-            messages.forEach(ChatAdapterUtils::invalidatePreparedMessage)
-        }
+        messages.forEach(ChatAdapterUtils::invalidatePreparedMessage)
     }
 
     fun updateLiveSettings(settings: LiveSettings): Boolean {
@@ -264,9 +277,8 @@ class ChatAdapter(
     }
 
     private fun bindMessage(holder: ViewHolder, position: Int) {
-        val chatMessage = synchronized(messages) {
-            messages.getOrNull(position)
-        } ?: return
+        val messages = currentList
+        val chatMessage = messages.getOrNull(position) ?: return
         val bindKey = messageBindKey(chatMessage)
         ChatAdapterUtils.beginImageBinding(holder.textView)
         val result = ChatAdapterUtils.prepareChatMessage(
@@ -316,10 +328,6 @@ class ChatAdapter(
             emoteQuality, animateGifs, enableOverlayEmotes, random, userColors,
             savedColors, savedLocalChatEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessage
         )
-    }
-
-    override fun getItemCount(): Int = synchronized(messages) {
-        messages.size
     }
 
     private fun replyPreviewKey(chatMessage: ChatMessage): String? {
@@ -402,9 +410,8 @@ class ChatAdapter(
         return InsetDrawable(cardDrawable, hInset, vInset, hInset, vInset)
     }
 
-    private fun createGiftedSubBackgroundDrawable(baseBackgroundColor: Int): LayerDrawable {
+    private fun createGiftedSubBackgroundDrawable(baseBackgroundColor: Int, accentColor: Int): LayerDrawable {
         val density = fragment.resources.displayMetrics.density
-        val accentColor = Color.parseColor("#00E701")
         val cardColor = ColorUtils.compositeColors(
             Color.parseColor("#F0181A1D"),
             baseBackgroundColor
@@ -496,9 +503,8 @@ class ChatAdapter(
             val density = textView.resources.displayMetrics.density
             val hPadding = (6f * density).toInt()
             val vPaddingNormal = (2.5f * density).toInt()
-            val isPrecededByReplyPreview = synchronized(messages) {
-                currentPosition > 0 && ChatListParityUtils.sharesVisualBlockWithPrevious(messages, currentPosition)
-            }
+            val isPrecededByReplyPreview = currentPosition > 0 &&
+                ChatListParityUtils.sharesVisualBlockWithPrevious(messages, currentPosition)
             val isKicksDonation = chatMessage.kicksDonation != null
             val isGiftedSub = chatMessage.giftedSubInfo != null
             textView.apply {
@@ -516,7 +522,11 @@ class ChatAdapter(
                         setPaddingRelative(hPad, vPad, hPad, vPad)
                     }
                     isGiftedSub -> {
-                        containerView.background = createGiftedSubBackgroundDrawable(resolvedBackgroundColor)
+                        val gifterColor = ChatAdapterUtils.getSavedColor(
+                            chatMessage.giftedSubInfo.gifterColor ?: chatMessage.color ?: "#00E701",
+                            savedColors, useReadableColors, isLightTheme = false,
+                        )
+                        containerView.background = createGiftedSubBackgroundDrawable(resolvedBackgroundColor, gifterColor)
                         val hPadLeft = (22f * density).toInt()
                         val hPadRight = (12f * density).toInt()
                         val vPad = (6f * density).toInt()

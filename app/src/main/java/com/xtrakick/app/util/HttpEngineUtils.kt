@@ -27,6 +27,7 @@ object HttpEngineUtils {
         continuation: Continuation<Pair<UrlResponseInfo, ByteArray>>,
         progressListener: NetworkUtils.ProgressListener? = null,
         output: OutputStream? = null,
+        onContentLength: ((Long) -> Unit)? = null,
     ): UrlRequest.Callback {
         return object : UrlRequest.Callback {
             private lateinit var mResponseBodyStream: ByteArrayOutputStream
@@ -38,6 +39,8 @@ object HttpEngineUtils {
             }
 
             override fun onResponseStarted(request: UrlRequest, info: UrlResponseInfo) {
+                onContentLength?.invoke(info.headers.asMap.entries.firstOrNull { it.key.equals(CONTENT_LENGTH_HEADER_NAME, true) }
+                    ?.value?.firstOrNull()?.toLongOrNull() ?: -1L)
                 val bodyLength = info.headers.asMap[CONTENT_LENGTH_HEADER_NAME]?.takeIf { it.size == 1 }?.getOrNull(0)?.toLongOrNull() ?: -1
                 require(output != null || bodyLength <= MAX_ARRAY_SIZE) { "The body is too large and wouldn't fit in a byte array!" }
                 mResponseBodyStream = if (output == null && bodyLength >= 0) {

@@ -63,17 +63,18 @@ object KickClipApi {
     /**
      * Chooses the (start, duration) window inside a temporary clip's source so the saved
      * clip ends at the moment of the initiate call ("last N seconds" semantics), clamped
-     * to the official app's limits and to whatever the server actually recorded. Duration
-     * never drops below the official minimum: for a source that short the server rejects
+     * to the official app's limits and to whatever the server actually recorded.
+     * [fromStart] selects preview zero for a positioned request. Duration never drops
+     * below the official minimum: for a source that short the server rejects
      * the finalize, which surfaces as a creation error instead of a crash.
      */
-    fun computeClipRange(sourceDurationSeconds: Int?, requestedDurationSeconds: Int): Pair<Int, Int> {
+    fun computeClipRange(sourceDurationSeconds: Int?, requestedDurationSeconds: Int, fromStart: Boolean = false): Pair<Int, Int> {
         val maxBySource = sourceDurationSeconds?.coerceAtLeast(0)
         val upperBound = if (maxBySource != null) minOf(CLIP_MAX_LENGTH_SECONDS, maxBySource) else CLIP_MAX_LENGTH_SECONDS
         val duration = requestedDurationSeconds
             .coerceAtLeast(CLIP_MIN_LENGTH_SECONDS)
             .coerceAtMost(maxOf(upperBound, CLIP_MIN_LENGTH_SECONDS))
-        val start = maxBySource?.let { (it - duration).coerceAtLeast(0) } ?: 0
+        val start = if (fromStart) 0 else maxBySource?.let { (it - duration).coerceAtLeast(0) } ?: 0
         return start to duration
     }
 

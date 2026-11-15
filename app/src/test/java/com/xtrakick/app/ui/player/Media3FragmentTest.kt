@@ -30,9 +30,11 @@ import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.Job
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -50,6 +52,25 @@ import java.util.concurrent.Executors
 @Config(application = Application::class, shadows = [Media3FragmentTest.RecordingController::class])
 @RunWith(RobolectricTestRunner::class)
 class Media3FragmentTest {
+    @Test
+    fun unchangedMetadataKeepsTheActiveWatchSession() {
+        var playing = false
+        val owner = KickViewerWatchOwner(kick, null, isRewardsEnabled = { true }, isPlaying = { playing })
+        val job = Job()
+        try {
+            owner.setMetadata("42", "123", "channel")
+            owner.javaClass.getDeclaredField("job").apply { isAccessible = true }.set(owner, job)
+            playing = true
+            owner.setMetadata("42", "123", "channel")
+            assertTrue(job.isActive)
+            playing = false
+            owner.setMetadata("43", "124", "other")
+            assertTrue(job.isCancelled)
+        } finally {
+            owner.release()
+        }
+    }
+
     private val appContext = RuntimeEnvironment.getApplication()
     private val controller = Shadow.newInstanceOf(MediaController::class.java)
     private val playback = Shadow.extract<RecordingController>(controller)
@@ -95,6 +116,36 @@ class Media3FragmentTest {
     fun close() {
         database.close()
         executor.shutdownNow()
+    }
+
+    @Test
+    fun chatOnlyUsesFullHeightAndKeepsPlaybackActionsAccessibleAfterRotation() {
+        val binding = ReflectionHelpers.getField<FragmentPlayerBinding>(fragment, "_binding")
+        playbackModel.quality = "chat_only"
+        binding.playerControls.title.text = "Current stream title"
+        binding.playerControls.title.visibility = android.view.View.VISIBLE
+        var openedChannel = false
+        binding.playerControls.channel.setOnClickListener { openedChannel = true }
+        val updateLayout = PlayerFragment::class.java.getDeclaredMethod(
+            "updateChatOnlyLayout", Boolean::class.javaPrimitiveType,
+        ).apply { isAccessible = true }
+
+        for (portrait in listOf(true, false)) {
+            binding.chatLayout.isPortrait = portrait
+            updateLayout.invoke(fragment, false)
+            binding.chatLayout.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.EXACTLY),
+            )
+            assertEquals(1920, binding.chatLayout.measuredHeight)
+            assertEquals(android.view.View.GONE, binding.playerLayout.visibility)
+            assertEquals(android.view.View.VISIBLE, binding.chatOnlyHeader.visibility)
+            assertTrue(binding.chatOnlyWatch.hasOnClickListeners())
+            assertTrue(binding.chatOnlySettings.hasOnClickListeners())
+            assertEquals("Current stream title", binding.chatOnlyTitle.text.toString())
+        }
+        binding.chatOnlyChannel.performClick()
+        assertTrue(openedChannel)
     }
 
     @Test

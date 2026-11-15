@@ -820,7 +820,10 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
             }
             if (user.createdAt != null) {
                 userCreated.visibility = View.VISIBLE
-                userCreated.text = getString(R.string.created_at, KickApiHelper.formatTimeString(requireContext(), user.createdAt))
+                val date = KickApiHelper.parseIso8601DateUTC(user.createdAt)?.let {
+                    java.text.DateFormat.getDateInstance(java.text.DateFormat.LONG).format(java.util.Date(it))
+                } ?: KickApiHelper.formatTimeString(requireContext(), user.createdAt)
+                userCreated.text = "${getString(R.string.account_created_label)} · $date"
                 userCreated.setTextColor(Color.LTGRAY)
                 userCreated.setShadowLayer(4f, 0f, 0f, Color.BLACK)
             } else {

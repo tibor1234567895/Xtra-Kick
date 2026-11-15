@@ -11,7 +11,7 @@ class StrictEditText : TextInputEditText {
     constructor(context: Context, attrs: AttributeSet, defStyleAttr: Int) : super(context, attrs, defStyleAttr)
 
     override fun onSelectionChanged(start: Int, end: Int) {
-        val length = text!!.length
+        val length = text?.length ?: return super.onSelectionChanged(start, end)
         if (start != length || end != length) {
             setSelection(length, length)
             return

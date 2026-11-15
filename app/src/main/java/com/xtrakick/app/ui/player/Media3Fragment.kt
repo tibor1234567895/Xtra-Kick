@@ -203,17 +203,19 @@ class Media3Fragment : PlayerFragment() {
             surfaceCreated = true
         }
 
-        controllerFuture = MediaController.Builder(
+        val future = MediaController.Builder(
             requireContext(),
             SessionToken(
                 requireContext(),
                 ComponentName(requireContext(), PlaybackService::class.java)
             )
         ).buildAsync()
-        controllerFuture?.addListener({
-            val controller = controllerFuture?.get()
+        controllerFuture = future
+        future.addListener({
+            if (bindingOrNull == null || controllerFuture !== future || future.isCancelled) return@addListener
+            val controller = future.get() ?: return@addListener
             if (viewModel.quality != AUDIO_ONLY_QUALITY) {
-                showVideoSurface(controller ?: return@addListener)
+                showVideoSurface(controller)
             }
             val listener = object : Player.Listener {
 
@@ -325,14 +327,21 @@ class Media3Fragment : PlayerFragment() {
                         viewModel.updateQualities = viewModel.quality != AUDIO_ONLY_QUALITY
                     }
                     if (viewModel.qualities.isEmpty() || viewModel.updateQualities) {
-                        player?.sendCustomCommand(
+                        val expectedView = bindingOrNull?.root ?: return
+                        val expectedController = player ?: return
+                        val uiExecutor = ContextCompat.getMainExecutor(requireContext())
+                        expectedController.sendCustomCommand(
                             SessionCommand(PlaybackService.GET_QUALITIES, Bundle.EMPTY),
                             Bundle.EMPTY
-                        )?.let { result ->
+                        ).let { result ->
                             result.addListener({
-                                if (result.get().resultCode == SessionResult.RESULT_SUCCESS) {
-                                    val names = result.get().extras.getStringArray(PlaybackService.NAMES)
-                                    val codecs = result.get().extras.getStringArray(PlaybackService.CODECS)?.map { codec ->
+                                if (bindingOrNull?.root !== expectedView || player !== expectedController || !isAdded
+                                    || !viewLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+                                    || childFragmentManager.isStateSaved) return@addListener
+                                val reply = runCatching { result.get() }.getOrNull() ?: return@addListener
+                                if (reply.resultCode == SessionResult.RESULT_SUCCESS) {
+                                    val names = reply.extras.getStringArray(PlaybackService.NAMES)
+                                    val codecs = reply.extras.getStringArray(PlaybackService.CODECS)?.map { codec ->
                                         codec?.substringBefore('.').let {
                                             when (it) {
                                                 "av01" -> "AV1"
@@ -342,8 +351,8 @@ class Media3Fragment : PlayerFragment() {
                                             }
                                         }
                                     }?.takeUnless { it.all { it == "H.264" || it == "mp4a" } }
-                                    val urls = result.get().extras.getStringArray(PlaybackService.URLS)
-                                    val bitrates = result.get().extras.getIntArray(PlaybackService.BITRATES)
+                                    val urls = reply.extras.getStringArray(PlaybackService.URLS)
+                                    val bitrates = reply.extras.getIntArray(PlaybackService.BITRATES)
                                     if (BuildConfig.DEBUG) {
                                         Log.d(
                                             "KickVodQuality",
@@ -424,7 +433,7 @@ class Media3Fragment : PlayerFragment() {
                                         viewModel.updateQualities = false
                                     }
                                 }
-                            }, MoreExecutors.directExecutor())
+                            }, uiExecutor)
                         }
                     }
                 }
@@ -566,7 +575,7 @@ class Media3Fragment : PlayerFragment() {
                     }
                 }
             }
-            controller?.addListener(listener)
+            controller.addListener(listener)
             playerListener = listener
             if (viewModel.restoreQuality) {
                 viewModel.restoreQuality = false
@@ -574,18 +583,25 @@ class Media3Fragment : PlayerFragment() {
                 changeQuality(targetQuality)
             }
             if (viewModel.quality != AUDIO_ONLY_QUALITY && viewModel.quality != CHAT_ONLY_QUALITY) {
-                showVideoSurface(controller ?: return@addListener)
+                showVideoSurface(controller)
             }
-            player?.sendCustomCommand(
+            val expectedView = bindingOrNull?.root ?: return@addListener
+            val expectedController = player ?: return@addListener
+            val uiExecutor = ContextCompat.getMainExecutor(requireContext())
+            expectedController.sendCustomCommand(
                 SessionCommand(
                     PlaybackService.SET_SLEEP_TIMER, bundleOf(
                         PlaybackService.DURATION to -1L
                     )
                 ), Bundle.EMPTY
-            )?.let { result ->
+            ).let { result ->
                 result.addListener({
-                    if (result.get().resultCode == SessionResult.RESULT_SUCCESS) {
-                        val endTime = result.get().extras.getLong(PlaybackService.RESULT)
+                    if (bindingOrNull?.root !== expectedView || player !== expectedController || !isAdded
+                        || !viewLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+                        || childFragmentManager.isStateSaved) return@addListener
+                    val reply = runCatching { result.get() }.getOrNull() ?: return@addListener
+                    if (reply.resultCode == SessionResult.RESULT_SUCCESS) {
+                        val endTime = reply.extras.getLong(PlaybackService.RESULT)
                         if (endTime > 0L) {
                             val duration = endTime - System.currentTimeMillis()
                             if (duration > 0L) {
@@ -597,7 +613,7 @@ class Media3Fragment : PlayerFragment() {
                             }
                         }
                     }
-                }, MoreExecutors.directExecutor())
+                }, uiExecutor)
             }
             if (viewModel.resume) {
                 viewModel.resume = false
@@ -1159,7 +1175,10 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun showPlaylistTags(mediaPlaylist: Boolean) {
-        player?.sendCustomCommand(
+        val expectedView = bindingOrNull?.root ?: return
+        val expectedController = player ?: return
+        val uiExecutor = ContextCompat.getMainExecutor(requireContext())
+        expectedController.sendCustomCommand(
             SessionCommand(
                 if (mediaPlaylist) {
                     PlaybackService.GET_MEDIA_PLAYLIST
@@ -1168,10 +1187,14 @@ class Media3Fragment : PlayerFragment() {
                 },
                 Bundle.EMPTY
             ), Bundle.EMPTY
-        )?.let { result ->
+        ).let { result ->
             result.addListener({
-                if (result.get().resultCode == SessionResult.RESULT_SUCCESS) {
-                    val tags = result.get().extras.getStringArray(PlaybackService.RESULT)?.joinToString("\n")
+                if (bindingOrNull?.root !== expectedView || player !== expectedController || !isAdded
+                    || !viewLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+                    || childFragmentManager.isStateSaved) return@addListener
+                val reply = runCatching { result.get() }.getOrNull() ?: return@addListener
+                if (reply.resultCode == SessionResult.RESULT_SUCCESS) {
+                    val tags = reply.extras.getStringArray(PlaybackService.RESULT)?.joinToString("\n")
                     if (!tags.isNullOrBlank()) {
                         requireContext().getAlertDialogBuilder().apply {
                             setView(NestedScrollView(context).apply {
@@ -1191,7 +1214,7 @@ class Media3Fragment : PlayerFragment() {
                         }.show()
                     }
                 }
-            }, MoreExecutors.directExecutor())
+            }, uiExecutor)
         }
     }
 
@@ -1297,6 +1320,7 @@ class Media3Fragment : PlayerFragment() {
                 showVideoSurface(player)
             }
         }
+        updateChatOnlyLayout()
     }
 
     override fun startAudioOnly() {
@@ -1331,13 +1355,20 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun downloadVideo() {
-        player?.sendCustomCommand(
+        val expectedView = bindingOrNull?.root ?: return
+        val expectedController = player ?: return
+        val uiExecutor = ContextCompat.getMainExecutor(requireContext())
+        expectedController.sendCustomCommand(
             SessionCommand(PlaybackService.GET_DURATION, Bundle.EMPTY),
             Bundle.EMPTY
-        )?.let { result ->
+        ).let { result ->
             result.addListener({
-                if (result.get().resultCode == SessionResult.RESULT_SUCCESS) {
-                    val totalDuration = result.get().extras.getLong(PlaybackService.RESULT)
+                if (bindingOrNull?.root !== expectedView || player !== expectedController || !isAdded
+                    || !viewLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+                    || childFragmentManager.isStateSaved) return@addListener
+                val reply = runCatching { result.get() }.getOrNull() ?: return@addListener
+                if (reply.resultCode == SessionResult.RESULT_SUCCESS) {
+                    val totalDuration = reply.extras.getLong(PlaybackService.RESULT)
                     val qualities = viewModel.qualities.filter { !it.value.second.isNullOrBlank() }
                     DownloadDialog.newInstance(
                         id = requireArguments().getString(KEY_VIDEO_ID),
@@ -1361,7 +1392,7 @@ class Media3Fragment : PlayerFragment() {
                         qualityUrls = qualities.mapNotNull { it.value.second }.toTypedArray(),
                     ).show(childFragmentManager, null)
                 }
-            }, MoreExecutors.directExecutor())
+            }, uiExecutor)
         }
     }
 

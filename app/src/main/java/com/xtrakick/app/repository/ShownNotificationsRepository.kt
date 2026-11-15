@@ -709,8 +709,7 @@ class ShownNotificationsRepository @Inject constructor(
         }
 
         /**
-         * Sentinel outside the practical range of String.hashCode() for channel ids, so a
-         * per-stream notification can never collide with the group summary by construction.
+         * Reserved for the group summary; per-stream IDs explicitly exclude this value.
          */
         internal const val SUMMARY_NOTIFICATION_ID = Int.MIN_VALUE
 
@@ -725,5 +724,6 @@ class ShownNotificationsRepository @Inject constructor(
          */
         internal fun notificationIdFor(stream: Stream): Int =
             (stream.channelId ?: stream.channelLogin?.lowercase() ?: stream.id).hashCode()
+                .let { if (it == SUMMARY_NOTIFICATION_ID) 0 else it }
     }
 }

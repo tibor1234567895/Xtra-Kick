@@ -31,10 +31,17 @@ class KickViewerWatchOwner(
     private var channelLogin: String? = null
 
     fun setMetadata(channelId: String?, livestreamId: String?, channelLogin: String?) {
+        val nextChannelId = channelId?.takeIf { it.isNotBlank() }
+        val nextLivestreamId = livestreamId?.takeIf { it.isNotBlank() }
+        val nextChannelLogin = channelLogin?.takeIf { it.isNotBlank() }
+        if (this.channelId == nextChannelId && this.livestreamId == nextLivestreamId && this.channelLogin == nextChannelLogin) {
+            if (isPlaying()) startIfNeeded()
+            return
+        }
         stop()
-        this.channelId = channelId?.takeIf { it.isNotBlank() }
-        this.livestreamId = livestreamId?.takeIf { it.isNotBlank() }
-        this.channelLogin = channelLogin?.takeIf { it.isNotBlank() }
+        this.channelId = nextChannelId
+        this.livestreamId = nextLivestreamId
+        this.channelLogin = nextChannelLogin
         if (isPlaying()) {
             startIfNeeded()
         }

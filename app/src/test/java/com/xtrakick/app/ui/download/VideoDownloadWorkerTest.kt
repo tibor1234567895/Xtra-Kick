@@ -40,6 +40,23 @@ import org.robolectric.shadows.ShadowLog
 @Config(application = Application::class)
 @RunWith(RobolectricTestRunner::class)
 class VideoDownloadWorkerTest {
+    @Test fun transferProgressDoesNotMarkAnOpenResponseComplete() {
+        assertEquals(50, VideoDownloadWorker.transferProgress(50L, 100L, 100))
+        assertEquals(99, VideoDownloadWorker.transferProgress(100L, 100L, 100))
+        assertEquals(99, VideoDownloadWorker.transferProgress(200L, 100L, 100))
+        assertEquals(50, VideoDownloadWorker.transferProgress(3_000_000_000L, 6_000_000_000L, 100))
+        assertNull(VideoDownloadWorker.transferProgress(10L, -1L, 100))
+        assertNull(VideoDownloadWorker.transferProgress(10L, 100L, 0))
+    }
+
+    @Test fun chatOffsetsKeepPreClipHistoryBeforeTheStart() {
+        val start = java.time.Instant.parse("2026-11-09T20:26:55.001Z").toEpochMilli()
+        val message = com.xtrakick.app.model.kick.KickMessage(createdAt = "2026-11-09T20:26:55Z")
+        assertEquals(-1, worker(0).getKickChatOffsetSeconds(message, start))
+        val laterMessage = com.xtrakick.app.model.kick.KickMessage(createdAt = "2026-11-09T20:27:00Z")
+        assertEquals(4, worker(0).getKickChatOffsetSeconds(laterMessage, start))
+    }
+
     private val context = RuntimeEnvironment.getApplication()
     private val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
     private val repository = OfflineRepository(database.videos(), database.localFollowsChannel(), database.bookmarks())

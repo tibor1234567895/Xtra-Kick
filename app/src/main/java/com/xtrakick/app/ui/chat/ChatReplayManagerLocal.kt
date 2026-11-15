@@ -128,7 +128,7 @@ class ChatReplayManagerLocal(
                 // chat was "streaming in weirdly" instead of popping like VODs.
                 val index = messageUpperBound(messages, position)
                 val preloadMessages = if (preload) {
-                    val from = max(messageLowerBound(messages, max(position - PRELOAD_MAX_AGE_MS, 0L)), index - PRELOAD_MAX_MESSAGES)
+                    val from = max(messageLowerBound(messages, position - PRELOAD_MAX_AGE_MS), index - PRELOAD_MAX_MESSAGES)
                     messages.subList(from, index)
                 } else {
                     emptyList()

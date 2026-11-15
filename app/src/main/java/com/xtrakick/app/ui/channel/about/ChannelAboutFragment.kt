@@ -33,6 +33,8 @@ import com.xtrakick.app.databinding.FragmentAboutBinding
 import com.xtrakick.app.ui.channel.ChannelPagerFragmentArgs
 import com.xtrakick.app.ui.common.BaseNetworkFragment
 import com.xtrakick.app.ui.common.IntegrityDialog
+import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -69,10 +71,8 @@ class ChannelAboutFragment : BaseNetworkFragment(), IntegrityDialog.CallbackList
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
                     viewModel.description.collectLatest {
-                        if (!it.isNullOrBlank()) {
-                            description.visibility = View.VISIBLE
-                            description.text = it
-                        }
+                        description.isVisible = !it.isNullOrBlank()
+                        description.text = it
                     }
                 }
             }
@@ -147,34 +147,35 @@ class ChannelAboutFragment : BaseNetworkFragment(), IntegrityDialog.CallbackList
                 }
             }
         }
+        loadAbout()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        loadAbout()
+    }
+
+    private fun loadAbout() {
         viewModel.loadAbout(
-                channelId = args.channelId,
-                channelLogin = args.channelLogin
-            )
+            channelLogin = args.channelLogin,
+            showPanels = requireContext().prefs().getBoolean(AppConstants.UI_SHOW_CHANNEL_PANELS, true),
+        )
     }
 
     override fun onNetworkRestored() {
-        viewModel.loadAbout(
-                channelId = args.channelId,
-                channelLogin = args.channelLogin
-            )
+        loadAbout()
     }
 
     override fun onIntegrityDialogCallback(callback: String?) {
         (parentFragment as? IntegrityDialog.CallbackListener)?.onIntegrityDialogCallback("refresh")
         if (callback == "refresh") {
-            viewLifecycleOwner.lifecycleScope.launch {
-                repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    viewModel.loadAbout(
-                channelId = args.channelId,
-                channelLogin = args.channelLogin
-            )
-                }
-            }
+            loadAbout()
         }
     }
 
     override fun onDestroyView() {
+        binding.recyclerView.adapter = null
+        panelAdapter = null
         super.onDestroyView()
         _binding = null
     }

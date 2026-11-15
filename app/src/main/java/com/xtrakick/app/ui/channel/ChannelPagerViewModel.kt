@@ -139,6 +139,7 @@ class ChannelPagerViewModel @Inject constructor(
                                 profileImageUrl = channel.user?.profileImage,
                                 followersCount = channel.followersCount,
                                 bannerImageURL = channel.bannerUrl,
+                                createdAt = channel.user?.createdAt?.let { kickRepository.normalizeDate(it) },
                                 lastBroadcast = lastBroadcast,
                                 isLive = channel.livestream != null,
                             )
@@ -516,7 +517,7 @@ class ChannelPagerViewModel @Inject constructor(
                         })
                     }
                     offlineRepository.getVideosByUserId(userId).forEach {
-                        offlineRepository.updateVideo(it.apply {
+                        offlineRepository.updateChannelMetadata(it.apply {
                             channelLogin = user.channelLogin
                             channelName = user.channelName
                             channelLogo = downloadedLogo

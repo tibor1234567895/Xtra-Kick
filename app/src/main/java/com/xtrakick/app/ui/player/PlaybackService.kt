@@ -301,6 +301,7 @@ class PlaybackService : MediaSessionService() {
                             "mediaItemPresent=${player.currentMediaItem != null}"
                     )
                     if (playbackState == androidx.media3.common.Player.STATE_ENDED || playbackState == androidx.media3.common.Player.STATE_IDLE) {
+                        stopKickViewerWatch()
                         DiagnosticLogger.logPause(
                             callingContext = this@PlaybackService,
                             source = "PlaybackService.onPlaybackStateChanged",
@@ -318,6 +319,7 @@ class PlaybackService : MediaSessionService() {
                             "background=$background"
                     )
                     if (!playWhenReady) {
+                        stopKickViewerWatch()
                         val isUser = reason == androidx.media3.common.Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
                         val reasonStr = when (reason) {
                             androidx.media3.common.Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "USER_REQUEST"
@@ -361,7 +363,9 @@ class PlaybackService : MediaSessionService() {
                         }
                     } else {
                         UsagePing.noteWatchStopped(this@PlaybackService)
-                        stopKickViewerWatch()
+                        if (!player.playWhenReady || player.playbackState != Player.STATE_BUFFERING) {
+                            stopKickViewerWatch()
+                        }
                         savePositionTimer?.cancel()
                         savePositionTimer = null
                         updateSavedPosition()
@@ -370,6 +374,7 @@ class PlaybackService : MediaSessionService() {
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
+                    stopKickViewerWatch()
                     logPlayerError(error)
                     val httpCode = Media3ErrorUtils.httpResponseCode(error)
                     if (httpCode == 404 && videoId == null && offlineVideoId == null) {
@@ -1036,6 +1041,9 @@ class PlaybackService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         savePosition()
+        val p = mediaSession?.player
+        if (p?.isPlaying == true ||
+            (p?.playWhenReady == true && p.playbackState == Player.STATE_BUFFERING)) return
         clearActiveLiveChannel()
         mediaSession?.player?.clearMediaItems()
         pauseAllPlayersAndStopSelf()

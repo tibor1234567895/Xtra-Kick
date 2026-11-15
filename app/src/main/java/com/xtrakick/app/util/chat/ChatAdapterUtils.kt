@@ -98,7 +98,14 @@ object ChatAdapterUtils {
             invalidateScheduled = false
             lastInvalidateMs = SystemClock.uptimeMillis()
             val views = synchronized(dirtyViews) {
-                dirtyViews.keys.toList().also { dirtyViews.clear() }
+                // Weak keys can disappear after a size check, so avoid toList's singleton shortcut.
+                val snapshot = ArrayList<View>()
+                val iterator = dirtyViews.keys.iterator()
+                while (iterator.hasNext()) {
+                    snapshot.add(iterator.next())
+                }
+                dirtyViews.clear()
+                snapshot
             }
             views.forEach(View::invalidate)
         }
@@ -524,7 +531,7 @@ object ChatAdapterUtils {
                     val density = context.resources.displayMetrics.density
                     val iconSize = (18f * density).toInt()
                     giftDrawable.setBounds(0, 0, iconSize, iconSize)
-                    giftDrawable.setTint(Color.parseColor("#00E701"))
+                    giftDrawable.setTint(gifterColor)
                     builder.append(". ")
                     builder.setSpan(CenteredImageSpan(giftDrawable), builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
                     builder.setSpan(ForegroundColorSpan(Color.TRANSPARENT), builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -967,7 +974,7 @@ object ChatAdapterUtils {
         builder.setSpan(span, start, end, SPAN_EXCLUSIVE_EXCLUSIVE)
     }
 
-    private fun getSavedColor(color: String, savedColors: HashMap<String, Int>, useReadableColors: Boolean, isLightTheme: Boolean): Int {
+    internal fun getSavedColor(color: String, savedColors: HashMap<String, Int>, useReadableColors: Boolean, isLightTheme: Boolean): Int {
         // Color.parseColor throws on any malformed string, and both callers feed it wire data
         // (chatMessage.color and emote.color) from inside onBindViewHolder — so one bad value
         // from any chatter crashed the app mid-scroll. Fall back instead, and cache the

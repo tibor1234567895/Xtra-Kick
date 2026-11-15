@@ -54,6 +54,7 @@ class GiftTrainAggregator(
         giftees = giftees.distinctBy { it.lowercase(Locale.ROOT) }.take(maxGifteesPerTrain),
         totalGifted = totalGifted ?: giftees.size.coerceAtLeast(1),
         lastUpdatedAtMs = nowMs,
+        gifterColor = gifterColor,
     )
 
     private fun KickGiftTrain.mergedWith(snapshot: KickGiftTrainSnapshot, nowMs: Long): KickGiftTrain {
@@ -69,6 +70,7 @@ class GiftTrainAggregator(
             giftees = giftees.values.toList(),
             totalGifted = totalGifted + (snapshot.totalGifted ?: snapshot.giftees.size.coerceAtLeast(1)),
             lastUpdatedAtMs = nowMs,
+            gifterColor = snapshot.gifterColor ?: gifterColor,
         )
     }
 

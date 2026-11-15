@@ -36,6 +36,7 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DownloadStorage
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
+import java.io.File
 import kotlin.math.min
 
 class DownloadsAdapter(
@@ -164,6 +165,7 @@ class DownloadsAdapter(
                         fragment.requireContext().imageLoader.enqueue(
                             ImageRequest.Builder(fragment.requireContext()).apply {
                                 data(item.channelLogo)
+                                memoryCacheKey("${item.channelLogo}:${File(item.channelLogo).lastModified()}")
                                 diskCachePolicy(CachePolicy.DISABLED)
                                 if (context.prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
                                     transformations(CircleCropTransformation())

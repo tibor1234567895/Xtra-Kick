@@ -33,7 +33,6 @@ import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
-import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -68,7 +67,7 @@ import androidx.preference.SeekBarPreference
 import androidx.preference.SwitchPreferenceCompat
 import androidx.preference.forEach
 import androidx.recyclerview.widget.ItemTouchHelper
-import androidx.recyclerview.widget.LinearLayoutManager
+import com.xtrakick.app.ui.view.SafeLinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
@@ -85,6 +84,7 @@ import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.repository.NotificationUsersRepository
 import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.main.RewardClaimScheduler
+import com.xtrakick.app.ui.common.BaseStateActivity
 import com.xtrakick.app.ui.common.CompactDialogs.constrainSheets
 import com.xtrakick.app.ui.following.KickFollowImportDialog
 import com.xtrakick.app.ui.player.LiveLatencySettings
@@ -116,7 +116,7 @@ import java.util.Collections
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class SettingsActivity : AppCompatActivity() {
+class SettingsActivity : BaseStateActivity() {
 
     private lateinit var binding: ActivitySettingsBinding
     private var changed = false
@@ -211,7 +211,7 @@ class SettingsActivity : AppCompatActivity() {
         )
         listAdapter.itemTouchHelper = itemTouchHelper
         val recyclerView = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@SettingsActivity)
+            layoutManager = SafeLinearLayoutManager(this@SettingsActivity)
             adapter = listAdapter
             val padding = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 10F, resources.displayMetrics).toInt()
             setPadding(0, padding, 0, 0)
@@ -1724,7 +1724,7 @@ class SettingsActivity : AppCompatActivity() {
                     listAdapter.itemTouchHelper = itemTouchHelper
                     val recyclerView = RecyclerView(requireContext()).apply {
                         id = newId
-                        layoutManager = LinearLayoutManager(requireContext())
+                        layoutManager = SafeLinearLayoutManager(requireContext())
                         adapter = listAdapter
                     }
                     itemTouchHelper.attachToRecyclerView(recyclerView)
@@ -1982,7 +1982,7 @@ class SettingsActivity : AppCompatActivity() {
         override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
             return RecyclerView(requireContext()).apply {
                 clipToPadding = false
-                layoutManager = LinearLayoutManager(requireContext())
+                layoutManager = SafeLinearLayoutManager(requireContext())
             }
         }
 

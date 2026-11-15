@@ -22,6 +22,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ShownNotificationsRepositoryTest {
+    @Test fun aHashEqualToTheGroupSummaryIsRemapped() {
+        val stream = Stream(channelId = "polygenelubricants")
+        assertEquals(Int.MIN_VALUE, stream.channelId.hashCode())
+        assertNotEquals(SUMMARY_NOTIFICATION_ID, notificationIdFor(stream))
+    }
 
     @Test
     fun successfulEmptyBatchDoesNotRefetchOfflineChannels() {
