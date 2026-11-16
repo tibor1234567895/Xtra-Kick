@@ -324,7 +324,10 @@ class FollowedLiveStreamsRepository @Inject constructor(
         return LoadResult(items = finalItems, fromCache = false)
     }
 
+    internal var enablePrefetchTopStreams: Boolean = true
+
     private fun prefetchTopStreams(items: List<Stream>) {
+        if (!enablePrefetchTopStreams) return
         items.take(2).forEach { stream ->
             stream.channelLogin?.let { kickRepository.prefetchPlaybackUrl(it) }
         }

@@ -45,7 +45,7 @@ class NetworkUtilsTest {
         val transfer = launch {
             NetworkUtils.awaitDownloadRequest<Unit> { continuation, _ ->
                 started.complete(continuation)
-                val cancel: () -> Unit = { cancellationRequested.complete(Unit); Unit }
+                val cancel: () -> Unit = { cancellationRequested.complete(Unit) }
                 cancel
             }
         }

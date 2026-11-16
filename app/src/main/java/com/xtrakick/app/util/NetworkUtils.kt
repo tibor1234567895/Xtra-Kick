@@ -67,12 +67,12 @@ object NetworkUtils {
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
         start: (Continuation<T>, () -> Unit) -> (() -> Unit),
     ): T = coroutineScope {
-        val result = CompletableDeferred<T>()
+        val deferred = CompletableDeferred<T>()
         val deadline = AtomicLong(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs))
         val callback = object : Continuation<T> {
             override val context = EmptyCoroutineContext
-            override fun resumeWith(value: Result<T>) {
-                value.fold(result::complete, result::completeExceptionally)
+            override fun resumeWith(result: Result<T>) {
+                result.fold(deferred::complete, deferred::completeExceptionally)
             }
         }
         ensureActive()
@@ -80,7 +80,7 @@ object NetworkUtils {
             deadline.set(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs))
         }
         val timeout = launch {
-            while (isActive && !result.isCompleted) {
+            while (isActive && !deferred.isCompleted) {
                 val remaining = TimeUnit.NANOSECONDS.toMillis(deadline.get() - System.nanoTime())
                 if (remaining <= 0L) {
                     cancel()
@@ -90,16 +90,16 @@ object NetworkUtils {
             }
         }
         try {
-            result.await()
+            deferred.await()
         } finally {
             timeout.cancel()
             // Keep the documented TLS cancellation grace, then await the concrete
             // request's terminal callback before a caller can close its output.
             withContext(NonCancellable) {
-                if (!result.isCompleted) {
+                if (!deferred.isCompleted) {
                     delay(2_000L)
-                    if (!result.isCompleted) cancel()
-                    result.join()
+                    if (!deferred.isCompleted) cancel()
+                    deferred.join()
                 }
             }
         }

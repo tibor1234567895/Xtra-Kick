@@ -165,7 +165,7 @@ class DownloadsAdapter(
                         fragment.requireContext().imageLoader.enqueue(
                             ImageRequest.Builder(fragment.requireContext()).apply {
                                 data(item.channelLogo)
-                                memoryCacheKey("${item.channelLogo}:${File(item.channelLogo).lastModified()}")
+                                memoryCacheKey("${item.channelLogo}:${File(item.channelLogo!!).lastModified()}")
                                 diskCachePolicy(CachePolicy.DISABLED)
                                 if (context.prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
                                     transformations(CircleCropTransformation())

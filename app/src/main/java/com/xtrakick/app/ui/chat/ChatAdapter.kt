@@ -489,6 +489,7 @@ class ChatAdapter(
 
         fun isBoundTo(bindKey: String): Boolean = currentBindKey == bindKey
 
+        @android.annotation.SuppressLint("ClickableViewAccessibility")
         fun bind(bindKey: String, chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder, position: Int, backgroundRes: Int) {
             currentBindKey = bindKey
             bindSeq++

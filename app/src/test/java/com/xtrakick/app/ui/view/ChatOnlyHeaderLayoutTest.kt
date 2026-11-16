@@ -14,7 +14,7 @@ import org.robolectric.RuntimeEnvironment
 @RunWith(RobolectricTestRunner::class)
 class ChatOnlyHeaderLayoutTest {
     private val context = RuntimeEnvironment.getApplication()
-    private val header = ChatOnlyHeaderLayout(context, Robolectric.buildAttributeSet().build()).also {
+    private val header = ChatOnlyHeaderLayout(context).also {
         FrameLayout(context).addView(it)
     }
     private val distance = 100 * context.resources.displayMetrics.density

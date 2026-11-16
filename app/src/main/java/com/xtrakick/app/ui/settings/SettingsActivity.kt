@@ -825,7 +825,7 @@ class SettingsActivity : BaseStateActivity() {
             for (key in listOf(AppConstants.USAGE_STATS_ENABLED, AppConstants.CRASH_REPORTS_ENABLED)) {
                 findPreference<Preference>(key)?.setOnPreferenceChangeListener { _, value ->
                     if (value == false) {
-                        requireContext().prefs().edit().putBoolean(key, false).commit()
+                        requireContext().prefs().edit().putBoolean(key, false).apply()
                         CrashReports.clear(requireContext())
                     }
                     true

@@ -7,7 +7,10 @@ import android.view.ViewConfiguration
 import android.widget.LinearLayout
 import kotlin.math.abs
 
-class ChatOnlyHeaderLayout(context: Context, attrs: AttributeSet) : LinearLayout(context, attrs) {
+class ChatOnlyHeaderLayout @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+) : LinearLayout(context, attrs) {
     var onDrag: ((Float) -> Unit)? = null
     var onRelease: ((Boolean) -> Unit)? = null
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop

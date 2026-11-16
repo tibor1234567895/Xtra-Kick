@@ -102,7 +102,9 @@ class FollowedLiveStreamsRepositoryTest {
         val kick = KickRepository(context, client, null, executor, json,
             AuthRepository(null, null, executor, client, json), KickOfficialApiClient(context, client, json))
         val publicApi = KickPublicApiRepository(null, null, executor, client, json)
-        return FollowedLiveStreamsRepository(context, follows, publicApi, kick, json)
+        return FollowedLiveStreamsRepository(context, follows, publicApi, kick, json).apply {
+            enablePrefetchTopStreams = false
+        }
     }
 
     private suspend fun addFollows() {

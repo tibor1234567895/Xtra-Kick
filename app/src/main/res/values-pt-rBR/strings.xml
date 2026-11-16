@@ -187,7 +187,6 @@
     <string name="chat_firstmsg_visibility">Primeiras mensagens e resgates com texto</string>
     <string name="timestamps">Mostrar horários</string>
     <string name="timestamp_format">Formato de horário</string>
-    <string name="created_at">Criado em %s</string>
     <string name="account_created_label">Criada em</string>
     <string name="user_partner">Parceiro</string>
     <string name="user_affiliate">Afiliado</string>
@@ -733,7 +732,6 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="backup_failed">Falha ao criar o backup: %1$s</string>
     <string name="restore_success">Restauração concluída — reiniciando o app</string>
     <string name="restore_failed">Falha ao restaurar: %1$s</string>
-    <string name="restore_needs_both">Selecione os dois arquivos de backup (configurações + dados)</string>
     <string name="restore_invalid">Arquivos de backup não reconhecidos</string>
     <string name="share">Compartilhar</string>
     <string name="check_updates">Verificar se há atualizações</string>
@@ -926,7 +924,6 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="kick_live_player_engine">Mecanismo de reprodução ao vivo do Kick</string>
     <string name="kick_live_player_engine_exo_only">Somente ExoPlayer</string>
     <string name="kick_live_player_engine_ivs">Amazon IVS para transmissões ao vivo do Kick</string>
-    <string name="ivs_fallback_to_standard_player">Falha na reprodução do IVS. Alternando para o player padrão.</string>
     <string name="ivs_feature_not_supported">Esta ação não é compatível com o player ao vivo do IVS.</string>
     <string name="delete_video_positions_message">Tem certeza de que deseja excluir todas as posições de vídeo salvas?</string>
     <string name="enabled_setting">Ativado</string>
@@ -989,7 +986,6 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="diagnostic_log_preview_truncated">Exibindo os últimos ~%1$d KB</string>
     <string name="diagnostic_log_copy">Copiar</string>
     <string name="diagnostic_log_copied">Log de diagnóstico copiado para a área de transferência</string>
-    <string name="diagnostic_log_clear_action">Limpar</string>
     <string name="diagnostic_log_share_title">Compartilhar log de diagnóstico</string>
     <string name="diagnostic_log_test">Gravar entrada de teste no log de diagnóstico</string>
     <string name="diagnostic_log_test_done">Entrada de teste gravada no log de diagnóstico</string>

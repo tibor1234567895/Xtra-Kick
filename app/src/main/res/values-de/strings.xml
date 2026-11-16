@@ -187,7 +187,6 @@
     <string name="chat_firstmsg_visibility">Erste Nachrichten und Einlösungen mit Text</string>
     <string name="timestamps">Zeitstempel anzeigen</string>
     <string name="timestamp_format">Zeitstempel-Format</string>
-    <string name="created_at">Erstellt am %s</string>
     <string name="account_created_label">Erstellt</string>
     <string name="user_partner">Partner</string>
     <string name="user_affiliate">Affiliate</string>
@@ -731,7 +730,6 @@
     <string name="backup_failed">Sicherung fehlgeschlagen: %1$s</string>
     <string name="restore_success">Wiederherstellung abgeschlossen • App wird neu gestartet</string>
     <string name="restore_failed">Wiederherstellung fehlgeschlagen: %1$s</string>
-    <string name="restore_needs_both">Beide Sicherungsdateien auswählen (Einstellungen + Daten)</string>
     <string name="restore_invalid">Nicht erkannte Sicherungsdateien</string>
     <string name="share">Teilen</string>
     <string name="check_updates">Nach Updates suchen</string>
@@ -924,7 +922,6 @@
     <string name="kick_live_player_engine">Kick-Livestream-Engine</string>
     <string name="kick_live_player_engine_exo_only">Nur ExoPlayer</string>
     <string name="kick_live_player_engine_ivs">Amazon IVS für Kick-Live</string>
-    <string name="ivs_fallback_to_standard_player">IVS-Wiedergabe fehlgeschlagen. Es wird zum Standard-Player gewechselt.</string>
     <string name="ivs_feature_not_supported">Diese Aktion wird im IVS-Live-Player nicht unterstützt.</string>
     <string name="delete_video_positions_message">Möchtest du wirklich alle gespeicherten Videopositionen löschen?</string>
     <string name="enabled_setting">Aktiviert</string>
@@ -987,7 +984,6 @@
     <string name="diagnostic_log_preview_truncated">Die letzten ~%1$d KB werden angezeigt</string>
     <string name="diagnostic_log_copy">Kopieren</string>
     <string name="diagnostic_log_copied">Diagnoseprotokoll in die Zwischenablage kopiert</string>
-    <string name="diagnostic_log_clear_action">Löschen</string>
     <string name="diagnostic_log_share_title">Diagnoseprotokoll teilen</string>
     <string name="diagnostic_log_test">Test-Diagnoseeintrag schreiben</string>
     <string name="diagnostic_log_test_done">Test-Diagnoseeintrag geschrieben</string>

@@ -116,11 +116,11 @@ class SavedMediaFragment : Fragment(), Scrollable, FragmentHost {
                         true
                     }
                     R.id.drops -> {
-                        (activity as? MainActivity)?.navigateTo(R.id.dropsFragment)
+                        activity.navigateTo(R.id.dropsFragment)
                         true
                     }
                     R.id.collectibles -> {
-                        (activity as? MainActivity)?.navigateTo(R.id.collectiblesFragment)
+                        activity.navigateTo(R.id.collectiblesFragment)
                         true
                     }
                     R.id.login -> {

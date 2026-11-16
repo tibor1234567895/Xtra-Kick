@@ -187,7 +187,6 @@
     <string name="chat_firstmsg_visibility">İlk mesajlar ve metinli ödül kullanımları</string>
     <string name="timestamps">Zaman damgalarını göster</string>
     <string name="timestamp_format">Zaman damgası biçimi</string>
-    <string name="created_at">Oluşturulma: %s</string>
     <string name="account_created_label">Oluşturulma</string>
     <string name="user_partner">Partner</string>
     <string name="user_affiliate">İştirak</string>
@@ -733,7 +732,6 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="backup_failed">Yedekleme başarısız oldu: %1$s</string>
     <string name="restore_success">Geri yükleme tamamlandı • uygulama yeniden başlatılıyor</string>
     <string name="restore_failed">Geri yükleme başarısız oldu: %1$s</string>
-    <string name="restore_needs_both">Her iki yedekleme dosyasını da seçin (ayarlar + veriler)</string>
     <string name="restore_invalid">Tanınmayan yedekleme dosyaları</string>
     <string name="share">Paylaş</string>
     <string name="check_updates">Güncellemeleri kontrol et</string>
@@ -926,7 +924,6 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="kick_live_player_engine">Kick canlı yayın motoru</string>
     <string name="kick_live_player_engine_exo_only">Yalnızca ExoPlayer</string>
     <string name="kick_live_player_engine_ivs">Kick canlı için Amazon IVS</string>
-    <string name="ivs_fallback_to_standard_player">IVS oynatması başarısız oldu. Standart oynatıcıya geçiliyor.</string>
     <string name="ivs_feature_not_supported">Bu eylem IVS canlı oynatıcısında desteklenmiyor.</string>
     <string name="delete_video_positions_message">Kaydedilen tüm video konumlarını silmek istediğinizden emin misiniz?</string>
     <string name="enabled_setting">Etkin</string>
@@ -989,7 +986,6 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="diagnostic_log_preview_truncated">Son ~%1$d KB gösteriliyor</string>
     <string name="diagnostic_log_copy">Kopyala</string>
     <string name="diagnostic_log_copied">Tanılama günlüğü panoya kopyalandı</string>
-    <string name="diagnostic_log_clear_action">Temizle</string>
     <string name="diagnostic_log_share_title">Tanılama günlüğünü paylaş</string>
     <string name="diagnostic_log_test">Test tanılama kaydı yaz</string>
     <string name="diagnostic_log_test_done">Test tanılama kaydı yazıldı</string>
