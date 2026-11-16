@@ -32,6 +32,7 @@ import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.setupWithNavController
 import androidx.viewpager2.widget.ViewPager2
 import coil3.imageLoader
+import coil3.asImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.request.target
@@ -72,6 +73,8 @@ import kotlinx.coroutines.launch
 class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, IntegrityDialog.CallbackListener {
 
     private var _binding: FragmentChannelBinding? = null
+    private var requestedAvatarUrl: String? = null
+    private var requestedBannerUrl: String? = null
     private val binding get() = _binding!!
     private val args: ChannelPagerFragmentArgs by navArgs()
     private val viewModel: ChannelPagerViewModel by viewModels()
@@ -225,20 +228,9 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     userName.visibility = View.GONE
                 }
             }
-            val initialLogo = args.channelLogo
-                ?: KickApiHelper.getDefaultProfilePicture(args.channelId, args.channelLogin ?: args.channelName)
             userLayout.visibility = View.VISIBLE
-            userImage.visibility = View.VISIBLE
-            requireContext().imageLoader.enqueue(
-                ImageRequest.Builder(requireContext()).apply {
-                    data(initialLogo)
-                    if (requireContext().prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
-                        transformations(CircleCropTransformation())
-                    }
-                    crossfade(true)
-                    target(userImage)
-                }.build()
-            )
+            userImage.visibility = View.INVISIBLE
+            updateHeaderAvatar(args.channelLogo?.takeUnless { it.contains("/img/default-profile-pictures/") })
             val isLoggedIn = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
             val setting = requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0
             val navController = findNavController()
@@ -655,24 +647,9 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     lastBroadcast.visibility = View.GONE
                 }
             }
-            // Fall back to the logo the page was opened with: Kick's channel
-            // response sometimes omits the profile image, and hiding the avatar
-            // we already displayed looks broken.
             val streamOrArgLogo = stream?.channelLogo ?: args.channelLogo
-                ?: KickApiHelper.getDefaultProfilePicture(stream?.channelId ?: args.channelId, stream?.channelLogin ?: args.channelLogin)
             userLayout.visibility = View.VISIBLE
-            userImage.visibility = View.VISIBLE
-            requireContext().imageLoader.enqueue(
-                ImageRequest.Builder(requireContext()).apply {
-                    data(streamOrArgLogo)
-                    if (requireContext().prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
-                        transformations(CircleCropTransformation())
-                    }
-                    crossfade(true)
-                    target(userImage)
-                }.build()
-            )
-            requireArguments().putString(AppConstants.CHANNEL_PROFILEIMAGE, streamOrArgLogo)
+            updateHeaderAvatar(streamOrArgLogo)
             stream?.channelName.let {
                 if (it != null && it != args.channelName) {
                     userLayout.visibility = View.VISIBLE
@@ -785,35 +762,47 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
         }
     }
 
+    private fun updateHeaderAvatar(url: String?) {
+        if (url.isNullOrBlank() || requestedAvatarUrl == url) return
+        requestedAvatarUrl = url
+        val image = binding.userImage
+        image.visibility = View.VISIBLE
+        requireContext().imageLoader.enqueue(
+            ImageRequest.Builder(requireContext()).apply {
+                data(url)
+                placeholder(image.drawable?.asImage())
+                error(image.drawable?.asImage())
+                if (requireContext().prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
+                    transformations(CircleCropTransformation())
+                }
+                crossfade(false)
+                target(image)
+            }.build()
+        )
+        requireArguments().putString(AppConstants.CHANNEL_PROFILEIMAGE, url)
+    }
+
     private fun updateUserLayout(user: User) {
         with(binding) {
             val logo = user.channelLogo
                 ?: KickApiHelper.getDefaultProfilePicture(user.channelId, user.channelLogin ?: user.channelName)
-            if (!userImage.isVisible) {
-                userLayout.visibility = View.VISIBLE
-                userImage.visibility = View.VISIBLE
-                requireContext().imageLoader.enqueue(
-                    ImageRequest.Builder(requireContext()).apply {
-                        data(logo)
-                        if (requireContext().prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
-                            transformations(CircleCropTransformation())
-                        }
-                        crossfade(true)
-                        target(userImage)
-                    }.build()
-                )
-                requireArguments().putString(AppConstants.CHANNEL_PROFILEIMAGE, logo)
-            }
+            userLayout.visibility = View.VISIBLE
+            updateHeaderAvatar(logo)
             val banner = user.bannerUrl ?: user.bannerImageURL
                 ?: KickApiHelper.getDefaultBanner(user.channelId, user.channelLogin ?: user.channelName)
             bannerImage.visibility = View.VISIBLE
-            requireContext().imageLoader.enqueue(
-                ImageRequest.Builder(requireContext()).apply {
-                    data(banner)
-                    crossfade(true)
-                    target(bannerImage)
-                }.build()
-            )
+            if (requestedBannerUrl != banner) {
+                requestedBannerUrl = banner
+                requireContext().imageLoader.enqueue(
+                    ImageRequest.Builder(requireContext()).apply {
+                        data(banner)
+                        placeholder(bannerImage.drawable?.asImage())
+                        error(bannerImage.drawable?.asImage())
+                        crossfade(false)
+                        target(bannerImage)
+                    }.build()
+                )
+            }
             if (userName.isVisible) {
                 userName.setTextColor(Color.WHITE)
                 userName.setShadowLayer(4f, 0f, 0f, Color.BLACK)
@@ -977,6 +966,8 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
 
     override fun onDestroyView() {
         super.onDestroyView()
+        requestedAvatarUrl = null
+        requestedBannerUrl = null
         _binding = null
     }
 }

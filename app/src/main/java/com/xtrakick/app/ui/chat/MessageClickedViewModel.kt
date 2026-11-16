@@ -60,6 +60,10 @@ class MessageClickedViewModel @Inject constructor(
     private var currentIsKick = false
     private var isLoadingUser = false
 
+    fun getCachedUser(login: String?): User? = login?.let { slug ->
+        kickRepository.getCachedChannel(slug)?.let { kickRepository.toUser(it) }
+    }
+
     fun loadUser(
         channelId: String?,
         channelLogin: String?,

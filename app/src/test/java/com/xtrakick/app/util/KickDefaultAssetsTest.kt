@@ -10,25 +10,47 @@ class KickDefaultAssetsTest {
     @Test
     fun testDefaultProfilePictureForNebur1256() {
         val avatar = KickApiHelper.getDefaultProfilePicture("8683813", "nebur1256")
-        assertEquals("https://kick.com/img/default-profile-pictures/default-avatar-2.webp", avatar)
+        assertEquals("https://files.kick.com/images/profile_image/default2.jpeg", avatar)
     }
 
     @Test
     fun testDefaultBannerForNebur1256() {
         val banner = KickApiHelper.getDefaultBanner("8683813", "nebur1256")
-        assertEquals("https://kick.com/img/default-channel-banners/new-default-banner-2.webp", banner)
+        assertEquals("https://files.kick.com/images/channel_banner/default2.webp", banner)
     }
 
     @Test
     fun testDefaultProfilePictureForCease() {
         val avatar = KickApiHelper.getDefaultProfilePicture("62529", "cease")
-        assertEquals("https://kick.com/img/default-profile-pictures/default-avatar-4.webp", avatar)
+        assertEquals("https://files.kick.com/images/profile_image/default2.jpeg", avatar)
     }
 
     @Test
     fun testDefaultBannerForCease() {
         val banner = KickApiHelper.getDefaultBanner("62529", "cease")
-        assertEquals("https://kick.com/img/default-channel-banners/new-default-banner-2.webp", banner)
+        assertEquals("https://files.kick.com/images/channel_banner/default2.webp", banner)
+    }
+
+    @Test
+    fun gymOwnerUsesOfficialMobileBannerWhenNoCustomBannerExists() {
+        val user = User(channelId = "120599077", channelLogin = "gymowner")
+        assertEquals("https://files.kick.com/images/channel_banner/default2.webp", user.bannerUrl)
+        assertEquals("https://files.kick.com/images/profile_image/default2.jpeg", user.channelLogo)
+    }
+
+    @Test
+    fun defaultAvatarsUseTheFourMobileVariants() {
+        for (id in 4L..7L) {
+            val variant = id % 4 + 1
+            assertEquals("https://files.kick.com/images/profile_image/default$variant.jpeg", KickApiHelper.getDefaultProfilePicture(id))
+        }
+    }
+
+    @Test
+    fun customBannerTakesPriorityOverDefaultArtwork() {
+        val url = "https://files.kick.com/images/channel/120599077/banner_image/custom.webp"
+        val user = User(channelId = "120599077", channelLogin = "gymowner", bannerImageURL = url)
+        assertEquals(url, user.bannerUrl)
     }
 
     @Test
@@ -38,7 +60,7 @@ class KickDefaultAssetsTest {
             channelLogin = "Nebur1256",
             profileImageUrl = null,
         )
-        assertEquals("https://kick.com/img/default-profile-pictures/default-avatar-2.webp", userWithoutPfp.channelLogo)
+        assertEquals("https://files.kick.com/images/profile_image/default2.jpeg", userWithoutPfp.channelLogo)
 
         val userWithPfp = User(
             channelId = "8683813",
@@ -50,7 +72,7 @@ class KickDefaultAssetsTest {
 
     @Test
     fun testTemplateUrlDoesNotMangleDefaultAssetUrls() {
-        val avatarUrl = "https://kick.com/img/default-profile-pictures/default-avatar-2.webp"
+        val avatarUrl = "https://files.kick.com/images/profile_image/default2.jpeg"
         val resolved = KickApiHelper.getTemplateUrl(avatarUrl, "profileimage")
         assertEquals(avatarUrl, resolved)
     }

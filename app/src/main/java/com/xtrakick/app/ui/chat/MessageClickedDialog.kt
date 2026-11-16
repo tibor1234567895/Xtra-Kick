@@ -27,6 +27,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.xtrakick.app.ui.view.SafeLinearLayoutManager
 import coil3.imageLoader
+import coil3.asImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.request.target
@@ -107,6 +108,8 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
     }
 
     private var _binding: DialogChatMessageClickBinding? = null
+    private var requestedAvatarUrl: String? = null
+    private var requestedBannerUrl: String? = null
     private val binding get() = _binding!!
     private val viewModel: MessageClickedViewModel by viewModels()
 
@@ -268,29 +271,32 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
     }
 
     private fun renderFallbackHeader(chatMessage: ChatMessage) {
+        viewModel.getCachedUser(chatMessage.userLogin ?: chatMessage.userName)?.let { user ->
+            updateUserLayout(user)
+            return
+        }
         binding.userLayout.visibility = android.view.View.VISIBLE
         binding.userName.text = chatMessage.userName ?: chatMessage.userLogin ?: getString(R.string.view_profile)
         binding.userName.visibility = android.view.View.VISIBLE
         binding.messagePreview.text = chatMessage.message ?: chatMessage.systemMsg ?: ""
         binding.messagePreview.isVisible = false
 
-        val fallbackId = chatMessage.userId
-        val fallbackLogin = chatMessage.userLogin ?: chatMessage.userName
-        val fallbackAvatar = KickApiHelper.getDefaultProfilePicture(fallbackId, fallbackLogin)
-        val fallbackBanner = KickApiHelper.getDefaultBanner(fallbackId, fallbackLogin)
-        updateBanner(fallbackBanner)
-
-        binding.userImage.visibility = android.view.View.VISIBLE
-        requireContext().imageLoader.enqueue(
-            ImageRequest.Builder(requireContext())
-                .data(fallbackAvatar)
-                .crossfade(true)
-                .transformations(CircleCropTransformation())
-                .target(binding.userImage)
-                .build()
-        )
+        requestedAvatarUrl = null
+        requestedBannerUrl = null
+        for (imageView in listOf(binding.userImage, binding.bannerImage)) {
+            requireContext().imageLoader.enqueue(
+                ImageRequest.Builder(requireContext()).data(null).target(imageView).build()
+            )
+        }
+        binding.bannerContainer.layoutParams.height = (100 * resources.displayMetrics.density).toInt()
+        binding.bannerImage.isVisible = false
+        binding.bannerScrim.isVisible = false
+        binding.closeButton.isVisible = true
+        binding.closeButtonInline.isVisible = false
+        binding.userImage.visibility = View.INVISIBLE
+        binding.avatarLoading.isVisible = true
         binding.userImage.setOnClickListener {
-            listener.onViewProfileClicked(chatMessage.userId, chatMessage.userLogin, chatMessage.userName, fallbackAvatar)
+            listener.onViewProfileClicked(chatMessage.userId, chatMessage.userLogin, chatMessage.userName, null)
             dismiss()
         }
 
@@ -385,14 +391,20 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
                 bannerScrim.isVisible = true
                 closeButton.isVisible = true
                 closeButtonInline.isVisible = false
-                requireContext().imageLoader.enqueue(
-                    ImageRequest.Builder(requireContext())
-                        .data(bannerUrl)
-                        .crossfade(true)
-                        .target(bannerImage)
-                        .build()
-                )
+                if (requestedBannerUrl != bannerUrl) {
+                    requestedBannerUrl = bannerUrl
+                    requireContext().imageLoader.enqueue(
+                        ImageRequest.Builder(requireContext())
+                            .data(bannerUrl)
+                            .placeholder(bannerImage.drawable?.asImage())
+                            .error(bannerImage.drawable?.asImage())
+                            .crossfade(false)
+                            .target(bannerImage)
+                            .build()
+                    )
+                }
             } else {
+                requestedBannerUrl = null
                 bannerContainer.layoutParams.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
                 bannerImage.isVisible = false
                 bannerScrim.isVisible = false
@@ -400,6 +412,26 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
                 closeButtonInline.isVisible = true
             }
         }
+    }
+
+    private fun updateAvatar(url: String) {
+        if (requestedAvatarUrl == url) return
+        requestedAvatarUrl = url
+        val binding = binding
+        requireContext().imageLoader.enqueue(
+            ImageRequest.Builder(requireContext())
+                .data(url)
+                .placeholder(binding.userImage.drawable?.asImage())
+                .error(binding.userImage.drawable?.asImage())
+                .crossfade(false)
+                .listener(
+                    onSuccess = { _, _ -> binding.avatarLoading.isVisible = false },
+                    onError = { _, _ -> binding.avatarLoading.isVisible = false },
+                )
+                .transformations(CircleCropTransformation())
+                .target(binding.userImage)
+                .build()
+        )
     }
 
     private fun updateUserLayout(user: User) {
@@ -412,14 +444,7 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
             val logoUrl = user.channelLogo
                 ?: KickApiHelper.getDefaultProfilePicture(user.channelId, user.channelLogin ?: user.channelName)
             userImage.visibility = android.view.View.VISIBLE
-            requireContext().imageLoader.enqueue(
-                ImageRequest.Builder(requireContext())
-                    .data(logoUrl)
-                    .crossfade(true)
-                    .transformations(CircleCropTransformation())
-                    .target(userImage)
-                    .build()
-            )
+            updateAvatar(logoUrl)
             userImage.setOnClickListener {
                 listener.onViewProfileClicked(user.channelId, user.channelLogin, user.channelName, logoUrl)
                 dismiss()
@@ -553,6 +578,8 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
 
     override fun onDestroyView() {
         super.onDestroyView()
+        requestedAvatarUrl = null
+        requestedBannerUrl = null
         _binding = null
     }
 

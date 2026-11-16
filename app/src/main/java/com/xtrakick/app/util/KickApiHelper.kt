@@ -79,8 +79,8 @@ object KickApiHelper {
             ?: userLogin?.hashCode()?.toLong()?.let { kotlin.math.abs(it) }
             ?: 1L
         val id = if (numericId > 0) numericId else 1L
-        val n = ((id % 6) + 1).coerceIn(1, 6)
-        return "https://kick.com/img/default-profile-pictures/default-avatar-$n.webp"
+        val n = ((id % 4) + 1).coerceIn(1, 4)
+        return "https://files.kick.com/images/profile_image/default$n.jpeg"
     }
 
     fun getDefaultProfilePicture(userId: Long?): String {
@@ -93,7 +93,7 @@ object KickApiHelper {
             ?: 0L
         val id = if (numericId >= 0) numericId else 0L
         val n = ((id % 4) + 1).coerceIn(1, 4)
-        return "https://kick.com/img/default-channel-banners/new-default-banner-$n.webp"
+        return "https://files.kick.com/images/channel_banner/default$n.webp"
     }
 
     fun getDefaultBanner(channelIdOrUserId: Long?): String {

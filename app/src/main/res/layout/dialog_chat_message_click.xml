@@ -83,15 +83,30 @@
                             android:paddingEnd="14dp"
                             android:paddingBottom="10dp">
 
-                            <ImageView
-                                android:id="@+id/userImage"
+                            <FrameLayout
                                 android:layout_width="52dp"
                                 android:layout_height="52dp"
-                                android:layout_marginEnd="12dp"
-                                android:scaleType="centerCrop"
-                                android:visibility="gone"
-                                tools:src="@tools:sample/avatars"
-                                tools:visibility="visible" />
+                                android:layout_marginEnd="12dp">
+
+                                <ImageView
+                                    android:id="@+id/userImage"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="match_parent"
+                                    android:scaleType="centerCrop"
+                                    android:visibility="invisible"
+                                    tools:src="@tools:sample/avatars"
+                                    tools:visibility="visible" />
+
+                                <com.google.android.material.progressindicator.CircularProgressIndicator
+                                    android:id="@+id/avatarLoading"
+                                    android:layout_width="24dp"
+                                    android:layout_height="24dp"
+                                    android:layout_gravity="center"
+                                    android:indeterminate="true"
+                                    android:visibility="gone"
+                                    app:indicatorSize="24dp"
+                                    app:trackThickness="2dp" />
+                            </FrameLayout>
 
                             <TextView
                                 android:id="@+id/userName"
