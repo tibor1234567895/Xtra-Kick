@@ -33,4 +33,7 @@
     <color name="giftTrainAccent">#FF5C87</color>
     <color name="eventTagForegroundLight">#805000</color>
     <color name="eventTagForegroundDark">#FFCC80</color>
+    <color name="dropsParticipateGreen">#00E701</color>
+    <color name="dropsOnParticipate">#000000</color>
+    <color name="dropsBannerSubtitle">#D0FFFFFF</color>
 </resources>

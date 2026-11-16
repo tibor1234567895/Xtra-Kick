@@ -119,6 +119,105 @@ class Media3FragmentTest {
     }
 
     @Test
+    fun chatOnlyReplayClockAdvancesAndSeeksWithoutPlayingVideo() {
+        ReflectionHelpers.callInstanceMethod<Void>(fragment, "startChatOnlyClock",
+            ReflectionHelpers.ClassParameter.from(Long::class.javaPrimitiveType, 30_000L))
+        playbackModel.quality = "chat_only"
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(3))
+        assertEquals(33_000L, fragment.getChatPosition())
+        assertTrue(fragment.isChatPlaybackPlaying())
+        fragment.seek(5_000L)
+        assertEquals(5_000L, fragment.getChatPosition())
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(2))
+        assertEquals(7_000L, fragment.getChatPosition())
+        playbackModel.quality = "auto"
+        assertEquals(fragment.getCurrentPosition(), fragment.getChatPosition())
+    }
+
+    private fun attachForModeChanges(target: PlayerFragment = fragment) {
+        val activity = org.robolectric.Robolectric.buildActivity(androidx.fragment.app.FragmentActivity::class.java).get()
+        val host = object : androidx.fragment.app.FragmentHostCallback<androidx.fragment.app.FragmentActivity>(
+            activity, android.os.Handler(Looper.getMainLooper()), 0,
+        ) {
+            override fun onGetHost() = activity
+        }
+        ReflectionHelpers.setField(target, "mHost", host)
+        PlayerFragment::class.java.superclass!!.getDeclaredField("componentContext").apply {
+            isAccessible = true
+            set(target, android.content.ContextWrapper(activity))
+        }
+        val binding = ReflectionHelpers.getField<FragmentPlayerBinding>(fragment, "_binding")
+        ReflectionHelpers.setField(target, "mView", binding.root)
+        target.arguments = Bundle()
+        target.networkMonitor = com.xtrakick.app.util.NetworkMonitor(appContext)
+    }
+
+    @Test
+    @Config(sdk = [28])
+    fun restoringChatOnlyStopsPlaybackWithoutRestartingItsClock() {
+        attachForModeChanges()
+        playbackModel.quality = "chat_only"
+        ReflectionHelpers.callInstanceMethod<Void>(fragment, "startChatOnlyClock",
+            ReflectionHelpers.ClassParameter.from(Long::class.javaPrimitiveType, 30_000L))
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(3))
+        fragment.changeQuality("chat_only")
+        assertEquals(1, playback.stops)
+        assertEquals(33_000L, fragment.getChatPosition())
+        fragment.startStream("https://example.com/live.m3u8")
+        assertEquals(2, playback.stops)
+        assertTrue(playback.commands.isEmpty())
+        assertEquals(33_000L, fragment.getChatPosition())
+    }
+
+    @Test
+    @Config(sdk = [28])
+    fun leavingRewoundChatOnlyForAudioOnlyPreservesAudioModeAndRecordingPosition() {
+        attachForModeChanges()
+        playbackModel.quality = "chat_only"
+        playbackModel.isLiveRewound = true
+        ReflectionHelpers.setField(fragment, "videoType", "stream")
+        ReflectionHelpers.setField(fragment, "activePlaybackUrl", "https://example.com/recording.m3u8")
+        ReflectionHelpers.callInstanceMethod<Void>(fragment, "startChatOnlyClock",
+            ReflectionHelpers.ClassParameter.from(Long::class.javaPrimitiveType, 30_000L))
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(3))
+        fragment.changeQuality("audio_only")
+        assertTrue(playback.tracks.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_VIDEO))
+        val binding = ReflectionHelpers.getField<FragmentPlayerBinding>(fragment, "_binding")
+        assertEquals(android.view.View.GONE, binding.playerSurface.visibility)
+        val command = playback.commands.single { it.customAction == PlaybackService.START_VIDEO }
+        assertEquals("https://example.com/recording.m3u8", command.customExtras.getString(PlaybackService.URI))
+        assertEquals(33_000L, command.customExtras.getLong(PlaybackService.PLAYBACK_POSITION))
+        assertTrue(playback.playRequested)
+    }
+
+    @Test
+    fun ivsChatOnlySeekUpdatesItsClockEvenWithAPendingPlayerSeek() {
+        val ivs = IvsPlayerFragment()
+        ReflectionHelpers.setField(ivs, "viewModel\$delegate", lazyOf(playbackModel))
+        playbackModel.quality = "chat_only"
+        ReflectionHelpers.setField(ivs, "pendingSeekPosition", 30_000L)
+        ReflectionHelpers.callInstanceMethod<Void>(ivs, "startChatOnlyClock",
+            ReflectionHelpers.ClassParameter.from(Long::class.javaPrimitiveType, 30_000L))
+        ivs.seek(5_000L)
+        assertEquals(5_000L, ivs.getChatPosition())
+        assertNull(ReflectionHelpers.getField<Long?>(ivs, "pendingSeekPosition"))
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(2))
+        assertEquals(7_000L, ivs.getChatPosition())
+    }
+
+    @Test
+    fun changingChatOnlySpeedKeepsTheElapsedPositionAndUsesTheNewRate() {
+        ReflectionHelpers.callInstanceMethod<Void>(fragment, "startChatOnlyClock",
+            ReflectionHelpers.ClassParameter.from(Long::class.javaPrimitiveType, 30_000L))
+        playbackModel.quality = "chat_only"
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(3))
+        fragment.setPlaybackSpeed(2f)
+        assertEquals(33_000L, fragment.getChatPosition())
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(2))
+        assertEquals(37_000L, fragment.getChatPosition())
+    }
+
+    @Test
     fun chatOnlyUsesFullHeightAndKeepsPlaybackActionsAccessibleAfterRotation() {
         val binding = ReflectionHelpers.getField<FragmentPlayerBinding>(fragment, "_binding")
         playbackModel.quality = "chat_only"
@@ -200,12 +299,51 @@ class Media3FragmentTest {
     @Implements(MediaController::class, isInAndroidSdk = false)
     class RecordingController {
         var playRequested = true
+        var stops = 0
+        var tracks = androidx.media3.common.TrackSelectionParameters.DEFAULT
+        val commands = mutableListOf<SessionCommand>()
+
+        @Implementation
+        fun getTrackSelectionParameters() = tracks
+
+        @Implementation
+        fun setTrackSelectionParameters(value: androidx.media3.common.TrackSelectionParameters) { tracks = value }
+
+        @Implementation
+        fun getCurrentMediaItem(): androidx.media3.common.MediaItem? = null
+
+        @Implementation
+        fun getPlaybackState() = androidx.media3.common.Player.STATE_IDLE
+
+        @Implementation
+        fun getBufferedPosition() = 0L
+
+        @Implementation
+        fun stop() { stops++; playRequested = false }
+
+        @Implementation
+        fun play() { playRequested = true }
+
+        @Implementation
+        fun setPlaybackSpeed(speed: Float) = Unit
 
         @Implementation
         fun isConnected() = true
 
         @Implementation
         fun getPlayWhenReady() = playRequested
+
+        @Implementation
+        fun getPlaybackParameters() = androidx.media3.common.PlaybackParameters.DEFAULT
+
+        @Implementation
+        fun getCurrentPosition() = 0L
+
+        @Implementation
+        fun getDuration() = 120_000L
+
+        @Implementation
+        fun isPlaying() = false
 
         @Implementation
         fun getApplicationLooper(): Looper = Looper.getMainLooper()
@@ -219,8 +357,10 @@ class Media3FragmentTest {
         fun clearVideoSurface() = Unit
 
         @Implementation
-        fun sendCustomCommand(command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> =
-            Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+        fun sendCustomCommand(command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
+            commands += command
+            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+        }
 
         @Implementation
         fun release() = Unit

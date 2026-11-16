@@ -46,4 +46,12 @@
         android:id="@+id/cleanLeftoverFiles"
         android:title="@string/leftover_files"
         android:visible="false" />
+    <item
+        android:id="@+id/drops"
+        android:icon="@drawable/ic_drops_24"
+        android:title="@string/drops_title" />
+    <item
+        android:id="@+id/collectibles"
+        android:icon="@drawable/ic_collectibles_24"
+        android:title="@string/collectibles_title" />
 </menu>

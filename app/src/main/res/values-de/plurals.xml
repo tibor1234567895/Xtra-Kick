@@ -40,4 +40,12 @@
         <item quantity="one">%d Belohnung</item>
         <item quantity="other">%d Belohnungen</item>
     </plurals>
+    <plurals name="drops_active_count">
+        <item quantity="one">%d aktiver Drop</item>
+        <item quantity="other">%d aktive Drops</item>
+    </plurals>
+    <plurals name="drops_count">
+        <item quantity="one">%d Drop</item>
+        <item quantity="other">%d Drops</item>
+    </plurals>
 </resources>

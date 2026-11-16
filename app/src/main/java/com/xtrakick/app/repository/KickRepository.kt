@@ -1256,16 +1256,16 @@ class KickRepository @Inject constructor(
     suspend fun getUserCardDetails(
         channelSlug: String?,
         userSlug: String,
+        knownCreatedAt: String? = null,
     ): KickUserCardDetails = withContext(Dispatchers.IO) {
         val normalizedUserSlug = userSlug.trim()
         if (normalizedUserSlug.isBlank()) return@withContext KickUserCardDetails()
 
-        val createdAt = runCatching {
+        val createdAt = knownCreatedAt ?: runCatching {
             val root = json.parseToJsonElement(
                 getRaw("https://kick.com/api/v2/channels/${urlEncode(normalizedUserSlug)}", isKickWeb = true)
             ).jsonObject
-            root.objOrNull("chatroom")?.firstPrimitiveOrNull("created_at", "createdAt")
-                ?: root.objOrNull("user")?.firstPrimitiveOrNull("created_at", "createdAt")
+            root.objOrNull("user")?.firstPrimitiveOrNull("created_at", "createdAt")
                 ?: root.firstPrimitiveOrNull("created_at", "createdAt")
         }.getOrNull()?.let(::normalizeDate)
 
@@ -3527,10 +3527,7 @@ class KickRepository @Inject constructor(
                 val viewCount = item.intOrNull("views")
                     ?: item.intOrNull("view_count")
                     ?: item.intOrNull("viewer_count")
-                val duration = normalizeVideoDurationSeconds(
-                    item.firstLongOrNull("duration_seconds", "length_seconds")
-                        ?: item.firstLongOrNull("duration")
-                )
+                val duration = videoDurationSeconds(item)
                 val category = item.arrayOrNull("categories")?.firstNotNullOfOrNull { categoryElement ->
                     (categoryElement as? JsonObject)?.let { categoryObject ->
                         Triple(
@@ -4334,12 +4331,7 @@ class KickRepository @Inject constructor(
                     ?: obj.primitiveOrNull("preview_thumbnail_url"),
                 viewCount = obj.intOrNull("views") ?: obj.intOrNull("view_count") ?: obj.intOrNull("viewer_count") ?: livestream?.intOrNull("viewer_count"),
                 type = "ARCHIVE",
-                duration = normalizeVideoDurationSeconds(
-                    obj.firstLongOrNull("duration_seconds", "length_seconds")
-                        ?: obj.firstLongOrNull("duration")
-                        ?: livestream?.firstLongOrNull("duration_seconds", "length_seconds")
-                        ?: livestream?.firstLongOrNull("duration")
-                ),
+                duration = videoDurationSeconds(obj) ?: livestream?.let(::videoDurationSeconds),
                 gameId = category?.primitiveOrNull("id"),
                 gameSlug = category?.primitiveOrNull("slug"),
                 gameName = category?.primitiveOrNull("name"),
@@ -5825,6 +5817,12 @@ class KickRepository @Inject constructor(
     }
 
     companion object {
+        internal fun videoDurationSeconds(video: JsonObject): String? {
+            val seconds = video.firstLongOrNull("duration_seconds", "length_seconds")
+            val duration = seconds ?: video.firstLongOrNull("duration")?.takeIf { it >= 0L }?.div(1000L)
+            return duration?.takeIf { it >= 0L }?.toString()
+        }
+
         private const val PLAYBACK_URL_CACHE_TTL_MS = 120_000L
 
         /** Fixed client token the official app sends as X-CLIENT-TOKEN on the viewer socket token fetch. */
@@ -7060,15 +7058,6 @@ class KickRepository @Inject constructor(
             input.contains('T') -> if (input.endsWith("Z") || input.contains("+")) input else "${input}Z"
             else -> input.replace(' ', 'T') + "Z"
         }
-    }
-
-    private fun normalizeVideoDurationSeconds(duration: Long?): String? {
-        val normalized = when {
-            duration == null || duration < 0L -> return null
-            duration > 604_800L -> duration / 1000L
-            else -> duration
-        }
-        return normalized.toString()
     }
 
     private fun urlEncode(value: String): String {

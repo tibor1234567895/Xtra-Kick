@@ -8,6 +8,16 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class KickVideoParsingTest {
+    @Test
+    fun recordingDurationsUseFieldUnitsEvenForShortBroadcasts() {
+        fun duration(json: String) = KickRepository.videoDurationSeconds(Json.parseToJsonElement(json).jsonObject)
+        assertEquals("58", duration("""{"duration":58000}"""))
+        assertEquals("255", duration("""{"duration":255000}"""))
+        assertEquals("900", duration("""{"duration":900000}"""))
+        assertEquals("900", duration("""{"duration_seconds":900,"duration":900000}"""))
+        assertEquals("604801", duration("""{"length_seconds":604801}"""))
+        assertNull(duration("""{"duration":-1000}"""))
+    }
 
     private fun resolveDisplayName(
         channelLogin: String?,

@@ -2,10 +2,14 @@ package com.xtrakick.app.repository
 
 import android.util.Log
 import com.xtrakick.app.BuildConfig
+import com.xtrakick.app.model.kick.KickCollectible
 import com.xtrakick.app.model.kick.KickDailyChallenge
 import com.xtrakick.app.model.kick.KickDailyClaimResult
 import com.xtrakick.app.model.kick.KickDropCampaign
+import com.xtrakick.app.model.kick.KickDropCampaignFull
+import com.xtrakick.app.model.kick.KickDropParticipatingChannel
 import com.xtrakick.app.model.kick.KickRewardsParsing
+import com.xtrakick.app.model.kick.KickUserLevel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -42,7 +46,6 @@ class KickRewardsRepository @Inject constructor(
 
     suspend fun getDailyChallenges(): List<KickDailyChallenge> =
         getAndParse("$BASE_URL/gamification/challenges") {
-            logRawJson("daily challenges", it)
             KickRewardsParsing.parseChallenges(it)
         }.also {
             _dailyChallengesFlow.value = it
@@ -77,7 +80,6 @@ class KickRewardsRepository @Inject constructor(
 
     suspend fun claimDailyChallenge(challengeId: String): KickDailyClaimResult =
         postAndParse("$BASE_URL/gamification/challenges/${urlEncode(challengeId)}/claim", body = null) {
-            logRawJson("daily claim", it)
             KickRewardsParsing.parseDailyClaim(it)
         }.also {
             kickRepository.clearKickEmoteGroupsCache()
@@ -91,6 +93,39 @@ class KickRewardsRepository @Inject constructor(
     suspend fun getDropCampaigns(): List<KickDropCampaign> =
         getAndParse("$BASE_URL/drops/progress") { KickRewardsParsing.parseDropCampaigns(it) }
 
+    suspend fun getAllDropCampaigns(): List<KickDropCampaignFull> {
+        val userProgress = if (canAttemptClaims()) {
+            runCatching { getDropCampaigns() }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+        // /drops/campaigns is public in the official app — no session required.
+        return getAndParse("$BASE_URL/drops/campaigns", requireAuth = false) { root ->
+            KickRewardsParsing.parseAllDropCampaigns(root, userProgress)
+        }
+    }
+
+    suspend fun getCampaignLivestreams(campaignId: String): List<KickDropParticipatingChannel> =
+        runCatching {
+            // Livestreams of a campaign are public; failures degrade to the static channel list.
+            getAndParse(
+                "$BASE_URL/drops/campaigns/${urlEncode(campaignId)}/livestreams",
+                requireAuth = false,
+            ) { root ->
+                KickRewardsParsing.parseCampaignLivestreams(root)
+            }
+        }.getOrDefault(emptyList())
+
+    suspend fun getCollectibles(): List<KickCollectible> =
+        getAndParse("$BASE_URL/gamification/collectibles") {
+            KickRewardsParsing.parseCollectibles(it)
+        }
+
+    suspend fun getUserLevel(): KickUserLevel? =
+        getAndParse("$BASE_URL/gamification/user/level") {
+            KickRewardsParsing.parseUserLevel(it)
+        }
+
     suspend fun claimDropReward(rewardId: String, campaignId: String) {
         val body = buildJsonObject {
             put("reward_id", JsonPrimitive(rewardId))
@@ -100,35 +135,39 @@ class KickRewardsRepository @Inject constructor(
         kickRepository.clearKickEmoteGroupsCache()
     }
 
-    private suspend fun <T> getAndParse(url: String, transform: (JsonElement) -> T): T =
-        requestAndParse(url, body = null, post = false, transform = transform)
+    private suspend fun <T> getAndParse(url: String, requireAuth: Boolean = true, transform: (JsonElement) -> T): T =
+        requestAndParse(url, body = null, post = false, requireAuth = requireAuth, transform = transform)
 
     private suspend fun post(url: String, body: String?): String = withContext(Dispatchers.IO) {
         kickRepository.executeKickWebSessionRequest(url, body, post = true)
     }
 
     private suspend fun <T> postAndParse(url: String, body: String?, transform: (JsonElement) -> T): T =
-        requestAndParse(url, body, post = true, transform = transform)
+        requestAndParse(url, body, post = true, requireAuth = true, transform = transform)
 
     private suspend fun <T> requestAndParse(
         url: String,
         body: String?,
         post: Boolean,
+        requireAuth: Boolean,
         transform: (JsonElement) -> T,
     ): T = withContext(Dispatchers.IO) {
-        val raw = kickRepository.executeKickWebSessionRequest(url, body, post)
+        val raw = kickRepository.executeKickWebSessionRequest(url, body, post, requireAuth = requireAuth)
         if (raw.isBlank()) {
             throw IOException("Kick rewards request returned an empty response for $url")
         }
-        transform(json.parseToJsonElement(raw))
+        val root = json.parseToJsonElement(raw)
+        logRawJson(url.substringBefore('?').substringAfterLast('/'), root)
+        transform(root)
     }
 
     private fun urlEncode(value: String): String =
         URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
     /**
-     * Debug-only capture of the raw gamification payloads (event crates like Trick or Treat
-     * carry shapes the parser can't reveal — empty roulette, placeholder winners, real video URLs).
+     * Debug-only capture of the raw gamification payloads (challenges, drops, collectibles,
+     * user level, livestreams) so live schema shapes can be verified against the parsers —
+     * event crates like Trick or Treat carry shapes the parser can't reveal.
      */
     private fun logRawJson(label: String, root: JsonElement) {
         if (!BuildConfig.DEBUG) return

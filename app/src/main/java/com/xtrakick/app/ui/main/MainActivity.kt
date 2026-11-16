@@ -39,6 +39,7 @@ import androidx.annotation.OptIn
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import androidx.core.content.edit
 import androidx.core.content.res.use
 import androidx.core.net.toUri
@@ -875,12 +876,7 @@ class MainActivity : BaseStateActivity() {
             INTENT_INSTALL_UPDATE -> {
                 val extras = intent.extras
                 if (extras?.getInt(PackageInstaller.EXTRA_STATUS) == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-                    val rawIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        extras.getParcelable(Intent.EXTRA_INTENT, Intent::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        extras.getParcelable(Intent.EXTRA_INTENT)
-                    }
+                    val rawIntent = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)
                     rawIntent?.takeIf(::isSystemInstallerIntent)?.let { verifiedIntent ->
                         tokenPrefs().edit {
                             putLong(AppConstants.UPDATE_LAST_CHECKED, System.currentTimeMillis())
@@ -900,12 +896,7 @@ class MainActivity : BaseStateActivity() {
                 }
             }
             INTENT_LIVE_NOTIFICATION -> {
-                val stream = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(KEY_VIDEO, Stream::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(KEY_VIDEO)
-                } ?: run {
+                val stream = IntentCompat.getParcelableExtra(intent, KEY_VIDEO, Stream::class.java) ?: run {
                     val channelLogin = intent.getStringExtra("stream_channel_login")
                         ?: intent.getStringExtra("channel_login")
                         ?: intent.getStringExtra("channelLogin")
@@ -991,12 +982,7 @@ class MainActivity : BaseStateActivity() {
                 }
             }
             INTENT_OPEN_DOWNLOADED_VIDEO -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(KEY_VIDEO, OfflineVideo::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(KEY_VIDEO)
-                }?.let {
+                IntentCompat.getParcelableExtra(intent, KEY_VIDEO, OfflineVideo::class.java)?.let {
                     startOfflineVideo(it)
                 }
             }
@@ -1154,6 +1140,11 @@ class MainActivity : BaseStateActivity() {
     fun launchSettings() {
         launchingSettings = true
         settingsResultLauncher?.launch(Intent(this, com.xtrakick.app.ui.settings.SettingsActivity::class.java))
+    }
+
+    fun navigateTo(destinationId: Int) {
+        playerFragment?.minimize()
+        navController.navigate(destinationId)
     }
 
     fun isLaunchingSettings(): Boolean = launchingSettings

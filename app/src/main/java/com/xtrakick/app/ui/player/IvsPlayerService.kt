@@ -34,6 +34,7 @@ import android.util.Log
 import android.view.KeyEvent
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.DefaultMediaNotificationProvider
@@ -317,6 +318,13 @@ class IvsPlayerService : Service() {
     private val rewardsPreferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == AppConstants.KICK_DAILY_REWARDS_ENABLED) {
             watchOwner.onRewardsToggle(prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true))
+        } else if (key == AppConstants.PLAYER_AUDIO_FOCUS) {
+            if (prefs().getBoolean(AppConstants.PLAYER_AUDIO_FOCUS, true)) {
+                if (playbackRequested && !isPaused) requestAudioFocus()
+            } else {
+                abandonAudioFocus()
+                if (suspendedByFocusLoss && playbackRequested) play()
+            }
         }
     }
 
@@ -809,12 +817,7 @@ class IvsPlayerService : Service() {
                     }
 
                     override fun onMediaButtonEvent(mediaButtonEvent: Intent): Boolean {
-                        val keyEvent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            mediaButtonEvent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
-                        } else {
-                            @Suppress("DEPRECATION")
-                            mediaButtonEvent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
-                        }
+                        val keyEvent = IntentCompat.getParcelableExtra(mediaButtonEvent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
                         if (keyEvent != null && keyEvent.action == KeyEvent.ACTION_DOWN) {
                             when (keyEvent.keyCode) {
                                 KeyEvent.KEYCODE_MEDIA_PAUSE,
@@ -1597,12 +1600,7 @@ class IvsPlayerService : Service() {
                 return START_NOT_STICKY
             }
             if (Intent.ACTION_MEDIA_BUTTON == intent.action) {
-                val keyEvent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
-                }
+                val keyEvent = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
                 if (keyEvent != null && keyEvent.action == KeyEvent.ACTION_DOWN) {
                     when (keyEvent.keyCode) {
                         KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> {

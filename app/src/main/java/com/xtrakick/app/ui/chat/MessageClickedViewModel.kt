@@ -107,6 +107,7 @@ class MessageClickedViewModel @Inject constructor(
             currentChannelName = response.channelName ?: currentChannelName
             currentChannelLogo = response.channelLogo ?: currentChannelLogo
 
+            uiState.value = uiState.value.copy(user = response, isLoadingUser = false)
             val remoteFollowing = loadFollowingState()
             val currentMutedUser = mutedChatUsersRepository.getMutedUser(currentChannelId, currentChannelLogin, currentChannelName)
             uiState.value = uiState.value.copy(
@@ -133,21 +134,29 @@ class MessageClickedViewModel @Inject constructor(
             try {
                 val response = kickRepository.getChannel(requireNotNull(currentChannelLogin), false)
                 response.user?.let { kickUser ->
-                    val userCardDetails = kickRepository.getUserCardDetails(
-                        channelSlug = currentTargetLogin,
-                        userSlug = requireNotNull(currentChannelLogin)
-                    )
                     val resolvedId = response.id?.toString() ?: kickUser.id?.toString() ?: currentChannelId
-                    val resolvedBanner = response.bannerUrl
-                        ?: KickApiHelper.getDefaultBanner(resolvedId, kickUser.username)
-                    User(
+                    val basicUser = User(
                         channelId = resolvedId,
                         channelLogin = kickUser.username,
                         channelName = kickUser.username,
                         profileImageUrl = kickUser.profileImage,
-                        bannerImageURL = resolvedBanner,
+                        bannerImageURL = response.bannerUrl ?: KickApiHelper.getDefaultBanner(resolvedId, kickUser.username),
+                        createdAt = kickUser.createdAt,
+                    )
+                    uiState.value = uiState.value.copy(user = basicUser, isLoadingUser = false)
+                    val userCardDetails = kickRepository.getUserCardDetails(
+                        channelSlug = currentTargetLogin,
+                        userSlug = requireNotNull(currentChannelLogin),
+                        knownCreatedAt = kickUser.createdAt,
+                    )
+                    User(
+                        channelId = basicUser.channelId,
+                        channelLogin = basicUser.channelLogin,
+                        channelName = basicUser.channelName,
+                        profileImageUrl = basicUser.profileImageUrl,
+                        bannerImageURL = basicUser.bannerImageURL,
                         createdAt = userCardDetails.createdAt ?: kickUser.createdAt,
-                        followedAt = userCardDetails.followingSince
+                        followedAt = userCardDetails.followingSince,
                     )
                 } ?: throw Exception("Invalid response")
             } catch (_: Exception) {

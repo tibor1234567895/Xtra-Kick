@@ -199,4 +199,18 @@
     <action
         android:id="@+id/action_global_notificationChannelsFragment"
         app:destination="@id/notificationChannelsFragment" />
+    <fragment
+        android:id="@+id/dropsFragment"
+        android:name="com.xtrakick.app.ui.main.DropsFragment"
+        android:label="@string/drops_title" />
+    <action
+        android:id="@+id/action_global_dropsFragment"
+        app:destination="@id/dropsFragment" />
+    <fragment
+        android:id="@+id/collectiblesFragment"
+        android:name="com.xtrakick.app.ui.main.CollectiblesFragment"
+        android:label="@string/collectibles_title" />
+    <action
+        android:id="@+id/action_global_collectiblesFragment"
+        app:destination="@id/collectiblesFragment" />
 </navigation>

@@ -659,6 +659,10 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun seek(position: Long) {
+        if (seekChatOnly(position)) {
+            pendingSeekPosition = null
+            return
+        }
         if (pendingSeekPosition != null) {
             pendingSeekPosition = position.coerceAtLeast(0L)
             return
@@ -682,6 +686,10 @@ class IvsPlayerFragment : PlayerFragment() {
         cancelPendingSkip()
         resetCatchupState()
         pendingSeekPosition = targetPositionMs
+        if (viewModel.quality == CHAT_ONLY_QUALITY) {
+            startChatOnlyClock(targetPositionMs)
+            pendingSeekPosition = null
+        }
         startStream(vodUrl)
         updateLiveRewindUi(isRewound = true)
         val effectiveStart = startedAtStr ?: requireArguments().getString(KEY_STARTED_AT) ?: viewModel.stream.value?.startedAt
@@ -741,6 +749,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun setPlaybackSpeed(speed: Float) {
+        super.setPlaybackSpeed(speed)
         runIvsOp("fragment-set-rate") { it.setPlaybackRate(speed) }
     }
 
@@ -994,7 +1003,11 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun changeQuality(selectedQuality: String?) {
         if (selectedQuality == CHAT_ONLY_QUALITY) {
-            if (viewModel.quality != CHAT_ONLY_QUALITY) viewModel.previousQuality = viewModel.quality
+            if (viewModel.quality != CHAT_ONLY_QUALITY) {
+                startChatOnlyClock()
+                viewModel.previousQuality = viewModel.quality
+            }
+            pendingSeekPosition = null
             viewModel.quality = CHAT_ONLY_QUALITY
             viewModel.restoreQuality = false
             resumeOnStart = false
@@ -1014,9 +1027,11 @@ class IvsPlayerFragment : PlayerFragment() {
         }
         val wasChatOnly = viewModel.quality == CHAT_ONLY_QUALITY
         if (wasChatOnly) {
+            val replayPosition = stopChatOnlyClock()
+            if (viewModel.isLiveRewound || videoType != STREAM) pendingSeekPosition = replayPosition
             viewModel.quality = selectedQuality
             viewModel.restoreQuality = false
-            updateChatOnlyLayout()
+            changePlayerMode()
             currentUrl?.let { startStream(it) }
         }
         if (selectedQuality == AUDIO_ONLY_QUALITY) {

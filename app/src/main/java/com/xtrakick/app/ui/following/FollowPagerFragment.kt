@@ -190,6 +190,14 @@ class FollowPagerFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
                         activity.launchSettings()
                         true
                     }
+                    R.id.drops -> {
+                        (activity as? MainActivity)?.navigateTo(R.id.dropsFragment)
+                        true
+                    }
+                    R.id.collectibles -> {
+                        (activity as? MainActivity)?.navigateTo(R.id.collectiblesFragment)
+                        true
+                    }
                     R.id.login -> {
                         if (isLoggedIn) {
                             activity.getAlertDialogBuilder().apply {

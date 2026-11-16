@@ -283,6 +283,36 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     open fun getCurrentPosition(): Long? = null
     open fun getCurrentSpeed(): Float? = null
     open fun isPlaybackPlaying(): Boolean = false
+    private var chatOnlyPositionMs: Long? = null
+    private var chatOnlyStartedAtMs = 0L
+    private var chatOnlySpeed = 1f
+
+    protected fun startChatOnlyClock(position: Long = getCurrentPosition() ?: 0L) {
+        chatOnlyPositionMs = position.coerceAtLeast(0L)
+        chatOnlyStartedAtMs = SystemClock.elapsedRealtime()
+        chatOnlySpeed = getCurrentSpeed() ?: 1f
+    }
+
+    fun getChatPosition(): Long? {
+        val position = chatOnlyPositionMs
+        if (viewModel.quality != CHAT_ONLY_QUALITY || position == null) return getCurrentPosition()
+        val current = position + ((SystemClock.elapsedRealtime() - chatOnlyStartedAtMs) * chatOnlySpeed).toLong()
+        if (videoType == STREAM) return current
+        val duration = getDuration()?.takeIf { it > 0L } ?: return current
+        return current.coerceAtMost(duration)
+    }
+
+    fun isChatPlaybackPlaying(): Boolean =
+        (viewModel.quality == CHAT_ONLY_QUALITY && chatOnlyPositionMs != null) || isPlaybackPlaying()
+
+    protected fun seekChatOnly(position: Long): Boolean {
+        if (chatOnlyPositionMs == null || viewModel.quality != CHAT_ONLY_QUALITY) return false
+        startChatOnlyClock(position)
+        if (isAdded) activeChatFragment()?.seekTo(position)
+        return true
+    }
+
+    protected fun stopChatOnlyClock(): Long? = getChatPosition().also { chatOnlyPositionMs = null }
     open fun getCurrentVolume(): Float? = null
     open fun playPause() {}
 
@@ -409,7 +439,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     open fun seekToLivePosition() {}
     open fun switchLiveToVod(vodUrl: String, targetPositionMs: Long, startedAtStr: String? = null) {}
     open fun returnLiveEdge() {}
-    open fun setPlaybackSpeed(speed: Float) {}
+    open fun setPlaybackSpeed(speed: Float) {
+        if (chatOnlyPositionMs != null && viewModel.quality == CHAT_ONLY_QUALITY) {
+            val position = getChatPosition() ?: 0L
+            startChatOnlyClock(position)
+            chatOnlySpeed = speed
+        }
+    }
     open fun updateChannelLogo(logo: String?) {}
 
     open fun updateStreamStartedAt(startedAt: String) {}
@@ -2436,6 +2472,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         binding.chatOnlyDivider.isVisible = chatOnly
         binding.playerLayout.isVisible = !chatOnly
         if (chatOnly) {
+            if (chatOnlyPositionMs == null) startChatOnlyClock()
             chatProgressAnimator?.cancel()
             binding.chatLayout.isPortrait = false
             binding.chatLayout.translationX = 0f
@@ -2448,8 +2485,20 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             binding.chatOnlyChannel.text = arguments?.getString(KEY_CHANNEL_NAME)
                 ?: arguments?.getString(KEY_CHANNEL_LOGIN)
             binding.chatOnlyWatch.setOnClickListener {
-                changeQuality(viewModel.previousQuality?.takeUnless { it == CHAT_ONLY_QUALITY || it == AUDIO_ONLY_QUALITY } ?: AUTO_QUALITY)
+                exitChatOnly()
             }
+            val exitGesture = GestureDetector(binding.root.context, object : GestureDetector.SimpleOnGestureListener() {
+                override fun onDown(e: MotionEvent): Boolean = true
+                override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                    if (e1 != null && e2.y - e1.y > 48 * resources.displayMetrics.density &&
+                        velocityY > kotlin.math.abs(velocityX)) {
+                        exitChatOnly()
+                        return true
+                    }
+                    return false
+                }
+            })
+            binding.chatOnlyHeader.setOnTouchListener { _, event -> exitGesture.onTouchEvent(event) }
             binding.chatOnlySettings.setOnClickListener { binding.playerControls.quality.performClick() }
             binding.chatOnlyChannel.setOnClickListener { binding.playerControls.channel.performClick() }
             binding.chatOnlyCategory.setOnClickListener { binding.playerControls.category.performClick() }
@@ -2464,6 +2513,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             binding.chatOnlyUptime.stop()
             initLayout()
         }
+    }
+
+    private fun exitChatOnly() {
+        changeQuality(viewModel.previousQuality?.takeUnless { it == CHAT_ONLY_QUALITY || it == AUDIO_ONLY_QUALITY } ?: AUTO_QUALITY)
     }
 
     private fun updateChatOnlyInfo() {
@@ -2534,6 +2587,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     fun showQualityDialog() {
+        if (videoType == STREAM && !viewModel.qualities.containsKey(CHAT_ONLY_QUALITY)) {
+            viewModel.qualities = viewModel.qualities + (CHAT_ONLY_QUALITY to (getString(R.string.chat_only) to null))
+        }
         if (viewModel.qualities.isNotEmpty()) {
             RadioButtonDialogFragment.newInstance(
                 requestCode = REQUEST_CODE_QUALITY,
@@ -3085,7 +3141,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     fun rewindLiveStream(rewindSeconds: Long) {
         if (viewModel.isLiveRewound) {
-            val currentPos = getCurrentPosition() ?: 0L
+            val currentPos = getChatPosition() ?: 0L
             val targetPositionMs = if (rewindSeconds < 0L) {
                 0L
             } else {
@@ -4519,7 +4575,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             VIDEO -> {
                 if (prefs.getBoolean(AppConstants.PLAYER_USE_VIDEOPOSITIONS, true)) {
                     requireArguments().getString(KEY_VIDEO_ID)?.toLongOrNull()?.let { id ->
-                        getCurrentPosition()?.let { position ->
+                        getChatPosition()?.let { position ->
                             viewModel.saveVideoPosition(id, position)
                         }
                     }
@@ -4527,7 +4583,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             }
             OFFLINE_VIDEO -> {
                 if (prefs.getBoolean(AppConstants.PLAYER_USE_VIDEOPOSITIONS, true)) {
-                    getCurrentPosition()?.let { position ->
+                    getChatPosition()?.let { position ->
                         viewModel.saveOfflineVideoPosition(requireArguments().getInt(KEY_OFFLINE_VIDEO_ID), position)
                     }
                 }

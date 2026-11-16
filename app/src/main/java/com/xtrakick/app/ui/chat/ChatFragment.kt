@@ -2062,13 +2062,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             channelId = channelId,
                             channelLogin = channelLogin,
                             chatUrl = chatUrl,
-                            getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
+                            getCurrentPosition = (parentFragment as PlayerFragment)::getChatPosition,
                             getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                             kickReplayFallback = kickReplayFallback,
                             kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
                             kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL),
                             isClipReplay = args.getBoolean(KEY_IS_CLIP_REPLAY),
-                            isPlaybackPlaying = (parentFragment as PlayerFragment)::isPlaybackPlaying
+                            isPlaybackPlaying = (parentFragment as PlayerFragment)::isChatPlaybackPlaying
                         )
                     }
                 } else {
@@ -2110,13 +2110,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         channelLogin = channelLogin,
                         videoId = videoId,
                         startTime = startTime,
-                        getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
+                        getCurrentPosition = (parentFragment as PlayerFragment)::getChatPosition,
                         getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                         kickReplayFallback = args.getBoolean(KEY_KICK_REPLAY_FALLBACK),
                         kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
                         kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL),
                         isClipReplay = args.getBoolean(KEY_IS_CLIP_REPLAY),
-                        isPlaybackPlaying = (parentFragment as PlayerFragment)::isPlaybackPlaying
+                        isPlaybackPlaying = (parentFragment as PlayerFragment)::isChatPlaybackPlaying
                     )
                 }
             }
@@ -2134,7 +2134,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         if (args.getBoolean(KEY_IS_LIVE) && !isLiveRewound) {
             viewModel.resumeLive(channelId, channelLogin)
         } else if (isLiveRewound) {
-            val currentPos = (parentFragment as? PlayerFragment)?.getCurrentPosition() ?: 0L
+            val currentPos = (parentFragment as? PlayerFragment)?.getChatPosition() ?: 0L
             startLiveRewind(null, currentPos)
         } else {
             viewModel.resumeReplay(
@@ -2143,13 +2143,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 chatUrl = args.getString(KEY_CHAT_URL),
                 videoId = args.getString(KEY_VIDEO_ID),
                 startTime = args.getInt(KEY_START_TIME),
-                getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
+                getCurrentPosition = (parentFragment as PlayerFragment)::getChatPosition,
                 getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                 kickReplayFallback = args.getBoolean(KEY_KICK_REPLAY_FALLBACK),
                 kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
                 kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL),
                 isClipReplay = args.getBoolean(KEY_IS_CLIP_REPLAY),
-                isPlaybackPlaying = (parentFragment as PlayerFragment)::isPlaybackPlaying
+                isPlaybackPlaying = (parentFragment as PlayerFragment)::isChatPlaybackPlaying
             )
         }
     }
@@ -2244,7 +2244,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN) ?: return
         val channelName = requireArguments().getString(KEY_CHANNEL_NAME)
         val startTimeMs = effectiveStart?.let { KickApiHelper.parseIso8601DateUTC(it) } ?: 0L
-        val getCurrentPosition = (parentFragment as? PlayerFragment)?.let { it::getCurrentPosition } ?: { targetPositionMs }
+        val getCurrentPosition = (parentFragment as? PlayerFragment)?.let { it::getChatPosition } ?: { targetPositionMs }
         val getCurrentSpeed = (parentFragment as? PlayerFragment)?.let { it::getCurrentSpeed } ?: { 1.0f }
         viewModel.startLiveRewindChat(
             channelId = channelId ?: "",
@@ -2254,7 +2254,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             targetPositionMs = targetPositionMs,
             getCurrentPosition = getCurrentPosition,
             getCurrentSpeed = getCurrentSpeed,
-            isPlaybackPlaying = { (parentFragment as? PlayerFragment)?.isPlaybackPlaying() == true },
+            isPlaybackPlaying = { (parentFragment as? PlayerFragment)?.isChatPlaybackPlaying() == true },
         )
     }
 
@@ -2619,13 +2619,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     chatUrl = args.getString(KEY_CHAT_URL),
                     videoId = args.getString(KEY_VIDEO_ID),
                     startTime = args.getInt(KEY_START_TIME),
-                    getCurrentPosition = (parentFragment as PlayerFragment)::getCurrentPosition,
+                    getCurrentPosition = (parentFragment as PlayerFragment)::getChatPosition,
                     getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
                     kickReplayFallback = args.getBoolean(KEY_KICK_REPLAY_FALLBACK),
                     kickReplayStartTime = args.getString(KEY_KICK_REPLAY_START_TIME),
                     kickReplayUrl = args.getString(KEY_KICK_REPLAY_URL),
                     isClipReplay = args.getBoolean(KEY_IS_CLIP_REPLAY),
-                    isPlaybackPlaying = (parentFragment as PlayerFragment)::isPlaybackPlaying
+                    isPlaybackPlaying = (parentFragment as PlayerFragment)::isChatPlaybackPlaying
                 )
             }
         }

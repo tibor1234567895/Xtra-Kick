@@ -668,6 +668,11 @@ class Media3Fragment : PlayerFragment() {
     override fun startStream(url: String?) {
         hideOfflineOverlay()
         activePlaybackUrl = url
+        if (viewModel.quality == CHAT_ONLY_QUALITY) {
+            player?.stop()
+            updateChatOnlyLayout()
+            return
+        }
         val latencyConfig = LiveLatencySettings.resolve(prefs)
         liveTargetOffsetMs = latencyConfig.targetOffsetMs
         pendingInitialLiveSync = true
@@ -679,13 +684,12 @@ class Media3Fragment : PlayerFragment() {
                 "urlPresent=${!url.isNullOrBlank()} urlHash=$urlHash latency=${LiveLatencySettings.describe(latencyConfig)}"
         )
         player?.let { player ->
-            if (viewModel.quality != AUDIO_ONLY_QUALITY) {
-                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
-                    setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
-                    clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
-                }.build()
-                showVideoSurface(player)
-            }
+            val audioOnly = viewModel.quality == AUDIO_ONLY_QUALITY
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
+                setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, audioOnly)
+                if (!audioOnly) clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
+            }.build()
+            if (!audioOnly) showVideoSurface(player)
         }
         val commandResult = player?.sendCustomCommand(
             SessionCommand(
@@ -752,14 +756,25 @@ class Media3Fragment : PlayerFragment() {
 
     override fun startVideo(url: String?, playbackPosition: Long?, multivariantPlaylist: Boolean) {
         activePlaybackUrl = url
+        if (viewModel.quality == CHAT_ONLY_QUALITY) {
+            startChatOnlyClock(playbackPosition ?: getChatPosition() ?: 0L)
+            player?.stop()
+            updateChatOnlyLayout()
+            return
+        }
         player?.let { player ->
             pendingInitialLiveSync = false
             liveTargetOffsetMs = null
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
-                setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
+                setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, viewModel.quality == AUDIO_ONLY_QUALITY)
                 clearOverridesOfType(androidx.media3.common.C.TRACK_TYPE_VIDEO)
             }.build()
-            showVideoSurface(player)
+            if (viewModel.quality == AUDIO_ONLY_QUALITY) {
+                player.clearVideoSurface()
+                binding.playerSurface.visibility = View.GONE
+            } else {
+                showVideoSurface(player)
+            }
             player.sendCustomCommand(
                 SessionCommand(
                     PlaybackService.START_VIDEO, bundleOf(
@@ -924,6 +939,7 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun seek(position: Long) {
+        if (seekChatOnly(position)) return
         player?.seekTo(position)
         activeChatFragment()?.seekTo(position)
     }
@@ -940,7 +956,12 @@ class Media3Fragment : PlayerFragment() {
             viewModel.liveStreamUrl = activePlaybackUrl
         }
         viewModel.isLiveRewound = true
-        startVideo(vodUrl, targetPositionMs, true)
+        if (viewModel.quality == CHAT_ONLY_QUALITY) {
+            startChatOnlyClock(targetPositionMs)
+            activePlaybackUrl = vodUrl
+        } else {
+            startVideo(vodUrl, targetPositionMs, true)
+        }
         updateLiveRewindUi(isRewound = true)
         val effectiveStart = startedAtStr ?: requireArguments().getString(KEY_STARTED_AT) ?: viewModel.stream.value?.startedAt
         activeChatFragment()?.startLiveRewind(effectiveStart, targetPositionMs)
@@ -970,6 +991,7 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun setPlaybackSpeed(speed: Float) {
+        super.setPlaybackSpeed(speed)
         player?.setPlaybackSpeed(speed)
     }
 
@@ -1219,7 +1241,19 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun changeQuality(selectedQuality: String?) {
-        viewModel.previousQuality = viewModel.quality
+        val wasChatOnly = viewModel.quality == CHAT_ONLY_QUALITY
+        if (selectedQuality == CHAT_ONLY_QUALITY) {
+            if (!wasChatOnly) {
+                startChatOnlyClock()
+                viewModel.previousQuality = viewModel.quality
+            }
+            viewModel.quality = CHAT_ONLY_QUALITY
+            player?.stop()
+            changePlayerMode()
+            return
+        }
+        val replayPosition = if (wasChatOnly) stopChatOnlyClock() else null
+        if (!wasChatOnly) viewModel.previousQuality = viewModel.quality
         viewModel.quality = selectedQuality
         val quality = viewModel.qualities.entries.find { it.key == selectedQuality }
         player?.let { player ->
@@ -1227,7 +1261,7 @@ class Media3Fragment : PlayerFragment() {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
                 }.build()
-                quality?.value?.second?.let { uri ->
+                quality?.value?.second?.takeUnless { viewModel.isLiveRewound }?.let { uri ->
                     val position = player.currentPosition
                     if (viewModel.qualities.containsKey(AUTO_QUALITY)) {
                         player.currentMediaItem?.let { mediaItem ->
@@ -1242,8 +1276,6 @@ class Media3Fragment : PlayerFragment() {
                 }
                 player.clearVideoSurface()
                 binding.playerSurface.visibility = View.GONE
-            } else if (selectedQuality == CHAT_ONLY_QUALITY) {
-                player.stop()
             } else {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().apply {
                     setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
@@ -1320,7 +1352,18 @@ class Media3Fragment : PlayerFragment() {
                 showVideoSurface(player)
             }
         }
-        updateChatOnlyLayout()
+        if (wasChatOnly) {
+            if (viewModel.isLiveRewound) {
+                startVideo(activePlaybackUrl, replayPosition, true)
+            } else if (videoType == STREAM) {
+                startStream(activePlaybackUrl)
+            } else {
+                player?.prepare()
+                replayPosition?.let { player?.seekTo(it) }
+            }
+            player?.play()
+        }
+        changePlayerMode()
     }
 
     override fun startAudioOnly() {

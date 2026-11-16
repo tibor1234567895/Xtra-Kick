@@ -3,8 +3,8 @@ package com.xtrakick.app.ui.player
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.view.KeyEvent
+import androidx.core.content.IntentCompat
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
 
@@ -24,12 +24,7 @@ class MediaButtonReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_MEDIA_BUTTON) return
-        val keyEvent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
-        }
+        val keyEvent = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
         if (keyEvent?.action != KeyEvent.ACTION_DOWN || keyEvent.repeatCount > 0) return
         when (keyEvent.keyCode) {
             KeyEvent.KEYCODE_MEDIA_PLAY,

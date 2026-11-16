@@ -270,4 +270,228 @@ class KickRewardsParsingTest {
         assertNull(KickRewardsParsing.parseIsoTimestampMs(""))
         assertNull(KickRewardsParsing.parseIsoTimestampMs("not-a-date"))
     }
+
+    @Test
+    fun parsesAllDropCampaignsWithProgressMerge() {
+        val root = json.parseToJsonElement(
+            """
+            {
+              "data": [
+                {
+                  "id": "camp-cod",
+                  "name": "Modern Warfare 4",
+                  "status": "active",
+                  "starts_at": "2026-10-23T00:00:00Z",
+                  "ends_at": "2026-11-23T00:00:00Z",
+                  "connect_url": "https://kick.com/connect",
+                  "url": "https://kick.com/category/call-of-duty-modern-warfare-4",
+                  "rule": { "id": 1, "name": "Watch to redeem" },
+                  "category": {
+                    "id": 14138,
+                    "name": "Call of Duty: Modern Warfare 4",
+                    "slug": "call-of-duty-modern-warfare-4",
+                    "image_url": "https://files.kick.com/banner.png",
+                    "banner_image_url": "https://files.kick.com/wide_banner.png"
+                  },
+                  "organization": {
+                    "id": "org-kick",
+                    "name": "KICK",
+                    "logo_url": "https://ext.kick.com/logo.png",
+                    "url": "https://about.kick.com/",
+                    "restricted": false
+                  },
+                  "channels": ["streamer1", "streamer2"],
+                  "rewards": [
+                    {
+                      "id": "rw-1",
+                      "name": "Ghost Badge",
+                      "required_units": 3000,
+                      "category_id": 14138,
+                      "organization_id": "org-kick",
+                      "image_url": "drops/reward-image/ghost.png"
+                    }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        val userProgress = listOf(
+            KickDropCampaign(
+                id = "camp-cod",
+                name = "Modern Warfare 4",
+                status = "active",
+                progressUnits = 1500L,
+                rewards = listOf(
+                    KickDropReward(
+                        id = "rw-1",
+                        name = "Ghost Badge",
+                        claimed = false,
+                        requiredUnits = 3000L,
+                        progressFraction = 0.5,
+                    ),
+                ),
+            ),
+        )
+
+        val campaigns = KickRewardsParsing.parseAllDropCampaigns(root, userProgress)
+        assertEquals(1, campaigns.size)
+        val campaign = campaigns[0]
+        assertEquals("camp-cod", campaign.id)
+        assertEquals("Modern Warfare 4", campaign.name)
+        assertEquals(true, campaign.isActive)
+        assertEquals(false, campaign.isUpcoming)
+        assertEquals("Call of Duty: Modern Warfare 4", campaign.category?.name)
+        assertEquals("KICK", campaign.organization?.name)
+        assertEquals(listOf("streamer1", "streamer2"), campaign.channels)
+
+        assertEquals(1, campaign.rewards.size)
+        val reward = campaign.rewards[0]
+        assertEquals("rw-1", reward.id)
+        assertEquals("Ghost Badge", reward.name)
+        assertEquals("https://ext.cdn.kick.com/drops/reward-image/ghost.png", reward.resolvedImageUrl)
+        assertEquals(1500L, reward.currentUnits)
+        assertEquals(0.5, reward.progressFraction, 0.001)
+        assertEquals(false, reward.claimed)
+        assertEquals(false, reward.isClaimable)
+        assertEquals(true, campaign.hasProgress)
+        assertEquals(true, campaign.isChannelSpecific)
+        assertEquals(false, campaign.isCategoryWide)
+        assertEquals(2, campaign.participatingChannels.size)
+        assertEquals("streamer1", campaign.participatingChannels[0].slug)
+    }
+
+    @Test
+    fun parsesCampaignWithObjectChannelsAndLivestreams() {
+        val root = json.parseToJsonElement(
+            """
+            {
+              "data": [
+                {
+                  "id": "camp-partner",
+                  "name": "Partner Exclusive Event",
+                  "status": "active",
+                  "channels": [
+                    {
+                      "slug": "trainwreckstv",
+                      "user": {
+                        "username": "Trainwreck",
+                        "profile_picture": "https://cdn.kick.com/train.png"
+                      }
+                    }
+                  ],
+                  "rewards": []
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        val campaigns = KickRewardsParsing.parseAllDropCampaigns(root)
+        assertEquals(1, campaigns.size)
+        val campaign = campaigns[0]
+        assertEquals(true, campaign.isChannelSpecific)
+        assertEquals(listOf("trainwreckstv"), campaign.channels)
+        assertEquals(1, campaign.participatingChannels.size)
+        assertEquals("trainwreckstv", campaign.participatingChannels[0].slug)
+        assertEquals("Trainwreck", campaign.participatingChannels[0].username)
+        assertEquals("https://cdn.kick.com/train.png", campaign.participatingChannels[0].profilePicture)
+
+        // Test parsing campaign livestreams endpoint response
+        val livestreamsRoot = json.parseToJsonElement(
+            """
+            {
+              "data": [
+                {
+                  "id": "live-1",
+                  "channel": {
+                    "slug": "trainwreckstv",
+                    "user": {
+                      "username": "Trainwreck",
+                      "profile_picture": "https://cdn.kick.com/train.png"
+                    }
+                  }
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+        val liveChannels = KickRewardsParsing.parseCampaignLivestreams(livestreamsRoot)
+        assertEquals(1, liveChannels.size)
+        assertEquals("trainwreckstv", liveChannels[0].slug)
+        assertEquals(true, liveChannels[0].isLive)
+    }
+
+    @Test
+    fun parsesCollectiblesInventoryWithOddsAndRarity() {
+        val root = json.parseToJsonElement(
+            """
+            {
+              "data": [
+                {
+                  "id": "col-1",
+                  "name": "Unikorn Emote",
+                  "rarity": "mythic",
+                  "owned": true,
+                  "card_url": "https://content.kick.com/cards/unikorn.webp",
+                  "thumbnail_url": "https://content.kick.com/thumb/unikorn.webp",
+                  "unlocked_at": "2026-10-25T12:00:00Z",
+                  "drop_table": [
+                    { "rarity": "common", "weighting": 500 },
+                    { "rarity": "mythic", "weighting": 5 }
+                  ]
+                },
+                {
+                  "id": "col-2",
+                  "name": "Standard Kappa",
+                  "rarity": "common",
+                  "owned": false,
+                  "card_url": "https://content.kick.com/cards/kappa.webp"
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        val collectibles = KickRewardsParsing.parseCollectibles(root)
+        assertEquals(2, collectibles.size)
+
+        val mythic = collectibles[0]
+        assertEquals("col-1", mythic.id)
+        assertEquals("Unikorn Emote", mythic.name)
+        assertEquals("mythic", mythic.rarity)
+        assertEquals(0, mythic.rarityRank)
+        assertEquals(true, mythic.owned)
+        assertEquals("https://content.kick.com/cards/unikorn.webp?width=300&format=png", mythic.resolvedCardUrl)
+        assertEquals(2, mythic.dropTable.size)
+
+        val common = collectibles[1]
+        assertEquals("col-2", common.id)
+        assertEquals("common", common.rarity)
+        assertEquals(5, common.rarityRank)
+        assertEquals(false, common.owned)
+    }
+
+    @Test
+    fun parsesUserLevelAndProgression() {
+        val root = json.parseToJsonElement(
+            """
+            {
+              "data": {
+                "level": 14,
+                "current_xp": 1450,
+                "next_level_xp": 2000,
+                "progress_percentage": 72.5
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val userLevel = KickRewardsParsing.parseUserLevel(root)
+        assertEquals(14, userLevel?.level)
+        assertEquals(1450L, userLevel?.currentXp)
+        assertEquals(2000L, userLevel?.nextLevelXp)
+        assertEquals(72.5, userLevel?.progressPercentage ?: 0.0, 0.001)
+    }
 }

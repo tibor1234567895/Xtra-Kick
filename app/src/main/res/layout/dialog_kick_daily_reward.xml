@@ -278,6 +278,52 @@
                 android:visibility="gone"
                 tools:text="Daily Reward resets at Aug 29, 02:00 AM"
                 tools:visibility="visible" />
+
+            <!-- Quick Navigation to Drops & Collectibles -->
+            <LinearLayout
+                android:id="@+id/quickNavContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/navDropsButton"
+                    style="?attr/tonalButtonStyle"
+                    android:layout_width="0dp"
+                    android:layout_height="42dp"
+                    android:layout_marginEnd="6dp"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:text="@string/drops_title"
+                    android:textSize="11.5sp"
+                    app:cornerRadius="10dp"
+                    app:icon="@drawable/ic_drops_24"
+                    app:iconPadding="4dp"
+                    app:iconSize="16dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/navCollectiblesButton"
+                    style="?attr/tonalButtonStyle"
+                    android:layout_width="0dp"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:text="@string/collectibles_title"
+                    android:textSize="11.5sp"
+                    app:cornerRadius="10dp"
+                    app:icon="@drawable/ic_collectibles_24"
+                    app:iconPadding="4dp"
+                    app:iconSize="16dp" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>

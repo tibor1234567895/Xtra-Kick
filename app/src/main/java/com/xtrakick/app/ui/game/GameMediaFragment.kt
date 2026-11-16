@@ -166,6 +166,14 @@ class GameMediaFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
                         activity.launchSettings()
                         true
                     }
+                    R.id.drops -> {
+                        activity.navigateTo(R.id.dropsFragment)
+                        true
+                    }
+                    R.id.collectibles -> {
+                        activity.navigateTo(R.id.collectiblesFragment)
+                        true
+                    }
                     R.id.login -> {
                         if (isLoggedIn) {
                             activity.getAlertDialogBuilder().apply {

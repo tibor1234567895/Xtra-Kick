@@ -203,6 +203,10 @@ class PlaybackService : MediaSessionService() {
     private val rewardsPreferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == AppConstants.KICK_DAILY_REWARDS_ENABLED) {
             watchOwner.onRewardsToggle(prefs().getBoolean(AppConstants.KICK_DAILY_REWARDS_ENABLED, true))
+        } else if (key == AppConstants.PLAYER_AUDIO_FOCUS) {
+            mediaSession?.player?.setAudioAttributes(
+                AudioAttributes.DEFAULT, prefs().getBoolean(AppConstants.PLAYER_AUDIO_FOCUS, true),
+            )
         }
     }
 

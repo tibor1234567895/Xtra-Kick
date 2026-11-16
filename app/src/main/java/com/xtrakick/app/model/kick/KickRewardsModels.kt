@@ -47,7 +47,7 @@ data class KickChallengeDropTableItem(
     val weighting: Long,
     val percentage: Double,
     val percentageFormatted: String,
-)
+) : java.io.Serializable
 
 data class KickDailyClaimResult(
     val challengeId: String?,
@@ -108,6 +108,130 @@ data class KickDropCampaign(
     val rewards: List<KickDropReward>,
 )
 
+data class KickDropRule(
+    val id: Long?,
+    val name: String?,
+)
+
+data class KickDropCategory(
+    val id: Long?,
+    val name: String,
+    val slug: String,
+    val imageUrl: String?,
+    val bannerImageUrl: String?,
+)
+
+data class KickDropOrganization(
+    val id: String?,
+    val name: String,
+    val logoUrl: String?,
+    val url: String?,
+    val restricted: Boolean = false,
+    val emailNotification: Boolean = false,
+)
+
+data class KickDropRewardItem(
+    val id: String,
+    val name: String,
+    val requiredUnits: Long,
+    val categoryId: Long?,
+    val organizationId: String?,
+    val imageUrl: String?,
+    val claimed: Boolean = false,
+    // Kick drop progress units are watch-time seconds; the UI divides by 60 to display minutes.
+    val currentUnits: Long = 0L,
+) {
+    val resolvedImageUrl: String?
+        get() = when {
+            imageUrl.isNullOrBlank() -> null
+            imageUrl.startsWith("http://", ignoreCase = true) || imageUrl.startsWith("https://", ignoreCase = true) -> imageUrl
+            imageUrl.startsWith("/") -> "https://ext.cdn.kick.com$imageUrl"
+            else -> "https://ext.cdn.kick.com/$imageUrl"
+        }
+
+    val progressFraction: Double
+        get() = if (requiredUnits > 0L) (currentUnits.toDouble() / requiredUnits).coerceIn(0.0, 1.0) else if (claimed) 1.0 else 0.0
+
+    val isClaimable: Boolean
+        get() = !claimed && requiredUnits > 0L && currentUnits >= requiredUnits
+}
+
+data class KickDropParticipatingChannel(
+    val slug: String,
+    val username: String = slug,
+    val profilePicture: String? = null,
+    val isLive: Boolean = false,
+) : java.io.Serializable
+
+data class KickDropCampaignFull(
+    val id: String,
+    val name: String,
+    val status: String,
+    val startsAtEpochMs: Long?,
+    val endsAtEpochMs: Long?,
+    val connectUrl: String?,
+    val url: String?,
+    val rule: KickDropRule?,
+    val category: KickDropCategory?,
+    val organization: KickDropOrganization?,
+    val channels: List<String> = emptyList(),
+    val participatingChannels: List<KickDropParticipatingChannel> = emptyList(),
+    val rewards: List<KickDropRewardItem> = emptyList(),
+) {
+    val isActive: Boolean
+        get() = status.equals("active", ignoreCase = true)
+
+    val isUpcoming: Boolean
+        get() = status.equals("upcoming", ignoreCase = true) || status.equals("coming-soon", ignoreCase = true)
+
+    val isExpired: Boolean
+        get() = status.equals("expired", ignoreCase = true)
+
+    val hasProgress: Boolean
+        get() = rewards.any { it.currentUnits > 0L || it.claimed }
+
+    val isChannelSpecific: Boolean
+        get() = channels.isNotEmpty() || participatingChannels.isNotEmpty()
+
+    val isCategoryWide: Boolean
+        get() = !isChannelSpecific && category != null
+}
+
+data class KickCollectible(
+    val id: String,
+    val name: String,
+    val rarity: String,
+    val owned: Boolean,
+    val cardUrl: String?,
+    val thumbnailUrl: String?,
+    val unlockedAtEpochMs: Long?,
+    val dropTable: List<KickChallengeDropTableItem> = emptyList(),
+) {
+    val resolvedCardUrl: String?
+        get() {
+            val base = cardUrl?.takeIf { it.isNotBlank() } ?: thumbnailUrl?.takeIf { it.isNotBlank() } ?: return null
+            return if (!base.contains("?")) "$base?width=300&format=png" else base
+        }
+
+    val rarityRank: Int
+        get() = when (rarity.lowercase(Locale.US)) {
+            "mythic" -> 0
+            "legendary" -> 1
+            "epic" -> 2
+            "rare" -> 3
+            "uncommon" -> 4
+            "common" -> 5
+            else -> 6
+        }
+}
+
+data class KickUserLevel(
+    val level: Int,
+    val currentXp: Long,
+    val nextLevelXp: Long,
+    val progressPercentage: Double,
+)
+
 /** Tolerant parsers for Kick's private gamification/drops endpoints (`{data:[...]}` or bare array). */
 object KickRewardsParsing {
 
@@ -124,6 +248,54 @@ object KickRewardsParsing {
 
     fun parseDropCampaigns(root: JsonElement): List<KickDropCampaign> =
         dataArray(root).mapNotNull { it.toDropCampaign() }
+
+    fun parseAllDropCampaigns(
+        root: JsonElement,
+        userProgress: List<KickDropCampaign> = emptyList(),
+    ): List<KickDropCampaignFull> {
+        val progressMap = userProgress.associateBy { it.id }
+        return dataArray(root).mapNotNull { it.toDropCampaignFull(progressMap) }
+    }
+
+    fun parseCampaignLivestreams(root: JsonElement): List<KickDropParticipatingChannel> {
+        val array = when (root) {
+            is JsonArray -> root
+            is JsonObject -> (root["data"] ?: root["livestreams"]) as? JsonArray
+            else -> null
+        } ?: return emptyList()
+
+        return array.mapNotNull { elem ->
+            val obj = elem as? JsonObject ?: return@mapNotNull null
+            val chObj = obj["channel"] as? JsonObject ?: obj
+            val slug = chObj.scalar("slug") ?: return@mapNotNull null
+            val userObj = chObj["user"] as? JsonObject
+            val username = userObj?.scalar("username") ?: chObj.scalar("username") ?: slug
+            val profilePic = userObj?.scalar("profile_picture") ?: chObj.scalar("profile_picture") ?: chObj.scalar("avatar_url")
+            KickDropParticipatingChannel(
+                slug = slug,
+                username = username,
+                profilePicture = profilePic,
+                isLive = true,
+            )
+        }
+    }
+
+    fun parseCollectibles(root: JsonElement): List<KickCollectible> =
+        dataArray(root).mapNotNull { it.toCollectible() }
+
+    fun parseUserLevel(root: JsonElement): KickUserLevel? {
+        val data = (root as? JsonObject)?.objectAt("data") ?: root as? JsonObject ?: return null
+        val level = data.longValue("level")?.toInt() ?: 1
+        val currentXp = data.longValue("current_xp") ?: data.longValue("current_points") ?: 0L
+        val nextLevelXp = data.longValue("next_level_xp") ?: data.longValue("next_level_points") ?: 0L
+        val progressPercentage = data.doubleValue("progress_percentage") ?: data.doubleValue("progress") ?: 0.0
+        return KickUserLevel(
+            level = level,
+            currentXp = currentXp,
+            nextLevelXp = nextLevelXp,
+            progressPercentage = progressPercentage,
+        )
+    }
 
     fun parseDailyClaim(root: JsonElement): KickDailyClaimResult {
         val data = (root as? JsonObject)?.objectAt("data") ?: root as? JsonObject
@@ -212,17 +384,10 @@ object KickRewardsParsing {
 
     private fun JsonObject.objectAt(key: String): JsonObject? = this[key] as? JsonObject
 
-    private fun JsonObject.toDailyChallenge(): KickDailyChallenge? {
-        val id = scalar("id") ?: return null
-        val condition = objectAt("condition")
-        val window = objectAt("window")
-        val winner = objectAt("winner") ?: objectAt("reward")
-        val animations = objectAt("animations")
-        val activePeriod = objectAt("active_period")
-
+    private fun JsonObject.toDropTable(): List<KickChallengeDropTableItem> {
         val rawDropTable = (this["drop_table"] as? JsonArray)?.filterIsInstance<JsonObject>().orEmpty()
         val totalWeight = rawDropTable.sumOf { it.longValue("weighting") ?: 0L }
-        val parsedDropTable = rawDropTable.mapNotNull { item ->
+        return rawDropTable.mapNotNull { item ->
             val rarity = item.scalar("rarity") ?: return@mapNotNull null
             val weighting = item.longValue("weighting") ?: 0L
             val percentage = if (totalWeight > 0) (weighting.toDouble() / totalWeight) * 100.0 else 0.0
@@ -240,6 +405,16 @@ object KickRewardsParsing {
                 percentageFormatted = formatted,
             )
         }
+    }
+
+    private fun JsonObject.toDailyChallenge(): KickDailyChallenge? {
+        val id = scalar("id") ?: return null
+        val condition = objectAt("condition")
+        val window = objectAt("window")
+        val winner = objectAt("winner") ?: objectAt("reward")
+        val animations = objectAt("animations")
+        val activePeriod = objectAt("active_period")
+        val parsedDropTable = toDropTable()
 
         val parsedCard = winner?.scalar("card_url")
         val parsedThumbnail = winner?.scalar("thumbnail_url")
@@ -300,6 +475,112 @@ object KickRewardsParsing {
                         progressFraction = element.doubleValue("progress"),
                     )
                 },
+        )
+    }
+
+    private fun JsonObject.toDropCampaignFull(progressMap: Map<String, KickDropCampaign>): KickDropCampaignFull? {
+        val id = scalar("id") ?: return null
+        val userCampaign = progressMap[id]
+        val userRewardMap = userCampaign?.rewards?.associateBy { it.id }.orEmpty()
+        val rewards = (this["rewards"] as? JsonArray)?.filterIsInstance<JsonObject>().orEmpty()
+            .mapNotNull { element ->
+                val rewardId = element.scalar("id") ?: return@mapNotNull null
+                val userReward = userRewardMap[rewardId]
+                val claimed = userReward?.claimed ?: element.booleanValue("claimed") ?: false
+                val requiredUnits = element.longValue("required_units") ?: userReward?.requiredUnits ?: 0L
+                val currentUnits = userReward?.progressFraction?.let { (it * requiredUnits).toLong() }
+                    ?: userCampaign?.progressUnits
+                    ?: 0L
+                KickDropRewardItem(
+                    id = rewardId,
+                    name = element.scalar("name") ?: element.scalar("reward_name") ?: "Reward",
+                    requiredUnits = requiredUnits,
+                    categoryId = element.longValue("category_id"),
+                    organizationId = element.scalar("organization_id"),
+                    imageUrl = element.scalar("image_url") ?: element.scalar("thumbnail_url"),
+                    claimed = claimed,
+                    currentUnits = currentUnits,
+                )
+            }
+
+        val ruleObj = objectAt("rule")
+        val categoryObj = objectAt("category")
+        val orgObj = objectAt("organization")
+
+        val parsedChannels = mutableListOf<KickDropParticipatingChannel>()
+        (this["channels"] as? JsonArray)?.forEach { elem ->
+            when (elem) {
+                is JsonPrimitive -> {
+                    elem.contentOrNull?.takeIf { it.isNotBlank() }?.let {
+                        parsedChannels.add(KickDropParticipatingChannel(slug = it, username = it))
+                    }
+                }
+                is JsonObject -> {
+                    val slug = elem.scalar("slug") ?: elem.scalar("channel_slug") ?: ""
+                    if (slug.isNotBlank()) {
+                        val user = elem["user"] as? JsonObject
+                        val username = user?.scalar("username") ?: elem.scalar("username") ?: elem.scalar("name") ?: slug
+                        val profilePic = user?.scalar("profile_picture") ?: elem.scalar("profile_picture") ?: elem.scalar("avatar_url")
+                        parsedChannels.add(
+                            KickDropParticipatingChannel(
+                                slug = slug,
+                                username = username,
+                                profilePicture = profilePic,
+                            )
+                        )
+                    }
+                }
+                else -> Unit
+            }
+        }
+
+        return KickDropCampaignFull(
+            id = id,
+            name = scalar("name") ?: scalar("campaign_name") ?: "Drop Campaign",
+            status = scalar("status") ?: "active",
+            startsAtEpochMs = scalar("starts_at")?.let(::parseIsoTimestampMs),
+            endsAtEpochMs = scalar("ends_at")?.let(::parseIsoTimestampMs),
+            connectUrl = scalar("connect_url"),
+            url = scalar("url"),
+            rule = ruleObj?.let { KickDropRule(it.longValue("id"), it.scalar("name")) },
+            category = categoryObj?.let {
+                KickDropCategory(
+                    id = it.longValue("id"),
+                    name = it.scalar("name") ?: "",
+                    slug = it.scalar("slug") ?: "",
+                    imageUrl = it.scalar("image_url"),
+                    bannerImageUrl = it.scalar("banner_image_url"),
+                )
+            },
+            organization = orgObj?.let {
+                KickDropOrganization(
+                    id = it.scalar("id"),
+                    name = it.scalar("name") ?: "",
+                    logoUrl = it.scalar("logo_url"),
+                    url = it.scalar("url"),
+                    restricted = it.booleanValue("restricted") ?: false,
+                    emailNotification = it.booleanValue("email_notification") ?: false,
+                )
+            },
+            channels = parsedChannels.map { it.slug },
+            participatingChannels = parsedChannels,
+            rewards = rewards,
+        )
+    }
+
+    private fun JsonObject.toCollectible(): KickCollectible? {
+        val id = scalar("id") ?: return null
+        return KickCollectible(
+            id = id,
+            // Same name-key fallback chain as the daily challenge winner; raw payload is
+            // captured in debug (KickRewardsRaw log) to verify against the live schema.
+            name = scalar("name") ?: scalar("title") ?: scalar("emote_name") ?: scalar("label") ?: "Collectible",
+            rarity = scalar("rarity") ?: "common",
+            owned = booleanValue("owned") ?: false,
+            cardUrl = scalar("card_url"),
+            thumbnailUrl = scalar("thumbnail_url") ?: scalar("image_url"),
+            unlockedAtEpochMs = scalar("unlocked_at")?.let(::parseIsoTimestampMs),
+            dropTable = toDropTable(),
         )
     }
 }

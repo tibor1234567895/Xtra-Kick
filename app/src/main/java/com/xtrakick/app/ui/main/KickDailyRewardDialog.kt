@@ -133,6 +133,14 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         binding.closeButton.setOnClickListener { dismiss() }
         binding.claimButton.setOnClickListener { claimReward() }
         binding.shareButton.setOnClickListener { shareReward() }
+        binding.navDropsButton.setOnClickListener {
+            dismiss()
+            (activity as? MainActivity)?.navigateTo(R.id.dropsFragment)
+        }
+        binding.navCollectiblesButton.setOnClickListener {
+            dismiss()
+            (activity as? MainActivity)?.navigateTo(R.id.collectiblesFragment)
+        }
         if (BuildConfig.DEBUG) {
             binding.claimButton.setOnLongClickListener {
                 selectedChallenge?.let { ch -> simulateClaim(ch) }
