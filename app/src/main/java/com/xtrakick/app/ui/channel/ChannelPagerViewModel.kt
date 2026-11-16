@@ -139,7 +139,7 @@ class ChannelPagerViewModel @Inject constructor(
                                 profileImageUrl = channel.user?.profileImage,
                                 followersCount = channel.followersCount,
                                 bannerImageURL = channel.bannerUrl,
-                                createdAt = channel.user?.createdAt?.let { kickRepository.normalizeDate(it) },
+                                createdAt = kickRepository.getUserCardDetails(channelLogin, channelLogin, channel.user?.createdAt).createdAt,
                                 lastBroadcast = lastBroadcast,
                                 isLive = channel.livestream != null,
                             )
@@ -197,7 +197,10 @@ class ChannelPagerViewModel @Inject constructor(
                 val loadedUser = if (!args.channelLogin.isNullOrBlank()) {
                     try {
                         val channelLogin = requireNotNull(args.channelLogin)
-                        val baseUser = kickRepository.getChannel(channelLogin).let { kickRepository.toUser(it) }
+                        val baseUser = kickRepository.getChannel(channelLogin).let { channel ->
+                            val details = kickRepository.getUserCardDetails(channelLogin, channelLogin, channel.user?.createdAt)
+                            kickRepository.toUser(channel, details.createdAt)
+                        }
                         if (baseUser.lastBroadcast == null) {
                             val resolvedLastBroadcast = _stream.value?.user?.lastBroadcast
                                 ?: try {

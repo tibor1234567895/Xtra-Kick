@@ -1261,29 +1261,21 @@ class KickRepository @Inject constructor(
         val normalizedUserSlug = userSlug.trim()
         if (normalizedUserSlug.isBlank()) return@withContext KickUserCardDetails()
 
-        val createdAt = knownCreatedAt ?: runCatching {
-            val root = json.parseToJsonElement(
-                getRaw("https://kick.com/api/v2/channels/${urlEncode(normalizedUserSlug)}", isKickWeb = true)
+        val contextSlug = channelSlug?.trim()?.takeIf { it.isNotBlank() } ?: normalizedUserSlug
+        val card = runCatching {
+            json.parseToJsonElement(
+                getRaw(
+                    "https://kick.com/api/v2/channels/${urlEncode(contextSlug)}/users/${urlEncode(normalizedUserSlug)}",
+                    isKickWeb = true,
+                )
             ).jsonObject
-            root.objOrNull("user")?.firstPrimitiveOrNull("created_at", "createdAt")
-                ?: root.firstPrimitiveOrNull("created_at", "createdAt")
-        }.getOrNull()?.let(::normalizeDate)
-
-        val followingSince = channelSlug
-            ?.trim()
-            ?.takeIf { it.isNotBlank() && !it.equals(normalizedUserSlug, true) }
-            ?.let { normalizedChannelSlug ->
-                runCatching {
-                    val root = json.parseToJsonElement(
-                        getRaw(
-                            "https://kick.com/api/v2/channels/${urlEncode(normalizedChannelSlug)}/users/${urlEncode(normalizedUserSlug)}",
-                            isKickWeb = true
-                        )
-                    ).jsonObject
-                    root.firstPrimitiveOrNull("following_since", "followed_at", "followedAt")
-                        ?: root.objOrNull("user")?.firstPrimitiveOrNull("following_since", "followed_at", "followedAt")
-                }.getOrNull()?.let(::normalizeDate)
-            }
+        }.getOrNull()
+        val createdAt = knownCreatedAt ?: (card?.firstPrimitiveOrNull("created_at", "createdAt")
+            ?: card?.objOrNull("user")?.firstPrimitiveOrNull("created_at", "createdAt"))?.let(::normalizeDate)
+        val followingSince = if (contextSlug.equals(normalizedUserSlug, true)) null else {
+            (card?.firstPrimitiveOrNull("following_since", "followed_at", "followedAt")
+                ?: card?.objOrNull("user")?.firstPrimitiveOrNull("following_since", "followed_at", "followedAt"))?.let(::normalizeDate)
+        }
 
         KickUserCardDetails(
             createdAt = createdAt,
@@ -4752,7 +4744,7 @@ class KickRepository @Inject constructor(
         )
     }
 
-    fun toUser(channel: KickChannelResponse): User {
+    fun toUser(channel: KickChannelResponse, createdAt: String? = channel.user?.createdAt): User {
         val lastBroadcastIso = channel.livestream?.createdAt?.let { normalizeDate(it) }
             ?: channel.previousLivestreams?.firstOrNull()?.createdAt?.let { normalizeDate(it) }
         return User(
@@ -4762,7 +4754,7 @@ class KickRepository @Inject constructor(
             profileImageUrl = channel.user?.profileImage,
             followersCount = channel.followersCount,
             bannerImageURL = channel.bannerUrl,
-            createdAt = channel.user?.createdAt?.let(::normalizeDate),
+            createdAt = createdAt?.let(::normalizeDate),
             lastBroadcast = lastBroadcastIso,
             isLive = channel.livestream != null
         )

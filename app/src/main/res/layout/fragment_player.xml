@@ -175,7 +175,7 @@
                 android:layout_height="match_parent"
                 android:orientation="vertical">
 
-                <LinearLayout
+                <com.xtrakick.app.ui.view.ChatOnlyHeaderLayout
                     android:id="@+id/chatOnlyHeader"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -201,7 +201,7 @@
                                 android:layout_height="wrap_content"
                                 android:ellipsize="end"
                                 android:maxLines="1"
-                                android:background="?attr/selectableItemBackgroundBorderless"
+                                android:background="?attr/selectableItemBackground"
                                 android:clickable="true"
                                 android:focusable="true"
                                 android:textAppearance="?attr/textAppearanceTitleMedium" />
@@ -271,7 +271,7 @@
                                 android:id="@+id/chatOnlyCategory"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:background="?attr/selectableItemBackgroundBorderless"
+                                android:background="?attr/selectableItemBackground"
                                 android:ellipsize="end"
                                 android:maxLines="1"
                                 android:textAppearance="?attr/textAppearanceBodySmall"
@@ -304,7 +304,7 @@
                                 android:visibility="gone" />
                         </LinearLayout>
                     </LinearLayout>
-                </LinearLayout>
+                </com.xtrakick.app.ui.view.ChatOnlyHeaderLayout>
 
                 <View
                     android:id="@+id/chatOnlyDivider"

@@ -2487,18 +2487,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             binding.chatOnlyWatch.setOnClickListener {
                 exitChatOnly()
             }
-            val exitGesture = GestureDetector(binding.root.context, object : GestureDetector.SimpleOnGestureListener() {
-                override fun onDown(e: MotionEvent): Boolean = true
-                override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                    if (e1 != null && e2.y - e1.y > 48 * resources.displayMetrics.density &&
-                        velocityY > kotlin.math.abs(velocityX)) {
-                        exitChatOnly()
-                        return true
-                    }
-                    return false
+            binding.chatOnlyHeader.onDrag = { distance ->
+                binding.chatLinearLayout.animate().cancel()
+                binding.chatLinearLayout.translationY = (distance * 0.5f).coerceAtMost(96 * resources.displayMetrics.density)
+            }
+            binding.chatOnlyHeader.onRelease = { complete ->
+                if (complete) exitChatOnly() else {
+                    binding.chatLinearLayout.animate().translationY(0f).setDuration(180).start()
                 }
-            })
-            binding.chatOnlyHeader.setOnTouchListener { _, event -> exitGesture.onTouchEvent(event) }
+            }
             binding.chatOnlySettings.setOnClickListener { binding.playerControls.quality.performClick() }
             binding.chatOnlyChannel.setOnClickListener { binding.playerControls.channel.performClick() }
             binding.chatOnlyCategory.setOnClickListener { binding.playerControls.category.performClick() }
@@ -2516,7 +2513,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     private fun exitChatOnly() {
+        val binding = _binding ?: return
+        binding.chatLinearLayout.animate().cancel()
         changeQuality(viewModel.previousQuality?.takeUnless { it == CHAT_ONLY_QUALITY || it == AUDIO_ONLY_QUALITY } ?: AUTO_QUALITY)
+        binding.chatLinearLayout.animate().translationY(0f).setDuration(220).start()
+        binding.playerLayout.alpha = 0f
+        binding.playerLayout.animate().alpha(1f).setDuration(220).start()
     }
 
     private fun updateChatOnlyInfo() {
