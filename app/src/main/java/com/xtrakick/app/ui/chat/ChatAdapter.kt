@@ -6,9 +6,14 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
+import android.os.SystemClock
+import android.text.Spannable
 import android.text.SpannableStringBuilder
+import android.text.TextPaint
 import android.text.TextUtils
 import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
+import android.text.style.LeadingMarginSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -90,6 +95,7 @@ class ChatAdapter(
     var loggedInUser: String?,
     private val messageClickListener: ((String?, ChatMessage?) -> Unit)?,
     private val replyClickListener: (() -> Unit)?,
+    private val replyModeClickListener: ((ChatMessage) -> Unit)?,
     private val imageClickListener: ((String?, String?, String?, Boolean?, Int?, Boolean?, String?) -> Unit)?,
 ) : ListAdapter<ChatMessage, ChatAdapter.ViewHolder>(object : DiffUtil.ItemCallback<ChatMessage>() {
     override fun areItemsTheSame(oldItem: ChatMessage, newItem: ChatMessage): Boolean =
@@ -276,6 +282,11 @@ class ChatAdapter(
             ?: "${chatMessage.timestamp ?: 0L}:${chatMessage.userId.orEmpty()}:${chatMessage.message.orEmpty()}"
     }
 
+    // Scroll-resilient double-tap detection: fast chat rebinds and shifts rows between the two
+    // taps of a double-tap, so the pair is matched by tapped message instead of coordinates.
+    private var lastTapBindKey: String? = null
+    private var lastTapAt = 0L
+
     private fun bindMessage(holder: ViewHolder, position: Int) {
         val messages = currentList
         val chatMessage = messages.getOrNull(position) ?: return
@@ -291,6 +302,38 @@ class ChatAdapter(
         val effectiveEmoteSize = if (chatMessage.isReply) (emoteSize * 0.7f).toInt().coerceAtLeast(12) else emoteSize
         val effectiveBadgeSize = if (chatMessage.isReply) (badgeSize * 0.7f).toInt().coerceAtLeast(10) else badgeSize
         ChatAdapterUtils.reserveImagePlaceholders(result.builder, result.images, effectiveEmoteSize, effectiveBadgeSize)
+        if (ChatAdapterUtils.hasUserIdentity(chatMessage)) {
+            val name = result.userName
+            val nameStart = result.userNameStartIndex
+            if (name != null && nameStart != null) {
+                result.builder.setSpan(
+                    object : ClickableSpan() {
+                        override fun onClick(widget: View) {
+                            selectedMessage = chatMessage
+                            messageClickListener?.invoke(channelId, chatMessage)
+                        }
+
+                        override fun updateDrawState(ds: TextPaint) {}
+                    },
+                    nameStart,
+                    nameStart + name.length,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
+        if (chatMessage.isReply) {
+            // Indent the quoted-context lines so they read as subordinate to the row's own
+            // message instead of looking like an independent chat line.
+            val newlineIndex = result.builder.indexOf('\n')
+            if (newlineIndex >= 0) {
+                result.builder.setSpan(
+                    LeadingMarginSpan.Standard((12f * holder.textView.context.resources.displayMetrics.density).toInt()),
+                    0,
+                    newlineIndex + 1,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
         holder.bind(bindKey, chatMessage, result.builder, position, result.backgroundRes)
         if (result.images.isNotEmpty() || result.imagePaint != null) {
             ChatAdapterUtils.loadImages(
@@ -487,6 +530,10 @@ class ChatAdapter(
         private var lastDownX = 0f
         private var lastDownY = 0f
 
+        // Set while the current gesture carries more than one pointer, so palm contact
+        // cannot open the message/user card or stack dialogs.
+        private var gestureHasMultiplePointers = false
+
         fun isBoundTo(bindKey: String): Boolean = currentBindKey == bindKey
 
         @android.annotation.SuppressLint("ClickableViewAccessibility")
@@ -572,15 +619,7 @@ class ChatAdapter(
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 if (chatMessage.isReply) {
                     TooltipCompat.setTooltipText(this, chatMessage.replyParent?.message ?: chatMessage.replyParent?.systemMsg)
-                    setOnClickListener {
-                        if (selectionStart == -1 && selectionEnd == -1) {
-                            selectedMessage = chatMessage.replyParent
-                            val tappedMessage = selectedMessage
-                            if (ChatAdapterUtils.hasUserIdentity(tappedMessage)) {
-                                messageClickListener?.invoke(channelId, tappedMessage)
-                            }
-                        }
-                    }
+                    setOnClickListener { handleMessageTap(chatMessage, bindingAdapterPosition) }
                     updateReplyExpandUi(showExpand = expanded || (previewKey != null && previewKey in truncatableReplyPreviewKeys), expanded = expanded)
                     doOnLayout {
                         if (boundSeq != bindSeq || !isBoundTo(bindKey)) return@doOnLayout
@@ -609,20 +648,16 @@ class ChatAdapter(
                 } else {
                     updateReplyExpandUi(showExpand = false, expanded = false)
                     TooltipCompat.setTooltipText(this, chatMessage.message ?: chatMessage.systemMsg)
-                    setOnClickListener {
-                        if (selectionStart == -1 && selectionEnd == -1) {
-                            selectedMessage = chatMessage
-                            val tappedMessage = selectedMessage
-                            if (ChatAdapterUtils.hasUserIdentity(tappedMessage)) {
-                                messageClickListener?.invoke(channelId, tappedMessage)
-                            }
-                        }
-                    }
+                    setOnClickListener { handleMessageTap(chatMessage, bindingAdapterPosition) }
                 }
                 setOnTouchListener { _, event ->
-                    if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-                        lastDownX = event.x
-                        lastDownY = event.y
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            lastDownX = event.x
+                            lastDownY = event.y
+                            gestureHasMultiplePointers = false
+                        }
+                        MotionEvent.ACTION_POINTER_DOWN -> gestureHasMultiplePointers = true
                     }
                     false
                 }
@@ -641,7 +676,20 @@ class ChatAdapter(
                         )
                         true
                     } else {
-                        false
+                        if (!gestureHasMultiplePointers) {
+                            // Long-press is a precise gesture: holding a quote preview row opens
+                            // the quoted chatter's card, holding a message row opens the sender's.
+                            val tappedMessage = if (chatMessage.isReply && chatMessage.id == null) {
+                                chatMessage.replyParent ?: chatMessage
+                            } else {
+                                chatMessage
+                            }
+                            selectedMessage = tappedMessage
+                            if (ChatAdapterUtils.hasUserIdentity(tappedMessage)) {
+                                messageClickListener?.invoke(channelId, tappedMessage)
+                            }
+                        }
+                        true
                     }
                 }
             }
@@ -659,6 +707,36 @@ class ChatAdapter(
                 }
                 val adapterPosition = bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION } ?: return@setOnClickListener
                 notifyItemChanged(adapterPosition, PAYLOAD_REFORMAT)
+            }
+        }
+
+        // Official-app gesture model: single tap on the message text is a no-op, a quick second
+        // tap on the same message opens reply mode for it. Username taps open the card via
+        // the ClickableSpan added in bindMessage. Reply previews (synthetic quote rows) forward
+        // their gestures to the reply message that follows them.
+        private fun handleMessageTap(message: ChatMessage, position: Int) {
+            val now = SystemClock.elapsedRealtime()
+            val bindKey = messageBindKey(message)
+            val isDoubleTap = !gestureHasMultiplePointers &&
+                now - lastTapAt < 300L &&
+                lastTapBindKey == bindKey
+            lastTapBindKey = if (isDoubleTap) null else bindKey
+            lastTapAt = if (isDoubleTap) 0L else now
+            if (!isDoubleTap) return
+            // The synthetic quote preview row (isReply, no id) precedes its reply message; a
+            // double-tap on either targets the reply message itself.
+            val target = if (message.isReply && message.id == null &&
+                position != RecyclerView.NO_POSITION && position + 1 < currentList.size
+            ) {
+                currentList.getOrNull(position + 1)?.takeIf {
+                    !it.isReply && it.id != null && it.reply?.threadParentId == message.reply?.threadParentId
+                }
+            } else {
+                message
+            }
+            if (target != null && ChatAdapterUtils.hasUserIdentity(target)) {
+                selectedMessage = target
+                replyModeClickListener?.invoke(target)
             }
         }
 

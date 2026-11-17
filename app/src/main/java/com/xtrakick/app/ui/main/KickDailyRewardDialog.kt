@@ -66,6 +66,7 @@ import com.xtrakick.app.util.RouletteAnimationAssets
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -236,6 +237,7 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
     }
 
     private suspend fun loadReward(isPeriodicRefresh: Boolean = false, keepActiveCardView: Boolean = false) {
+        val originalBinding = _binding ?: return
         if (!isPeriodicRefresh) {
             showLoading()
         }
@@ -247,21 +249,30 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         }
         val fetchedChallenges = try {
             rewardsRepository.getDailyChallenges()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             com.xtrakick.app.util.DiagnosticLogger.w("KickRewards", "getDailyChallenges failed: ${e.message}", e)
-            if (!isPeriodicRefresh && isAdded && _binding != null) {
+            if (!isPeriodicRefresh && isAdded && _binding === originalBinding) {
                 showLoadError(R.string.daily_reward_load_failed)
             }
             return
         }
-        if (!isAdded || _binding == null) return
+        if (!isAdded || _binding !== originalBinding) return
         val currentContext = context ?: return
         val userId = currentContext.tokenPrefs()
             .getString(AppConstants.KICK_USER_ID, null)
             ?.takeIf { it.isNotBlank() }
         val streak = userId?.let { id ->
-            runCatching { rewardsRepository.getDailyStreak(id) }.getOrNull()
+            try {
+                rewardsRepository.getDailyStreak(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
         }
+        if (!isAdded || _binding !== originalBinding) return
         lastKnownStreak = streak
 
         val sorted = KickRewardsPolicy.sortChallenges(fetchedChallenges)
@@ -273,12 +284,13 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         if (!keepActiveCardView) {
             cardAdapter.notifyDataSetChanged()
 
-            val peekMarginPx = if (sorted.size > 1) (20 * resources.displayMetrics.density).toInt() else 0
-            binding.cardViewPager.setPadding(peekMarginPx, 0, peekMarginPx, 0)
+            val density = originalBinding.root.resources.displayMetrics.density
+            val peekMarginPx = if (sorted.size > 1) (20 * density).toInt() else 0
+            originalBinding.cardViewPager.setPadding(peekMarginPx, 0, peekMarginPx, 0)
 
             val selectedIndex = sorted.indexOfFirst { it.id == selectedChallengeId }.coerceAtLeast(0)
-            if (binding.cardViewPager.currentItem != selectedIndex) {
-                binding.cardViewPager.setCurrentItem(selectedIndex, false)
+            if (originalBinding.cardViewPager.currentItem != selectedIndex) {
+                originalBinding.cardViewPager.setCurrentItem(selectedIndex, false)
             }
 
             updateChallengeChips(sorted)
@@ -288,14 +300,14 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
             updateChallengeChips(sorted)
             val isDailyRewardTab = selectedChallenge?.featured != true
             val showStreak = isDailyRewardTab && (streak != null && streak > 0)
-            binding.streakContainer.isVisible = showStreak
+            originalBinding.streakContainer.isVisible = showStreak
             if (showStreak) {
                 val days = streak.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-                binding.streakText.text = resources.getQuantityString(R.plurals.daily_reward_streak, days, days)
+                originalBinding.streakText.text = originalBinding.root.resources.getQuantityString(R.plurals.daily_reward_streak, days, days)
             }
             if (pendingStreakPop) {
                 pendingStreakPop = false
-                if (showStreak) startStreakPop(binding.streakText)
+                if (showStreak) startStreakPop(originalBinding.streakText)
             }
         }
     }
@@ -389,9 +401,10 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
                 isChecked = (ch.id == selectedChallengeId)
                 updateChipIcon(this, ch)
                 setOnClickListener {
+                    val b = _binding ?: return@setOnClickListener
                     if (selectedChallengeId != ch.id) {
                         selectedChallengeId = ch.id
-                        binding.cardViewPager.setCurrentItem(i, true)
+                        b.cardViewPager.setCurrentItem(i, true)
                         renderChallengeDetails(ch, lastKnownStreak)
                     }
                 }

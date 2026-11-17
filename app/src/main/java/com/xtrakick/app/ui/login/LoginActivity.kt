@@ -49,6 +49,7 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.KickPkceHelper
 import com.xtrakick.app.util.applyTheme
+import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import dagger.hilt.android.AndroidEntryPoint
@@ -508,7 +509,7 @@ class LoginActivity : BaseStateActivity() {
     }
 
     private fun logoutAndFinish() {
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        getAlertDialogBuilder()
             .setTitle(R.string.logout_clear_follows_title)
             .setMessage(R.string.logout_clear_follows_message)
             .setPositiveButton(R.string.logout_follows_clear) { _, _ -> performLogout(clearLocalFollows = true) }

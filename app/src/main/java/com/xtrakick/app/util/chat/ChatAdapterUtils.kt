@@ -711,11 +711,14 @@ object ChatAdapterUtils {
                     }
                 }
                 chatMessage.badges?.forEach { chatBadge ->
+                    // Live-message badges carry a "kick:" set-id prefix while the badge catalogs
+                    // use raw API set ids; normalize both sides or the catalogs never match.
+                    val chatBadgeSetId = chatBadge.setId.removePrefix("kick:")
                     val badge = synchronized(channelBadges) {
-                        channelBadges.find { it.setId == chatBadge.setId && it.version == chatBadge.version }
+                        channelBadges.find { it.setId.removePrefix("kick:") == chatBadgeSetId && it.version == chatBadge.version }
                     } ?:
                     synchronized(globalBadges) {
-                        globalBadges.find { it.setId == chatBadge.setId && it.version == chatBadge.version }
+                        globalBadges.find { it.setId.removePrefix("kick:") == chatBadgeSetId && it.version == chatBadge.version }
                     }
                     if (badge != null) {
                         builder.append(". ")
@@ -824,6 +827,7 @@ object ChatAdapterUtils {
                     }
                 }
                 if (!chatMessage.userName.isNullOrBlank()) {
+                    userNameStartIndex = builderIndex
                     userName = resolveDisplayName(chatMessage.userName, chatMessage.userLogin, nameDisplay)
                     builder.append(userName)
                     builder.setSpan(ForegroundColorSpan(color), builderIndex, builderIndex + userName.length, SPAN_EXCLUSIVE_EXCLUSIVE)

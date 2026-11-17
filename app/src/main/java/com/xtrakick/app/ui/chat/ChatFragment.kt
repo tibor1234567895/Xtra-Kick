@@ -161,6 +161,15 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     private var isChatTouched = false
     private var followChatTail = true
+
+    // True while a programmatic tail-follow scroll (scrollChatToBottom) is in flight, so the
+    // scroll-down pill is driven by user gestures only and never flashes from layout passes.
+    private var programmaticTailScroll = false
+    private val scrollDownButtonThresholdPx get() = 112.dp()
+
+    // Desired pill state; repeated calls with the same value must not restart the fade animation.
+    private var scrollDownButtonShown = false
+    private var lastMessageDialogOpenedAt = 0L
     private var showChatStatus = false
     private var recentEmotes = emptyList<RecentEmote>()
     private var delayBadgeActive = false
@@ -477,32 +486,41 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val adapter = adapter ?: return
         val snapshot = synchronized(viewModel.chatMessages) { viewModel.chatMessages.toList() }
         adapter.submitList(snapshot) {
-            if (_binding === binding && this.adapter === adapter && adapter.itemCount > 0 &&
-                !isChatTouched && followChatTail) {
+            val active = _binding === binding && this.adapter === adapter && adapter.itemCount > 0 && !isChatTouched
+            if (active && followChatTail) {
                 scrollChatToBottom(adapter.itemCount - 1)
+            } else if (active) {
+                // Deferred so the measurement sees the layout this submit produces, not the stale one.
+                binding.recyclerView.post {
+                    if (_binding === binding && this.adapter === adapter && !isChatTouched && !programmaticTailScroll) {
+                        val recyclerView = binding.recyclerView
+                        if (recyclerView.canScrollVertically(1) && distanceFromBottom(recyclerView) >= scrollDownButtonThresholdPx) {
+                            setScrollDownButtonVisible(true)
+                        }
+                    }
+                }
             }
         }
     }
 
     private fun setScrollDownButtonVisible(visible: Boolean) {
         val btn = _binding?.btnDown ?: return
+        if (visible == scrollDownButtonShown) return
+        scrollDownButtonShown = visible
+        btn.animate().cancel()
         if (visible) {
-            if (btn.isGone || btn.alpha < 0.9f) {
-                btn.animate().cancel()
-                btn.visibility = View.VISIBLE
-                btn.scaleX = 0.8f
-                btn.scaleY = 0.8f
-                btn.alpha = 0f
-                btn.animate()
-                    .alpha(1f)
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .setDuration(160L)
-                    .setInterpolator(DecelerateInterpolator())
-                    .start()
-            }
-        } else if (btn.isVisible && btn.alpha > 0.05f) {
-            btn.animate().cancel()
+            btn.visibility = View.VISIBLE
+            btn.scaleX = 0.8f
+            btn.scaleY = 0.8f
+            btn.alpha = 0f
+            btn.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(160L)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        } else {
             btn.animate()
                 .alpha(0f)
                 .scaleX(0.8f)
@@ -510,9 +528,11 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 .setDuration(120L)
                 .setInterpolator(DecelerateInterpolator())
                 .withEndAction {
-                    btn.visibility = View.GONE
-                    btn.scaleX = 1f
-                    btn.scaleY = 1f
+                    if (!scrollDownButtonShown) {
+                        btn.visibility = View.GONE
+                        btn.scaleX = 1f
+                        btn.scaleY = 1f
+                    }
                 }
                 .start()
         }
@@ -521,6 +541,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private fun scrollChatToBottom(position: Int) {
         val binding = _binding ?: return
         if (position < 0) return
+        programmaticTailScroll = true
         pendingScrollToBottomPosition = position
         if (scrollToBottomQueued) return
         scrollToBottomQueued = true
@@ -532,12 +553,17 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             pendingScrollToBottomPosition = null
             activeBinding.recyclerView.scrollToPosition(targetPosition)
             activeBinding.recyclerView.doOnLayout { view ->
-                val laidOutRecyclerView = view as? RecyclerView ?: return@doOnLayout
-                if (laidOutRecyclerView.canScrollVertically(1)) {
+                val laidOutRecyclerView = view as? RecyclerView
+                if (laidOutRecyclerView != null && laidOutRecyclerView.canScrollVertically(1)) {
                     laidOutRecyclerView.scrollBy(0, laidOutRecyclerView.computeVerticalScrollRange())
                 }
+                programmaticTailScroll = false
             }
         }
+    }
+
+    private fun distanceFromBottom(recyclerView: RecyclerView): Int {
+        return recyclerView.computeVerticalScrollRange() - recyclerView.computeVerticalScrollOffset() - recyclerView.computeVerticalScrollExtent()
     }
 
     private fun currentChannelLogin(): String? {
@@ -1434,7 +1460,17 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         channelId = channelId,
                         loggedInUser = if (enableMessaging) accountLogin else null,
                         messageClickListener = { channelId, tappedMessage ->
-                            if (ChatAdapterUtils.hasUserIdentity(tappedMessage)) {
+                            // Fragment transactions are async, so a multi-pointer palm burst can
+                            // stack dialogs before the first one is findable by tag; the debounce
+                            // closes that window. 400L matches the default long-press timeout.
+                            val now = SystemClock.elapsedRealtime()
+                            if (ChatAdapterUtils.hasUserIdentity(tappedMessage) &&
+                                !isChatTouched &&
+                                now - lastMessageDialogOpenedAt >= 400L &&
+                                this@ChatFragment.childFragmentManager.findFragmentByTag("messageDialog") == null &&
+                                this@ChatFragment.childFragmentManager.findFragmentByTag("replyDialog") == null
+                            ) {
+                                lastMessageDialogOpenedAt = now
                                 (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
                                 editText.clearFocus()
                                 tappedMessageDialogSeed = tappedMessage
@@ -1449,10 +1485,20 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             }
                         },
                         replyClickListener = {
-                            (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
-                            editText.clearFocus()
-                            val canMessage = isLive && AuthStateHelper.isKickLoggedIn(requireContext())
-                            ReplyClickedDialog.newInstance(canMessage).show(this@ChatFragment.childFragmentManager, "replyDialog")
+                            if (this@ChatFragment.childFragmentManager.findFragmentByTag("replyDialog") == null) {
+                                (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
+                                editText.clearFocus()
+                                val canMessage = isLive && AuthStateHelper.isKickLoggedIn(requireContext())
+                                ReplyClickedDialog.newInstance(canMessage).show(this@ChatFragment.childFragmentManager, "replyDialog")
+                            }
+                        },
+                        replyModeClickListener = { tappedMessage ->
+                            onReplyClicked(
+                                tappedMessage.id,
+                                tappedMessage.userLogin,
+                                tappedMessage.userName,
+                                tappedMessage.message,
+                            )
                         },
                         imageClickListener = { url, name, format, isAnimated, source, thirdParty, emoteId ->
                             (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
@@ -1470,10 +1516,16 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                                 super.onScrollStateChanged(recyclerView, newState)
                                 isChatTouched = newState != RecyclerView.SCROLL_STATE_IDLE
-                                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                                    programmaticTailScroll = false
+                                } else if (newState == RecyclerView.SCROLL_STATE_IDLE && !programmaticTailScroll) {
                                     followChatTail = !recyclerView.canScrollVertically(1)
+                                    if (!recyclerView.canScrollVertically(1)) {
+                                        setScrollDownButtonVisible(false)
+                                    } else if (distanceFromBottom(recyclerView) >= scrollDownButtonThresholdPx) {
+                                        setScrollDownButtonVisible(true)
+                                    }
                                 }
-                                setScrollDownButtonVisible(recyclerView.canScrollVertically(1))
                                 if (showChatStatus && chatStatus.isGone) {
                                     chatStatus.visibility = View.VISIBLE
                                     chatStatus.postDelayed({ chatStatus.visibility = View.GONE }, 5000)
@@ -1485,10 +1537,22 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
                             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                                 super.onScrolled(recyclerView, dx, dy)
-                                setScrollDownButtonVisible(recyclerView.canScrollVertically(1))
+                                if (!recyclerView.canScrollVertically(1)) {
+                                    setScrollDownButtonVisible(false)
+                                } else if (!programmaticTailScroll && dy < 0 &&
+                                    distanceFromBottom(recyclerView) >= scrollDownButtonThresholdPx
+                                ) {
+                                    setScrollDownButtonVisible(true)
+                                }
                             }
                         })
                     }
+                    isChatTouched = false
+                    followChatTail = true
+                    programmaticTailScroll = false
+                    scrollDownButtonShown = false
+                    scrollToBottomQueued = false
+                    pendingScrollToBottomPosition = null
                     renderBufferedMessages()
                     pinnedGiftUiHelper.renderPinnedGift()
                     renderChannelPointsButton()
@@ -2179,6 +2243,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 guestLoginPromptView.visibility = View.GONE
                 if (isPlayerContext && !ctx.prefs().getBoolean(AppConstants.KEY_CHAT_BAR_VISIBLE, true)) {
                     messageView.visibility = View.GONE
+                    dismissActiveReply()
                 } else {
                     messageView.visibility = View.VISIBLE
                 }
@@ -2201,6 +2266,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 messagingEnabled = true
             } else {
                 messageView.visibility = View.GONE
+                dismissActiveReply()
                 val isChatBarVisible = !isPlayerContext || ctx.prefs().getBoolean(AppConstants.KEY_CHAT_BAR_VISIBLE, true)
                 guestLoginPromptView.visibility = if (isLive && !isLiveRewound && !currentLoggedIn && isChatBarVisible) View.VISIBLE else View.GONE
                 messagingEnabled = false
@@ -2473,15 +2539,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editText.windowToken, 0)
             editText.clearFocus()
             toggleEmoteMenu(false)
-            replyView.visibility = View.GONE
-            send.setOnClickListener { sendMessage() }
-            editText.setOnKeyListener { _, keyCode, event ->
-                if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_ENTER) {
-                    sendMessage()
-                } else {
-                    false
-                }
-            }
+            dismissActiveReply()
             val text = editText.text.trim()
             editText.text.clear()
             return if (text.isNotEmpty()) {
@@ -2501,6 +2559,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 val lastIndex = synchronized(viewModel.chatMessages) {
                     viewModel.chatMessages.lastIndex
                 }
+                followChatTail = true
                 scrollChatToBottom(lastIndex)
                 true
             } else {
@@ -2543,6 +2602,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     override fun onReplyClicked(replyId: String?, userLogin: String?, userName: String?, message: String?) {
         with(binding) {
+            // The "Chat input toggle" (or messaging-off state) hides the input row; replying
+            // without a composer is meaningless, so ignore reply requests entirely then.
+            if (!messageView.isVisible) return
             if (!replyId.isNullOrBlank()) {
                 messageDialog?.dismiss()
                 replyView.visibility = View.VISIBLE
@@ -2561,17 +2623,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     val name = userName ?: userLogin ?: ""
                     getString(R.string.replying_to_message, name, "")
                 }
-                replyClose.setOnClickListener {
-                    replyView.visibility = View.GONE
-                    send.setOnClickListener { sendMessage() }
-                    editText.setOnKeyListener { _, keyCode, event ->
-                        if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_ENTER) {
-                            sendMessage()
-                        } else {
-                            false
-                        }
-                    }
-                }
+                replyClose.setOnClickListener { dismissActiveReply() }
                 send.setOnClickListener { sendMessage(replyId) }
                 editText.setOnKeyListener { _, keyCode, event ->
                     if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_ENTER) {
@@ -2584,6 +2636,19 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             editText.apply {
                 requestFocus()
                 WindowCompat.getInsetsController(this@ChatFragment.requireActivity().window, this).show(WindowInsetsCompat.Type.ime())
+            }
+        }
+    }
+
+    private fun dismissActiveReply() {
+        val binding = _binding ?: return
+        binding.replyView.visibility = View.GONE
+        binding.send.setOnClickListener { sendMessage() }
+        binding.editText.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_ENTER) {
+                sendMessage()
+            } else {
+                false
             }
         }
     }

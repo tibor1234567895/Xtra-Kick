@@ -74,6 +74,7 @@ import com.xtrakick.app.model.ui.Video
 import com.xtrakick.app.ui.channel.ChannelPagerFragmentDirections
 import com.xtrakick.app.ui.login.LoginActivity
 import com.xtrakick.app.ui.common.BaseStateActivity
+import com.xtrakick.app.ui.common.safeSetPictureInPictureParams
 import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.CompactDialogs.constrainSheets
 import com.xtrakick.app.ui.common.Scrollable
@@ -519,6 +520,7 @@ class MainActivity : BaseStateActivity() {
                 removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
             }.build(), networkCallback
         )
+        isNetworkCallbackRegistered = true
         ContextCompat.registerReceiver(
             this,
             pipActionReceiver,
@@ -530,6 +532,7 @@ class MainActivity : BaseStateActivity() {
             },
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        isPipReceiverRegistered = true
         restorePlayerFragment()
         handleIntent(intent)
         lifecycleScope.launch {
@@ -697,9 +700,35 @@ class MainActivity : BaseStateActivity() {
         hasLockedScreenSinceLastPip = false
         playerFragment?.clearPipDismissState()
         launchingSettings = false
+        reassertPipAutoEnterParams()
         logPlayerShell("onResume restoring existing playerFragment=${playerFragment?.javaClass?.simpleName}")
         restorePlayerFragment()
         multiPovFragment?.updatePictureInPictureParams()
+    }
+
+    /**
+     * Repairs stale auto-enter PiP params on resume: params updates skipped while the activity
+     * was past STARTED (safeSetPictureInPictureParams) could otherwise leave autoEnterEnabled=true
+     * with no player open. When a player surface is open it owns the params (remote actions,
+     * sourceRectHint, autoEnter) — reasserting here would strip them, so it skips.
+     */
+    private fun reassertPipAutoEnterParams() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            !packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        ) {
+            return
+        }
+        val playerOwnsParams = viewModel.isPlayerOpened && !hasLockedScreenSinceLastPip &&
+            prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true) &&
+            (!viewModel.isMultiPovOpened || prefs.getBoolean(AppConstants.MULTIPOV_PIP_FOCUSED, true))
+        if (playerOwnsParams) return
+        safeSetPictureInPictureParams(
+            PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(16, 9))
+                .setAutoEnterEnabled(false)
+                .setSeamlessResizeEnabled(true)
+                .build()
+        )
     }
 
     override fun onStop() {
@@ -728,10 +757,29 @@ class MainActivity : BaseStateActivity() {
         }
     }
 
+    private var isNetworkCallbackRegistered = false
+    private var isPipReceiverRegistered = false
+
     override fun onDestroy() {
         val connectivityManager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-        connectivityManager.unregisterNetworkCallback(networkCallback)
-        unregisterReceiver(pipActionReceiver)
+        if (isNetworkCallbackRegistered) {
+            try {
+                connectivityManager.unregisterNetworkCallback(networkCallback)
+            } catch (e: IllegalArgumentException) {
+                DiagnosticLogger.w("MainActivity", "NetworkCallback unregister ignored: ${e.message}")
+            } finally {
+                isNetworkCallbackRegistered = false
+            }
+        }
+        if (isPipReceiverRegistered) {
+            try {
+                unregisterReceiver(pipActionReceiver)
+            } catch (e: IllegalArgumentException) {
+                DiagnosticLogger.w("MainActivity", "PipReceiver unregister ignored: ${e.message}")
+            } finally {
+                isPipReceiverRegistered = false
+            }
+        }
         if (isFinishing && playerFragment?.shouldContinuePlaybackInBackground() != true) {
             playerFragment?.close()
         }
@@ -1071,7 +1119,7 @@ class MainActivity : BaseStateActivity() {
             val pipEnabled = !hasLockedScreenSinceLastPip &&
                 prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true) &&
                 prefs.getBoolean(AppConstants.MULTIPOV_PIP_FOCUSED, true)
-            setPictureInPictureParams(
+            safeSetPictureInPictureParams(
                 PictureInPictureParams.Builder()
                     .setAutoEnterEnabled(pipEnabled)
                     .setSeamlessResizeEnabled(true)
@@ -1105,7 +1153,7 @@ class MainActivity : BaseStateActivity() {
         closeMultiPovInternal()
         viewModel.isPlayerOpened = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).setSeamlessResizeEnabled(true).build())
+            safeSetPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).setSeamlessResizeEnabled(true).build())
         }
     }
 
@@ -1231,7 +1279,7 @@ class MainActivity : BaseStateActivity() {
             prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
         ) {
             val allowAutoEnter = !hasLockedScreenSinceLastPip
-            setPictureInPictureParams(
+            safeSetPictureInPictureParams(
                 PictureInPictureParams.Builder()
                     .setAspectRatio(Rational(16, 9))
                     .setAutoEnterEnabled(allowAutoEnter)
@@ -1265,7 +1313,7 @@ class MainActivity : BaseStateActivity() {
         viewModel.isPlayerOpened = false
         viewModel.isMultiPovOpened = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).setSeamlessResizeEnabled(true).build())
+            safeSetPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).setSeamlessResizeEnabled(true).build())
         }
         viewModel.sleepTimer?.cancel()
         viewModel.sleepTimerEndTime = 0L

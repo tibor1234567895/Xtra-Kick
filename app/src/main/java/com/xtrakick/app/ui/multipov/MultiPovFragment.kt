@@ -42,6 +42,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import androidx.core.os.BundleCompat
+import com.xtrakick.app.ui.common.safeSetPictureInPictureParams
 import com.xtrakick.app.util.bundleOf
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -208,14 +210,9 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         )
     }
 
-    @Suppress("DEPRECATION")
     private fun readStreamsArg(): List<Stream> {
         val args = requireArguments()
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            args.getParcelableArrayList(ARG_STREAMS, Stream::class.java).orEmpty()
-        } else {
-            args.getParcelableArrayList<Stream>(ARG_STREAMS).orEmpty()
-        }
+        return BundleCompat.getParcelableArrayList(args, ARG_STREAMS, Stream::class.java).orEmpty()
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -1516,11 +1513,9 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         videoZoom = null
         _binding = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            runCatching {
-                activity?.setPictureInPictureParams(
-                    PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()
-                )
-            }
+            activity?.safeSetPictureInPictureParams(
+                PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()
+            )
         }
         super.onDestroyView()
     }
@@ -1712,9 +1707,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
 
                 setActions(actions)
             }
-            try {
-                act.setPictureInPictureParams(builder.build())
-            } catch (_: Exception) {}
+            act.safeSetPictureInPictureParams(builder.build())
         }
     }
 

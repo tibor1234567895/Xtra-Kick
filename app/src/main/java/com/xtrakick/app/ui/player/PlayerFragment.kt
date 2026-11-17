@@ -13,6 +13,7 @@ import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import com.xtrakick.app.ui.common.safeSetPictureInPictureParams
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
@@ -211,7 +212,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         activity?.let { act ->
                             if (act.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-                                act.setPictureInPictureParams(
+                                act.safeSetPictureInPictureParams(
                                     PictureInPictureParams.Builder()
                                         .setAspectRatio(Rational(16, 9))
                                         .setAutoEnterEnabled(false)
@@ -3499,7 +3500,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
                 ) {
-                    requireActivity().setPictureInPictureParams(
+                    requireActivity().safeSetPictureInPictureParams(
                         PictureInPictureParams.Builder()
                             .setAspectRatio(Rational(16, 9))
                             .setAutoEnterEnabled(false)
@@ -3798,11 +3799,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         lastPipPlaying = playing
         val act = activity ?: return
         val ctx = context ?: return
+        if (!isAdded || isDetached) return
+        if (!act.isInPictureInPictureMode && !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             act.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             prefs.getBoolean(AppConstants.PLAYER_PICTURE_IN_PICTURE, true)
         ) {
-            act.setPictureInPictureParams(
+            act.safeSetPictureInPictureParams(
                 PictureInPictureParams.Builder().apply {
                     setAspectRatio(Rational(16, 9))
                     val videoView = _binding?.aspectRatioFrameLayout

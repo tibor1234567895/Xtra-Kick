@@ -1,18 +1,27 @@
 package com.xtrakick.app.ui.main
 
 import android.app.Application
+import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.os.Bundle
 import android.os.Parcel
 import android.os.Parcelable
 import android.view.KeyEvent
 import androidx.core.content.IntentCompat
+import androidx.fragment.app.DialogFragment
+import androidx.preference.PreferenceManager
+import com.xtrakick.app.R
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.model.ui.Stream
+import com.xtrakick.app.ui.common.BaseStateActivity
 import com.xtrakick.app.ui.player.IvsPlayerService
 import com.xtrakick.app.ui.player.MediaButtonReceiver
+import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.getAlertDialogBuilder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -96,6 +105,60 @@ class MainActivityIntentTest {
 
         assertEquals(android.app.Service.START_STICKY, result)
     }
+
+    @Test fun callKeyEventsAreConsumedByBaseActivity() {
+        val activity = Robolectric.buildActivity(TestBaseStateActivity::class.java).setup().get()
+        val callDown = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_CALL)
+        val callUp = KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_CALL)
+        val endCallDown = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENDCALL)
+        val endCallUp = KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENDCALL)
+
+        assertTrue("KEYCODE_CALL down should be consumed", activity.dispatchKeyEvent(callDown))
+        assertTrue("KEYCODE_CALL up should be consumed", activity.dispatchKeyEvent(callUp))
+        assertTrue("KEYCODE_ENDCALL down should be consumed", activity.dispatchKeyEvent(endCallDown))
+        assertTrue("KEYCODE_ENDCALL up should be consumed", activity.dispatchKeyEvent(endCallUp))
+    }
+
+    @Test fun guardedAlertDialogConsumesCallKeys() {
+        val activity = Robolectric.buildActivity(TestBaseStateActivity::class.java).setup().get()
+        activity.setTheme(R.style.DarkTheme)
+        val dialog = activity.getAlertDialogBuilder().setTitle("call-key-guard").create()
+        dialog.show()
+
+        assertTrue("KEYCODE_CALL should be consumed by guarded dialog",
+            dialog.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_CALL)))
+        assertTrue("KEYCODE_ENDCALL should be consumed by guarded dialog",
+            dialog.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENDCALL)))
+    }
+
+    @Test fun guardedAlertDialogConsumesCallKeysOnPlainThemeBranch() {
+        val activity = Robolectric.buildActivity(TestBaseStateActivity::class.java).setup().get()
+        activity.setTheme(R.style.AppCompatDarkTheme)
+        PreferenceManager.getDefaultSharedPreferences(activity).edit()
+            .putBoolean(AppConstants.UI_THEME_MATERIAL3, false).apply()
+        val dialog = activity.getAlertDialogBuilder().setTitle("call-key-guard").create()
+        dialog.show()
+
+        assertTrue("Plain-theme dialog should consume KEYCODE_CALL",
+            dialog.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_CALL)))
+    }
+
+    @Test fun dialogFragmentGuardConsumesCallKeys() {
+        val activity = Robolectric.buildActivity(TestBaseStateActivity::class.java).setup().get()
+        val fragment = GuardTestDialogFragment()
+        fragment.show(activity.supportFragmentManager, "call-key-guard")
+        activity.supportFragmentManager.executePendingTransactions()
+        val dialog = fragment.dialog ?: throw AssertionError("DialogFragment dialog was not created")
+
+        assertTrue("KEYCODE_CALL should be consumed by guarded DialogFragment",
+            dialog.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_CALL)))
+    }
+
+    class GuardTestDialogFragment : DialogFragment() {
+        override fun onCreateDialog(savedInstanceState: Bundle?): Dialog = Dialog(requireContext())
+    }
+
+    class TestBaseStateActivity : BaseStateActivity()
 
     private fun handleIntent(intent: Intent) {
         val activity = Robolectric.buildActivity(MainActivity::class.java).get()

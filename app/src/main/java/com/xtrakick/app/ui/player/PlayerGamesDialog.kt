@@ -7,6 +7,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import androidx.core.content.res.use
+import androidx.core.os.BundleCompat
 import com.xtrakick.app.util.bundleOf
 import androidx.core.view.setPadding
 import androidx.core.widget.NestedScrollView
@@ -40,12 +41,7 @@ class PlayerGamesDialog : BottomSheetDialogFragment() {
             }
             adapter = PlayerGamesDialogAdapter(this@PlayerGamesDialog).also {
                 it.submitList(
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        requireArguments().getParcelableArrayList(GAMES, Game::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        requireArguments().getParcelableArrayList(GAMES)
-                    }?.toList()
+                    BundleCompat.getParcelableArrayList(requireArguments(), GAMES, Game::class.java)?.toList()
                 )
             }
         }

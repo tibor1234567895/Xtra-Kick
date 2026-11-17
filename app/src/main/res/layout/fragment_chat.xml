@@ -146,8 +146,10 @@
             android:id="@+id/replyView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_margin="4dp"
+            android:background="@drawable/reply_bar_background"
             android:orientation="horizontal"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="8dp"
             android:visibility="gone"
             app:layout_constraintBottom_toTopOf="@id/messageView"
             tools:visibility="visible">

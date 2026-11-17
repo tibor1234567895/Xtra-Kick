@@ -87,6 +87,6 @@ class ChatAdapterSnapshotTest {
         backgroundColor = Color.BLACK, dialogBackgroundColor = Color.BLACK, imageLibrary = null,
         messageTextSize = 14f, emoteSize = 28, badgeSize = 18, emoteQuality = "1", animateGifs = false,
         animatedEmoteFps = 15, enableOverlayEmotes = false, channelId = null, loggedInUser = null,
-        messageClickListener = null, replyClickListener = null, imageClickListener = null,
+        messageClickListener = null, replyClickListener = null, replyModeClickListener = null, imageClickListener = null,
     )
 }

@@ -1038,6 +1038,34 @@ class ChatViewModel @Inject constructor(
                 cheerEmotes.clear()
             }
         }
+        if (chatReplayManagerLocal == null && channelId != null) {
+            viewModelScope.launch {
+                // Custom badge images (broadcaster, subscriber tiers) only exist in the
+                // api.kick.com badge catalogs; kick.com channel payloads carry none, so
+                // without this fetch live rows fall back to the built-in default glyphs.
+                val global = runCatching {
+                    playerRepository.loadGlobalBadges(networkLibrary, kickPublicApiHeaders, kickWebHeaders, emoteQuality, enableIntegrity)
+                }.getOrDefault(emptyList())
+                val channel = runCatching {
+                    playerRepository.loadChannelBadges(networkLibrary, kickPublicApiHeaders, kickWebHeaders, channelId, channelLogin, emoteQuality, enableIntegrity)
+                }.getOrDefault(emptyList())
+                if (global.isNotEmpty()) {
+                    synchronized(globalBadges) {
+                        globalBadges.clear()
+                        globalBadges.addAll(global)
+                    }
+                }
+                if (channel.isNotEmpty()) {
+                    synchronized(channelBadges) {
+                        channelBadges.clear()
+                        channelBadges.addAll(channel)
+                    }
+                }
+                if (global.isNotEmpty() || channel.isNotEmpty()) {
+                    reloadMessages.value = true
+                }
+            }
+        }
         if (applicationContext.prefs().getBoolean(AppConstants.CHAT_ENABLE_STV, true)) {
             val saved = savedGlobalStvEmotes
             if (!saved.isNullOrEmpty()) {

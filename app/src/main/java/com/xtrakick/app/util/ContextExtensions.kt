@@ -2,9 +2,11 @@ package com.xtrakick.app.util
 
 import android.app.Activity
 import android.content.Context
+import android.content.DialogInterface
 import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.os.Build
+import android.view.KeyEvent
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.res.use
@@ -148,12 +150,31 @@ fun Activity.applyTheme() {
     }
 }
 
+/**
+ * Consumes KEYCODE_CALL / KEYCODE_ENDCALL so unhandled call-button events never reach
+ * PhoneFallbackEventHandler, which throws SecurityException on Android 12 because
+ * third-party apps may no longer send the CLOSE_SYSTEM_DIALOGS broadcast.
+ */
+val callKeyEventGuardListener = DialogInterface.OnKeyListener { _, keyCode, _ ->
+    keyCode == KeyEvent.KEYCODE_CALL || keyCode == KeyEvent.KEYCODE_ENDCALL
+}
+
 fun Context.getAlertDialogBuilder(): AlertDialog.Builder {
     return if (prefs().getBoolean(AppConstants.UI_THEME_MATERIAL3, true)) {
-        MaterialAlertDialogBuilder(this)
+        GuardedMaterialAlertDialogBuilder(this)
     } else {
-        AlertDialog.Builder(this)
+        GuardedAlertDialogBuilder(this)
     }
+}
+
+private class GuardedMaterialAlertDialogBuilder(context: Context) : MaterialAlertDialogBuilder(context) {
+    override fun create(): AlertDialog =
+        super.create().also { it.setOnKeyListener(callKeyEventGuardListener) }
+}
+
+private class GuardedAlertDialogBuilder(context: Context) : AlertDialog.Builder(context) {
+    override fun create(): AlertDialog =
+        super.create().also { it.setOnKeyListener(callKeyEventGuardListener) }
 }
 
 fun getByteArrayCronetCallback(continuation: Continuation<Pair<UrlResponseInfo, ByteArray>>): ByteArrayCronetCallback {
