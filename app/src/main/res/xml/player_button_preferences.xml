@@ -297,12 +297,4 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:dependency="player_sleep"
-        android:key="sleep_timer_lock"
-        android:title="@string/sleep_timer_lock_screen"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
 </androidx.preference.PreferenceScreen>

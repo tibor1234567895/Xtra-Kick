@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content">
 
@@ -47,17 +46,6 @@
                 android:textSize="20sp" />
 
         </LinearLayout>
-
-        <CheckBox
-            android:id="@+id/lockCheckbox"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:layout_marginTop="7dp"
-            android:layout_marginEnd="10dp"
-            android:layout_marginBottom="7dp"
-            android:textSize="16sp"
-            tools:text="@string/sleep_timer_lock_permissions" />
 
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>

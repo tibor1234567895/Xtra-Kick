@@ -521,7 +521,10 @@ class KickRepository @Inject constructor(
                     DiagnosticLogger.w(tag, "Kick public API headers missing token and no refresh token available")
                 }
                 if (propagateFailure) {
-                    throw KickAuthRequestException.HttpFailure(401)
+                    // Nothing to refresh with: the OAuth session is unusable. Marked
+                    // synthetic so callers force a re-login instead of treating this
+                    // like a retryable backend failure.
+                    throw KickAuthRequestException.HttpFailure(401, synthetic = true)
                 }
                 return headers
             }
@@ -560,7 +563,11 @@ class KickRepository @Inject constructor(
                     tokenPrefs.edit {
                         putString(AppConstants.KICK_ACCESS_TOKEN, newAccessToken)
                         putString(AppConstants.KICK_REFRESH_TOKEN, refresh.refreshToken ?: refreshToken)
-                        putLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, now + (refresh.expiresIn ?: 0L))
+                        // 0 means "no expiry" (mirrors the login path): a blank/absent
+                        // expires_in must not stamp an already-past expiry that makes
+                        // the fresh token instantly look stale.
+                        val expiresIn = refresh.expiresIn ?: 0L
+                        putLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, if (expiresIn > 0L) now + expiresIn else 0L)
                         putString(AppConstants.KICK_TOKEN_TYPE, refresh.tokenType)
                     }
                     val refreshedHeaders = KickApiHelper.getKickPublicApiHeaders(context)
@@ -573,7 +580,11 @@ class KickRepository @Inject constructor(
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                if (KickAuthRequestException.isUnauthorized(e) &&
+                // Log out only when the session is truly revoked (explicit
+                // invalid_grant rejection or nothing to refresh with). Signature,
+                // clock and transport failures are retryable and must keep tokens:
+                // a phone with a wrong clock must not lose its login.
+                if (KickAuthRequestException.isSessionUnusable(e) &&
                     tokenPrefs.getString(AppConstants.KICK_REFRESH_TOKEN, null) == refreshToken &&
                     tokenPrefs.getString(AppConstants.KICK_ACCESS_TOKEN, null) == observedToken
                 ) {
@@ -1009,7 +1020,9 @@ class KickRepository @Inject constructor(
                 append(urlEncode(cursor))
             }
         }
-        Log.i(tag, "Kick follow import request url=$url cursor=${cursor ?: "<initial>"}")
+        if (BuildConfig.DEBUG) {
+            Log.i(tag, "Kick follow import request url=$url cursor=${cursor ?: "<initial>"}")
+        }
         KickFollowSnapshot.parsePage(executeKickWebSessionRequest(url), requireComplete).also { page ->
             Log.i(tag, "Kick follow import response channels=${page.channels.size} hasNextPage=${page.nextCursor != null}")
         }
@@ -1776,7 +1789,9 @@ class KickRepository @Inject constructor(
                 if (response.code == 401) throw KickAuthRequestException.HttpFailure(401)
                 if (!response.isSuccessful) {
                     val errorBody = response.body.string()
-                    Log.i(tag, "chat-commands HTTP ${response.code} payload=$payload body=${errorBody.take(600)}")
+                    if (BuildConfig.DEBUG) {
+                        Log.i(tag, "chat-commands HTTP ${response.code} payload=$payload body=${errorBody.take(600)}")
+                    }
                     throw IOException(kickChatCommandHttpError(response.code, errorBody))
                 }
             }
@@ -2537,7 +2552,10 @@ class KickRepository @Inject constructor(
         okHttpClient.newCall(request).execute().use { response ->
             val responseBody = response.body.string()
             if (!response.isSuccessful) {
-                DiagnosticLogger.w("KickRepository", "Clip request to $url failed (${response.code}): $responseBody")
+                DiagnosticLogger.w("KickRepository", "Clip request to $url failed (${response.code})")
+                if (BuildConfig.DEBUG) {
+                    DiagnosticLogger.w("KickRepository", "Clip request failure body: $responseBody")
+                }
                 throw KickWebResponseException(response.code, responseBody, "Kick request failed (${response.code}) for $url")
             }
             responseBody
@@ -2653,7 +2671,9 @@ class KickRepository @Inject constructor(
             throw IOException("Kick login is required.")
         }
         val body = KickClipApi.buildInitiateClipBody(videoId, positionSeconds)
-        DiagnosticLogger.i("KickRepository", "POST /api/v1/clips body: $body")
+        if (BuildConfig.DEBUG) {
+            DiagnosticLogger.i("KickRepository", "POST /api/v1/clips body: $body")
+        }
         val raw = executeKickClipRequest("https://mobile.kick.com/api/v1/clips", body)
         KickClipApi.parseTemporaryClip(raw)
             ?: throw IOException("Kick clip initiate response was missing the temporary clip")

@@ -44,6 +44,7 @@ import org.robolectric.annotation.Implements
 import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.ShadowMediaSession
 import org.robolectric.util.ReflectionHelpers
+import java.lang.reflect.Field
 import java.lang.reflect.Proxy
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
@@ -425,5 +426,90 @@ class IvsPlayerFragmentTest {
     @Test
     fun goLiveSkipThresholdMatchesCatchupDriftThreshold() {
         assertEquals(LiveLatencySettings.CATCHUP_DRIFT_THRESHOLD_MS, IvsPlayerFragment.GO_LIVE_SKIP_THRESHOLD_MS)
+    }
+
+    private fun createTestIvsPlayerService(): Pair<IvsPlayerService, AppDatabase> {
+        val service = Robolectric.buildService(IvsPlayerService::class.java).get()
+        val context = RuntimeEnvironment.getApplication()
+        val executor = Executors.newSingleThreadExecutor()
+        val json = Json { ignoreUnknownKeys = true }
+        val client = OkHttpClient.Builder().addInterceptor { error("Unexpected network request") }.build()
+        val auth = AuthRepository(null, null, executor, client, json)
+        val kick = KickRepository(
+            context, client, null, executor, json, auth,
+            KickOfficialApiClient(context, client, json),
+        )
+        service.kickRepository = kick
+        service.rewardsRepository = KickRewardsRepository(kick, json)
+        val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        val publicApi = KickPublicApiRepository(null, null, executor, client, json)
+        val follows = LocalFollowChannelRepository(database.localFollowsChannel(), database)
+        val notifications = NotificationUsersRepository(
+            context, database.notificationsDao(), kick, dagger.Lazy { error("Unused FCM") },
+        )
+        service.shownNotificationsRepository = ShownNotificationsRepository(
+            context, database.shownNotificationsDao(), kick, publicApi, notifications, follows,
+        )
+        return service to database
+    }
+
+    private fun playbackRequestedField(): Field {
+        return IvsPlayerService::class.java.getDeclaredField("playbackRequested").apply {
+            isAccessible = true
+        }
+    }
+
+    @Test
+    fun taskRemovedStopsPlaybackEvenWhenBackgroundPlaybackWasEnabled() {
+        val (service, db) = createTestIvsPlayerService()
+        try {
+            service.setBackgroundPlaybackEnabled(true)
+            val field = playbackRequestedField()
+            field.setBoolean(service, true)
+
+            service.onTaskRemoved(null)
+
+            assertFalse(service.isBackgroundPlaybackEnabled())
+            assertFalse(field.getBoolean(service))
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun taskRemovedPreservesPlaybackWhenPipDismissedWithBackgroundAudio() {
+        val (service, db) = createTestIvsPlayerService()
+        try {
+            service.setBackgroundPlaybackEnabled(true)
+            val field = playbackRequestedField()
+            field.setBoolean(service, true)
+            service.markPipDismissedWithBackgroundAudio()
+
+            service.onTaskRemoved(null)
+
+            assertTrue(service.isBackgroundPlaybackEnabled())
+            assertTrue(field.getBoolean(service))
+            assertEquals(0L, service.pipDismissedWithBackgroundAudioAtMs)
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun taskRemovedStopsPlaybackWhenPipDismissHandoffExpired() {
+        val (service, db) = createTestIvsPlayerService()
+        try {
+            service.setBackgroundPlaybackEnabled(true)
+            val field = playbackRequestedField()
+            field.setBoolean(service, true)
+            service.pipDismissedWithBackgroundAudioAtMs = SystemClock.elapsedRealtime() - 60_000
+
+            service.onTaskRemoved(null)
+
+            assertFalse(service.isBackgroundPlaybackEnabled())
+            assertFalse(field.getBoolean(service))
+        } finally {
+            db.close()
+        }
     }
 }

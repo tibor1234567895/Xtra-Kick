@@ -118,6 +118,8 @@ class IvsPlayerService : Service() {
     private var loadingArtworkUrl: String? = null
     private var artworkDisposable: Disposable? = null
     private var backgroundPlaybackEnabled = false
+    @Volatile
+    internal var pipDismissedWithBackgroundAudioAtMs = 0L
     private var lastNotifiedTitle: String? = null
     private var lastNotifiedChannel: String? = null
     private var lastNotifiedPlaying: Boolean? = null
@@ -1759,11 +1761,27 @@ class IvsPlayerService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        if (consumePipDismissedBackgroundAudioHandoff()) {
+            return
+        }
+        super.onTaskRemoved(rootIntent)
         if (multiPovDelegate != null) {
             detachMultiPovSession()
-        } else if (!backgroundPlaybackEnabled || !playbackRequested || isPaused) {
+        } else {
             stopPlayback()
         }
+    }
+
+    fun markPipDismissedWithBackgroundAudio() {
+        pipDismissedWithBackgroundAudioAtMs = SystemClock.elapsedRealtime()
+    }
+
+    // The handoff is only honored for a short window after the PiP window is dismissed;
+    // a stale mark must not keep playback alive on an unrelated later task removal.
+    private fun consumePipDismissedBackgroundAudioHandoff(): Boolean {
+        val at = pipDismissedWithBackgroundAudioAtMs
+        pipDismissedWithBackgroundAudioAtMs = 0L
+        return at != 0L && SystemClock.elapsedRealtime() - at < PIP_DISMISS_HANDOFF_TTL_MS
     }
 
     private fun syncDynamicsProcessingWithPreference() {
@@ -1879,6 +1897,7 @@ class IvsPlayerService : Service() {
         private const val INTENT_PLAY_PAUSE = "com.xtrakick.app.IVS_PLAY_PAUSE"
         const val INTENT_RESUME_BACKGROUND_IF_LOCKED = "com.xtrakick.app.IVS_RESUME_BACKGROUND_IF_LOCKED"
         const val ACTION_STOP_PLAYBACK = "com.xtrakick.app.IVS_STOP_PLAYBACK"
+        private const val PIP_DISMISS_HANDOFF_TTL_MS = 15_000L
 
         @Volatile
         var isRunning: Boolean = false

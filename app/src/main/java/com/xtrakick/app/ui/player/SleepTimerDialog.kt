@@ -1,12 +1,7 @@
 package com.xtrakick.app.ui.player
 
 import android.app.Dialog
-import android.app.admin.DeviceAdminReceiver
-import android.app.admin.DevicePolicyManager
-import android.content.ComponentName
-import android.content.Context
 import android.content.DialogInterface
-import android.content.Intent
 import android.os.Bundle
 import androidx.core.content.edit
 import com.xtrakick.app.util.bundleOf
@@ -47,7 +42,7 @@ class SleepTimerDialog : DialogFragment() {
                 maxValue = 59
             }
             val positiveListener: (dialog: DialogInterface, which: Int) -> Unit = { _, _ ->
-                (parentFragment as? PlayerFragment)?.onSleepTimerChanged(hours.value * 3600_000L + minutes.value * 60_000L,  hours.value, minutes.value, lockCheckbox.isChecked)
+                (parentFragment as? PlayerFragment)?.onSleepTimerChanged(hours.value * 3600_000L + minutes.value * 60_000L,  hours.value, minutes.value)
                 requireContext().prefs().edit {
                     putInt(AppConstants.SLEEP_TIMER_MINUTES, hours.value * 60 + minutes.value)
                 }
@@ -66,30 +61,10 @@ class SleepTimerDialog : DialogFragment() {
                 minutes.value = ((timeLeft - hours * 3600_000L) / 60_000L).toInt()
                 builder.setPositiveButton(getString(R.string.set), positiveListener)
                 builder.setNegativeButton(getString(R.string.stop)) { _, _ ->
-                    (parentFragment as? PlayerFragment)?.onSleepTimerChanged(-1L, 0, 0, lockCheckbox.isChecked)
+                    (parentFragment as? PlayerFragment)?.onSleepTimerChanged(-1L, 0, 0)
                     dismiss()
                 }
                 builder.setNeutralButton(android.R.string.cancel) { _, _ -> dismiss() }
-            }
-            val devicePolicyManager = requireContext().getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-            val admin = ComponentName(requireContext(), DeviceAdminReceiver::class.java)
-            if (devicePolicyManager.isAdminActive(admin)) {
-                lockCheckbox.apply {
-                    isChecked = requireContext().prefs().getBoolean(AppConstants.SLEEP_TIMER_LOCK, false)
-                    text = getString(R.string.sleep_timer_lock)
-                }
-            } else {
-                lockCheckbox.apply {
-                    isChecked = false
-                    text = getString(R.string.sleep_timer_lock_permissions)
-                    setOnClickListener {
-                        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
-                        }
-                        startActivity(intent)
-                        dismiss()
-                    }
-                }
             }
         }
         return builder.create()

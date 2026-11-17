@@ -19,6 +19,8 @@ import androidx.work.workDataOf
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.model.AppUpdateInfo
+import com.xtrakick.app.util.extractReleaseVersionCode
+import com.xtrakick.app.util.findReleaseVersionUrl
 import com.xtrakick.app.util.parseAppUpdateInfo
 import com.xtrakick.app.model.VideoPosition
 import com.xtrakick.app.model.kick.auth.KickBackendIntrospectRequest
@@ -674,7 +676,7 @@ class MainViewModel @Inject constructor(
                     putString(AppConstants.USERNAME, loginName)
                 }
             } catch (e: Exception) {
-                if ((e is IllegalStateException && e.message == "401") || KickAuthRequestException.isUnauthorized(e)) {
+                if ((e is IllegalStateException && e.message == "401") || KickAuthRequestException.isSessionUnusable(e)) {
                     AuthStateHelper.markUnexpectedLogout(activity)
                     Toast.makeText(activity, R.string.token_expired, Toast.LENGTH_LONG).show()
                     AuthStateHelper.clearKickAuth(activity)
@@ -710,9 +712,29 @@ class MainViewModel @Inject constructor(
                 }
             }
             val updateInfoResult: AppUpdateInfo? = try {
-                playerRepository.loadTextFromUrl(networkLibrary, url)?.let { body ->
-                    parseAppUpdateInfo(json.parseToJsonElement(body) as? JsonObject, lastChecked)
-                }.also { info ->
+                val response = playerRepository.loadTextFromUrl(networkLibrary, url)
+                    ?.let { json.parseToJsonElement(it) as? JsonObject }
+                val candidate = response?.let { parseAppUpdateInfo(it, lastChecked) }
+                // Prefer versionCode over timestamps when CI publishes
+                // release-version.json: a re-uploaded older build must not be offered.
+                val resolved = if (candidate != null) {
+                    // Isolated: a failed release-version fetch must not suppress a
+                    // valid timestamp-based candidate.
+                    val remoteCode = try {
+                        findReleaseVersionUrl(response)
+                            ?.let { playerRepository.loadTextFromUrl(networkLibrary, it) }
+                            ?.let { json.parseToJsonElement(it) as? JsonObject }
+                            ?.let(::extractReleaseVersionCode)
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        DiagnosticLogger.w("MainViewModel", "release-version fetch failed, falling back to timestamps: ${e.message}")
+                        null
+                    }
+                    if (remoteCode != null && remoteCode <= BuildConfig.VERSION_CODE) null else candidate
+                } else {
+                    candidate
+                }
+                resolved.also { info ->
                     if (info != null) updateSize = info.size
                 }
             } catch (e: Exception) {
@@ -764,7 +786,9 @@ class MainViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
-
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                DiagnosticLogger.e("MainViewModel", "downloadUpdate failed", e)
+                Toast.makeText(applicationContext, R.string.update_download_failed, Toast.LENGTH_LONG).show()
             }
             closeUpdateDialog.emit(true)
         }

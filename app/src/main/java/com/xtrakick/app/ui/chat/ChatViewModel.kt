@@ -1520,7 +1520,7 @@ class ChatViewModel @Inject constructor(
                 ?.trim()
                 ?.takeIf { it.isNotBlank() }
             if (token.isNullOrBlank() && propagateFailure) {
-                throw KickAuthRequestException.HttpFailure(401)
+                throw KickAuthRequestException.HttpFailure(401, synthetic = true)
             }
             return token
         }
@@ -3995,7 +3995,12 @@ class ChatViewModel @Inject constructor(
                     try {
                         slashCommandDispatcher.dispatch(message, networkLibrary, kickPublicApiHeaders, accountId, channelId, channelLogin, useApiChatMessages, enableIntegrity)
                     } catch (e: Exception) {
-
+                        // dispatch() surfaces its own failures via emitError; this
+                        // boundary guard only covers unexpected synchronous throws so
+                        // send() can never crash the calling UI.
+                        viewModelScope.launch {
+                            onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, formatKickChatSendError(e))))
+                        }
                     }
                 } else {
                     sendMessage(message, networkLibrary, channelId, channelLogin)
@@ -4027,13 +4032,18 @@ class ChatViewModel @Inject constructor(
                 val accessToken = try {
                     getKickAccessTokenForChatSend(propagateFailure = true)
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     if (KickAuthRequestException.isBackendUnavailable(e)) {
                         onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, applicationContext.getString(R.string.kick_oauth_backend_unreachable))))
-                    } else {
+                    } else if (KickAuthRequestException.isSessionUnusable(e)) {
                         AuthStateHelper.markUnexpectedLogout(applicationContext)
                         AuthStateHelper.clearKickAuth(applicationContext)
                         AuthStateHelper.clearLegacyWebAuth(applicationContext)
                         onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, applicationContext.getString(R.string.token_expired))))
+                    } else {
+                        // Retryable refresh failure (signature/clock error, transport):
+                        // keep the session and surface the error without logging out.
+                        onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, formatKickChatSendError(e))))
                     }
                     return@launch
                 }
@@ -4045,13 +4055,22 @@ class ChatViewModel @Inject constructor(
                         if (initialError.message?.contains("(401)", ignoreCase = true) == true ||
                             (initialError is KickAuthRequestException.HttpFailure && initialError.statusCode == 401)
                         ) {
+                            var refreshFailureMessage: String? = null
                             val retryToken = try {
                                 getKickAccessTokenForChatSend(forceRefresh = true, propagateFailure = true)
                             } catch (refreshError: Exception) {
-                                if (!KickAuthRequestException.isBackendUnavailable(refreshError)) {
-                                    AuthStateHelper.markUnexpectedLogout(applicationContext)
-                                    AuthStateHelper.clearKickAuth(applicationContext)
-                                    AuthStateHelper.clearLegacyWebAuth(applicationContext)
+                                if (refreshError is CancellationException) throw refreshError
+                                refreshFailureMessage = when {
+                                    KickAuthRequestException.isBackendUnavailable(refreshError) ->
+                                        applicationContext.getString(R.string.kick_oauth_backend_unreachable)
+                                    KickAuthRequestException.isSessionUnusable(refreshError) -> {
+                                        AuthStateHelper.markUnexpectedLogout(applicationContext)
+                                        AuthStateHelper.clearKickAuth(applicationContext)
+                                        AuthStateHelper.clearLegacyWebAuth(applicationContext)
+                                        applicationContext.getString(R.string.token_expired)
+                                    }
+                                    // Retryable refresh failure: keep the session.
+                                    else -> formatKickChatSendError(refreshError)
                                 }
                                 null
                             }
@@ -4069,10 +4088,16 @@ class ChatViewModel @Inject constructor(
                                     onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, formatKickChatSendError(retryError))))
                                 }
                             } else {
-                                AuthStateHelper.markUnexpectedLogout(applicationContext)
-                                AuthStateHelper.clearKickAuth(applicationContext)
-                                AuthStateHelper.clearLegacyWebAuth(applicationContext)
-                                onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, applicationContext.getString(R.string.token_expired))))
+                                // The refresh either threw (message captured above, logout
+                                // already applied when the session was truly revoked) or a
+                                // Google session returned null: its mobile token is dead.
+                                if (refreshFailureMessage == null) {
+                                    AuthStateHelper.markUnexpectedLogout(applicationContext)
+                                    AuthStateHelper.clearKickAuth(applicationContext)
+                                    AuthStateHelper.clearLegacyWebAuth(applicationContext)
+                                    refreshFailureMessage = applicationContext.getString(R.string.token_expired)
+                                }
+                                onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, refreshFailureMessage)))
                             }
                         } else {
                             onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, formatKickChatSendError(initialError))))

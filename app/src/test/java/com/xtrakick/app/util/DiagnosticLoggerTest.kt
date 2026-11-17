@@ -1,5 +1,6 @@
 package com.xtrakick.app.util
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -61,5 +62,39 @@ class DiagnosticLoggerTest {
         // When both are disabled, nothing is logged
         assertFalse(DiagnosticLogger.shouldLogPause(logAllPausesEnabled = false, logNonUserPausesEnabled = false, isUserInitiated = false))
         assertFalse(DiagnosticLogger.shouldLogPause(logAllPausesEnabled = false, logNonUserPausesEnabled = false, isUserInitiated = true))
+    }
+
+    @Test
+    fun redactStripsBearerAndAuthHeaders() {
+        assertEquals("Authorization: Bearer REDACTED", DiagnosticLogger.redact("Authorization: Bearer abcdefghijklmnop"))
+        assertEquals("auth=Bearer REDACTED", DiagnosticLogger.redact("auth=Bearer abcdefghijklmnop"))
+        // Normal prose mentioning auth concepts must not be mangled.
+        assertEquals("authorization server rejected the request", DiagnosticLogger.redact("authorization server rejected the request"))
+    }
+
+    @Test
+    fun redactStripsCookieHeaders() {
+        assertEquals("Cookie: REDACTED", DiagnosticLogger.redact("Cookie: session_token=abcdef; other=123456"))
+        // Prose mentioning cookies must survive.
+        assertEquals("cookies disabled for this webview", DiagnosticLogger.redact("cookies disabled for this webview"))
+    }
+
+    @Test
+    fun redactStripsUrlQueriesAndSensitiveParams() {
+        assertEquals(
+            "POST https://mobile.kick.com/api/v1/clips?REDACTED",
+            DiagnosticLogger.redact("POST https://mobile.kick.com/api/v1/clips?videoId=123&sig=abcdef123")
+        )
+        assertEquals(
+            "check https://api.github.com/repos/x/releases/tags/latest?REDACTED",
+            DiagnosticLogger.redact("check https://api.github.com/repos/x/releases/tags/latest?per_page=1")
+        )
+    }
+
+    @Test
+    fun redactLeavesPlainMessagesUnchanged() {
+        val message = "Kick token refresh failed for public API headers: HTTP 401"
+        assertEquals(message, DiagnosticLogger.redact(message))
+        assertEquals("", DiagnosticLogger.redact(""))
     }
 }

@@ -78,7 +78,7 @@ blocked if its code is lower than the installed one.
 
 - Login uses OAuth 2.0 with PKCE against Kick's authorization server, routed through a small backend service operated by the maintainer. The backend is open source: [Xtra-Kick-OAuth-Backend](https://github.com/tibor1234567895/Xtra-Kick-OAuth-Backend). Tokens are stored locally and refreshed automatically; logout revokes them.
 - Follow import and web authorization run in WebViews restricted to kick.com and id.kick.com origins only.
-- The app sends a daily usage ping with app/Android version, approximate country, session counts, player engine, and watch-time buckets. When signed in, a one-way account hash helps distinguish reinstalls; account names and tokens are not included. You can turn it off in Settings → System & Advanced → Privacy.
+- The app sends a daily anonymous usage ping (app and Android version, approximate country, session counts, player engine, watch-time buckets) and crash stack traces to help find and fix device-specific bugs faster. Neither includes account names, IDs or tokens, and crash reports never contain exception messages.
 - The app is not affiliated with or endorsed by Kick. You use your account at your own discretion.
 
 ## License

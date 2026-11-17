@@ -408,8 +408,6 @@
     <string name="error_loading_chatters">Sohbettekiler yüklenemedi</string>
     <string name="copied_username">%s kopyalandı</string>
     <string name="use_followpager">\"Takip Edilenler\" sayfası için sekmeleri kullan</string>
-    <string name="sleep_timer_lock">Kilit ekranı süresi</string>
-    <string name="sleep_timer_lock_permissions">Sonrasında ekranı kilitle (cihaz yöneticisi izni gerektirir)</string>
     <string name="disable_chat">Sohbeti devre dışı bırak</string>
     <string name="disconnected">Bağlantı kesildi</string>
     <string name="other">Diğer</string>
@@ -811,7 +809,6 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="event_reward_ends">Etkinlik bitişi: %s</string>
     <string name="daily_reward_winner">Günlük ödül kazananı</string>
     <string name="daily_reward_rarity">%s ödül</string>
-    <string name="sleep_timer_lock_screen">Uyku zamanlayıcısı bittiğinde ekranı kilitle</string>
     <string name="sleep_timer_time_picker">Uyku zamanlayıcısı için Material saat seçicisini kullan</string>
     <string name="stop_sleep_timer_message">Uyku zamanlayıcısı durdurulsun mu?</string>
     <string name="enable_notifications">Bildirimleri aç</string>
@@ -835,6 +832,7 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="show_name_paints">7TV isim boyalarını göster</string>
     <string name="kick_oauth_not_configured">Kick girişi yapılandırılmadı. Derleme yapılandırmasında KICK_CLIENT_ID ve KICK_OAUTH_BACKEND_BASE_URL tanımlayın.</string>
     <string name="kick_oauth_scope_missing">Kick girişi için gerekli izinler: user:read ve chat:write.</string>
+    <string name="kick_oauth_user_missing">Kick hesabın yüklenemedi. Lütfen tekrar dene.</string>
     <string name="kick_oauth_backend_unreachable">OAuth arka uç sunucusu çevrimdışı veya ulaşılamaz olduğu için Kick girişi geçici olarak kullanılamıyor. Birazdan tekrar deneyin.</string>
     <string name="kick_browser_fallback_webview">Tarayıcı açılamadı, uygulama içinde devam ediliyor.</string>
     <string name="retry">Tekrar dene</string>
@@ -872,6 +870,7 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="update_settings">Güncelleme ayarları</string>
     <string name="downloading_update_progress">Güncelleme indiriliyor. %1$s / %2$s</string>
     <string name="downloading_update">Güncelleme indiriliyor.</string>
+    <string name="update_download_failed">Güncelleme indirilemedi.</string>
     <string name="playback_settings">Oynatma</string>
     <string name="chat_settings">Sohbet</string>
     <string name="debug_settings">Hata ayıklama</string>
@@ -1219,6 +1218,7 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="welcome_security_bullet1">• Güvenli Giriş: kick.com üzerinde doğrudan OAuth (PKCE)</string>
     <string name="welcome_security_bullet2">• Sıfır Sızıntı: Xtra şifrenizi veya 2FA kodunuzu asla görmez</string>
     <string name="welcome_security_bullet3">• Doğrudan Trafik: Doğrudan Kick sunucularına bağlanır</string>
+    <string name="welcome_security_bullet4">• Anonim Telemetri: Günlük kullanım istatistikleri ve çökme raporları cihaza özgü hataların daha hızlı düzeltilmesine yardımcı olur — hiçbir hesap verisi içermez</string>
     <string name="welcome_action_login">Kick / Google ile Giriş Yap</string>
     <string name="welcome_action_guest">Misafir Olarak Devam Et</string>
     <string name="language">Dil</string>

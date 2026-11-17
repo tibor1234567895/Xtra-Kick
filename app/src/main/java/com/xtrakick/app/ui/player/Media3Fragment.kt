@@ -1476,6 +1476,14 @@ class Media3Fragment : PlayerFragment() {
             if (player.isConnected) {
                 savePosition()
                 if (shouldContinuePlaybackInBackground()) {
+                    if (isGenuinePip() && !isScreenLockedOrOff() &&
+                        prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO_PIP_CLOSED, false)
+                    ) {
+                        player.sendCustomCommand(
+                            SessionCommand(PlaybackService.SET_PIP_DISMISSED_BACKGROUND_AUDIO, Bundle.EMPTY),
+                            Bundle.EMPTY,
+                        )
+                    }
                     if (player.playWhenReady && viewModel.quality != AUDIO_ONLY_QUALITY) {
                         viewModel.restoreQuality = true
                         viewModel.previousQuality = viewModel.quality

@@ -60,7 +60,6 @@ object AppConstants {
     const val KEY_CHAT_BAR_VISIBLE = "key_chat_bar_visible"
     const val SLEEP_TIMER_MINUTES = "sleep_timer_minutes"
     const val SLEEP_TIMER_TIME = "sleep_timer_time"
-    const val SLEEP_TIMER_LOCK = "sleep_timer_lock"
     const val SLEEP_TIMER_USE_TIME_PICKER = "sleep_timer_use_time_picker"
     const val SORT_DEFAULT_GAME_VIDEOS = "sort_default_game_videos"
     const val SORT_DEFAULT_GAME_CLIPS = "sort_default_game_clips"

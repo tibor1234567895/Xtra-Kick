@@ -31,13 +31,59 @@ class AppUpdateParsingTest {
         val info = parseReleasePayload("""{
           "tag_name":"v3", "name":{}, "body":[], "published_at":"2026-08-28T12:00:00Z",
           "assets":[null, 12, {"name":"missing-url.apk"},
-            {"name":"usable.apk", "browser_download_url":"https://example.invalid/app.apk", "size":-1}]
+            {"name":"usable.apk", "browser_download_url":"https://github.com/example/app.apk", "size":-1}]
         }""", 0)
 
-        assertEquals("https://example.invalid/app.apk", info?.downloadUrl)
+        assertEquals("https://github.com/example/app.apk", info?.downloadUrl)
         assertEquals("v3", info?.releaseTitle)
         assertNull(info?.releaseNotes)
         assertNull(info?.size)
+    }
+
+    @Test
+    fun untrustedDownloadHostsAreRejected() {
+        val payload = """{
+          "published_at":"2026-08-28T12:00:00Z",
+          "assets":[
+            {"name":"app.apk", "browser_download_url":"https://evil.example.com/app.apk"},
+            {"name":"app2.apk", "browser_download_url":"http://github.com/app.apk"},
+            {"name":"app3.apk", "browser_download_url":"https://github.com.evil.com/app.apk"}
+          ]
+        }"""
+        assertNull(parseReleasePayload(payload, 0))
+        assertFalse(isTrustedUpdateUrl("https://github.com.evil.com/app.apk"))
+        assertFalse(isTrustedUpdateUrl("not a url"))
+        assertTrue(isTrustedUpdateUrl("https://github.com/owner/repo/releases/download/latest/app.apk"))
+        assertTrue(isTrustedUpdateUrl("https://release-assets.githubusercontent.com/x/app.apk"))
+        assertTrue(isTrustedUpdateUrl("https://objects.githubusercontent.com/x/app.apk"))
+    }
+
+    @Test
+    fun releaseVersionUrlAndCodeExtracted() {
+        val response = json.parseToJsonElement("""{
+          "assets":[
+            {"name":"release-version.json", "browser_download_url":"https://github.com/owner/repo/releases/download/latest/release-version.json"}
+          ]
+        }""") as JsonObject
+
+        assertEquals(
+            "https://github.com/owner/repo/releases/download/latest/release-version.json",
+            findReleaseVersionUrl(response)
+        )
+        assertEquals(123L, extractReleaseVersionCode(json.parseToJsonElement("""{"versionCode":123}""") as JsonObject))
+        assertNull(extractReleaseVersionCode(json.parseToJsonElement("""{"other":1}""") as JsonObject))
+        assertNull(extractReleaseVersionCode(json.parseToJsonElement("""{"versionCode":0}""") as JsonObject))
+    }
+
+    @Test
+    fun untrustedReleaseVersionUrlIsIgnored() {
+        val response = json.parseToJsonElement("""{
+          "assets":[
+            {"name":"release-version.json", "browser_download_url":"https://evil.example.com/release-version.json"}
+          ]
+        }""") as JsonObject
+
+        assertNull(findReleaseVersionUrl(response))
     }
 
     @Test

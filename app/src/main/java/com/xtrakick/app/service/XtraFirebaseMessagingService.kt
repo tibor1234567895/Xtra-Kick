@@ -9,11 +9,16 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @AndroidEntryPoint
 class XtraFirebaseMessagingService : FirebaseMessagingService() {
+
+    private companion object {
+        private val CHANNEL_SLUG_REGEX = Regex("[A-Za-z0-9_-]{1,64}")
+    }
 
     @Inject
     lateinit var shownNotificationsRepository: ShownNotificationsRepository
@@ -31,6 +36,11 @@ class XtraFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
+    override fun onDestroy() {
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
         val data = remoteMessage.data
@@ -38,7 +48,10 @@ class XtraFirebaseMessagingService : FirebaseMessagingService() {
         if (type == "stream_live") {
             val channelId = data["channel_id"]?.toLongOrNull()
             val userId = data["user_id"]?.toLongOrNull() ?: return
-            val channelSlug = data["channel_slug"]?.trim()?.removePrefix("/") ?: userId.toString()
+            // The payload slug becomes a navigation path: accept only well-formed
+            // channel slugs and fall back to the user id otherwise.
+            val channelSlug = data["channel_slug"]?.trim()?.removePrefix("/")
+                ?.takeIf { it.matches(CHANNEL_SLUG_REGEX) } ?: userId.toString()
             val title = data["title"]
             val description = data["description"]
             val profilePicture = data["profile_picture"]

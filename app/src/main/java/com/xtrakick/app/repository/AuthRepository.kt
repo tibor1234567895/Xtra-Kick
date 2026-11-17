@@ -137,6 +137,11 @@ class AuthRepository @Inject constructor(
     private fun buildBackendUrl(baseUrl: String, path: String): String {
         val sanitized = baseUrl.trim().trimEnd('/')
         val parsed = sanitized.toHttpUrlOrNull() ?: throw IllegalArgumentException("Kick OAuth backend URL is invalid")
+        // Token exchange and refresh must never run over plaintext. Debug builds
+        // may still target a local HTTP backend for development.
+        if (!parsed.isHttps && !BuildConfig.DEBUG) {
+            throw IllegalArgumentException("Kick OAuth backend URL must use HTTPS")
+        }
         return parsed.newBuilder()
             .addPathSegment("v1")
             .addPathSegment("kick")
@@ -254,7 +259,13 @@ class AuthRepository @Inject constructor(
             if (response.isSuccessful) {
                 response.body.string()
             } else {
-                throw KickAuthRequestException.HttpFailure(response.code)
+                // Keep the body so callers can discriminate a real OAuth grant
+                // rejection ("invalid_grant") from retryable backend failures
+                // ("unauthorized" signature/clock errors).
+                throw KickAuthRequestException.HttpFailure(
+                    response.code,
+                    body = runCatching { response.body.string() }.getOrNull(),
+                )
             }
         }
 
@@ -265,7 +276,7 @@ class AuthRepository @Inject constructor(
         if (statusCode in 200..299) {
             return String(second)
         }
-        throw KickAuthRequestException.HttpFailure(statusCode)
+        throw KickAuthRequestException.HttpFailure(statusCode, body = String(second))
     }
 
     private fun Pair<org.chromium.net.UrlResponseInfo, ByteArray>.asCronetStringBody(): String {
@@ -273,6 +284,6 @@ class AuthRepository @Inject constructor(
         if (statusCode in 200..299) {
             return String(second)
         }
-        throw KickAuthRequestException.HttpFailure(statusCode)
+        throw KickAuthRequestException.HttpFailure(statusCode, body = String(second))
     }
 }

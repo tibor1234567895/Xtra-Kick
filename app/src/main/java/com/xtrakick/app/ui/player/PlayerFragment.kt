@@ -2559,7 +2559,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 requireContext().getAlertDialogBuilder()
                     .setMessage(getString(R.string.stop_sleep_timer_message))
                     .setPositiveButton(getString(R.string.yes)) { _, _ ->
-                        onSleepTimerChanged(-1L, 0, 0, requireContext().prefs().getBoolean(AppConstants.SLEEP_TIMER_LOCK, false))
+                        onSleepTimerChanged(-1L, 0, 0)
                     }
                     .setNegativeButton(getString(R.string.no), null)
                     .show()
@@ -2573,7 +2573,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     .build()
                 picker.addOnPositiveButtonClickListener {
                     val minutes = KickApiHelper.getMinutesLeft(picker.hour, picker.minute)
-                    onSleepTimerChanged(minutes * 60_000L, minutes / 60, minutes % 60, requireContext().prefs().getBoolean(AppConstants.SLEEP_TIMER_LOCK, false))
+                    onSleepTimerChanged(minutes * 60_000L, minutes / 60, minutes % 60)
                     requireContext().prefs().edit {
                         putInt(AppConstants.SLEEP_TIMER_TIME, picker.hour * 60 + picker.minute)
                     }
@@ -3753,7 +3753,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     protected open fun onScreenOffWhileStopped() {
     }
 
-    private fun isGenuinePip(): Boolean =
+    protected fun isGenuinePip(): Boolean =
         wasInPictureInPictureMode && pipEnteredAtMs > 0L && (SystemClock.uptimeMillis() - pipEnteredAtMs >= MIN_PIP_DURATION_MS)
 
     internal fun shouldContinuePlaybackInBackground(): Boolean {
@@ -4902,7 +4902,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     open fun resumePlaybackAfterOverlay() {}
 
-    fun onSleepTimerChanged(durationMs: Long, hours: Int, minutes: Int, lockScreen: Boolean) {
+    fun onSleepTimerChanged(durationMs: Long, hours: Int, minutes: Int) {
         if (durationMs > 0L) {
             Toast.makeText(
                 requireContext(),
@@ -4925,9 +4925,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             ).show()
         } else if (((activity as? MainActivity)?.getSleepTimerTimeLeft() ?: 0) > 0L) {
             Toast.makeText(requireContext(), R.string.timer_canceled, Toast.LENGTH_LONG).show()
-        }
-        if (lockScreen != prefs.getBoolean(AppConstants.SLEEP_TIMER_LOCK, false)) {
-            prefs.edit { putBoolean(AppConstants.SLEEP_TIMER_LOCK, lockScreen) }
         }
         (activity as? MainActivity)?.setSleepTimer(durationMs)
     }

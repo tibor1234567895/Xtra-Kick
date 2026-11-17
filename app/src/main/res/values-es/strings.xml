@@ -408,8 +408,6 @@
     <string name="error_loading_chatters">Error al cargar los usuarios del chat</string>
     <string name="copied_username">Copiado %s</string>
     <string name="use_followpager">Usar pestañas en la página \"Siguiendo\"</string>
-    <string name="sleep_timer_lock">Bloquear pantalla después</string>
-    <string name="sleep_timer_lock_permissions">Bloquear pantalla después (requiere permisos de administrador del dispositivo)</string>
     <string name="disable_chat">Desactivar chat</string>
     <string name="disconnected">Desconectado</string>
     <string name="other">Otro</string>
@@ -816,7 +814,6 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
         <item quantity="many">Racha de %d días</item>
         <item quantity="other">Racha de %d días</item>
     </plurals>
-    <string name="sleep_timer_lock_screen">Bloquear pantalla al terminar el temporizador</string>
     <string name="sleep_timer_time_picker">Usar selector de hora Material para el temporizador</string>
     <string name="stop_sleep_timer_message">¿Detener el temporizador?</string>
     <string name="enable_notifications">Activar notificaciones</string>
@@ -840,6 +837,7 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="show_name_paints">Mostrar pinturas de nombre de 7TV</string>
     <string name="kick_oauth_not_configured">El inicio de sesión de Kick no está configurado. Define KICK_CLIENT_ID y KICK_OAUTH_BACKEND_BASE_URL en la configuración de compilación.</string>
     <string name="kick_oauth_scope_missing">El inicio de sesión de Kick requiere los permisos: user:read y chat:write.</string>
+    <string name="kick_oauth_user_missing">No se pudo cargar tu cuenta de Kick. Inténtalo de nuevo.</string>
     <string name="kick_oauth_backend_unreachable">El inicio de sesión de Kick no está disponible temporalmente porque el servidor OAuth está desconectado o inaccesible. Inténtalo de nuevo en un momento.</string>
     <string name="kick_browser_fallback_webview">No se pudo abrir el navegador, continuando dentro de la app.</string>
     <string name="retry">Reintentar</string>
@@ -877,6 +875,7 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="update_settings">Actualizaciones</string>
     <string name="downloading_update_progress">Descargando actualización. %1$s / %2$s</string>
     <string name="downloading_update">Descargando actualización.</string>
+    <string name="update_download_failed">Error al descargar la actualización.</string>
     <string name="playback_settings">Reproducción</string>
     <string name="chat_settings">Chat</string>
     <string name="debug_settings">Depuración</string>
@@ -1224,6 +1223,7 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="welcome_security_bullet1">• Inicio de sesión seguro: OAuth directo (PKCE) en kick.com</string>
     <string name="welcome_security_bullet2">• Cero fugas: Xtra nunca ve tu contraseña ni tu 2FA</string>
     <string name="welcome_security_bullet3">• Tráfico directo: se conecta directo a los servidores de Kick</string>
+    <string name="welcome_security_bullet4">• Telemetría anónima: Las estadísticas de uso y los informes de fallos ayudan a corregir problemas del dispositivo más rápido — sin ningún dato de cuenta</string>
     <string name="welcome_action_login">Iniciar sesión con Kick / Google</string>
     <string name="welcome_action_guest">Continuar como invitado</string>
     <string name="language">Idioma</string>

@@ -109,16 +109,19 @@ jobs:
         git tag -f latest
         git push -f origin latest
 
-    - name: Delete release
-      continue-on-error: true
+    # Upload-and-update in place instead of delete-then-create: deleting the
+    # release opens a window where /releases/tags/latest 404s and the in-app
+    # updater (and download links) break until the new release exists.
+    - name: Publish release
       env:
         GH_TOKEN: ${{ github.token }}
-      run: gh release delete latest -y
-
-    - name: Create release
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: gh release create latest --title "Latest" --notes-file notes.txt --latest=true 'app/build/outputs/apk/release/*.apk' build/release-version.json
+      run: |
+        if gh release view latest >/dev/null 2>&1; then
+          gh release upload latest --clobber 'app/build/outputs/apk/release/*.apk' build/release-version.json
+          gh release edit latest --title "Latest" --notes-file notes.txt --latest=true
+        else
+          gh release create latest --title "Latest" --notes-file notes.txt --latest=true 'app/build/outputs/apk/release/*.apk' build/release-version.json
+        fi
 
     - name: Submit Release APK to VirusTotal
       continue-on-error: true

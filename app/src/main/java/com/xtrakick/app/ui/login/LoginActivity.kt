@@ -465,8 +465,12 @@ class LoginActivity : BaseStateActivity() {
                 val expiresAt = if (expiresIn > 0L) (System.currentTimeMillis() / 1000L) + expiresIn else 0L
                 val userResponse = authRepository.getKickCurrentUser(networkLibrary, accessToken)
                 val user = userResponse.data.firstOrNull()
+                // A successful-but-empty user response must not store tokens with a
+                // null user ID: the session would read as logged out everywhere that
+                // consumes KICK_USER_ID. Abort before anything is persisted.
                 val userId = user?.id?.toString()
-                val loginName = user?.name ?: user?.channelSlug ?: userId
+                    ?: throw IllegalStateException("missing kick user")
+                val loginName = user.name ?: user.channelSlug ?: userId
 
                 AuthStateHelper.clearLegacyWebAuth(this@LoginActivity)
                 val websiteSessionCaptured = AuthStateHelper.captureKickWebsiteSession()
@@ -494,6 +498,10 @@ class LoginActivity : BaseStateActivity() {
                 when {
                     e is IllegalStateException && e.message == "missing scopes" -> {
                         Toast.makeText(this@LoginActivity, R.string.kick_oauth_scope_missing, Toast.LENGTH_LONG).show()
+                        finish()
+                    }
+                    e is IllegalStateException && e.message == "missing kick user" -> {
+                        Toast.makeText(this@LoginActivity, R.string.kick_oauth_user_missing, Toast.LENGTH_LONG).show()
                         finish()
                     }
                     KickAuthRequestException.isBackendUnavailable(e) -> {

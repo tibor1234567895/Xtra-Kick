@@ -2582,8 +2582,6 @@
     <ID>MaxLineLength:PlayerFragment.kt$PlayerFragment$kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_STREAM, true))</ID>
     <ID>MaxLineLength:PlayerFragment.kt$PlayerFragment$kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_VIDEO, true))</ID>
     <ID>MaxLineLength:PlayerFragment.kt$PlayerFragment$networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")</ID>
-    <ID>MaxLineLength:PlayerFragment.kt$PlayerFragment$onSleepTimerChanged(-1L, 0, 0, requireContext().prefs().getBoolean(AppConstants.SLEEP_TIMER_LOCK, false))</ID>
-    <ID>MaxLineLength:PlayerFragment.kt$PlayerFragment$onSleepTimerChanged(minutes * 60_000L, minutes / 60, minutes % 60, requireContext().prefs().getBoolean(AppConstants.SLEEP_TIMER_LOCK, false))</ID>
     <ID>MaxLineLength:PlayerFragment.kt$PlayerFragment$playVideo((prefs.getString(AppConstants.TOKEN_SKIP_VIDEO_ACCESS_TOKEN, "2")?.toIntOrNull() ?: 2) &lt;= 1, 0)</ID>
     <ID>MaxLineLength:PlayerFragment.kt$PlayerFragment$playVideo((prefs.getString(AppConstants.TOKEN_SKIP_VIDEO_ACCESS_TOKEN, "2")?.toIntOrNull() ?: 2) &lt;= 1, it)</ID>
     <ID>MaxLineLength:PlayerFragment.kt$PlayerFragment$playVideo((prefs.getString(AppConstants.TOKEN_SKIP_VIDEO_ACCESS_TOKEN, "2")?.toIntOrNull() ?: 2) &lt;= 1, requireArguments().getLong(KEY_OFFSET).takeIf { it != -1L } ?: 0)</ID>
@@ -2838,8 +2836,6 @@
     <ID>MaxLineLength:SettingsActivity.kt$SettingsActivity.NavigationSettingsFragment$findPreference&lt;SwitchPreferenceCompat&gt;(AppConstants.UI_SCROLLTOP)?.onPreferenceChangeListener = changeListener</ID>
     <ID>MaxLineLength:SettingsActivity.kt$SettingsActivity.NavigationSettingsFragment$findPreference&lt;SwitchPreferenceCompat&gt;(AppConstants.UI_STORE_RECENT_SEARCHES)?.onPreferenceChangeListener = changeListener</ID>
     <ID>MaxLineLength:SettingsActivity.kt$SettingsActivity.NavigationSettingsFragment$val</ID>
-    <ID>MaxLineLength:SettingsActivity.kt$SettingsActivity.PlayerButtonSettingsFragment$startActivity(Intent().setComponent(ComponentName("com.android.settings", "com.android.settings.DeviceAdminSettings")))</ID>
-    <ID>MaxLineLength:SettingsActivity.kt$SettingsActivity.PlayerButtonSettingsFragment$val devicePolicyManager = requireContext().getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager</ID>
     <ID>MaxLineLength:SettingsActivity.kt$SettingsActivity.PlayerOverviewFragment$findPreference&lt;SwitchPreferenceCompat&gt;(AppConstants.PLAYER_BACKGROUND_AUDIO)?.onPreferenceChangeListener = changeListener</ID>
     <ID>MaxLineLength:SettingsActivity.kt$SettingsActivity.PlayerOverviewFragment$findPreference&lt;SwitchPreferenceCompat&gt;(AppConstants.PLAYER_BACKGROUND_AUDIO_LOCKED)?.onPreferenceChangeListener = changeListener</ID>
     <ID>MaxLineLength:SettingsActivity.kt$SettingsActivity.PlayerOverviewFragment$findPreference&lt;SwitchPreferenceCompat&gt;(AppConstants.PLAYER_PICTURE_IN_PICTURE)?.onPreferenceChangeListener = changeListener</ID>
@@ -2902,8 +2898,6 @@
     <ID>MaxLineLength:ShownNotificationsRepository.kt$ShownNotificationsRepository$val requested = publicApiResult.filter { isRequestedLivestream(it, userIdsForPublicApi, slugsForFallback) }</ID>
     <ID>MaxLineLength:ShownNotificationsRepositoryTest.kt$ShownNotificationsRepositoryTest$assertTrue(shouldSuppressEvent(existingStartedAt = streamStart + 1, liveStartedAt = streamStart, nowMs = 2_000_000L))</ID>
     <ID>MaxLineLength:ShownNotificationsRepositoryTest.kt$ShownNotificationsRepositoryTest$assertTrue(shouldSuppressEvent(existingStartedAt = streamStart, liveStartedAt = streamStart, nowMs = 2_000_000L))</ID>
-    <ID>MaxLineLength:SleepTimerDialog.kt$SleepTimerDialog$(parentFragment as? PlayerFragment)?.onSleepTimerChanged(hours.value * 3600_000L + minutes.value * 60_000L, hours.value, minutes.value, lockCheckbox.isChecked)</ID>
-    <ID>MaxLineLength:SleepTimerDialog.kt$SleepTimerDialog$val devicePolicyManager = requireContext().getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager</ID>
     <ID>MaxLineLength:StreamDownloadWorker.kt$StreamDownloadWorker$.</ID>
     <ID>MaxLineLength:StreamDownloadWorker.kt$StreamDownloadWorker$Log.e(TAG, "Aborting live recording: playlist is HLS-encrypted (#EXT-X-KEY); recorded segments would be unplayable")</ID>
     <ID>MaxLineLength:StreamDownloadWorker.kt$StreamDownloadWorker$NotificationChannel(channelId, ContextCompat.getString(context, R.string.notification_downloads_channel_title), NotificationManager.IMPORTANCE_DEFAULT)</ID>

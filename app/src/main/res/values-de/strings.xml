@@ -408,8 +408,6 @@
     <string name="error_loading_chatters">Fehler beim Laden der Chatter</string>
     <string name="copied_username">%s kopiert</string>
     <string name="use_followpager">Tabs für die Seite \"Gefolgt\" nutzen</string>
-    <string name="sleep_timer_lock">Bildschirm danach sperren</string>
-    <string name="sleep_timer_lock_permissions">Bildschirm danach sperren (erfordert Geräte-Administratorrechte)</string>
     <string name="disable_chat">Chat deaktivieren</string>
     <string name="disconnected">Getrennt</string>
     <string name="other">Sonstiges</string>
@@ -809,7 +807,6 @@
     <string name="event_reward_ends">Event endet um %s</string>
     <string name="daily_reward_winner">Gewinner der täglichen Belohnung</string>
     <string name="daily_reward_rarity">%s Belohnung</string>
-    <string name="sleep_timer_lock_screen">Sperrbildschirm nach Ablauf des Schlaf-Timers aktivieren</string>
     <string name="sleep_timer_time_picker">Material-Zeitauswahl für Schlaf-Timer nutzen</string>
     <string name="stop_sleep_timer_message">Schlaf-Timer beenden?</string>
     <string name="enable_notifications">Benachrichtigungen aktivieren</string>
@@ -833,6 +830,7 @@
     <string name="show_name_paints">7TV-Namensfarben anzeigen</string>
     <string name="kick_oauth_not_configured">Kick-Login ist nicht konfiguriert. Setze KICK_CLIENT_ID und KICK_OAUTH_BACKEND_BASE_URL in der Build-Konfiguration.</string>
     <string name="kick_oauth_scope_missing">Kick-Login erfordert Berechtigungen: user:read und chat:write.</string>
+    <string name="kick_oauth_user_missing">Dein Kick-Konto konnte nicht geladen werden. Bitte versuche es erneut.</string>
     <string name="kick_oauth_backend_unreachable">Kick-Login ist vorübergehend nicht verfügbar, da der OAuth-Backend-Server offline oder nicht erreichbar ist. Bitte gleich noch einmal versuchen.</string>
     <string name="kick_browser_fallback_webview">Browser konnte nicht geöffnet werden, Vorgang wird in der App fortgesetzt.</string>
     <string name="retry">Wiederholen</string>
@@ -870,6 +868,7 @@
     <string name="update_settings">Update-Einstellungen</string>
     <string name="downloading_update_progress">Update wird heruntergeladen: %1$s / %2$s</string>
     <string name="downloading_update">Update wird heruntergeladen.</string>
+    <string name="update_download_failed">Update-Download fehlgeschlagen.</string>
     <string name="playback_settings">Wiedergabe</string>
     <string name="chat_settings">Chat</string>
     <string name="debug_settings">Debug</string>
@@ -1217,6 +1216,7 @@
     <string name="welcome_security_bullet1">• Sichere Anmeldung: Direktes OAuth (PKCE) auf kick.com</string>
     <string name="welcome_security_bullet2">• Keine Datenlecks: Xtra sieht niemals dein Passwort oder 2FA</string>
     <string name="welcome_security_bullet3">• Direkte Verbindung: Verbindet sich direkt mit den Servern von Kick</string>
+    <string name="welcome_security_bullet4">• Anonyme Telemetrie: Tägliche Nutzungsstatistiken und Absturzberichte helfen, gerätespezifische Fehler schneller zu beheben — ganz ohne Kontodaten</string>
     <string name="welcome_action_login">Mit Kick / Google anmelden</string>
     <string name="welcome_action_guest">Als Gast fortfahren</string>
     <string name="language">Sprache</string>

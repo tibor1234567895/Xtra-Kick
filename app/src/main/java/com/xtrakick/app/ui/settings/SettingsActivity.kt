@@ -3,8 +3,6 @@ package com.xtrakick.app.ui.settings
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.app.admin.DeviceAdminReceiver
-import android.app.admin.DevicePolicyManager
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -884,10 +882,18 @@ class SettingsActivity : BaseStateActivity() {
                 findNavController().navigate(SettingsNavGraphDirections.actionGlobalPlaybackSettingsFragment())
                 true
             }
-            findPreference<Preference>("nav_developer_settings")?.setOnPreferenceClickListener {
-                requireActivity().findViewById<AppBarLayout>(R.id.appBar)?.setExpanded(true)
-                findNavController().navigate(SettingsNavGraphDirections.actionGlobalDeveloperSettingsFragment())
-                true
+            findPreference<Preference>("nav_developer_settings")?.let { developerPreference ->
+                // The developer token screen shows live access/refresh tokens in
+                // plain editable fields. It must not be reachable in a shipped build.
+                if (BuildConfig.DEBUG) {
+                    developerPreference.setOnPreferenceClickListener {
+                        requireActivity().findViewById<AppBarLayout>(R.id.appBar)?.setExpanded(true)
+                        findNavController().navigate(SettingsNavGraphDirections.actionGlobalDeveloperSettingsFragment())
+                        true
+                    }
+                } else {
+                    developerPreference.isVisible = false
+                }
             }
             findPreference<Preference>("nav_debug_settings")?.let { debugPreference ->
                 // Debug Settings can swap the entire playback stack and the search
@@ -1050,20 +1056,6 @@ class SettingsActivity : BaseStateActivity() {
                         it.setSelection(it.text.length)
                     }
                 }
-            }
-            findPreference<SwitchPreferenceCompat>("sleep_timer_lock")?.setOnPreferenceChangeListener { _, newValue ->
-                if (newValue == true) {
-                    val devicePolicyManager = requireContext().getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager
-                    val admin = ComponentName(requireContext(), DeviceAdminReceiver::class.java)
-                    if (!devicePolicyManager.isAdminActive(admin)) {
-                        startActivity(
-                            Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                                putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
-                            }
-                        )
-                    }
-                }
-                true
             }
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
                 findPreference<SwitchPreferenceCompat>(AppConstants.PLAYER_AUDIO_COMPRESSOR_BUTTON)?.isVisible = false
@@ -2055,7 +2047,6 @@ class SettingsActivity : BaseStateActivity() {
                     searchSource(R.xml.proxy_preferences, SettingsNavGraphDirections.actionGlobalProxySettingsFragment(), R.string.proxy_settings),
                     searchSource(R.xml.playback_preferences, SettingsNavGraphDirections.actionGlobalPlaybackSettingsFragment(), R.string.stream_parameters),
                     searchSource(R.xml.api_token_preferences, SettingsNavGraphDirections.actionGlobalApiTokenSettingsFragment(), R.string.account),
-                    searchSource(R.xml.developer_preferences, SettingsNavGraphDirections.actionGlobalDeveloperSettingsFragment(), R.string.developer_tokens),
                     searchSource(R.xml.update_preferences, SettingsNavGraphDirections.actionGlobalUpdateSettingsFragment(), R.string.update_settings),
                 )
                 // Debug Settings can swap the entire playback stack and the search
@@ -2064,6 +2055,9 @@ class SettingsActivity : BaseStateActivity() {
                 searchSources.add(searchSource(R.xml.debug_log_preferences, SettingsNavGraphDirections.actionGlobalDebugLogSettingsFragment(), R.string.customize_debug_logs))
                 if (BuildConfig.DEBUG) {
                     searchSources.add(searchSource(R.xml.debug_preferences, SettingsNavGraphDirections.actionGlobalDebugSettingsFragment(), R.string.debug_settings))
+                    // The developer token screen exposes live tokens and must stay
+                    // out of release search results.
+                    searchSources.add(searchSource(R.xml.developer_preferences, SettingsNavGraphDirections.actionGlobalDeveloperSettingsFragment(), R.string.developer_tokens))
                 }
                 fun collectPreferences(pref: Preference, navDirections: androidx.navigation.NavDirections, location: String) {
                     if (pref is PreferenceGroup) {

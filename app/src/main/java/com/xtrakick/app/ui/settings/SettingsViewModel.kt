@@ -10,12 +10,15 @@ import android.net.http.HttpEngine
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.JsonReader
+import android.widget.Toast
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.model.AppUpdateInfo
+import com.xtrakick.app.util.extractReleaseVersionCode
+import com.xtrakick.app.util.findReleaseVersionUrl
 import com.xtrakick.app.util.parseAppUpdateInfo
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.repository.NotificationUsersRepository
@@ -51,6 +54,7 @@ import org.chromium.net.CronetEngine
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import kotlin.math.max
@@ -518,8 +522,27 @@ class SettingsViewModel @Inject constructor(
                 }
             }
             val updateInfoResult: AppUpdateInfo? = try {
-                playerRepository.loadTextFromUrl(networkLibrary, url)?.let { body ->
-                    parseAppUpdateInfo(json.parseToJsonElement(body) as? JsonObject, lastChecked)
+                val response = playerRepository.loadTextFromUrl(networkLibrary, url)
+                    ?.let { json.parseToJsonElement(it) as? JsonObject }
+                val candidate = response?.let { parseAppUpdateInfo(it, lastChecked) }
+                // Prefer versionCode over timestamps when CI publishes
+                // release-version.json: a re-uploaded older build must not be offered.
+                if (candidate != null) {
+                    // Isolated: a failed release-version fetch must not suppress a
+                    // valid timestamp-based candidate.
+                    val remoteCode = try {
+                        findReleaseVersionUrl(response)
+                            ?.let { playerRepository.loadTextFromUrl(networkLibrary, it) }
+                            ?.let { json.parseToJsonElement(it) as? JsonObject }
+                            ?.let(::extractReleaseVersionCode)
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        DiagnosticLogger.w("SettingsViewModel", "release-version fetch failed, falling back to timestamps: ${e.message}")
+                        null
+                    }
+                    if (remoteCode != null && remoteCode <= BuildConfig.VERSION_CODE) null else candidate
+                } else {
+                    candidate
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -562,7 +585,9 @@ class SettingsViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
-
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                DiagnosticLogger.e("SettingsViewModel", "downloadUpdate failed", e)
+                Toast.makeText(applicationContext, R.string.update_download_failed, Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -637,6 +662,25 @@ class SettingsViewModel @Inject constructor(
         return BackupFileType.UNKNOWN
     }
 
+    /**
+     * Copies one zip entry to [target] with a hard size cap so a hostile backup
+     * zip cannot fill cacheDir with an endless entry.
+     */
+    private fun copyZipEntryBounded(input: java.util.zip.ZipInputStream, target: File) {
+        val maxBytes = 256L * 1024L * 1024L
+        target.outputStream().use { out ->
+            val buffer = ByteArray(64 * 1024)
+            var total = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read == -1) return
+                total += read
+                if (total > maxBytes) throw IOException("Backup entry exceeds size limit")
+                out.write(buffer, 0, read)
+            }
+        }
+    }
+
     fun restoreSettings(list: List<String>, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>) {
         viewModelScope.launch(Dispatchers.IO) {
             var tmpZipPrefs: File? = null
@@ -658,16 +702,18 @@ class SettingsViewModel @Inject constructor(
                                         val entryName = entry.name.lowercase()
                                         if (entryName.endsWith(".xml") || entryName == "preferences.xml") {
                                             val tmpFile = File.createTempFile("restore-zip-prefs", ".xml", applicationContext.cacheDir)
-                                            tmpFile.outputStream().use { zipIn.copyTo(it) }
+                                            // Assign before copying so the outer cleanup also
+                                            // deletes the partial file when the size cap aborts.
                                             tmpZipPrefs?.delete()
                                             tmpZipPrefs = tmpFile
                                             prefsUri = tmpFile.toUri()
+                                            copyZipEntryBounded(zipIn, tmpFile)
                                         } else if (entryName == "database" || entryName.endsWith(".db") || entryName.endsWith(".sqlite")) {
                                             val tmpFile = File.createTempFile("restore-zip-db", ".db", applicationContext.cacheDir)
-                                            tmpFile.outputStream().use { zipIn.copyTo(it) }
                                             tmpZipDb?.delete()
                                             tmpZipDb = tmpFile
                                             dbUri = tmpFile.toUri()
+                                            copyZipEntryBounded(zipIn, tmpFile)
                                         }
                                         zipIn.closeEntry()
                                         entry = zipIn.nextEntry

@@ -20,11 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * time bucket, crash count, the number of sessions and playback starts (per
  * engine) since the last successful ping to the OAuth backend, at most once per
  * calendar day. Release builds only, and skipped entirely when the user
- * disables anonymous usage stats in settings. When the user is logged in, a
- * one-way SHA-256 of the user id is included so reinstalls by a known account
- * can be reconciled server-side; it cannot be linked to an account without the
- * backend salt. Playback identifiers stay in memory and are never sent;
- * failures are silent.
+ * disables anonymous usage stats in settings. Playback identifiers stay in
+ * memory and are never sent; failures are silent.
  */
 object UsagePing {
 
@@ -99,16 +96,10 @@ object UsagePing {
 
             val pid = sha256Hex(seed)
             val country = runCatching { java.util.Locale.getDefault().country }.getOrNull().orEmpty()
-            val accountHash = runCatching {
-                context.tokenPrefs().getString(AppConstants.USER_ID, null)
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { sha256Hex(it) }
-            }.getOrNull()
             val body = buildString {
                 append("{\"pid\":\"").append(pid).append("\",\"v\":\"").append(escapeJson(BuildConfig.VERSION_NAME)).append("\"")
                 append(",\"os\":\"").append(Build.VERSION.SDK_INT).append('"')
                 if (country.length == 2) append(",\"cc\":\"").append(country).append('"')
-                if (accountHash != null) append(",\"ah\":\"").append(accountHash).append('"')
                 if (sessions > 0) append(",\"s\":").append(sessions)
                 append(",\"pe\":\"").append(playerEngine).append('"')
                 if (playbackStartsIvs > 0) append(",\"si\":").append(playbackStartsIvs)

@@ -413,8 +413,6 @@
     <string name="error_loading_chatters">Failed to load chatters</string>
     <string name="copied_username">Copied %s</string>
     <string name="use_followpager">Use tabs for \"Following\" page</string>
-    <string name="sleep_timer_lock">Lock screen after</string>
-    <string name="sleep_timer_lock_permissions">Lock screen after (requires device admin permissions)</string>
     <string name="disable_chat">Disable chat</string>
     <string name="disconnected">Disconnected</string>
     <string name="other">Other</string>
@@ -823,7 +821,6 @@ These are downloads you removed while keeping the files. Android hides this fold
         <item quantity="one">%d day streak</item>
         <item quantity="other">%d day streak</item>
     </plurals>
-    <string name="sleep_timer_lock_screen">Lock screen after sleep timer is done</string>
     <string name="sleep_timer_time_picker">Use Material time picker for sleep timer</string>
     <string name="stop_sleep_timer_message">Stop sleep timer?</string>
     <string name="enable_notifications">Turn on notifications</string>
@@ -848,6 +845,7 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="api_kick" translatable="false">Kick</string>
     <string name="kick_oauth_not_configured">Kick login is not configured. Set KICK_CLIENT_ID and KICK_OAUTH_BACKEND_BASE_URL in build config.</string>
     <string name="kick_oauth_scope_missing">Kick login requires scopes: user:read and chat:write.</string>
+    <string name="kick_oauth_user_missing">Could not load your Kick account. Please try again.</string>
     <string name="kick_oauth_backend_unreachable">Kick login is temporarily unavailable because the OAuth backend server is offline or not reachable. Try again in a moment.</string>
     <string name="kick_browser_fallback_webview">Could not open browser, continuing in-app.</string>
     <string name="retry">Retry</string>
@@ -885,6 +883,7 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="update_settings">Update settings</string>
     <string name="downloading_update_progress">Downloading update. %1$s / %2$s</string>
     <string name="downloading_update">Downloading update.</string>
+    <string name="update_download_failed">Update download failed.</string>
     <string name="playback_settings">Playback</string>
     <string name="chat_settings">Chat</string>
     <string name="debug_settings">Debug</string>
@@ -1233,6 +1232,7 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="welcome_security_bullet1">• Safe Login: Direct OAuth (PKCE) on kick.com</string>
     <string name="welcome_security_bullet2">• Zero Leaks: Xtra never sees your password or 2FA</string>
     <string name="welcome_security_bullet3">• Direct Traffic: Connects straight to Kick servers</string>
+    <string name="welcome_security_bullet4">• Anonymous Telemetry: Daily usage stats and crash reports help fix device-specific bugs faster — no account data is ever included</string>
     <string name="welcome_action_login">Sign in with Kick / Google</string>
     <string name="welcome_action_guest">Continue as Guest</string>
 

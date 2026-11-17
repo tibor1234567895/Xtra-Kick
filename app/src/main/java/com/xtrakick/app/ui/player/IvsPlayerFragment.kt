@@ -1394,6 +1394,11 @@ class IvsPlayerFragment : PlayerFragment() {
             if (shouldKeepPlaying) {
                 lastBackgroundPauseAtMs = 0L
                 playbackService?.setBackgroundPlaybackEnabled(true)
+                if (isGenuinePip() && !isScreenLockedOrOff() &&
+                    prefs.getBoolean(AppConstants.PLAYER_BACKGROUND_AUDIO_PIP_CLOSED, false)
+                ) {
+                    playbackService?.markPipDismissedWithBackgroundAudio()
+                }
                 if (prefs.getBoolean("player_use_background_audio_track", false)) {
                     prefs.edit {
                         putBoolean(AppConstants.PLAYER_DISABLE_BACKGROUND_VIDEO, true)

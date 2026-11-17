@@ -55,23 +55,53 @@ object DiagnosticLogger {
     }
 
     /**
+     * Strips credentials from a message before it reaches logcat or the
+     * diagnostic export: bearer/authorization headers, cookies, sensitive
+     * query parameters, and the query string of any URL. Release builds ship
+     * Log.i/w/e, so anything logged here must be assumed exportable.
+     */
+    internal fun redact(message: String): String {
+        var out = message
+        // Authorization headers and bearer tokens.
+        out = BEARER_REGEX.replace(out, "$1REDACTED")
+        // Cookie and set-cookie headers: drop the rest of the line.
+        out = COOKIE_REGEX.replace(out, "$1REDACTED")
+        // Sensitive URL query parameters.
+        out = SENSITIVE_QUERY_PARAM_REGEX.replace(out, "$1REDACTED")
+        // Remaining query strings on URLs (cursor values, signed params, ...).
+        out = URL_QUERY_REGEX.replace(out, "$1?REDACTED")
+        return out
+    }
+
+    private val BEARER_REGEX =
+        Regex("""(?i)(authorization["'=:]*(?:\s*bearer\s+)?|bearer\s+)[A-Za-z0-9._\-]{8,}""")
+    private val COOKIE_REGEX =
+        Regex("""(?i)((?:set-)?cookie["'=:]\s*)[^\r\n]+""")
+    private val SENSITIVE_QUERY_PARAM_REGEX =
+        Regex("""(?i)([?&](?:access_token|refresh_token|api_token|session_token|token|sig|signature|secret|password)=)[^&\s"']+""")
+    private val URL_QUERY_REGEX =
+        Regex("""(https?://\S+?)\?\S+""")
+
+    /**
      * Logcat-only informational trace. Does not write to the diagnostic export file.
      * Use for high-volume operational noise that is useful while debugging but not
      * "important errors and warnings" for export review.
      */
     fun i(tag: String?, message: String, throwable: Throwable? = null) {
         val safeTag = tag ?: "Xtra"
+        val safeMessage = redact(message)
         if (throwable != null) {
-            Log.i(safeTag, message, throwable)
+            Log.i(safeTag, safeMessage, throwable)
         } else {
-            Log.i(safeTag, message)
+            Log.i(safeTag, safeMessage)
         }
     }
 
     fun w(tag: String?, message: String, throwable: Throwable? = null) {
         val safeTag = tag ?: "Xtra"
-        Log.w(safeTag, message, throwable)
-        writeIfEnabled(LEVEL_WARNING, safeTag, message, throwable)
+        val safeMessage = redact(message)
+        Log.w(safeTag, safeMessage, throwable)
+        writeIfEnabled(LEVEL_WARNING, safeTag, safeMessage, throwable)
     }
 
     /**
@@ -89,8 +119,9 @@ object DiagnosticLogger {
 
     fun e(tag: String?, message: String, throwable: Throwable? = null) {
         val safeTag = tag ?: "Xtra"
-        Log.e(safeTag, message, throwable)
-        writeIfEnabled(LEVEL_ERROR, safeTag, message, throwable)
+        val safeMessage = redact(message)
+        Log.e(safeTag, safeMessage, throwable)
+        writeIfEnabled(LEVEL_ERROR, safeTag, safeMessage, throwable)
     }
 
     fun testEntry() {
@@ -181,9 +212,10 @@ object DiagnosticLogger {
             if (audioInfo.isNotBlank()) append(" | audio=[").append(audioInfo).append("]")
         }
 
-        Log.w(tag, message, callstack)
+        val safeMessage = redact(message)
+        Log.w(tag, safeMessage, callstack)
         if (shouldLog && appContext != null) {
-            write(appContext, level, tag, message, callstack)
+            write(appContext, level, tag, safeMessage, callstack)
         }
     }
 
@@ -394,9 +426,9 @@ object DiagnosticLogger {
                     val causeMsg = it.cause?.let { cause ->
                         " (cause: ${cause.javaClass.simpleName}: ${cause.message})"
                     } ?: ""
-                    appendLine("cause=${it.javaClass.simpleName}: ${it.message ?: "network error"}$causeMsg")
+                    appendLine(redact("cause=${it.javaClass.simpleName}: ${it.message ?: "network error"}$causeMsg"))
                 } else {
-                    appendLine(stackTrace(it))
+                    appendLine(redact(stackTrace(it)))
                 }
             }
             appendLine()

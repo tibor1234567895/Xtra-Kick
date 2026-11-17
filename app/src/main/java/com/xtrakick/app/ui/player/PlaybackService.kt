@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import android.os.ext.SdkExtensions
 import android.util.Log
 import androidx.annotation.OptIn
@@ -105,6 +106,7 @@ internal fun playbackControllerConnection(
         add(SessionCommand(PlaybackService.GET_MEDIA_PLAYLIST, Bundle.EMPTY))
         add(SessionCommand(PlaybackService.GET_MULTIVARIANT_PLAYLIST, Bundle.EMPTY))
         add(SessionCommand(PlaybackService.UPDATE_CHANNEL_LOGO, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.SET_PIP_DISMISSED_BACKGROUND_AUDIO, Bundle.EMPTY))
     }.build()
     val playerCommands = Player.Commands.Builder()
         .addAllCommands()
@@ -179,6 +181,8 @@ class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private var dynamicsProcessing: DynamicsProcessing? = null
     private var background = false
+    @Volatile
+    internal var pipDismissedWithBackgroundAudioAtMs = 0L
     private var backgroundPrepareRetryCount = 0
     private var videoId: Long? = null
     private var currentVideoIdString: String? = null
@@ -854,6 +858,10 @@ class PlaybackService : MediaSessionService() {
                                 pauseAllPlayersAndStopSelf()
                                 Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                             }
+                            SET_PIP_DISMISSED_BACKGROUND_AUDIO -> {
+                                markPipDismissedWithBackgroundAudio()
+                                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                            }
                             SET_SLEEP_TIMER -> {
                                 val duration = customCommand.customExtras.getLong(DURATION)
                                 background = duration != -1L
@@ -1044,13 +1052,25 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        if (consumePipDismissedBackgroundAudioHandoff()) {
+            return
+        }
+        super.onTaskRemoved(rootIntent)
         savePosition()
-        val p = mediaSession?.player
-        if (p?.isPlaying == true ||
-            (p?.playWhenReady == true && p.playbackState == Player.STATE_BUFFERING)) return
         clearActiveLiveChannel()
-        mediaSession?.player?.clearMediaItems()
         pauseAllPlayersAndStopSelf()
+    }
+
+    private fun markPipDismissedWithBackgroundAudio() {
+        pipDismissedWithBackgroundAudioAtMs = SystemClock.elapsedRealtime()
+    }
+
+    // The handoff is only honored for a short window after the PiP window is dismissed;
+    // a stale mark must not keep playback alive on an unrelated later task removal.
+    private fun consumePipDismissedBackgroundAudioHandoff(): Boolean {
+        val at = pipDismissedWithBackgroundAudioAtMs
+        pipDismissedWithBackgroundAudioAtMs = 0L
+        return at != 0L && SystemClock.elapsedRealtime() - at < PIP_DISMISS_HANDOFF_TTL_MS
     }
 
     override fun onDestroy() {
@@ -1149,7 +1169,9 @@ class PlaybackService : MediaSessionService() {
         const val GET_MEDIA_PLAYLIST = "getMediaPlaylist"
         const val GET_MULTIVARIANT_PLAYLIST = "getMultivariantPlaylist"
         const val UPDATE_CHANNEL_LOGO = "updateChannelLogo"
+        const val SET_PIP_DISMISSED_BACKGROUND_AUDIO = "setPipDismissedBackgroundAudio"
         const val ACTION_STOP_PLAYBACK = "com.xtrakick.app.ACTION_STOP_PLAYBACK"
+        private const val PIP_DISMISS_HANDOFF_TTL_MS = 15_000L
 
         @Volatile
         var isRunning: Boolean = false

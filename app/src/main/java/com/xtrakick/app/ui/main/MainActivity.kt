@@ -3,7 +3,6 @@ package com.xtrakick.app.ui.main
 import android.app.ActivityOptions
 import android.app.KeyguardManager
 import android.app.PictureInPictureParams
-import android.app.admin.DevicePolicyManager
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -1367,15 +1366,6 @@ class MainActivity : BaseStateActivity() {
                                 it.minimize()
                                 it.close()
                                 closePlayer()
-                            }
-                            if (prefs.getBoolean(AppConstants.SLEEP_TIMER_LOCK, false)) {
-                                if ((getSystemService(POWER_SERVICE) as PowerManager).isInteractive) {
-                                    try {
-                                        (getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager).lockNow()
-                                    } catch (e: SecurityException) {
-
-                                    }
-                                }
                             }
                         } else {
                             withStarted {

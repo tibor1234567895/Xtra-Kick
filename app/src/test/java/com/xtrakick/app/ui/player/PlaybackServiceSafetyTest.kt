@@ -2,6 +2,7 @@ package com.xtrakick.app.ui.player
 
 import android.app.Application
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -17,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
@@ -42,7 +44,28 @@ class PlaybackServiceSafetyTest {
         val own = playbackControllerConnection(trusted, 1000, 1000)
         assertTrue(own.availableSessionCommands.contains(SessionCommand(PlaybackService.START_VIDEO, Bundle.EMPTY)))
         assertTrue(own.availableSessionCommands.contains(SessionCommand(PlaybackService.GET_MEDIA_PLAYLIST, Bundle.EMPTY)))
+        assertTrue(own.availableSessionCommands.contains(SessionCommand(PlaybackService.SET_PIP_DISMISSED_BACKGROUND_AUDIO, Bundle.EMPTY)))
         assertTrue(own.availablePlayerCommands.contains(Player.COMMAND_PLAY_PAUSE))
+    }
+
+    @Test
+    fun freshPipDismissMarkIsConsumedOnTaskRemoved() {
+        val service = PlaybackService()
+        service.pipDismissedWithBackgroundAudioAtMs = SystemClock.elapsedRealtime()
+
+        service.onTaskRemoved(null)
+
+        assertEquals(0L, service.pipDismissedWithBackgroundAudioAtMs)
+    }
+
+    @Test
+    fun expiredPipDismissMarkIsClearedOnTaskRemoved() {
+        val service = Robolectric.buildService(PlaybackService::class.java).get()
+        service.pipDismissedWithBackgroundAudioAtMs = SystemClock.elapsedRealtime() - 60_000
+
+        service.onTaskRemoved(null)
+
+        assertEquals(0L, service.pipDismissedWithBackgroundAudioAtMs)
     }
 
     @Test fun finalPositionWritesStayOrderedAndOutliveTheServiceScope() = runBlocking {

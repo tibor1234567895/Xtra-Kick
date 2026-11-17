@@ -18,8 +18,12 @@ sealed class KickAuthRequestException(message: String, cause: Throwable? = null)
     class InvalidBackendUrl(cause: Throwable? = null) :
         KickAuthRequestException("Kick OAuth backend URL is invalid", cause)
 
-    class HttpFailure(val statusCode: Int, cause: Throwable? = null) :
-        KickAuthRequestException("Kick auth request failed ($statusCode)", cause)
+    class HttpFailure(
+        val statusCode: Int,
+        cause: Throwable? = null,
+        val body: String? = null,
+        val synthetic: Boolean = false,
+    ) : KickAuthRequestException("Kick auth request failed ($statusCode)", cause)
 
     companion object {
         fun classify(throwable: Throwable, isBackendRequest: Boolean): IOException {
@@ -50,6 +54,32 @@ sealed class KickAuthRequestException(message: String, cause: Throwable? = null)
             val failure = (throwable as? HttpFailure)
                 ?: (throwable.cause as? HttpFailure)
             return failure != null && (failure.statusCode == 401 || failure.statusCode == 400)
+        }
+
+        /**
+         * True only when an auth failure means the session is genuinely unusable
+         * and a forced logout is warranted:
+         * - app-raised synthetic failures (no refresh token to refresh with, dead
+         *   Google mobile token), and
+         * - backend responses that explicitly rejected the OAuth grant
+         *   (HTTP 4xx with body code "invalid_grant").
+         *
+         * Everything else — signature/clock failures ("unauthorized" body),
+         * rate limits, upstream 5xx, transport errors — is retryable and must
+         * keep the session: a phone with a wrong clock must not lose its login.
+         */
+        fun isSessionUnusable(throwable: Throwable): Boolean {
+            val failure = (throwable as? HttpFailure)
+                ?: (throwable.cause as? HttpFailure)
+            if (failure != null) {
+                if (failure.synthetic) return true
+                if (failure.statusCode !in 400..499) return false
+                val body = failure.body ?: return false
+                return body.contains("\"invalid_grant\"", ignoreCase = true)
+            }
+            // MainViewModel's auth validation signals a dead session with
+            // IllegalStateException("401"); preserve that convention.
+            return throwable is IllegalStateException && throwable.message == "401"
         }
 
         private fun isBackendUnavailableCause(throwable: Throwable): Boolean {
