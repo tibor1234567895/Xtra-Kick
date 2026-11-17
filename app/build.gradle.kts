@@ -122,6 +122,10 @@ android {
     namespace = "com.xtrakick.app"
     compileSdk = 37
 
+    compileOptions {
+        isCoreLibraryDesugaringEnabled = true
+    }
+
     defaultConfig {
         applicationId = "com.github.andreyasadchy.xtrakick"
         minSdk = 26
@@ -243,6 +247,7 @@ androidComponents {
 }
 
 dependencies {
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation("com.google.guava:guava:33.8.0-android") // exoplayer
     implementation("com.google.android.gms:play-services-cronet:18.1.1")
     implementation("androidx.credentials:credentials:1.3.0")
@@ -309,13 +314,13 @@ dependencies {
 testImplementation("org.json:json:20260814")
     // ChatBackgroundUtilsTest computes its expected values with androidx ColorUtils,
     // which calls android.graphics.Color — absent on a plain JVM. Robolectric supplies it.
-    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("org.robolectric:robolectric:4.18")
     // conscrypt-android ships JNI only for Android. Robolectric loads it on the JVM, so the
     // desktop build supplies the matching native library. Test runtime only.
     testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.9.0")
 }
 
-// Robolectric 4.17 reaches FileDescriptor internals via jdk.internal.access.SharedSecrets,
+// Robolectric reaches FileDescriptor internals via jdk.internal.access.SharedSecrets,
 // which JPMS hides by default. Export and open it for the unit-test JVM.
 tasks.withType<Test> {
     jvmArgs(
