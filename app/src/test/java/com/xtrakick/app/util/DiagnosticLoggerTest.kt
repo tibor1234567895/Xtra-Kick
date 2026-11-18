@@ -97,4 +97,22 @@ class DiagnosticLoggerTest {
         assertEquals(message, DiagnosticLogger.redact(message))
         assertEquals("", DiagnosticLogger.redact(""))
     }
+
+    @Test
+    fun logcatRedactsExceptionMessagesAndNestedCauses() {
+        val error = IllegalStateException(
+            "Request failed for https://example.com/update?token=urlsecret",
+            IllegalArgumentException("Authorization: Bearer bearerSecret"),
+        )
+        error.addSuppressed(IllegalStateException("Cookie: session=cookiesecret"))
+
+        val message = DiagnosticLogger.logcatMessage("Update failed", error)
+
+        assertTrue(message.startsWith("Update failed\n"))
+        assertTrue(message.contains("java.lang.IllegalStateException"))
+        assertTrue(message.contains("Caused by: java.lang.IllegalArgumentException"))
+        assertFalse(message.contains("urlsecret"))
+        assertFalse(message.contains("bearerSecret"))
+        assertFalse(message.contains("cookiesecret"))
+    }
 }

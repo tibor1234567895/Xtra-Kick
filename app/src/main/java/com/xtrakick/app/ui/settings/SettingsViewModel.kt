@@ -1,9 +1,7 @@
 package com.xtrakick.app.ui.settings
 
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageInstaller
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.net.http.HttpEngine
@@ -17,9 +15,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.model.AppUpdateInfo
-import com.xtrakick.app.util.extractReleaseVersionCode
-import com.xtrakick.app.util.findReleaseVersionUrl
-import com.xtrakick.app.util.parseAppUpdateInfo
+import com.xtrakick.app.util.fetchAppUpdate
+import com.xtrakick.app.util.installAppUpdate
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.repository.NotificationUsersRepository
 import com.xtrakick.app.repository.OfflineRepository
@@ -44,11 +41,10 @@ import kotlinx.coroutines.channels.BufferOverflow
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import okhttp3.OkHttpClient
 import org.chromium.net.CronetEngine
 import java.io.File
@@ -522,27 +518,8 @@ class SettingsViewModel @Inject constructor(
                 }
             }
             val updateInfoResult: AppUpdateInfo? = try {
-                val response = playerRepository.loadTextFromUrl(networkLibrary, url)
-                    ?.let { json.parseToJsonElement(it) as? JsonObject }
-                val candidate = response?.let { parseAppUpdateInfo(it, lastChecked) }
-                // Prefer versionCode over timestamps when CI publishes
-                // release-version.json: a re-uploaded older build must not be offered.
-                if (candidate != null) {
-                    // Isolated: a failed release-version fetch must not suppress a
-                    // valid timestamp-based candidate.
-                    val remoteCode = try {
-                        findReleaseVersionUrl(response)
-                            ?.let { playerRepository.loadTextFromUrl(networkLibrary, it) }
-                            ?.let { json.parseToJsonElement(it) as? JsonObject }
-                            ?.let(::extractReleaseVersionCode)
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        DiagnosticLogger.w("SettingsViewModel", "release-version fetch failed, falling back to timestamps: ${e.message}")
-                        null
-                    }
-                    if (remoteCode != null && remoteCode <= BuildConfig.VERSION_CODE) null else candidate
-                } else {
-                    candidate
+                fetchAppUpdate(json, url, lastChecked) { feedUrl ->
+                    playerRepository.loadTextFromUrl(networkLibrary, feedUrl)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -557,37 +534,15 @@ class SettingsViewModel @Inject constructor(
     fun downloadUpdate(networkLibrary: String?, url: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val packageInstaller = applicationContext.packageManager.packageInstaller
-                val sessionId = packageInstaller.createSession(
-                    PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-                )
-                packageInstaller.openSession(sessionId).use { session ->
-                    try {
-                        session.openWrite("package", 0, -1).use { output ->
-                            playerRepository.downloadTo(networkLibrary, url, output)
-                            session.fsync(output)
-                        }
-                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                        session.commit(
-                            PendingIntent.getActivity(
-                                applicationContext,
-                                0,
-                                Intent(applicationContext, MainActivity::class.java).apply {
-                                    flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                                    setAction(MainActivity.INTENT_INSTALL_UPDATE)
-                                },
-                                PendingIntent.FLAG_MUTABLE
-                            ).intentSender
-                        )
-                    } catch (error: Exception) {
-                        session.abandon()
-                        throw error
-                    }
+                installAppUpdate(applicationContext, url) { output ->
+                    playerRepository.downloadTo(networkLibrary, url, output)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 DiagnosticLogger.e("SettingsViewModel", "downloadUpdate failed", e)
-                Toast.makeText(applicationContext, R.string.update_download_failed, Toast.LENGTH_LONG).show()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(applicationContext, R.string.update_download_failed, Toast.LENGTH_LONG).show()
+                }
             }
         }
     }

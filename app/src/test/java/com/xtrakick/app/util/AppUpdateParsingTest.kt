@@ -1,6 +1,8 @@
 package com.xtrakick.app.util
 
+import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.model.AppUpdateInfo
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -31,10 +33,10 @@ class AppUpdateParsingTest {
         val info = parseReleasePayload("""{
           "tag_name":"v3", "name":{}, "body":[], "published_at":"2026-08-28T12:00:00Z",
           "assets":[null, 12, {"name":"missing-url.apk"},
-            {"name":"usable.apk", "browser_download_url":"https://github.com/example/app.apk", "size":-1}]
+            {"name":"usable.apk", "browser_download_url":"https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/usable.apk", "size":-1}]
         }""", 0)
 
-        assertEquals("https://github.com/example/app.apk", info?.downloadUrl)
+        assertEquals("https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/usable.apk", info?.downloadUrl)
         assertEquals("v3", info?.releaseTitle)
         assertNull(info?.releaseNotes)
         assertNull(info?.size)
@@ -53,21 +55,64 @@ class AppUpdateParsingTest {
         assertNull(parseReleasePayload(payload, 0))
         assertFalse(isTrustedUpdateUrl("https://github.com.evil.com/app.apk"))
         assertFalse(isTrustedUpdateUrl("not a url"))
-        assertTrue(isTrustedUpdateUrl("https://github.com/owner/repo/releases/download/latest/app.apk"))
-        assertTrue(isTrustedUpdateUrl("https://release-assets.githubusercontent.com/x/app.apk"))
-        assertTrue(isTrustedUpdateUrl("https://objects.githubusercontent.com/x/app.apk"))
+        assertTrue(isTrustedUpdateUrl("https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/app-release.apk"))
+        assertFalse(isTrustedUpdateUrl("https://github.com/owner/repo/releases/download/latest/app.apk"))
+        assertFalse(isTrustedUpdateUrl("https://release-assets.githubusercontent.com/x/app.apk"))
+        assertFalse(isTrustedUpdateUrl("https://objects.githubusercontent.com/x/app.apk"))
+    }
+
+    @Test
+    fun checksOnlyUseReleaseFeedsFromTheOfficialRepository() {
+        assertTrue(isOfficialUpdateFeed(OFFICIAL_UPDATE_FEED))
+        assertTrue(isOfficialUpdateFeed("https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/latest"))
+        assertFalse(isOfficialUpdateFeed("https://api.github.com/repos/example/Xtra-Kick/releases/latest"))
+        assertFalse(isOfficialUpdateFeed("http://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/latest"))
+        assertFalse(isOfficialUpdateFeed("https://api.github.com/repos/tibor1234567895/Xtra-Kick/issues"))
+    }
+
+    @Test
+    fun ignoresCustomFeedAndRejectsTheInstalledVersion() = runBlocking {
+        val target = "https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/"
+        val requested = mutableListOf<String>()
+        val update = fetchAppUpdate(json, "https://example.com/releases", 0) { url ->
+            requested.add(url)
+            if (url == OFFICIAL_UPDATE_FEED) """
+                {"published_at":"2026-11-18T12:00:00Z","assets":[
+                    {"name":"app-release.apk","browser_download_url":"${target}app-release.apk"},
+                    {"name":"release-version.json","browser_download_url":"${target}release-version.json"}
+                ]}
+            """ else """{"versionCode":${BuildConfig.VERSION_CODE}}"""
+        }
+        assertNull(update)
+        assertEquals(listOf(OFFICIAL_UPDATE_FEED, "${target}release-version.json"), requested)
+    }
+
+    @Test
+    fun canonicalApkTakesPrecedenceOverThePreviousAssetDuringPublishing() {
+        val target = "https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/"
+        val response = """{
+          "assets":[
+            {"name":"previous-1-app-release.apk", "updated_at":"2026-11-18T12:01:00Z",
+             "browser_download_url":"${target}previous-1-app-release.apk"},
+            {"name":"app-release.apk", "updated_at":"2026-11-18T12:00:00Z",
+             "browser_download_url":"${target}app-release.apk"}
+          ]
+        }"""
+        assertEquals("${target}app-release.apk", parseReleasePayload(response, 0)?.downloadUrl)
+        val afterCanonical = checkNotNull(KickApiHelper.parseIso8601DateUTC("2026-11-18T12:00:01Z"))
+        assertNull(parseReleasePayload(response, afterCanonical))
     }
 
     @Test
     fun releaseVersionUrlAndCodeExtracted() {
         val response = json.parseToJsonElement("""{
           "assets":[
-            {"name":"release-version.json", "browser_download_url":"https://github.com/owner/repo/releases/download/latest/release-version.json"}
+            {"name":"release-version.json", "browser_download_url":"https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/release-version.json"}
           ]
         }""") as JsonObject
 
         assertEquals(
-            "https://github.com/owner/repo/releases/download/latest/release-version.json",
+            "https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/release-version.json",
             findReleaseVersionUrl(response)
         )
         assertEquals(123L, extractReleaseVersionCode(json.parseToJsonElement("""{"versionCode":123}""") as JsonObject))
@@ -116,7 +161,7 @@ class AppUpdateParsingTest {
                         "content_type": "application/vnd.android.package-archive",
                         "size": 25000000,
                         "updated_at": "2026-08-28T12:05:00Z",
-                        "browser_download_url": "https://github.com/downloads/app-release.apk"
+                        "browser_download_url": "https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/app-release.apk"
                     }
                 ]
             }
@@ -125,7 +170,7 @@ class AppUpdateParsingTest {
         val info = parseReleasePayload(payload, lastChecked = 1000L)
 
         assertNotNull(info)
-        assertEquals("https://github.com/downloads/app-release.apk", info?.downloadUrl)
+        assertEquals("https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/app-release.apk", info?.downloadUrl)
         assertEquals(25000000L, info?.size)
         assertEquals("v2.55.0 - Performance & Bug Fixes", info?.releaseTitle)
         assertEquals("### Changes\n- Fixed in-app updater\n- Chat performance enhancements", info?.releaseNotes)
@@ -145,7 +190,7 @@ class AppUpdateParsingTest {
                         "content_type": "application/vnd.android.package-archive",
                         "size": 25000000,
                         "updated_at": "2026-08-20T12:05:00Z",
-                        "browser_download_url": "https://github.com/downloads/app-release.apk"
+                        "browser_download_url": "https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/app-release.apk"
                     }
                 ]
             }
@@ -171,7 +216,7 @@ class AppUpdateParsingTest {
                         "content_type": "application/zip",
                         "size": 12345,
                         "updated_at": "2026-08-28T12:05:00Z",
-                        "browser_download_url": "https://github.com/downloads/source.zip"
+                        "browser_download_url": "https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/source.zip"
                     }
                 ]
             }

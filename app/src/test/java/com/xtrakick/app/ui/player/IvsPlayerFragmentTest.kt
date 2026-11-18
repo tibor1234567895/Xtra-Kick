@@ -460,6 +460,28 @@ class IvsPlayerFragmentTest {
     }
 
     @Test
+    fun sleepTimerStopsBackgroundPlaybackAndCanBeCanceled() {
+        val (service, db) = createTestIvsPlayerService()
+        try {
+            val requested = playbackRequestedField()
+            val looper = org.robolectric.Shadows.shadowOf(Looper.getMainLooper())
+            service.setBackgroundPlaybackEnabled(true)
+            requested.setBoolean(service, true)
+            service.setSleepTimer(1_000)
+            service.setSleepTimer(0)
+            looper.idleFor(1_000, TimeUnit.MILLISECONDS)
+            assertTrue(requested.getBoolean(service))
+
+            service.setSleepTimer(1_000)
+            looper.idleFor(1_000, TimeUnit.MILLISECONDS)
+            assertFalse(requested.getBoolean(service))
+            assertFalse(service.isBackgroundPlaybackEnabled())
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
     fun taskRemovedStopsPlaybackEvenWhenBackgroundPlaybackWasEnabled() {
         val (service, db) = createTestIvsPlayerService()
         try {

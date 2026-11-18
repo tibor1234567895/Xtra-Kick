@@ -141,6 +141,12 @@ class IvsPlayerService : Service() {
     private var dynamicsProcessing: DynamicsProcessing? = null
 
     private val playerHandler = Handler(Looper.getMainLooper())
+    private val sleepTimerAction = Runnable { stopPlayback() }
+
+    internal fun setSleepTimer(durationMs: Long) {
+        playerHandler.removeCallbacks(sleepTimerAction)
+        if (durationMs > 0) playerHandler.postDelayed(sleepTimerAction, durationMs)
+    }
     private var servicePlayerListener: Player.Listener? = null
     @Volatile private var destroying = false
     @Volatile private var watchPlaybackActive = false
@@ -1834,6 +1840,7 @@ class IvsPlayerService : Service() {
     }
 
     override fun onDestroy() {
+        playerHandler.removeCallbacks(sleepTimerAction)
         destroying = true
         watchPlaybackActive = false
         isRunning = false

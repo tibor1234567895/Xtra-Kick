@@ -28,6 +28,7 @@ import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -91,6 +92,18 @@ class ChannelPagerViewModel @Inject constructor(
     val follow = MutableStateFlow<Pair<Boolean, String?>?>(null)
     private var updatedLocalUser = false
 
+    private val _fallbackCreatedAt = MutableStateFlow<String?>(null)
+    val fallbackCreatedAt: StateFlow<String?> = _fallbackCreatedAt
+    private var creationDateLookup: Job? = null
+
+    private fun loadFallbackCreationDate(createdAt: String?) {
+        val login = args.channelLogin?.takeIf { it.isNotBlank() } ?: return
+        if (createdAt != null || _fallbackCreatedAt.value != null || creationDateLookup?.isActive == true) return
+        creationDateLookup = viewModelScope.launch {
+            _fallbackCreatedAt.value = kickRepository.getUserCardDetails(login, login).createdAt
+        }
+    }
+
     private val _stream = MutableStateFlow<Stream?>(null)
     val stream: StateFlow<Stream?> = _stream
     private val _user = MutableStateFlow<User?>(null)
@@ -139,7 +152,7 @@ class ChannelPagerViewModel @Inject constructor(
                                 profileImageUrl = channel.user?.profileImage,
                                 followersCount = channel.followersCount,
                                 bannerImageURL = channel.bannerUrl,
-                                createdAt = kickRepository.getUserCardDetails(channelLogin, channelLogin, channel.user?.createdAt).createdAt,
+                                createdAt = kickRepository.normalizeDate(channel.user?.createdAt),
                                 lastBroadcast = lastBroadcast,
                                 isLive = channel.livestream != null,
                             )
@@ -177,6 +190,7 @@ class ChannelPagerViewModel @Inject constructor(
                 }
                 _stream.value = loadedStream
                 if (loadedStream != null) {
+                    loadedStream.user?.let { loadFallbackCreationDate(it.createdAt) }
                     val candidateKeys = allCandidateKeys(
                         loadedStream.channelId,
                         loadedStream.channelLogin,
@@ -198,8 +212,7 @@ class ChannelPagerViewModel @Inject constructor(
                     try {
                         val channelLogin = requireNotNull(args.channelLogin)
                         val baseUser = kickRepository.getChannel(channelLogin).let { channel ->
-                            val details = kickRepository.getUserCardDetails(channelLogin, channelLogin, channel.user?.createdAt)
-                            kickRepository.toUser(channel, details.createdAt)
+                            kickRepository.toUser(channel, kickRepository.normalizeDate(channel.user?.createdAt))
                         }
                         if (baseUser.lastBroadcast == null) {
                             val resolvedLastBroadcast = _stream.value?.user?.lastBroadcast
@@ -246,6 +259,7 @@ class ChannelPagerViewModel @Inject constructor(
                 }
                 _user.value = loadedUser
                 if (loadedUser != null) {
+                    loadFallbackCreationDate(loadedUser.createdAt)
                     val candidateKeys = allCandidateKeys(loadedUser.channelId, loadedUser.channelLogin)
                     runCatching {
                         _notificationsEnabled.value = notificationUsersRepository.isNotificationEnabled(candidateKeys)

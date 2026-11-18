@@ -1357,10 +1357,14 @@ class MainActivity : BaseStateActivity() {
     fun setSleepTimer(duration: Long) {
         viewModel.sleepTimer?.cancel()
         viewModel.sleepTimerEndTime = 0L
+        (playerFragment as? IvsPlayerFragment)?.setServiceSleepTimer(duration)
         if (duration > 0L) {
+            val deadline = System.currentTimeMillis() + duration
+            viewModel.sleepTimerEndTime = deadline
             viewModel.sleepTimer = Timer().apply {
                 schedule(duration) {
                     lifecycleScope.launch {
+                        if (viewModel.sleepTimerEndTime != deadline) return@launch
                         if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
                             playerFragment?.let {
                                 it.minimize()
@@ -1369,6 +1373,7 @@ class MainActivity : BaseStateActivity() {
                             }
                         } else {
                             withStarted {
+                                if (viewModel.sleepTimerEndTime != deadline) return@withStarted
                                 playerFragment?.let {
                                     it.minimize()
                                     it.close()
@@ -1379,7 +1384,6 @@ class MainActivity : BaseStateActivity() {
                     }
                 }
             }
-            viewModel.sleepTimerEndTime = System.currentTimeMillis() + duration
         }
     }
 

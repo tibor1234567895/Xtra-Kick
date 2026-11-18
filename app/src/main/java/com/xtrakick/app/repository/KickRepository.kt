@@ -103,6 +103,8 @@ import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -265,7 +267,7 @@ class KickRepository @Inject constructor(
     private val livestreamCacheTtlMs = 30_000L
     private val searchCacheTtlMs = 60_000L
     private val kickSubscriberAccessCacheTtlMs = 60_000L
-    private val kickEmoteGroupsCacheTtlMs = 60_000L
+    private val kickEmoteCatalogCacheTtlMs = 60_000L
     private val kickBadgeUrls = ConcurrentHashMap<String, String>()
     private val channelCache = boundedCache<Pair<Long, KickChannelResponse>>()
     private val channelLivestreamCache = boundedCache<Pair<Long, KickChannelLivestream?>>()
@@ -290,7 +292,7 @@ class KickRepository @Inject constructor(
     private var browseLanguageCodes: List<String>? = null
     private val eventStreamsCache = boundedCache<Pair<Long, List<KickEventStream>>>()
     private val kickSubscriberAccessCache = boundedCache<Pair<Long, Boolean>>()
-    private val kickEmoteGroupsCache = boundedCache<Pair<Long, List<KickEmoteGroup>>>()
+    private val kickEmoteCatalogCache = boundedCache<Pair<Long, JsonArray>>()
     private val kickInlineBadgeSanitizedCache = ConcurrentHashMap<String, String>()
     private val kickBadgeCatalogRefreshAt = ConcurrentHashMap<String, Long>()
     private val kickBadgeCatalogRefreshInProgress = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
@@ -324,10 +326,8 @@ class KickRepository @Inject constructor(
     private val moderationNestedObjectKeys = listOf(
         "message", "target_message", "deleted_message", "target", "data", "payload", "metadata"
     )
-    private val channelRequestLock = Any()
     private val kickUlidRandom = SecureRandom()
     private val inFlightChannelRequests = mutableMapOf<String, CompletableDeferred<KickChannelResponse>>()
-    private val channelLivestreamRequestLock = Any()
     private val inFlightChannelLivestreamRequests = mutableMapOf<String, CompletableDeferred<KickChannelLivestream?>>()
     private val badgeCacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val livestreamPrefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -1191,19 +1191,11 @@ class KickRepository @Inject constructor(
                 }
             }
         }
-        val deferred = CompletableDeferred<KickChannelResponse>()
-        val inFlight = synchronized(channelRequestLock) {
-            inFlightChannelRequests[normalizedKey]?.also { return@synchronized it }
-                ?: deferred.also { inFlightChannelRequests[normalizedKey] = it }
-        }
-        if (inFlight !== deferred) {
-            return inFlight.await()
-        }
-        try {
+        return coalesceChannelRequest(inFlightChannelRequests, normalizedKey) {
             val decoded = json.decodeFromString<KickChannelResponse>(
                 getRaw("https://kick.com/api/v2/channels/${urlEncode(channelSlug)}")
             )
-            return decoded.also { channel ->
+            decoded.also { channel ->
                 val cachedAt = System.currentTimeMillis()
                 channelCache[normalizedKey] = cachedAt to channel
                 channel.slug?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }?.let { channelCache[it] = cachedAt to channel }
@@ -1226,16 +1218,6 @@ class KickRepository @Inject constructor(
                 }
                 if (prefetchBadgeCatalog) {
                     maybeRefreshKickBadgeCatalogInBackground(channel)
-                }
-                deferred.complete(channel)
-            }
-        } catch (t: Throwable) {
-            deferred.completeExceptionally(t)
-            throw t
-        } finally {
-            synchronized(channelRequestLock) {
-                if (inFlightChannelRequests[normalizedKey] === deferred) {
-                    inFlightChannelRequests.remove(normalizedKey)
                 }
             }
         }
@@ -1395,27 +1377,14 @@ class KickRepository @Inject constructor(
         if (normalizedSlug.isBlank()) {
             return@withContext emptyList()
         }
-        val cacheKey = accountCacheKey() + "|" + normalizedSlug.lowercase(Locale.ROOT) + "|" + includeCurrentChannelSubscriberEmotes
-        kickEmoteGroupsCache[cacheKey]?.let { (cachedAt, cachedGroups) ->
-            if (System.currentTimeMillis() - cachedAt <= kickEmoteGroupsCacheTtlMs) {
-                return@withContext cachedGroups
-            }
-        }
-        val rootElement = runCatching {
-            json.parseToJsonElement(
-                executeKickWebSessionRequest(
-                    "https://kick.com/emotes/${urlEncode(normalizedSlug)}",
-                    requireAuth = false,
-                )
-            )
-        }.recoverCatching {
-            json.parseToJsonElement(
-                getRaw("https://kick.com/emotes/${urlEncode(normalizedSlug)}", isKickWeb = true)
-            )
-        }.getOrNull()
-        val root = (rootElement as? JsonArray)
-            ?: (rootElement as? JsonObject)?.arrayOrNull("data")
-            ?: return@withContext emptyList()
+        val normalizedCurrentSlug = normalizedSlug.lowercase(Locale.ROOT)
+        val cacheKey = accountCacheKey() + "|" + normalizedCurrentSlug
+        val cached = kickEmoteCatalogCache[cacheKey]?.takeIf { (cachedAt, _) ->
+            System.currentTimeMillis() - cachedAt <= kickEmoteCatalogCacheTtlMs
+        }?.second
+        val root = cached ?: fetchKickEmoteCatalog(normalizedSlug)?.also {
+            kickEmoteCatalogCache[cacheKey] = System.currentTimeMillis() to it
+        } ?: return@withContext emptyList()
         val groups = mutableListOf<KickEmoteGroup>()
         root.forEachIndexed { index, groupElement ->
             val group = groupElement as? JsonObject ?: return@forEachIndexed
@@ -1425,7 +1394,7 @@ class KickRepository @Inject constructor(
                 ?: group.firstPrimitiveOrNull("slug")
                 ?: "Kick ${index + 1}"
             val groupId = group.firstPrimitiveOrNull("slug", "id")?.takeIf { it.isNotBlank() } ?: rawTitle
-            val isCurrentChannelGroup = groupSlug != null && groupSlug == normalizedSlug.lowercase(Locale.ROOT)
+            val isCurrentChannelGroup = groupSlug == normalizedCurrentSlug
             val emotes = group.arrayOrNull("emotes").orEmpty()
             val deduped = LinkedHashMap<String, Emote>()
             emotes.forEach { emoteElement ->
@@ -1457,7 +1426,6 @@ class KickRepository @Inject constructor(
                 )
             }
         }
-        val normalizedCurrentSlug = normalizedSlug.lowercase(Locale.ROOT)
         groups.sortedWith(
             compareBy<KickEmoteGroup> { group ->
                 when {
@@ -1468,13 +1436,24 @@ class KickRepository @Inject constructor(
                     else -> 2
                 }
             }.thenBy { it.title.lowercase(Locale.ROOT) }
-        ).also { sortedGroups ->
-            kickEmoteGroupsCache[cacheKey] = System.currentTimeMillis() to sortedGroups
-        }
+        )
+    }
+
+    private suspend fun fetchKickEmoteCatalog(slug: String): JsonArray? {
+        val url = "https://kick.com/emotes/${urlEncode(slug)}"
+        val root = runCatching {
+            json.parseToJsonElement(executeKickWebSessionRequest(url, requireAuth = false))
+        }.recoverCatching {
+            if (it is CancellationException) throw it
+            json.parseToJsonElement(getRaw(url, isKickWeb = true))
+        }.onFailure {
+            if (it is CancellationException) throw it
+        }.getOrNull()
+        return (root as? JsonArray) ?: (root as? JsonObject)?.arrayOrNull("data")
     }
 
     fun clearKickEmoteGroupsCache() {
-        kickEmoteGroupsCache.clear()
+        kickEmoteCatalogCache.clear()
     }
 
     suspend fun getChannelPointRewards(
@@ -3012,11 +2991,11 @@ class KickRepository @Inject constructor(
     // start would otherwise both miss and hit the same endpoint within milliseconds.
     private val chatroomRawMutex = Mutex()
 
-    private suspend fun getChannelChatroomRaw(channelSlug: String): String = chatroomRawMutex.withLock {
+    private suspend fun getChannelChatroomRaw(channelSlug: String, forceRefresh: Boolean = false): String = chatroomRawMutex.withLock {
         val normalizedKey = channelSlug.trim().lowercase(Locale.ROOT)
         val now = System.currentTimeMillis()
         chatroomRawCache?.let { (cachedKey, cachedAt, cachedRaw) ->
-            if (cachedKey == normalizedKey && now - cachedAt <= 15_000L) {
+            if (!forceRefresh && cachedKey == normalizedKey && now - cachedAt <= 15_000L) {
                 return cachedRaw
             }
         }
@@ -3059,14 +3038,18 @@ class KickRepository @Inject constructor(
         return root.primitiveOrNull("id")?.takeIf { it.isNotBlank() }
     }
 
-    suspend fun getInitialRoomState(channelSlug: String?, channelId: String?): RoomState? {
+    suspend fun getInitialRoomState(channelSlug: String?, channelId: String?, forceRefresh: Boolean = false): RoomState? {
         val normalizedSlug = channelSlug?.trim()?.takeIf { it.isNotBlank() }
             ?: channelId?.trim()?.takeIf { it.isNotBlank() } ?: return null
 
         val raw = runCatching {
-            getChannelChatroomRaw(normalizedSlug)
+            getChannelChatroomRaw(normalizedSlug, forceRefresh)
+        }.onFailure {
+            if (it is CancellationException) throw it
         }.getOrNull() ?: runCatching {
             getRaw("https://kick.com/api/v2/channels/${urlEncode(normalizedSlug)}", isKickWeb = true)
+        }.onFailure {
+            if (it is CancellationException) throw it
         }.getOrNull() ?: return null
 
         val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
@@ -3083,15 +3066,7 @@ class KickRepository @Inject constructor(
                 }
             }
         }
-        val deferred = CompletableDeferred<KickChannelLivestream?>()
-        val inFlight = synchronized(channelLivestreamRequestLock) {
-            inFlightChannelLivestreamRequests[normalizedKey]?.also { return@synchronized it }
-                ?: deferred.also { inFlightChannelLivestreamRequests[normalizedKey] = it }
-        }
-        if (inFlight !== deferred) {
-            return inFlight.await()
-        }
-        try {
+        return coalesceChannelRequest(inFlightChannelLivestreamRequests, normalizedKey) {
             val livestream = parseChannelLivestream(
                 json.parseToJsonElement(
                     getRaw(
@@ -3100,22 +3075,12 @@ class KickRepository @Inject constructor(
                     )
                 )
             )
-            return livestream.also {
+            livestream.also {
                 val cachedAt = System.currentTimeMillis()
                 if (livestream != null) {
                     channelLivestreamCache[normalizedKey] = cachedAt to livestream
                 } else {
                     channelLivestreamCache.remove(normalizedKey)
-                }
-                deferred.complete(livestream)
-            }
-        } catch (t: Throwable) {
-            deferred.completeExceptionally(t)
-            throw t
-        } finally {
-            synchronized(channelLivestreamRequestLock) {
-                if (inFlightChannelLivestreamRequests[normalizedKey] === deferred) {
-                    inFlightChannelLivestreamRequests.remove(normalizedKey)
                 }
             }
         }
@@ -7476,3 +7441,34 @@ open class KickWebResponseException(
     val responseBody: String?,
     message: String = "Kick request failed ($statusCode)",
 ) : IOException(message)
+
+
+internal suspend fun <T> coalesceChannelRequest(
+    requests: MutableMap<String, CompletableDeferred<T>>,
+    key: String,
+    fetch: suspend () -> T,
+): T {
+    while (true) {
+        val own = CompletableDeferred<T>()
+        val pending = synchronized(requests) { requests.getOrPut(key) { own } }
+        if (pending !== own) {
+            try {
+                return pending.await()
+            } catch (_: CancellationException) {
+                currentCoroutineContext().ensureActive()
+                continue
+            }
+        }
+
+        try {
+            return fetch().also { own.complete(it) }
+        } catch (failure: Throwable) {
+            // Release the slot before waking waiters so they can retry an abandoned request.
+            synchronized(requests) { requests.remove(key, own) }
+            own.completeExceptionally(failure)
+            throw failure
+        } finally {
+            synchronized(requests) { requests.remove(key, own) }
+        }
+    }
+}

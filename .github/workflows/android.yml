@@ -5,12 +5,10 @@ name: Build
 on:
   workflow_dispatch:
 
-# A newer push to main supersedes the run in progress. The publish steps sit at
-# the very end and finish in seconds, so an interrupted publish self-heals on
-# the next successful run.
+# Keep another dispatch from interrupting an asset promotion.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: android-release
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -51,7 +49,7 @@ jobs:
     - name: Prepare release version
       id: version
       run: |
-        python3 -B -m unittest discover -s gradle -p test_release_version.py
+        python3 -B -m unittest discover -s gradle
         code=$(python3 -B gradle/release_version.py ci --run-number "$GITHUB_RUN_NUMBER" --output build/release-version.json)
         echo "code=$code" >> "$GITHUB_OUTPUT"
 
@@ -104,24 +102,17 @@ jobs:
         echo "" >> notes.txt
         echo "Active Changelog: https://github.com/tibor1234567895/Xtra-Kick/commits/main" >> notes.txt
 
-    - name: Update tag
-      run: |
-        git tag -f latest
-        git push -f origin latest
-
-    # Upload-and-update in place instead of delete-then-create: deleting the
-    # release opens a window where /releases/tags/latest 404s and the in-app
-    # updater (and download links) break until the new release exists.
     - name: Publish release
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        if gh release view latest >/dev/null 2>&1; then
-          gh release upload latest --clobber 'app/build/outputs/apk/release/*.apk' build/release-version.json
-          gh release edit latest --title "Latest" --notes-file notes.txt --latest=true
-        else
-          gh release create latest --title "Latest" --notes-file notes.txt --latest=true 'app/build/outputs/apk/release/*.apk' build/release-version.json
-        fi
+        python3 -B gradle/publish_release.py "${{ steps.version.outputs.code }}" "$GITHUB_SHA" notes.txt \
+          app/build/outputs/apk/release/app-release.apk build/release-version.json
+
+    - name: Update tag
+      run: |
+        git tag -f latest
+        git push -f origin latest
 
     - name: Submit Release APK to VirusTotal
       continue-on-error: true

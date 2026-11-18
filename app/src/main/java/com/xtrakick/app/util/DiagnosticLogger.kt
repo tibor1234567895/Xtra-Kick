@@ -88,19 +88,13 @@ object DiagnosticLogger {
      * "important errors and warnings" for export review.
      */
     fun i(tag: String?, message: String, throwable: Throwable? = null) {
-        val safeTag = tag ?: "Xtra"
-        val safeMessage = redact(message)
-        if (throwable != null) {
-            Log.i(safeTag, safeMessage, throwable)
-        } else {
-            Log.i(safeTag, safeMessage)
-        }
+        Log.i(tag ?: "Xtra", logcatMessage(redact(message), throwable))
     }
 
     fun w(tag: String?, message: String, throwable: Throwable? = null) {
         val safeTag = tag ?: "Xtra"
         val safeMessage = redact(message)
-        Log.w(safeTag, safeMessage, throwable)
+        Log.w(safeTag, logcatMessage(safeMessage, throwable))
         writeIfEnabled(LEVEL_WARNING, safeTag, safeMessage, throwable)
     }
 
@@ -120,7 +114,7 @@ object DiagnosticLogger {
     fun e(tag: String?, message: String, throwable: Throwable? = null) {
         val safeTag = tag ?: "Xtra"
         val safeMessage = redact(message)
-        Log.e(safeTag, safeMessage, throwable)
+        Log.e(safeTag, logcatMessage(safeMessage, throwable))
         writeIfEnabled(LEVEL_ERROR, safeTag, safeMessage, throwable)
     }
 
@@ -213,7 +207,7 @@ object DiagnosticLogger {
         }
 
         val safeMessage = redact(message)
-        Log.w(tag, safeMessage, callstack)
+        Log.w(tag, logcatMessage(safeMessage, callstack))
         if (shouldLog && appContext != null) {
             write(appContext, level, tag, safeMessage, callstack)
         }
@@ -428,7 +422,7 @@ object DiagnosticLogger {
                     } ?: ""
                     appendLine(redact("cause=${it.javaClass.simpleName}: ${it.message ?: "network error"}$causeMsg"))
                 } else {
-                    appendLine(redact(stackTrace(it)))
+                    appendLine(stackTrace(it))
                 }
             }
             appendLine()
@@ -455,10 +449,13 @@ object DiagnosticLogger {
         return false
     }
 
+    internal fun logcatMessage(safeMessage: String, throwable: Throwable?): String =
+        if (throwable == null) safeMessage else "$safeMessage\n${stackTrace(throwable)}"
+
     private fun stackTrace(throwable: Throwable): String {
         val writer = StringWriter()
         throwable.printStackTrace(PrintWriter(writer))
-        return writer.toString()
+        return redact(writer.toString())
     }
 
     private fun currentFile(context: Context) = File(File(context.filesDir, DIRECTORY), FILE_NAME)

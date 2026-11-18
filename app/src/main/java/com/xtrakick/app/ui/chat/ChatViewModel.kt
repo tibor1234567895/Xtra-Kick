@@ -80,6 +80,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import org.json.JSONArray
 import org.json.JSONObject
@@ -341,6 +342,7 @@ class ChatViewModel @Inject constructor(
     private var kickReplayPacingPerTick = 1
     private val kickReplyThreadHistoryWindowMs = 6L * 60L * 60L * 1000L
     private val kickRealtimeChatroomIdPrefix = "kick_realtime_chatroom_id"
+    private val verifiedKickChatroomIds = mutableMapOf<String, Pair<Long, String>>()
     private val kickPreferredMessageSourcePrefix = "kick_preferred_message_source"
     private val kickReplayPendingMessages = PriorityQueue(
         11,
@@ -400,6 +402,10 @@ class ChatViewModel @Inject constructor(
     val personalEmoteSets = mutableMapOf<String, List<Emote>>()
     val stvUsers = mutableListOf<StvUser>()
     var channelStvEmoteSetId: String? = null
+    private var channelStvEmoteLoadJob: Job? = null
+    private var nativeEmoteLoadJob: Job? = null
+    private var globalStvEmoteLoadJob: Job? = null
+    private var channelStvEmoteRevision = 0
     var userStvEmoteSetId: String? = null
     private var currentKickEmoteChannelLogin: String? = null
 
@@ -988,6 +994,9 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun loadEmotes(channelId: String?, channelLogin: String?) {
+        channelStvEmoteLoadJob?.cancel()
+        nativeEmoteLoadJob?.cancel()
+        globalStvEmoteLoadJob?.cancel()
         currentKickEmoteChannelLogin = channelLogin?.trim()?.lowercase(Locale.ROOT)
         val networkLibrary = applicationContext.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(applicationContext)
@@ -1003,23 +1012,36 @@ class ChatViewModel @Inject constructor(
         }
         kickEmoteGroups.value = emptyList()
         if (!channelLogin.isNullOrBlank()) {
-            viewModelScope.launch {
-                try {
-                    val includeCurrentChannelSubscriberEmotes = kickRepository.canAccessKickSubscriberEmotes(channelLogin)
-                    val groups = kickRepository.loadKickNativeEmoteGroups(channelLogin, includeCurrentChannelSubscriberEmotes)
+            nativeEmoteLoadJob = viewModelScope.launch {
+                suspend fun publish(groups: List<KickRepository.KickEmoteGroup>) {
                     kickEmoteGroups.value = groups
                     val emotes = groups.flatMap { it.emotes }
                     if (emotes.isNotEmpty()) {
                         appendToThirdPartyEmotes(emotes)
-                        if (!reloadMessages.value) {
-                            reloadMessages.value = true
-                        }
-                        thirdPartyEmotesUpdated.emit(Unit)
                         appendToAutoCompleteList(emotes)
                         appendToAllEmotes(emotes.mapNotNull { it.name })
+                        reloadMessages.value = true
+                        thirdPartyEmotesUpdated.emit(Unit)
                     }
-                } catch (_: Exception) {
-
+                }
+                try {
+                    val subscriberAccess = async {
+                        runCatching { kickRepository.canAccessKickSubscriberEmotes(channelLogin) }.getOrElse {
+                            if (it is CancellationException) throw it
+                            false
+                        }
+                    }
+                    val publicGroups = kickRepository.loadKickNativeEmoteGroups(channelLogin, includeCurrentChannelSubscriberEmotes = false)
+                    publish(publicGroups)
+                    if (isKickRecentChatDebugEnabled()) {
+                        Log.d("KickRecentChat", "public Kick emote groups channel=$channelLogin count=${publicGroups.size}")
+                    }
+                    if (subscriberAccess.await()) {
+                        val subscriberGroups = kickRepository.loadKickNativeEmoteGroups(channelLogin, includeCurrentChannelSubscriberEmotes = true)
+                        if (subscriberGroups != publicGroups) publish(subscriberGroups)
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                 }
             }
         }
@@ -1079,46 +1101,78 @@ class ChatViewModel @Inject constructor(
                 appendToAutoCompleteList(saved)
                 appendToAllEmotes(saved.mapNotNull { it.name })
             } else {
-                viewModelScope.launch {
-                    try {
-                        val emotes = playerRepository.loadGlobalStvEmotes(networkLibrary, useWebp)
-                        if (emotes.isNotEmpty()) {
-                            savedGlobalStvEmotes = emotes
-                            appendToThirdPartyEmotes(emotes)
-                            if (!reloadMessages.value) {
-                                reloadMessages.value = true
-                            }
-                            thirdPartyEmotesUpdated.emit(Unit)
-                            appendToAutoCompleteList(emotes)
-                            appendToAllEmotes(emotes.mapNotNull { it.name })
+                globalStvEmoteLoadJob = viewModelScope.launch {
+                    val cached = playerRepository.loadCachedGlobalStvEmotes(useWebp)
+                    if (cached.isNotEmpty()) {
+                        applyStvEmotes(cached, Emote.GLOBAL_STV)
+                        if (isKickRecentChatDebugEnabled()) {
+                            Log.d("KickRecentChat", "global 7TV cache emotes=${cached.size}")
                         }
-                    } catch (e: Exception) {
-
+                    }
+                    val refreshed = playerRepository.loadGlobalStvEmotes(networkLibrary, useWebp)
+                    savedGlobalStvEmotes = refreshed.ifEmpty { cached }
+                    if (refreshed.isNotEmpty() && !sameStvEmotes(cached, refreshed)) {
+                        applyStvEmotes(refreshed, Emote.GLOBAL_STV)
                     }
                 }
             }
             if (!channelId.isNullOrBlank()) {
-                viewModelScope.launch {
-                    try {
-                        val response = loadStvChannelEmotes(networkLibrary, channelId, channelLogin, useWebp)
-                        val setId = response.first
-                        val emotes = response.second
-                        if (emotes.isNotEmpty()) {
-                            channelStvEmoteSetId = setId
-                            appendToThirdPartyEmotes(emotes)
-                            if (!reloadMessages.value) {
-                                reloadMessages.value = true
-                            }
-                            thirdPartyEmotesUpdated.emit(Unit)
-                            appendToAutoCompleteList(emotes)
-                            appendToAllEmotes(emotes.mapNotNull { it.name })
+                channelStvEmoteLoadJob = viewModelScope.launch {
+                    val started = SystemClock.elapsedRealtime()
+                    val revision = channelStvEmoteRevision
+                    val cachedBroadcasterId = channelLogin?.let { kickRepository.getCachedChannel(it)?.userId }
+                        ?.toString()?.takeUnless { it == channelId }
+                    val cached = playerRepository.loadCachedStvChannelEmotes(channelId, useWebp)
+                        ?: cachedBroadcasterId?.let { playerRepository.loadCachedStvChannelEmotes(it, useWebp) }
+                    if (cached != null && revision == channelStvEmoteRevision) {
+                        applyChannelStvEmotes(cached.first, cached.second)
+                        if (isKickRecentChatDebugEnabled()) {
+                            Log.d("KickRecentChat", "7TV cache channel=$channelLogin emotes=${cached.second.size} elapsedMs=${SystemClock.elapsedRealtime() - started}")
                         }
-                    } catch (e: Exception) {
-
+                    }
+                    val refreshed = loadStvChannelEmotes(networkLibrary, channelId, channelLogin, useWebp)
+                    if (revision == channelStvEmoteRevision &&
+                        (refreshed.first != null || refreshed.second.isNotEmpty()) &&
+                        (cached == null || cached.first != refreshed.first || !sameStvEmotes(cached.second, refreshed.second))
+                    ) {
+                        applyChannelStvEmotes(refreshed.first, refreshed.second)
+                        if (isKickRecentChatDebugEnabled()) {
+                            Log.d("KickRecentChat", "7TV refresh channel=$channelLogin emotes=${refreshed.second.size} elapsedMs=${SystemClock.elapsedRealtime() - started}")
+                        }
                     }
                 }
             }
         }
+    }
+
+    private fun sameStvEmotes(cached: List<Emote>, refreshed: List<Emote>): Boolean {
+        if (cached.size != refreshed.size) return false
+        return cached.indices.all { i ->
+            val before = cached[i]
+            val after = refreshed[i]
+            before.name == after.name && before.url1x == after.url1x && before.url2x == after.url2x &&
+                before.url3x == after.url3x && before.url4x == after.url4x && before.format == after.format &&
+                before.isAnimated == after.isAnimated && before.isOverlayEmote == after.isOverlayEmote
+        }
+    }
+
+    private suspend fun applyChannelStvEmotes(setId: String?, emotes: List<Emote>) {
+        channelStvEmoteSetId = setId
+        applyStvEmotes(emotes, Emote.CHANNEL_STV)
+    }
+
+    private suspend fun applyStvEmotes(emotes: List<Emote>, source: Int) {
+        synchronized(thirdPartyEmotes) {
+            thirdPartyEmotes.removeAll { it.source == source && it.localData == null }
+            appendToThirdPartyEmotes(emotes)
+        }
+        synchronized(autoCompleteList) {
+            autoCompleteList.removeAll { it is Emote && it.source == source && it.localData == null }
+            appendToAutoCompleteList(emotes)
+        }
+        appendToAllEmotes(emotes.mapNotNull { it.name })
+        reloadMessages.value = true
+        thirdPartyEmotesUpdated.emit(Unit)
     }
 
     private fun appendToAutoCompleteList(items: Collection<Any?>) {
@@ -1466,7 +1520,21 @@ class ChatViewModel @Inject constructor(
         }.apply()
     }
 
-    private suspend fun resolveKickRealtimeChatroomId(channelId: String, channelLogin: String): String {
+    private suspend fun resolveKickRealtimeChatroomId(
+        channelId: String,
+        channelLogin: String,
+        confirmedChatroomId: String? = null,
+    ): String {
+        val login = channelLogin.trim().lowercase(Locale.ROOT)
+        val verifiedKey = if (login.isNotEmpty()) "login:$login" else "id:$channelId"
+        if (confirmedChatroomId != null) {
+            verifiedKickChatroomIds[verifiedKey] = SystemClock.elapsedRealtime() to confirmedChatroomId
+            cacheKickRealtimeChatroomId(confirmedChatroomId, channelId, channelLogin)
+            return confirmedChatroomId
+        }
+        verifiedKickChatroomIds[verifiedKey]?.let { (verifiedAt, id) ->
+            if (SystemClock.elapsedRealtime() - verifiedAt <= 5 * 60_000L) return id
+        }
         val cached = getCachedKickRealtimeChatroomId(channelId, channelLogin)
         val fresh = runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelLogin) }.getOrNull().orEmpty().firstOrNull()
             ?: runCatching { kickRepository.resolveDedicatedChatroomCandidates(channelId) }.getOrNull().orEmpty().firstOrNull()
@@ -1537,25 +1605,22 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun loadStvChannelEmotes(networkLibrary: String?, channelId: String, channelLogin: String?, useWebp: Boolean): Pair<String?, List<Emote>> {
-                var lastError: Exception? = null
+        val broadcasterId = resolveKickBroadcasterUserId(channelId, channelLogin)?.toString()
         val candidates = LinkedHashSet<String>().apply {
-            resolveKickBroadcasterUserId(channelId, channelLogin)?.toString()?.let(::add)
+            broadcasterId?.let(::add)
             channelId.trim().takeIf { it.isNotBlank() }?.let(::add)
             channelLogin?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
         }
-        candidates.forEach { candidate ->
-            try {
-                return playerRepository.loadStvKickEmotes(networkLibrary, candidate, useWebp)
-            } catch (e: Exception) {
-                lastError = e
-            }
+        for (candidate in candidates) {
+            val result = playerRepository.loadStvEmotes(
+                networkLibrary, candidate, useWebp,
+                preferGraphQl = candidate == broadcasterId,
+                cacheChannelId = channelId,
+                useDiskFallback = false,
+            )
+            if (result.first != null || result.second.isNotEmpty()) return result
         }
-        try {
-            return playerRepository.loadStvEmotes(networkLibrary, channelId, useWebp)
-        } catch (e: Exception) {
-            lastError = e
-        }
-        throw lastError
+        return playerRepository.loadCachedStvChannelEmotes(channelId, useWebp) ?: (null to emptyList())
     }
 
     private fun addKickInlineEmotes(rawMessage: String?): Boolean {
@@ -2982,14 +3047,15 @@ class ChatViewModel @Inject constructor(
                 ?: runCatching { kickRepository.getChannelLivestream(channelLogin)?.id?.toString() }.getOrNull()?.takeIf { it.isNotBlank() }
             val categoryId = resolvedChannel?.livestream?.category?.id?.toString()?.takeIf { it.isNotBlank() }
             val fallbackId = effectiveChannelId ?: channelLogin
-            val kickChatroomId = if (!effectiveChannelId.isNullOrBlank()) {
-                resolveKickRealtimeChatroomId(effectiveChannelId, channelLogin)
+            val confirmedChatroomId = resolvedChannel?.let(kickRepository::getChatroomId)
+            val kickChatroomId = if (!effectiveChannelId.isNullOrBlank() || confirmedChatroomId != null) {
+                resolveKickRealtimeChatroomId(effectiveChannelId.orEmpty(), channelLogin, confirmedChatroomId)
             } else {
                 fallbackId
             }
             currentKickChatroomId = kickChatroomId
             if (debugKickRealtimeChat) {
-                Log.d("KickRealtimeChat", "resolved chatroomId=$kickChatroomId channelId=$effectiveChannelId channelLogin=$channelLogin")
+                Log.d("KickRealtimeChat", "resolved chatroomId=$kickChatroomId channelId=$effectiveChannelId channelLogin=$channelLogin confirmedByChannel=${confirmedChatroomId != null}")
             }
             if (!isActive || sessionGeneration != chatSessionGeneration) {
                 return@launch
@@ -3755,6 +3821,7 @@ class ChatViewModel @Inject constructor(
             if (result != null) {
                 if (result.channelSet) {
                     if (stvLiveUpdates) {
+                        channelStvEmoteRevision++
                         val removedEmotes = (result.removed + result.updated.map { it.first }).map { it.name }
                         val newEmotes = result.added + result.updated.map { it.second }
                         synchronized(thirdPartyEmotes) {
@@ -4021,6 +4088,7 @@ class ChatViewModel @Inject constructor(
         }
         try {
             viewModelScope.launch {
+                val sessionGeneration = chatSessionGeneration
                 // NOTE: chatRestriction is advisory only (input hint + timeline notice).
                 // Never hard-block sends on local follow/sub/ban state: the relationship
                 // fetch returns an empty default on any network failure, which previously
@@ -4085,7 +4153,7 @@ class ChatViewModel @Inject constructor(
                                         AuthStateHelper.clearKickAuth(applicationContext)
                                         AuthStateHelper.clearLegacyWebAuth(applicationContext)
                                     }
-                                    onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, formatKickChatSendError(retryError))))
+                                    reportKickChatSendFailure(retryError, channelLogin, channelId, sessionGeneration)
                                 }
                             } else {
                                 // The refresh either threw (message captured above, logout
@@ -4100,7 +4168,7 @@ class ChatViewModel @Inject constructor(
                                 onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, refreshFailureMessage)))
                             }
                         } else {
-                            onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, formatKickChatSendError(initialError))))
+                            reportKickChatSendFailure(initialError, channelLogin, channelId, sessionGeneration)
                         }
                     }
                 } else {
@@ -4131,8 +4199,39 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun formatKickChatSendError(error: Throwable): String {
-        return when (KickChatSendErrorMapper.classify(error.message, roomState.value)) {
+    private suspend fun reportKickChatSendFailure(
+        error: Throwable,
+        channelLogin: String?,
+        channelId: String?,
+        sessionGeneration: Long,
+    ) {
+        if (error is CancellationException) throw error
+        if (sessionGeneration != chatSessionGeneration) return
+        val previousState = roomState.value
+        val reason = KickChatSendErrorMapper.classify(error.message, previousState)
+        val subscriberModeConfirmed = if (reason == KickChatSendErrorMapper.Reason.SUBSCRIBERS_ONLY) {
+            val refreshedState = withTimeoutOrNull(3_000) {
+                kickRepository.getInitialRoomState(channelLogin, channelId, forceRefresh = true)
+            }
+            if (sessionGeneration != chatSessionGeneration) return
+            val latestState = roomState.value
+            if (latestState === previousState && refreshedState != null) {
+                roomState.value = refreshedState
+                evaluateChatRestriction(channelLogin, currentChatChannelName)
+            }
+            val confirmedState = if (latestState === previousState) refreshedState else latestState
+            confirmedState?.subs == "1"
+        } else false
+        val message = formatKickChatSendError(error, reason, subscriberModeConfirmed)
+        onMessage(ChatMessage(systemMsg = applicationContext.getString(R.string.chat_send_msg_error, message)))
+    }
+
+    private fun formatKickChatSendError(
+        error: Throwable,
+        reason: KickChatSendErrorMapper.Reason = KickChatSendErrorMapper.classify(error.message, roomState.value),
+        subscriberModeConfirmed: Boolean = false,
+    ): String {
+        return when (reason) {
             KickChatSendErrorMapper.Reason.TOKEN_EXPIRED -> applicationContext.getString(R.string.token_expired)
             KickChatSendErrorMapper.Reason.FOLLOWERS_ONLY -> {
                 val followersDurationMinutes = roomState.value?.followers?.toIntOrNull()?.takeIf { it > 0 }
@@ -4146,7 +4245,9 @@ class ChatViewModel @Inject constructor(
                     applicationContext.getString(R.string.kick_chat_send_followers_only)
                 }
             }
-            KickChatSendErrorMapper.Reason.SUBSCRIBERS_ONLY -> applicationContext.getString(R.string.irc_notice_msg_subsonly)
+            KickChatSendErrorMapper.Reason.SUBSCRIBERS_ONLY -> applicationContext.getString(
+                if (subscriberModeConfirmed) R.string.irc_notice_msg_subsonly else R.string.kick_chat_send_forbidden
+            )
             KickChatSendErrorMapper.Reason.EMOTES_ONLY -> applicationContext.getString(R.string.irc_notice_msg_emoteonly)
             KickChatSendErrorMapper.Reason.SLOW_MODE -> applicationContext.getString(
                 R.string.irc_notice_msg_slowmode,

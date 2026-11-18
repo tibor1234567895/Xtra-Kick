@@ -189,6 +189,8 @@ class IvsPlayerFragment : PlayerFragment() {
                 val binder = service as IvsPlayerService.ServiceBinder
                 val boundService = binder.getService()
                 playbackService = boundService
+                val sleepTimeLeft = (activity as? MainActivity)?.getSleepTimerTimeLeft() ?: 0L
+                if (sleepTimeLeft > 0L) boundService.setSleepTimer(sleepTimeLeft)
                 boundService.setKickViewerMetadata(
                     channelId = requireArguments().getString(KEY_CHANNEL_ID)
                         .takeIf { requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true) },
@@ -1334,6 +1336,10 @@ class IvsPlayerFragment : PlayerFragment() {
 
     override fun showPlaylistTags(mediaPlaylist: Boolean) {
         Toast.makeText(requireContext(), R.string.ivs_feature_not_supported, Toast.LENGTH_SHORT).show()
+    }
+
+    internal fun setServiceSleepTimer(durationMs: Long) {
+        playbackService?.setSleepTimer(durationMs)
     }
 
     override fun close() {

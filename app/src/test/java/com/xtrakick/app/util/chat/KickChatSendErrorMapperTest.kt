@@ -7,23 +7,43 @@ import org.junit.Test
 class KickChatSendErrorMapperTest {
 
     @Test
-    fun mapsForbiddenToFollowersOnlyWhenRoomStateRequiresFollow() {
+    fun genericForbiddenDoesNotGuessFollowersOnly() {
         val reason = KickChatSendErrorMapper.classify(
             """Kick request failed (403): {"data":{},"message":"Forbidden"}""",
             RoomState(emote = null, followers = "600", unique = null, slow = null, subs = null)
         )
 
-        assertEquals(KickChatSendErrorMapper.Reason.FOLLOWERS_ONLY, reason)
+        assertEquals(KickChatSendErrorMapper.Reason.FORBIDDEN, reason)
     }
 
     @Test
-    fun mapsForbiddenToSubscribersOnlyWhenRoomStateRequiresSub() {
+    fun genericForbiddenDoesNotGuessSubscribersOnly() {
         val reason = KickChatSendErrorMapper.classify(
             """Kick request failed (403): {"message":"Forbidden"}""",
             RoomState(emote = null, followers = "-1", unique = null, slow = null, subs = "1")
         )
 
+        assertEquals(KickChatSendErrorMapper.Reason.FORBIDDEN, reason)
+    }
+
+    @Test
+    fun recognizesExplicitSubscriberRestrictionEvenWhenRoomStateDisagrees() {
+        val reason = KickChatSendErrorMapper.classify(
+            "This room is in subscribers only mode.",
+            RoomState(emote = "0", followers = "1", unique = null, slow = "2", subs = "0")
+        )
+
         assertEquals(KickChatSendErrorMapper.Reason.SUBSCRIBERS_ONLY, reason)
+    }
+
+    @Test
+    fun doesNotTreatUnrelatedSubscriptionTextAsSubscriberRestriction() {
+        val reason = KickChatSendErrorMapper.classify(
+            """Kick request failed (403): {"message":"Unsupported subscription status"}""",
+            RoomState(emote = "0", followers = "1", unique = null, slow = "2", subs = "0")
+        )
+
+        assertEquals(KickChatSendErrorMapper.Reason.FORBIDDEN, reason)
     }
 
     @Test

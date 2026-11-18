@@ -609,6 +609,15 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                 }
             }
         }
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.fallbackCreatedAt.collectLatest { createdAt ->
+                    if (createdAt != null) {
+                        updateCreationDate(viewModel.user.value?.createdAt ?: viewModel.stream.value?.user?.createdAt ?: createdAt)
+                    }
+                }
+            }
+        }
         viewModel.isFollowingChannel(
             requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
             args.channelId,
@@ -776,10 +785,25 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                     transformations(CircleCropTransformation())
                 }
                 crossfade(false)
+                listener(onError = { _, _ ->
+                    if (_binding?.userImage === image && requestedAvatarUrl == url) requestedAvatarUrl = null
+                })
                 target(image)
             }.build()
         )
         requireArguments().putString(AppConstants.CHANNEL_PROFILEIMAGE, url)
+    }
+
+    private fun updateCreationDate(createdAt: String?) {
+        val label = binding.userCreated
+        label.isVisible = createdAt != null
+        if (createdAt == null) return
+        val date = KickApiHelper.parseIso8601DateUTC(createdAt)?.let {
+            java.text.DateFormat.getDateInstance(java.text.DateFormat.LONG).format(java.util.Date(it))
+        } ?: KickApiHelper.formatTimeString(requireContext(), createdAt)
+        label.text = "${getString(R.string.account_created_label)} · $date"
+        label.setTextColor(Color.LTGRAY)
+        label.setShadowLayer(4f, 0f, 0f, Color.BLACK)
     }
 
     private fun updateUserLayout(user: User) {
@@ -807,17 +831,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
                 userName.setTextColor(Color.WHITE)
                 userName.setShadowLayer(4f, 0f, 0f, Color.BLACK)
             }
-            if (user.createdAt != null) {
-                userCreated.visibility = View.VISIBLE
-                val date = KickApiHelper.parseIso8601DateUTC(user.createdAt)?.let {
-                    java.text.DateFormat.getDateInstance(java.text.DateFormat.LONG).format(java.util.Date(it))
-                } ?: KickApiHelper.formatTimeString(requireContext(), user.createdAt)
-                userCreated.text = "${getString(R.string.account_created_label)} · $date"
-                userCreated.setTextColor(Color.LTGRAY)
-                userCreated.setShadowLayer(4f, 0f, 0f, Color.BLACK)
-            } else {
-                userCreated.visibility = View.GONE
-            }
+            updateCreationDate(user.createdAt ?: viewModel.fallbackCreatedAt.value)
             if (user.followersCount != null) {
                 userFollowers.visibility = View.VISIBLE
                 val count = user.followersCount
