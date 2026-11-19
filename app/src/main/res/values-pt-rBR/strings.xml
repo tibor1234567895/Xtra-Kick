@@ -714,6 +714,9 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="download_blocked_wifi">Aguardando conexão Wi-Fi</string>
     <string name="download_wifi_only">Baixar somente por Wi-Fi</string>
     <string name="download_waiting_for_stream">Aguardando a transmissão</string>
+    <string name="download_video_missing">O arquivo de vídeo salvo está ausente. Retome o download para restaurá-lo.</string>
+    <string name="saved_video_missing">Vídeo salvo ausente</string>
+    <string name="download_converted_missing">O arquivo de vídeo convertido está ausente. Exclua este download e baixe-o novamente.</string>
     <string name="download_live_check">Intervalo de verificação da playlist da transmissão</string>
     <string name="download_live_check_summary">Segundos entre as verificações para ver se a playlist tem novos segmentos</string>
     <string name="download_offline_check">Intervalo de verificação da transmissão ao vivo</string>

@@ -299,8 +299,8 @@ class ChatAdapter(
             loggedInUser, chatUrl, getEmoteBytes, userColors, savedColors, localChatEmotes, thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalChatEmotes, savedLocalBadges,
             savedLocalCheerEmotes, savedLocalEmotes, holder.textView.context
         )
-        val effectiveEmoteSize = if (chatMessage.isReply) (emoteSize * 0.7f).toInt().coerceAtLeast(12) else emoteSize
-        val effectiveBadgeSize = if (chatMessage.isReply) (badgeSize * 0.7f).toInt().coerceAtLeast(10) else badgeSize
+        val effectiveEmoteSize = if (chatMessage.isReply) (emoteSize * 0.7f).toInt().coerceAtLeast(12) else emoteSize.coerceAtLeast(1)
+        val effectiveBadgeSize = if (chatMessage.isReply) (badgeSize * 0.7f).toInt().coerceAtLeast(10) else badgeSize.coerceAtLeast(1)
         ChatAdapterUtils.reserveImagePlaceholders(result.builder, result.images, effectiveEmoteSize, effectiveBadgeSize)
         if (ChatAdapterUtils.hasUserIdentity(chatMessage)) {
             val name = result.userName
@@ -355,7 +355,7 @@ class ChatAdapter(
             { chatMessage -> selectedMessage = chatMessage; replyClickListener?.invoke() },
             { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClickListener?.invoke(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, showStvBadges, showKickBadges, showPersonalEmotes,
-            enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize, badgeSize,
+            enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize.coerceAtLeast(1), badgeSize.coerceAtLeast(1),
             emoteQuality, animateGifs, enableOverlayEmotes, random, userColors,
             savedColors, savedLocalChatEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessageOverride
         )
@@ -367,7 +367,7 @@ class ChatAdapter(
             stvUsers, enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg, rewardChatMsg, replyMessage,
             { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClickListener?.invoke(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, showStvBadges, showKickBadges, showPersonalEmotes,
-            enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize, badgeSize,
+            enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize.coerceAtLeast(1), badgeSize.coerceAtLeast(1),
             emoteQuality, animateGifs, enableOverlayEmotes, random, userColors,
             savedColors, savedLocalChatEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessage
         )

@@ -530,13 +530,14 @@ object NetworkUtils {
         networkLibrary: String?,
         url: String,
     ): Pair<Int, ByteArray> {
+        val http = httpEngine?.get()
         if (networkLibrary == "HttpEngine" &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
             SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-            httpEngine != null
+            http != null
         ) {
             val response = suspendCancellableCoroutine { continuation ->
-                val request = httpEngine.get().newUrlRequestBuilder(
+                val request = http.newUrlRequestBuilder(
                     url,
                     executor,
                     HttpEngineUtils.byteArrayUrlCallback(continuation)
@@ -546,9 +547,10 @@ object NetworkUtils {
             }
             return response.first.httpStatusCode to response.second
         }
-        if (networkLibrary == "Cronet" && cronetEngine != null) {
+        val cronet = cronetEngine?.get()
+        if (networkLibrary == "Cronet" && cronet != null) {
             val response = suspendCancellableCoroutine { continuation ->
-                val request = cronetEngine.get().newUrlRequestBuilder(
+                val request = cronet.newUrlRequestBuilder(
                     url,
                     getByteArrayCronetCallback(continuation),
                     executor

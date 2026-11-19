@@ -38,6 +38,9 @@ interface VideosDao {
     @Query("SELECT * FROM videos WHERE lower(url) LIKE '%.m3u8'")
     fun getPlaylists(): List<OfflineVideo>
 
+    @Query("SELECT * FROM videos WHERE status = ${OfflineVideo.STATUS_DELETING}")
+    fun getDeletingVideos(): List<OfflineVideo>
+
     @Insert
     fun insert(video: OfflineVideo): Long
 

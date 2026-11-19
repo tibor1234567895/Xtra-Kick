@@ -192,11 +192,19 @@ class VideoDownloadWorker @AssistedInject constructor(
     private suspend fun runDownload(): Result {
         offlineVideo = offlineRepository.getVideoById(inputData.getInt(KEY_VIDEO_ID, 0)) ?: return Result.failure()
         val forceChatRedownload = inputData.getBoolean(KEY_FORCE_CHAT_REDOWNLOAD, false)
+        // Pre-run status: the classification below must know whether the row was
+        // finalized outside the download (converted/moved/imported) before this run
+        // flips it to STATUS_DOWNLOADING.
+        val preRunStatus = offlineVideo.status
         var ownedChatScope: CoroutineScope? = null
+        var videoPhaseSkipped = false
+        var videoOutputTouched = false
         try {
             offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
             setForeground(createForegroundInfo())
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
+        val http = httpEngine?.get()
+        val cronet = cronetEngine?.get()
         val sourceUrl = offlineVideo.sourceUrl!!
         if (isStopped) {
             runCatching { offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
@@ -209,7 +217,20 @@ class VideoDownloadWorker @AssistedInject constructor(
             offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_BLOCKED })
             return Result.failure()
         }
-        if (PlaylistUtils.isHlsUrl(sourceUrl)) {
+        if (forceChatRedownload) {
+            if (!DownloadStorage.isOutputIntact(context, offlineVideo.url)) {
+                DiagnosticLogger.e("VideoDownloadWorker", "Redownload chat refused: saved video file is missing")
+                offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
+                return Result.failure()
+            }
+            videoPhaseSkipped = true
+        }
+        val isHls = PlaylistUtils.isHlsUrl(sourceUrl)
+        val chatRangeKnown = !offlineVideo.clipId.isNullOrBlank() ||
+            (offlineVideo.sourceStartPosition != null && offlineVideo.duration != null)
+        if (videoPhaseSkipped && (chatRangeKnown || !isHls)) {
+            startChatJobSafely(offlineVideo.downloadPath!!, forceChatRedownload)
+        } else if (isHls) {
             val path = offlineVideo.downloadPath!!
             val from = offlineVideo.fromTime ?: 0L
             val to = offlineVideo.toTime
@@ -227,14 +248,14 @@ class VideoDownloadWorker @AssistedInject constructor(
             val isShared = path.toUri().scheme == ContentResolver.SCHEME_CONTENT
             var playlistUrl = sourceUrl
             var playlist = when {
-                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                    val response = NetworkUtils.downloadHttpEngine(httpEngine!!.get(), sourceUrl, cronetExecutor)
+                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                    val response = NetworkUtils.downloadHttpEngine(http, sourceUrl, cronetExecutor)
                     response.second.inputStream().use {
                         PlaylistUtils.parseMediaPlaylist(it)
                     }
                 }
-                networkLibrary == "Cronet" && cronetEngine != null -> {
-                    val response = NetworkUtils.downloadCronet(cronetEngine!!.get(), sourceUrl, cronetExecutor).second
+                networkLibrary == "Cronet" && cronet != null -> {
+                    val response = NetworkUtils.downloadCronet(cronet, sourceUrl, cronetExecutor).second
                     response.inputStream().use {
                         PlaylistUtils.parseMediaPlaylist(it)
                     }
@@ -248,26 +269,12 @@ class VideoDownloadWorker @AssistedInject constructor(
                 }
             }
             if (playlist.segments.isEmpty()) {
-                playlistUrl = getFirstVariantPlaylistUrl(networkLibrary, sourceUrl) ?: run {
-                    runCatching { offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
-                    return Result.failure()
-                }
-                playlist = (playerRepository.loadTextFromUrl(networkLibrary, playlistUrl) ?: run {
-                    runCatching { offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
-                    return Result.failure()
-                })
-                    .byteInputStream()
-                    .use { PlaylistUtils.parseMediaPlaylist(it) }
-                if (playlist.segments.isEmpty()) {
-                    runCatching { offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
-                    return Result.failure()
-                }
+                playlistUrl = checkNotNull(getFirstVariantPlaylistUrl(networkLibrary, sourceUrl)) { "No downloadable playlist variant" }
+                val playlistText = checkNotNull(playerRepository.loadTextFromUrl(networkLibrary, playlistUrl)) { "Cannot load playlist variant" }
+                playlist = playlistText.byteInputStream().use { PlaylistUtils.parseMediaPlaylist(it) }
+                check(playlist.segments.isNotEmpty()) { "Playlist has no media segments" }
             }
-            if (playlist.encrypted) {
-                Log.e("VideoDownloadWorker", "Aborting download: playlist is HLS-encrypted (#EXT-X-KEY); downloaded segments would be unplayable")
-                offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
-                return Result.failure()
-            }
+            check(!playlist.encrypted) { "Encrypted HLS downloads are unsupported" }
             val targetDuration = playlist.targetDuration * 1000L
             var totalDuration = 0L
             val size = playlist.segments.size
@@ -319,6 +326,72 @@ class VideoDownloadWorker @AssistedInject constructor(
                     startChatJobSafely(path, forceChatRedownload)
                 }
             }
+            val resolvedCount = toIndex - fromIndex + 1
+            var resetSingleFile = false
+            // Resume-state classification. Only rows with an existing single output
+            // file are classified: playlist rows resync maxProgress on every run
+            // (updateVideoRange) and never write bytes, so their counters cannot go
+            // stale the way single-file counters do.
+            val resumeUrl = offlineVideo.url.takeUnless { videoPhaseSkipped }
+            if (!resumeUrl.isNullOrBlank() && !resumeUrl.endsWith(".m3u8")) {
+                if (offlineVideo.playlistToFile) {
+                    // Finalized rows (completed download, conversion, move, or import)
+                    // carry counters that no longer describe the file, so the output
+                    // itself decides whether the video phase can be skipped.
+                    val outputIntact = DownloadStorage.isOutputIntact(context, resumeUrl)
+                    when {
+                        preRunStatus == OfflineVideo.STATUS_DOWNLOADED -> {
+                            if (outputIntact) {
+                                videoPhaseSkipped = true
+                            } else {
+                                resetSingleFile = true
+                            }
+                        }
+                        offlineVideo.progress > offlineVideo.maxProgress -> {
+                            // Legacy inflated counter on an interrupted row (issue #150):
+                            // the offset no longer maps to any playlist, so rebuild.
+                            resetSingleFile = true
+                        }
+                        else -> {
+                            // Interrupted download: resume only when the stored counters
+                            // and the local file match the freshly resolved playlist.
+                            val fileLength = runCatching {
+                                if (isShared) {
+                                    context.contentResolver.openFileDescriptor(resumeUrl.toUri(), "r")?.use { it.statSize } ?: -1L
+                                } else {
+                                    File(resumeUrl).length()
+                                }
+                            }.getOrDefault(-1L)
+                            if (offlineVideo.maxProgress != resolvedCount ||
+                                offlineVideo.progress < 0 ||
+                                (offlineVideo.progress > 0 && offlineVideo.bytes <= 0L) ||
+                                (playlist.initSegmentUri != null && offlineVideo.bytes <= 0L) ||
+                                fileLength < 0L ||
+                                fileLength < offlineVideo.bytes
+                            ) {
+                                resetSingleFile = true
+                            }
+                        }
+                    }
+                    if (resetSingleFile) {
+                        // Zero the counters before remainingSegments derives the resume
+                        // offset from them and before the file is truncated. Both must be
+                        // persisted atomically — updateVideoPlaylist does not write the
+                        // progress column, and a crash mid-reset must leave a state the
+                        // next run classifies as reset again, not as a consistent resume.
+                        offlineVideo.progress = 0
+                        offlineVideo.bytes = 0L
+                        offlineRepository.updateVideoProgress(offlineVideo)
+                    }
+                } else {
+                    if (!DownloadStorage.isOutputIntact(context, resumeUrl)) {
+                        DiagnosticLogger.e("VideoDownloadWorker", "Resume refused: converted video file is missing")
+                        offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
+                        return Result.failure()
+                    }
+                    videoPhaseSkipped = true
+                }
+            }
             val urlPath = playlistUrl
             val remainingSegments = ArrayList<Segment>()
             if (offlineVideo.progress < offlineVideo.maxProgress) {
@@ -329,10 +402,43 @@ class VideoDownloadWorker @AssistedInject constructor(
             }
             val concurrency = context.prefs().getInt(AppConstants.DOWNLOAD_CONCURRENT_LIMIT, 10).coerceIn(1, 32)
             val count = MutableStateFlow(0)
-            val jobs = if (offlineVideo.playlistToFile) {
+            videoOutputTouched = !videoPhaseSkipped
+            val jobs = if (videoPhaseSkipped) {
+                emptyList<Job>()
+            } else if (offlineVideo.playlistToFile) {
                 val videoFileUri = if (!offlineVideo.url.isNullOrBlank()) {
-                    val fileUri = offlineVideo.url!!
-                    if (isShared) {
+                    var fileUri = offlineVideo.url!!
+                    if (resetSingleFile) {
+                        // Rebuild from scratch: the stored counters or file could not be
+                        // matched against the freshly resolved playlist, so resuming from
+                        // them would append a mismatched tail onto a mismatched prefix.
+                        if (isShared) {
+                            // A reset discards the old content, so never reuse the stored
+                            // URI: MediaProvider can answer open("rw") on a deleted
+                            // document with an invisible resurrected file, leaving the
+                            // rebuild complete but unreadable. Find-or-create a fresh
+                            // document and truncate the returned one instead.
+                            val ext = remainingSegments.first().uri.substringAfterLast(".").substringBefore("?").takeIf { it.isNotBlank() } ?: "mp4"
+                            val fileName = DownloadStorage.singleFileNameFor(offlineVideo, ext)
+                            val dirDoc = DownloadStorage.containerDoc(context, path.toUri(), offlineVideo)
+                            fileUri = SafStorageUtils.getOrCreateFileInDir(dirDoc, fileName, singleFileMime(ext)).toString()
+                            openDownloadOutput(fileUri, isShared).close()
+                        } else {
+                            FileOutputStream(fileUri, true).use { output ->
+                                output.channel.truncate(0L)
+                            }
+                        }
+                        val resetInitBytes = playlist.initSegmentUri?.let {
+                            downloadInitSegment(networkLibrary, urlPath, it, fileUri, isShared)
+                        } ?: 0L
+                        offlineVideo.bytes = resetInitBytes
+                        offlineRepository.updateVideoPlaylist(offlineVideo.apply {
+                            url = fileUri
+                            duration = (relativeStartTimes[toIndex] + durations[toIndex] - relativeStartTimes[fromIndex]) - 1000L
+                            sourceStartPosition = relativeStartTimes[fromIndex]
+                            maxProgress = resolvedCount
+                        })
+                    } else if (isShared) {
                         context.contentResolver.openFileDescriptor(fileUri.toUri(), "rw")!!.use {
                             FileOutputStream(it.fileDescriptor).use { output ->
                                 output.channel.truncate(offlineVideo.bytes)
@@ -349,61 +455,15 @@ class VideoDownloadWorker @AssistedInject constructor(
                     val fileName = DownloadStorage.singleFileNameFor(offlineVideo, ext)
                     val fileUri = if (isShared) {
                         val dirDoc = DownloadStorage.containerDoc(context, path.toUri(), offlineVideo)
-                        SafStorageUtils.getOrCreateFileInDir(dirDoc, fileName, "video/mp4").toString()
+                        SafStorageUtils.getOrCreateFileInDir(dirDoc, fileName, singleFileMime(ext)).toString()
                     } else {
                         val dir = DownloadStorage.containerFile(path, offlineVideo)
                         "$dir${File.separator}$fileName"
                     }
                     val startPosition = relativeStartTimes[fromIndex]
-                    val initSegmentBytes = if (playlist.initSegmentUri != null) {
-                        val initUrl = resolveSegmentUrl(urlPath, playlist.initSegmentUri)
-                        when {
-                            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                val response = NetworkUtils.downloadHttpEngine(httpEngine!!.get(), initUrl, cronetExecutor)
-                                check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading init segment" }
-                                if (isShared) {
-                                    context.contentResolver.openOutputStream(fileUri.toUri(), "wa")!!.use {
-                                        it.write(response.second)
-                                    }
-                                } else {
-                                    FileOutputStream(fileUri, true).use {
-                                        it.write(response.second)
-                                    }
-                                }
-                                response.second.size.toLong()
-                            }
-                            networkLibrary == "Cronet" && cronetEngine != null -> {
-                                val cronetResponse = NetworkUtils.downloadCronet(cronetEngine!!.get(), initUrl, cronetExecutor)
-                                check(cronetResponse.first.httpStatusCode in 200..299) { "HTTP ${cronetResponse.first.httpStatusCode} downloading init segment" }
-                                val response = cronetResponse.second
-                                if (isShared) {
-                                    context.contentResolver.openOutputStream(fileUri.toUri(), "wa")!!.use {
-                                        it.write(response)
-                                    }
-                                } else {
-                                    FileOutputStream(fileUri, true).use {
-                                        it.write(response)
-                                    }
-                                }
-                                response.size.toLong()
-                            }
-                            else -> {
-                                okHttpClient.newCall(Request.Builder().url(initUrl).build()).execute().use { response ->
-                                    check(response.isSuccessful) { "HTTP ${response.code} downloading init segment" }
-                                    if (isShared) {
-                                        context.contentResolver.openOutputStream(fileUri.toUri(), "wa")!!
-                                    } else {
-                                        FileOutputStream(fileUri, true)
-                                    }.use { outputStream ->
-                                        response.body.byteStream().use { inputStream ->
-                                            inputStream.copyTo(outputStream)
-                                        }
-                                    }
-                                    response.body.contentLength()
-                                }
-                            }
-                        }
-                    } else null
+                    val initSegmentBytes = playlist.initSegmentUri?.let {
+                        downloadInitSegment(networkLibrary, urlPath, it, fileUri, isShared)
+                    }
                     offlineRepository.updateVideoPlaylist(offlineVideo.apply {
                         url = fileUri
                         duration = (relativeStartTimes[toIndex] + durations[toIndex] - startPosition) - 1000L
@@ -441,9 +501,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                         try {
                             val segmentTargetUrl = resolveSegmentUrl(urlPath, it.uri)
                             when {
-                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
                                     val rangeHeader = segmentRangeHeader(it)
-                                    val response = NetworkUtils.downloadHttpEngine(httpEngine!!.get(), segmentTargetUrl, cronetExecutor, range = rangeHeader)
+                                    val response = NetworkUtils.downloadHttpEngine(http, segmentTargetUrl, cronetExecutor, range = rangeHeader)
                                     check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
                                     val body = applySegmentRange(response.second, response.first.httpStatusCode, it)
                                     stagingFile.outputStream().use {
@@ -451,9 +511,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                                     }
                                     stagedBytes = body.size.toLong()
                                 }
-                                networkLibrary == "Cronet" && cronetEngine != null -> {
+                                networkLibrary == "Cronet" && cronet != null -> {
                                     val rangeHeader = segmentRangeHeader(it)
-                                    val cronetResponse = NetworkUtils.downloadCronet(cronetEngine!!.get(), segmentTargetUrl, cronetExecutor, range = rangeHeader)
+                                    val cronetResponse = NetworkUtils.downloadCronet(cronet, segmentTargetUrl, cronetExecutor, range = rangeHeader)
                                     val statusCode = cronetResponse.first.httpStatusCode
                                     val body = cronetResponse.second
                                     check(statusCode in 200..299) { "HTTP $statusCode downloading segment ${it.uri}" }
@@ -485,15 +545,19 @@ class VideoDownloadWorker @AssistedInject constructor(
                             check(stagingFile.exists()) {
                                 "Staging file for segment $id disappeared before it could be appended"
                             }
-                            if (stagingFile.length() > 0L) {
-                                val outputStream = if (isShared) {
-                                    context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!
-                                } else {
-                                    FileOutputStream(videoFileUri, true)
-                                }
-                                outputStream.use { stream ->
-                                    stagingFile.inputStream().use { it.copyTo(stream) }
-                                }
+                            // An empty 2xx body is a broken response, not a zero-length
+                            // segment: appending nothing while counting progress would
+                            // finalize a file with holes in the byte stream.
+                            check(stagingFile.length() > 0L) {
+                                "Empty response for segment ${it.uri}"
+                            }
+                            val outputStream = if (isShared) {
+                                context.contentResolver.openOutputStream(videoFileUri.toUri(), "wa")!!
+                            } else {
+                                FileOutputStream(videoFileUri, true)
+                            }
+                            outputStream.use { stream ->
+                                stagingFile.inputStream().use { it.copyTo(stream) }
                             }
                             offlineRepository.updateVideoProgress(offlineVideo.apply {
                                 bytes += stagedBytes
@@ -588,9 +652,12 @@ class VideoDownloadWorker @AssistedInject constructor(
                     startChatJobSafely(path, forceChatRedownload)
                 }
             } else null
-            val videoFileUri = if (!offlineVideo.url.isNullOrBlank()) {
-                offlineVideo.url!!
+            val existingUrl = offlineVideo.url
+            val outputIntact = DownloadStorage.isOutputIntact(context, existingUrl)
+            val videoFileUri = if (!existingUrl.isNullOrBlank() && (!isShared || outputIntact)) {
+                existingUrl
             } else {
+                videoOutputTouched = true
                 val fileName = DownloadStorage.singleFileNameFor(
                     offlineVideo,
                     if (!offlineVideo.clipId.isNullOrBlank()) "mp4" else "mp4"
@@ -612,7 +679,12 @@ class VideoDownloadWorker @AssistedInject constructor(
                 })
                 fileUri
             }
-            if (offlineVideo.progress < offlineVideo.maxProgress) {
+            if (offlineVideo.progress != offlineVideo.maxProgress || !outputIntact) {
+                videoOutputTouched = true
+                offlineRepository.updateVideoProgress(offlineVideo.apply {
+                    progress = 0
+                    bytes = 0L
+                })
                 openDownloadOutput(videoFileUri, isShared).use { output ->
                     downloadAsset(networkLibrary, sourceUrl, output, reportProgress = true)
                 }
@@ -631,9 +703,13 @@ class VideoDownloadWorker @AssistedInject constructor(
         // progress anymore: a completed video is final even if the chat walk ended
         // early (the force-chat-redownload flow can repair chat). Basing the status
         // on chat progress here would stick the item at "DOWNLOADING: 100%" forever.
-        if (offlineVideo.progress < offlineVideo.maxProgress) {
-            offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
-        } else {
+        // A skipped video phase is a finalized row (converted/imported/complete) whose
+        // counters may not match the freshly resolved playlist — still complete.
+        // Every non-skipped completion verifies the output file itself: a run whose
+        // writes landed on a vanished document must end PENDING, not DOWNLOADED.
+        val outputReady = videoPhaseSkipped ||
+            DownloadStorage.isOutputIntact(context, offlineVideo.url)
+        if ((offlineVideo.progress == offlineVideo.maxProgress || videoPhaseSkipped) && outputReady) {
             offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADED })
             runCatching {
                 val infoJson = DownloadStorage.buildInfoJson(offlineVideo, context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown")
@@ -688,6 +764,11 @@ class VideoDownloadWorker @AssistedInject constructor(
                 )
             }.build()
             notificationManager.notify(-offlineVideo.id, notification)
+        } else {
+            // The counter ended off the freshly resolved range: surface a repairable
+            // state instead of declaring a broken download complete.
+            offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
+            return Result.failure()
         }
         return Result.success()
         } catch (e: CancellationException) {
@@ -696,7 +777,17 @@ class VideoDownloadWorker @AssistedInject constructor(
             Log.e("VideoDownloadWorker", "Video download failed: ${e.message}", e)
             DiagnosticLogger.e("VideoDownloadWorker", "Video download failed: ${e.message}", e)
             runCatching {
-                offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING })
+                // A run that failed before the video phase touched anything (e.g. an
+                // expired source playlist during a chat repair) must not downgrade a
+                // completed row: with all segments counted and the output intact,
+                // the download is still exactly what the user saved.
+                val completedIntact = !videoOutputTouched &&
+                    (preRunStatus == OfflineVideo.STATUS_DOWNLOADED || forceChatRedownload ||
+                        (offlineVideo.maxProgress > 0 && offlineVideo.progress == offlineVideo.maxProgress)) &&
+                    DownloadStorage.isOutputIntact(context, offlineVideo.url)
+                offlineRepository.updateStatus(offlineVideo.apply {
+                    status = if (completedIntact) OfflineVideo.STATUS_DOWNLOADED else OfflineVideo.STATUS_PENDING
+                })
             }
             return Result.failure()
         } finally {
@@ -849,6 +940,8 @@ class VideoDownloadWorker @AssistedInject constructor(
                 }
                 val downloadEmotes = offlineVideo.downloadChatEmotes
                 val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
+                val http = httpEngine?.get()
+                val cronet = cronetEngine?.get()
                 val kickWebHeaders = KickApiHelper.getKickWebHeaders(context, true)
                 val kickPublicApiHeaders = KickApiHelper.getKickWebHeaders(context)
                 val emoteQuality = context.prefs().getString(AppConstants.CHAT_IMAGE_QUALITY, "4") ?: "4"
@@ -1056,12 +1149,12 @@ class VideoDownloadWorker @AssistedInject constructor(
                             if (url.startsWith("data:", ignoreCase = true)) {
                                 decodeDataUriToByteArray(url)
                             } else when {
-                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                                    val response = NetworkUtils.downloadHttpEngine(httpEngine!!.get(), url, cronetExecutor)
+                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                                    val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
                                     response.second
                                 }
-                                networkLibrary == "Cronet" && cronetEngine != null -> {
-                                    NetworkUtils.downloadCronet(cronetEngine!!.get(), url, cronetExecutor).second
+                                networkLibrary == "Cronet" && cronet != null -> {
+                                    NetworkUtils.downloadCronet(cronet, url, cronetExecutor).second
                                 }
                                 else -> {
                                     okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
@@ -1473,7 +1566,53 @@ class VideoDownloadWorker @AssistedInject constructor(
             ?: throw IOException("Cannot open download output")
         else FileOutputStream(target)
 
+    private fun singleFileMime(ext: String): String =
+        if (ext.equals("ts", ignoreCase = true)) "video/mp2t" else "video/mp4"
+
+    /**
+     * Downloads the HLS init segment into [fileUri] with truncating output: init is
+     * always the first content in the container, so a leftover partial file from a
+     * failed prior attempt must never receive appended init bytes. Returns the byte
+     * count actually written — content-length is unreliable for chunked responses.
+     */
+    private suspend fun downloadInitSegment(networkLibrary: String?, playlistUrl: String, initUri: String, fileUri: String, shared: Boolean): Long {
+        val http = httpEngine?.get()
+        val cronet = cronetEngine?.get()
+        val initUrl = resolveSegmentUrl(playlistUrl, initUri)
+        val written = when {
+            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                val response = NetworkUtils.downloadHttpEngine(http, initUrl, cronetExecutor)
+                check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading init segment" }
+                openDownloadOutput(fileUri, shared).use { it.write(response.second) }
+                response.second.size.toLong()
+            }
+            networkLibrary == "Cronet" && cronet != null -> {
+                val cronetResponse = NetworkUtils.downloadCronet(cronet, initUrl, cronetExecutor)
+                check(cronetResponse.first.httpStatusCode in 200..299) { "HTTP ${cronetResponse.first.httpStatusCode} downloading init segment" }
+                val response = cronetResponse.second
+                openDownloadOutput(fileUri, shared).use { it.write(response) }
+                response.size.toLong()
+            }
+            else -> {
+                var count = 0L
+                okHttpClient.newCall(Request.Builder().url(initUrl).build()).execute().use { response ->
+                    check(response.isSuccessful) { "HTTP ${response.code} downloading init segment" }
+                    openDownloadOutput(fileUri, shared).use { outputStream ->
+                        response.body.byteStream().use { inputStream ->
+                            count = inputStream.copyTo(outputStream)
+                        }
+                    }
+                }
+                count
+            }
+        }
+        check(written > 0L) { "Empty init segment response" }
+        return written
+    }
+
     private suspend fun downloadAsset(networkLibrary: String?, url: String, output: OutputStream, reportProgress: Boolean = false) = coroutineScope {
+        val http = httpEngine?.get()
+        val cronet = cronetEngine?.get()
         val bytesWritten = AtomicLong()
         val contentLength = AtomicLong(-1L)
         val countedOutput = object : java.io.FilterOutputStream(output) {
@@ -1500,12 +1639,12 @@ class VideoDownloadWorker @AssistedInject constructor(
         } else null
         try {
             val status = when {
-                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
-                    val response = NetworkUtils.downloadHttpEngine(httpEngine!!.get(), url, cronetExecutor, output = countedOutput, onContentLength = contentLength::set)
+                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                    val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor, output = countedOutput, onContentLength = contentLength::set)
                     response.first.httpStatusCode
                 }
-                networkLibrary == "Cronet" && cronetEngine != null -> {
-                    val response = NetworkUtils.downloadCronet(cronetEngine!!.get(), url, cronetExecutor, output = countedOutput, onContentLength = contentLength::set)
+                networkLibrary == "Cronet" && cronet != null -> {
+                    val response = NetworkUtils.downloadCronet(cronet, url, cronetExecutor, output = countedOutput, onContentLength = contentLength::set)
                     response.first.httpStatusCode
                 }
                 else -> okHttpClient.newCall(Request.Builder().url(url).build()).useCancellable(cancelCallOnCancellation = false) { response ->

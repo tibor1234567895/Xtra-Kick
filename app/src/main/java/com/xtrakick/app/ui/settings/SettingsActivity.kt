@@ -109,7 +109,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.chromium.net.CronetProvider
+import com.xtrakick.app.KickApp
 import java.util.Collections
 import javax.inject.Inject
 
@@ -1771,10 +1771,18 @@ class SettingsActivity : BaseStateActivity() {
                     true
                 }
             }
-            val httpEngine = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7
-            val cronet = CronetProvider.getAllProviders(requireContext()).any { it.isEnabled }
-            if (!httpEngine || !cronet) {
-                findPreference<ListPreference>(AppConstants.NETWORK_LIBRARY)?.apply {
+            val app = requireActivity().application as? KickApp
+            val httpEngine = app?.isHttpEngineAvailable() == true
+            val cronet = app?.isCronetAvailable() == true
+            findPreference<ListPreference>(AppConstants.NETWORK_LIBRARY)?.apply {
+                setOnPreferenceChangeListener { _, _ ->
+                    runCatching {
+                        @OptIn(coil3.annotation.DelicateCoilApi::class)
+                        coil3.SingletonImageLoader.reset()
+                    }
+                    true
+                }
+                if (!httpEngine || !cronet) {
                     when {
                         !httpEngine && !cronet -> {
                             isVisible = false

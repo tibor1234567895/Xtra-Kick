@@ -115,10 +115,11 @@ class AuthRepository @Inject constructor(
     }
 
     private suspend fun get(networkLibrary: String?, url: String, headers: Map<String, String>): String = withContext(Dispatchers.IO) {
+        val cronet = cronetEngine?.get()
         when {
             networkLibrary == "HttpEngine" && canUseHttpEngine() -> executeHttpEngineGet(url, headers)
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                val response = awaitTimedCronetResponse(url) {
+            networkLibrary == "Cronet" && cronet != null -> {
+                val response = awaitTimedCronetResponse(cronet, url) {
                     headers.forEach { (k, v) -> addHeader(k, v) }
                 }
                 response.asCronetStringBody()
@@ -158,14 +159,15 @@ class AuthRepository @Inject constructor(
             url = url,
             body = body.toByteArray(),
         )
+        val cronet = cronetEngine?.get()
         when {
             networkLibrary == "HttpEngine" && canUseHttpEngine() ->
                 executeHttpEnginePostJson(url, body) {
                     addHeader("Content-Type", "application/json")
                     authHeaders.forEach { (name, value) -> addHeader(name, value) }
                 }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
-                val response = awaitTimedCronetResponse(url) {
+            networkLibrary == "Cronet" && cronet != null -> {
+                val response = awaitTimedCronetResponse(cronet, url) {
                     addHeader("Content-Type", "application/json")
                     authHeaders.forEach { (name, value) -> addHeader(name, value) }
                     setUploadDataProvider(UploadDataProviders.create(body.toByteArray()), cronetExecutor)
@@ -188,7 +190,7 @@ class AuthRepository @Inject constructor(
     private fun canUseHttpEngine(): Boolean {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
             SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-            httpEngine != null
+            httpEngine?.get() != null
     }
 
     @RequiresApi(Build.VERSION_CODES.R)
@@ -232,8 +234,9 @@ class AuthRepository @Inject constructor(
         url: String,
         configure: android.net.http.UrlRequest.Builder.() -> Unit,
     ): Pair<android.net.http.UrlResponseInfo, ByteArray> = withTimeout(KICK_AUTH_REQUEST_TIMEOUT_MS) {
+        val engine = httpEngine?.get() ?: throw IllegalStateException("HttpEngine is not available")
         suspendCancellableCoroutine { continuation ->
-            val request = httpEngine!!.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation))
+            val request = engine.newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation))
                 .apply(configure)
                 .build()
             continuation.invokeOnCancellation { request.cancel() }
@@ -242,11 +245,12 @@ class AuthRepository @Inject constructor(
     }
 
     private suspend fun awaitTimedCronetResponse(
+        engine: CronetEngine,
         url: String,
         configure: org.chromium.net.UrlRequest.Builder.() -> Unit,
     ): Pair<org.chromium.net.UrlResponseInfo, ByteArray> = withTimeout(KICK_AUTH_REQUEST_TIMEOUT_MS) {
         suspendCancellableCoroutine { continuation ->
-            val request = cronetEngine!!.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor)
+            val request = engine.newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor)
                 .apply(configure)
                 .build()
             continuation.invokeOnCancellation { request.cancel() }

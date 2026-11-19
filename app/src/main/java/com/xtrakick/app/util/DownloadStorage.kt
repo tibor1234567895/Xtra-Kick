@@ -151,6 +151,13 @@ object DownloadStorage {
         }
     }
 
+    /** True when the downloadable output file still exists and is non-empty. */
+    fun isOutputIntact(context: Context, urlStr: String?): Boolean = when {
+        urlStr.isNullOrBlank() -> false
+        isContentUri(urlStr) || urlStr.endsWith(".m3u8") -> exists(context, urlStr)
+        else -> File(urlStr).let { it.isFile && it.length() > 0L }
+    }
+
     private fun existsPlaylistFile(playlistFile: File): Boolean {
         return runCatching {
             val playlist = playlistFile.inputStream().use {

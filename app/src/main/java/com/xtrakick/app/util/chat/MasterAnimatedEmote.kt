@@ -44,8 +44,9 @@ internal class MasterAnimatedEmote(
     }
 
     init {
-        val rawWidth = delegate.intrinsicWidth.takeIf { it > 0 } ?: targetHeight
-        val rawHeight = delegate.intrinsicHeight.takeIf { it > 0 } ?: targetHeight
+        val safeTargetHeight = targetHeight.coerceAtLeast(1)
+        val rawWidth = delegate.intrinsicWidth.takeIf { it > 0 } ?: safeTargetHeight
+        val rawHeight = delegate.intrinsicHeight.takeIf { it > 0 } ?: safeTargetHeight
         intrinsicWidth = rawWidth
         intrinsicHeight = rawHeight
         @Suppress("DEPRECATION")
@@ -53,11 +54,11 @@ internal class MasterAnimatedEmote(
 
         val widthRatio = rawWidth.toFloat() / rawHeight.toFloat()
         val calculatedWidth = if (widthRatio == 1f) {
-            targetHeight
+            safeTargetHeight
         } else {
-            (targetHeight * widthRatio).toInt().coerceAtLeast(1)
+            (safeTargetHeight * widthRatio).toInt().coerceAtLeast(1)
         }
-        bounds = Rect(0, 0, calculatedWidth, targetHeight)
+        bounds = Rect(0, 0, calculatedWidth, safeTargetHeight)
         delegate.bounds = bounds
         delegate.callback = this
     }

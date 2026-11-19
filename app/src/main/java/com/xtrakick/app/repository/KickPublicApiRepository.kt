@@ -72,10 +72,12 @@ class KickPublicApiRepository @Inject constructor(
         bodyJson: String? = null,
     ): Pair<Int, String> = withContext(Dispatchers.IO) {
         val url = "https://api.kick.com$path$query"
+        val http = httpEngine?.get()
+        val cronet = cronetEngine?.get()
         when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
                 val response = suspendCancellableCoroutine { continuation ->
-                    val request = httpEngine.get().newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                    val request = http.newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
                         setHttpMethod(method)
                         headers.forEach { addHeader(it.key, it.value) }
                         if (bodyJson != null) {
@@ -89,9 +91,9 @@ class KickPublicApiRepository @Inject constructor(
                 }
                 Pair(response.first.httpStatusCode, String(response.second))
             }
-            networkLibrary == "Cronet" && cronetEngine != null -> {
+            networkLibrary == "Cronet" && cronet != null -> {
                 val response = suspendCancellableCoroutine { continuation ->
-                    val request = cronetEngine.get().newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
+                    val request = cronet.newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
                         setHttpMethod(method)
                         headers.forEach { addHeader(it.key, it.value) }
                         if (bodyJson != null) {

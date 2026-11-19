@@ -207,6 +207,19 @@ class ChatAdapterUtilsTest {
     }
 
     @Test
+    fun doesNotCreateChatImageKeyForZeroOrNegativeTargetHeight() {
+        val image = Image(
+            url1x = "https://files.kick.com/emotes/37217/fullsize",
+            isEmote = true,
+            start = 0,
+            end = 1,
+        )
+
+        assertNull(ChatAdapterUtils.chatImageKeyForTest(image, "1", 0))
+        assertNull(ChatAdapterUtils.chatImageKeyForTest(image, "1", -5))
+    }
+
+    @Test
     fun coalescesInFlightRequestsForSameKey() {
         val coordinator = ChatAdapterUtils.RequestCoordinator<String, String>(10)
         val loaderCalls = AtomicInteger(0)

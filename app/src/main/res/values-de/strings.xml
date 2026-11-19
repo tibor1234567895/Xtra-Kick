@@ -712,6 +712,9 @@
     <string name="download_blocked_wifi">Warten auf WLAN-Verbindung</string>
     <string name="download_wifi_only">Nur über WLAN herunterladen</string>
     <string name="download_waiting_for_stream">Warten auf den Stream</string>
+    <string name="download_video_missing">Die gespeicherte Videodatei fehlt. Setze den Download fort, um sie wiederherzustellen.</string>
+    <string name="saved_video_missing">Gespeichertes Video fehlt</string>
+    <string name="download_converted_missing">Die konvertierte Videodatei fehlt. Lösche diesen Download und lade ihn erneut herunter.</string>
     <string name="download_live_check">Prüfintervall für Stream-Playlist</string>
     <string name="download_live_check_summary">Sekunden zwischen Prüfungen, ob die Playlist neue Segmente enthält</string>
     <string name="download_offline_check">Live-Prüfintervall</string>

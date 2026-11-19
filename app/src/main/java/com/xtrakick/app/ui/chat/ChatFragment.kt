@@ -2811,12 +2811,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 TypedValue.COMPLEX_UNIT_DIP,
                 (prefs.getString(AppConstants.CHAT_EMOTE_SIZE, "29.5")?.toFloatOrNull() ?: 29.5f) * sizeModifier,
                 resources.displayMetrics
-            ).toInt(),
+            ).toInt().coerceAtLeast(1),
             badgeSize = TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP,
                 (prefs.getString(AppConstants.CHAT_BADGE_SIZE, "18.5")?.toFloatOrNull() ?: 18.5f) * sizeModifier,
                 resources.displayMetrics
-            ).toInt(),
+            ).toInt().coerceAtLeast(1),
             emoteQuality = prefs.getString(AppConstants.CHAT_IMAGE_QUALITY, "4") ?: "4",
             animateGifs = prefs.getBoolean(AppConstants.ANIMATED_EMOTES, true),
             animatedEmoteFps = prefs.getString(AppConstants.CHAT_ANIMATED_EMOTE_FPS, "15")?.toIntOrNull()?.coerceIn(5, 60) ?: 15,

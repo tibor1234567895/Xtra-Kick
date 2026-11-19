@@ -714,6 +714,9 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="download_blocked_wifi">Esperando conexión Wi-Fi</string>
     <string name="download_wifi_only">Descargar solo con Wi-Fi</string>
     <string name="download_waiting_for_stream">Esperando la transmisión</string>
+    <string name="download_video_missing">Falta el archivo de vídeo guardado. Reanuda la descarga para restaurarlo.</string>
+    <string name="saved_video_missing">Falta el vídeo guardado</string>
+    <string name="download_converted_missing">Falta el archivo de vídeo convertido. Elimina esta descarga y descárgala de nuevo.</string>
     <string name="download_live_check">Frecuencia de comprobación de playlist en vivo</string>
     <string name="download_live_check_summary">Segundos de espera entre comprobaciones para ver si la playlist tiene segmentos nuevos</string>
     <string name="download_offline_check">Frecuencia de comprobación de estado en vivo</string>

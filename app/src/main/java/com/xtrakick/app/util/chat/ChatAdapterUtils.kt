@@ -43,6 +43,7 @@ import com.bumptech.glide.request.target.CustomTarget
 import com.bumptech.glide.request.transition.Transition
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
+import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.model.chat.ChatMessage
 import com.xtrakick.app.model.chat.CheerEmote
 import com.xtrakick.app.model.chat.Emote
@@ -942,11 +943,11 @@ object ChatAdapterUtils {
         badgeSize: Int,
     ) {
         images.forEach { image ->
-            val imageSize = if (image.isEmote) {
+            val imageSize = (if (image.isEmote) {
                 emoteSize
             } else {
                 badgeSize
-            }
+            }).coerceAtLeast(1)
             val placeholder = ColorDrawable(Color.TRANSPARENT).apply {
                 setBounds(0, 0, imageSize, imageSize)
             }
@@ -1433,95 +1434,104 @@ object ChatAdapterUtils {
         val isCurrentBinding = { fragment.isAdded && itemView.getTag(R.id.chat_image_binding) === bindingToken }
         if (imagePaint != null) {
             val paintUrl = imagePaint.imageUrl
-            val paintTargetSize = (itemView as? android.widget.TextView)?.lineHeight?.takeIf { it > 0 } ?: badgeSize
+            val paintTargetSize = ((itemView as? android.widget.TextView)?.lineHeight?.takeIf { it > 0 } ?: badgeSize).coerceAtLeast(1)
             if (imageLibrary == "0") {
-                fragment.requireContext().imageLoader.enqueue(
-                    ImageRequest.Builder(fragment.requireContext()).apply {
-                        data(paintUrl)
-                        size(paintTargetSize, paintTargetSize)
-                        crossfade(false)
-                        httpHeaders(NetworkHeaders.Builder().apply {
-                            add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                        }.build())
-                        target(
-                            onSuccess = onSuccess@{
-                                if (!isCurrentBinding()) return@onSuccess
-                                (it.asDrawable(fragment.resources)).let { loaded ->
-                                    val result = if (loaded is Animatable && animateGifs && MasterEmoteManager.isSyncEnabled) {
-                                        if (paintUrl != null) {
-                                            val key = ChatImageKey(paintUrl, paintTargetSize, isEmote = false, isAnimated = true)
-                                            val master = MasterEmoteManager.getOrCreateMaster(key, loaded, paintTargetSize, animatedEmoteFps)
-                                            ProxyEmoteDrawable(master, itemView).also { proxy ->
-                                                startAnimationIfOnScreen(proxy, itemView)
+                try {
+                    fragment.requireContext().imageLoader.enqueue(
+                        ImageRequest.Builder(fragment.requireContext()).apply {
+                            data(paintUrl)
+                            size(paintTargetSize, paintTargetSize)
+                            crossfade(false)
+                            httpHeaders(NetworkHeaders.Builder().apply {
+                                add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                            }.build())
+                            target(
+                                onSuccess = onSuccess@{
+                                    if (!isCurrentBinding()) return@onSuccess
+                                    (it.asDrawable(fragment.resources)).let { loaded ->
+                                        val result = if (loaded is Animatable && animateGifs && MasterEmoteManager.isSyncEnabled) {
+                                            if (paintUrl != null) {
+                                                val key = ChatImageKey(paintUrl, paintTargetSize, isEmote = false, isAnimated = true)
+                                                val master = MasterEmoteManager.getOrCreateMaster(key, loaded, paintTargetSize, animatedEmoteFps)
+                                                ProxyEmoteDrawable(master, itemView).also { proxy ->
+                                                    startAnimationIfOnScreen(proxy, itemView)
+                                                }
+                                            } else {
+                                                throttleAnimatedDrawable(loaded, itemView, animatedEmoteFps).also { anim ->
+                                                    startAnimationIfOnScreen(anim, itemView)
+                                                }
                                             }
-                                        } else {
-                                            throttleAnimatedDrawable(loaded, itemView, animatedEmoteFps).also { anim ->
-                                                startAnimationIfOnScreen(anim, itemView)
-                                            }
+                                        } else loaded
+                                        try {
+                                            builder.setSpan(
+                                                NamePaintImageSpan(
+                                                    userName!!,
+                                                    imagePaint.shadows,
+                                                    (itemView.background as? ColorDrawable)?.color,
+                                                    backgroundColor,
+                                                    result
+                                                ),
+                                                userNameStartIndex!!,
+                                                userNameStartIndex + userName.length,
+                                                SPAN_EXCLUSIVE_EXCLUSIVE
+                                            )
+                                        } catch (e: IndexOutOfBoundsException) {
                                         }
-                                    } else loaded
-                                    try {
-                                        builder.setSpan(
-                                            NamePaintImageSpan(
-                                                userName!!,
-                                                imagePaint.shadows,
-                                                (itemView.background as? ColorDrawable)?.color,
-                                                backgroundColor,
-                                                result
-                                            ),
-                                            userNameStartIndex!!,
-                                            userNameStartIndex + userName.length,
-                                            SPAN_EXCLUSIVE_EXCLUSIVE
-                                        )
-                                    } catch (e: IndexOutOfBoundsException) {
+                                        bind(builder)
                                     }
-                                    bind(builder)
-                                }
-                            },
-                        )
-                    }.build()
-                )
+                                },
+                            )
+                        }.build()
+                    )
+                } catch (t: Throwable) {
+                    DiagnosticLogger.w("ChatAdapterUtils", "Failed to enqueue paint ImageRequest", t)
+                }
             } else {
-                Glide.with(fragment)
-                    .load(GlideUrl(paintUrl) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) })
-                    .diskCacheStrategy(DiskCacheStrategy.DATA)
-                    .into(object : CustomTarget<Drawable>() {
-                        override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
-                            if (!isCurrentBinding()) return
-                            val result = if (resource is Animatable && animateGifs && MasterEmoteManager.isSyncEnabled) {
-                                if (paintUrl != null) {
-                                    val key = ChatImageKey(paintUrl, paintTargetSize, isEmote = false, isAnimated = true)
-                                    val master = MasterEmoteManager.getOrCreateMaster(key, resource, paintTargetSize, animatedEmoteFps)
-                                    ProxyEmoteDrawable(master, itemView).also { proxy ->
-                                        startAnimationIfOnScreen(proxy, itemView)
+                try {
+                    if (!fragment.isAdded || fragment.context == null) return
+                    Glide.with(fragment)
+                        .load(GlideUrl(paintUrl) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) })
+                        .diskCacheStrategy(DiskCacheStrategy.DATA)
+                        .into(object : CustomTarget<Drawable>() {
+                            override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
+                                if (!isCurrentBinding()) return
+                                val result = if (resource is Animatable && animateGifs && MasterEmoteManager.isSyncEnabled) {
+                                    if (paintUrl != null) {
+                                        val key = ChatImageKey(paintUrl, paintTargetSize, isEmote = false, isAnimated = true)
+                                        val master = MasterEmoteManager.getOrCreateMaster(key, resource, paintTargetSize, animatedEmoteFps)
+                                        ProxyEmoteDrawable(master, itemView).also { proxy ->
+                                            startAnimationIfOnScreen(proxy, itemView)
+                                        }
+                                    } else {
+                                        throttleAnimatedDrawable(resource, itemView, animatedEmoteFps).also { anim ->
+                                            startAnimationIfOnScreen(anim, itemView)
+                                        }
                                     }
-                                } else {
-                                    throttleAnimatedDrawable(resource, itemView, animatedEmoteFps).also { anim ->
-                                        startAnimationIfOnScreen(anim, itemView)
-                                    }
+                                } else resource
+                                try {
+                                    builder.setSpan(
+                                        NamePaintImageSpan(
+                                            userName!!,
+                                            imagePaint.shadows,
+                                            (itemView.background as? ColorDrawable)?.color,
+                                            backgroundColor,
+                                            result
+                                        ),
+                                        userNameStartIndex!!,
+                                        userNameStartIndex + userName.length,
+                                        SPAN_EXCLUSIVE_EXCLUSIVE
+                                    )
+                                } catch (e: IndexOutOfBoundsException) {
                                 }
-                            } else resource
-                            try {
-                                builder.setSpan(
-                                    NamePaintImageSpan(
-                                        userName!!,
-                                        imagePaint.shadows,
-                                        (itemView.background as? ColorDrawable)?.color,
-                                        backgroundColor,
-                                        result
-                                    ),
-                                    userNameStartIndex!!,
-                                    userNameStartIndex + userName.length,
-                                    SPAN_EXCLUSIVE_EXCLUSIVE
-                                )
-                            } catch (e: IndexOutOfBoundsException) {
+                                bind(builder)
                             }
-                            bind(builder)
-                        }
 
-                        override fun onLoadCleared(placeholder: Drawable?) {
-                        }
-                    })
+                            override fun onLoadCleared(placeholder: Drawable?) {
+                            }
+                        })
+                } catch (t: Throwable) {
+                    DiagnosticLogger.w("ChatAdapterUtils", "Failed to enqueue paint Glide request", t)
+                }
             }
         }
         images.forEach { image ->
@@ -1587,6 +1597,10 @@ object ChatAdapterUtils {
         onLoaded: (Drawable?) -> Unit,
     ) {
         if (!isCurrentBinding()) return
+        if (targetHeight <= 0) {
+            onLoaded(null)
+            return
+        }
         val isAnimated = (image.isAnimated || image.format.equals("gif", true))
         val isSyncCandidate = isAnimated && animateGifs && image.isEmote && MasterEmoteManager.isSyncEnabled
 
@@ -1666,6 +1680,10 @@ object ChatAdapterUtils {
     }
 
     private fun loadImageUncached(imageLibrary: String?, fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable?) -> Unit) {
+        if (targetHeight <= 0 || !fragment.isAdded || fragment.context == null) {
+            onLoaded(null)
+            return
+        }
         if (imageLibrary == "0" || (imageLibrary == "1" && !image.format.equals("webp", true))) {
             loadCoil(fragment, image, source, targetHeight, onLoaded)
         } else {
@@ -1674,69 +1692,95 @@ object ChatAdapterUtils {
     }
 
     private fun loadCoil(fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable?) -> Unit) {
-        val resources = fragment.resources
-        fragment.requireContext().imageLoader.enqueue(
-            ImageRequest.Builder(fragment.requireContext()).apply {
-                data(source)
-                size(targetHeight, targetHeight)
-                crossfade(false)
-                if (source is String && source.startsWith("http", ignoreCase = true)) {
-                    val headers = if (source.contains(".kick.com", ignoreCase = true)) {
-                        KICK_COIL_HEADERS
-                    } else {
-                        BASE_COIL_HEADERS
+        val context = fragment.context ?: run {
+            onLoaded(null)
+            return
+        }
+        val safeTargetHeight = targetHeight.coerceAtLeast(1)
+        try {
+            val resources = context.resources
+            context.imageLoader.enqueue(
+                ImageRequest.Builder(context).apply {
+                    data(source)
+                    size(safeTargetHeight, safeTargetHeight)
+                    crossfade(false)
+                    if (source is String && source.startsWith("http", ignoreCase = true)) {
+                        val headers = if (source.contains(".kick.com", ignoreCase = true)) {
+                            KICK_COIL_HEADERS
+                        } else {
+                            BASE_COIL_HEADERS
+                        }
+                        httpHeaders(headers)
                     }
-                    httpHeaders(headers)
-                }
-                target(
-                    onError = {
-                        onLoaded(null)
-                    },
-                    onSuccess = {
-                        onLoaded((it.asDrawable(resources)))
-                    },
-                )
-                listener(
-                    onError = { _, _ -> },
-                    onCancel = {
-                        onLoaded(null)
-                    }
-                )
-            }.build()
-        )
+                    target(
+                        onError = {
+                            onLoaded(null)
+                        },
+                        onSuccess = {
+                            onLoaded((it.asDrawable(resources)))
+                        },
+                    )
+                    listener(
+                        onError = { _, _ -> },
+                        onCancel = {
+                            onLoaded(null)
+                        }
+                    )
+                }.build()
+            )
+        } catch (t: Throwable) {
+            DiagnosticLogger.w("ChatAdapterUtils", "Failed to enqueue Coil request", t)
+            onLoaded(null)
+        }
     }
 
     private fun loadGlide(fragment: Fragment, image: Image, source: Any, onLoaded: (Drawable?) -> Unit) {
-        Glide.with(fragment)
-            .load(source.let {
-                if (it is String && it.startsWith("http", ignoreCase = true)) {
-                    val headers = if (it.contains(".kick.com", ignoreCase = true)) {
-                        KICK_CHAT_IMAGE_HEADERS
-                    } else {
-                        BASE_CHAT_IMAGE_HEADERS
+        if (!fragment.isAdded || fragment.context == null) {
+            onLoaded(null)
+            return
+        }
+        try {
+            Glide.with(fragment)
+                .load(source.let {
+                    if (it is String && it.startsWith("http", ignoreCase = true)) {
+                        val headers = if (it.contains(".kick.com", ignoreCase = true)) {
+                            KICK_CHAT_IMAGE_HEADERS
+                        } else {
+                            BASE_CHAT_IMAGE_HEADERS
+                        }
+                        GlideUrl(it) { headers }
+                    } else it
+                })
+                .diskCacheStrategy(DiskCacheStrategy.DATA)
+                .into(object : CustomTarget<Drawable>() {
+                    override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
+                        onLoaded(resource)
                     }
-                    GlideUrl(it) { headers }
-                } else it
-            })
-            .diskCacheStrategy(DiskCacheStrategy.DATA)
-            .into(object : CustomTarget<Drawable>() {
-                override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
-                    onLoaded(resource)
-                }
 
-                override fun onLoadCleared(placeholder: Drawable?) {
-                    onLoaded(null)
-                }
+                    override fun onLoadCleared(placeholder: Drawable?) {
+                        onLoaded(null)
+                    }
 
-                override fun onLoadFailed(errorDrawable: Drawable?) {
-                    onLoaded(null)
-                }
-            })
+                    override fun onLoadFailed(errorDrawable: Drawable?) {
+                        onLoaded(null)
+                    }
+                })
+        } catch (t: Throwable) {
+            DiagnosticLogger.w("ChatAdapterUtils", "Failed to enqueue Glide request", t)
+            onLoaded(null)
+        }
     }
 
     private fun cloneDrawableForBind(fragment: Fragment, drawable: Drawable): Drawable {
         if (drawable is ProxyEmoteDrawable) return drawable
-        return (drawable.constantState?.newDrawable(fragment.resources) ?: drawable).mutate()
+        val resources = try {
+            if (fragment.isAdded) fragment.resources else null
+        } catch (_: Throwable) {
+            null
+        }
+        return (resources?.let { drawable.constantState?.newDrawable(it) }
+            ?: drawable.constantState?.newDrawable()
+            ?: drawable).mutate()
     }
 
     private fun prepareDrawableForChat(
@@ -1751,16 +1795,17 @@ object ChatAdapterUtils {
             startAnimationIfOnScreen(drawable, itemView)
             return drawable
         }
+        val safeTargetHeight = targetHeight.coerceAtLeast(1)
         val result = cloneDrawableForBind(fragment, drawable)
-        val intrinsicWidth = result.intrinsicWidth.takeIf { it > 0 } ?: targetHeight
-        val intrinsicHeight = result.intrinsicHeight.takeIf { it > 0 } ?: targetHeight
+        val intrinsicWidth = result.intrinsicWidth.takeIf { it > 0 } ?: safeTargetHeight
+        val intrinsicHeight = result.intrinsicHeight.takeIf { it > 0 } ?: safeTargetHeight
         val widthRatio = intrinsicWidth.toFloat() / intrinsicHeight.toFloat()
         val width = if (widthRatio == 1f) {
-            targetHeight
+            safeTargetHeight
         } else {
-            (targetHeight * widthRatio).toInt().coerceAtLeast(1)
+            (safeTargetHeight * widthRatio).toInt().coerceAtLeast(1)
         }
-        result.setBounds(0, 0, width, targetHeight)
+        result.setBounds(0, 0, width, safeTargetHeight)
         if (result is Animatable && animateGifs) {
             return throttleAnimatedDrawable(result, itemView, animatedEmoteFps).also {
                 startAnimationIfOnScreen(it, itemView)

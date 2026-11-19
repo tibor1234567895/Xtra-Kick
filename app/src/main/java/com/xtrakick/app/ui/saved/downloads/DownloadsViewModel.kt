@@ -28,20 +28,25 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import kotlin.math.max
@@ -57,12 +62,24 @@ class DownloadsViewModel @Inject internal constructor(
 
     companion object {
         private val finishMutex = Mutex()
+
+        // A normal SAF call takes milliseconds; anything still running at this
+        // point is a hung provider call.
+        private const val SAF_CALL_TIMEOUT_MS = 30_000L
     }
 
     var selectedVideo: OfflineVideo? = null
     private val videosInUse = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
     private val currentDownloads = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
     private val liveDownloads = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    // Abandoned hung binder calls occupy their thread indefinitely; cap the
+    // damage to a few slots so the shared Dispatchers.IO pool stays healthy.
+    private val safCallDispatcher = Dispatchers.IO.limitedParallelism(8)
+
+    init {
+        externalScope.launch(Dispatchers.IO) { recoverInterruptedDeletions() }
+    }
 
     val flow = Pager(
         PagingConfig(pageSize = 30, prefetchDistance = 3, initialLoadSize = 30),
@@ -162,7 +179,7 @@ class DownloadsViewModel @Inject internal constructor(
                                 if (video.status == OfflineVideo.STATUS_DOWNLOADING || video.status == OfflineVideo.STATUS_BLOCKED || video.status == OfflineVideo.STATUS_QUEUED || video.status == OfflineVideo.STATUS_QUEUED_WIFI || video.status == OfflineVideo.STATUS_CONVERTING || video.status == OfflineVideo.STATUS_MOVING || video.status == OfflineVideo.STATUS_DELETING) {
                                     repository.updateStatus(video.apply {
                                         status = if (video.status == OfflineVideo.STATUS_DOWNLOADING &&
-                                            work?.state == WorkInfo.State.SUCCEEDED && video.progress >= video.maxProgress) {
+                                            work?.state == WorkInfo.State.SUCCEEDED && video.progress == video.maxProgress) {
                                             OfflineVideo.STATUS_DOWNLOADED
                                         } else OfflineVideo.STATUS_PENDING
                                     })
@@ -817,20 +834,22 @@ class DownloadsViewModel @Inject internal constructor(
         }
     }
 
-    fun redownloadChat(video: OfflineVideo) {
+    suspend fun redownloadChat(video: OfflineVideo) {
         if (!videosInUse.add(video.id)) {
             return
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.withVideoFiles(video, wait = true) { video ->
-                repository.resetChatProgress(video.apply {
-                    chatProgress = 0
-                    chatBytes = 0
-                    chatOffsetSeconds = 0
-                    status = OfflineVideo.STATUS_PENDING
-                })
+        try {
+            withContext(Dispatchers.IO) {
+                repository.withVideoFiles(video, wait = true) { video ->
+                    repository.resetChatProgress(video.apply {
+                        chatProgress = 0
+                        chatBytes = 0
+                        chatOffsetSeconds = 0
+                        status = OfflineVideo.STATUS_PENDING
+                    })
+                }
             }
-        }.invokeOnCompletion {
+        } finally {
             videosInUse.remove(video.id)
         }
     }
@@ -840,6 +859,9 @@ class DownloadsViewModel @Inject internal constructor(
             externalScope.launch(Dispatchers.IO) {
                 repository.withVideoDeletion(video) { video ->
                     val videoUrl = video.url
+                    val originalStatus = video.status
+                    val originalProgress = video.progress
+                    val originalMaxProgress = video.maxProgress
                     val activeRecording = video.status in setOf(
                         OfflineVideo.STATUS_DOWNLOADING, OfflineVideo.STATUS_WAITING_FOR_STREAM,
                         OfflineVideo.STATUS_QUEUED, OfflineVideo.STATUS_QUEUED_WIFI, OfflineVideo.STATUS_BLOCKED,
@@ -859,13 +881,11 @@ class DownloadsViewModel @Inject internal constructor(
                             if (videoUrl.toUri().scheme == ContentResolver.SCHEME_CONTENT) {
                                 if (videoUrl.endsWith(".m3u8")) {
                                     val videoDirectoryUri = videoUrl.substringBeforeLast("%2F")
-                                    val playlist = try {
+                                    val playlist = safCallWithTimeout {
                                         applicationContext.contentResolver.openInputStream(videoUrl.toUri())!!.use {
                                             PlaylistUtils.parseMediaPlaylist(it)
                                         }
-                                    } catch (e: Exception) {
-                                        null
-                                    }
+                                    } ?: throw IOException("Cannot read download playlist")
                                     val playlists = repository.getPlaylists().mapNotNull { video ->
                                         video.url?.takeIf {
                                             it.toUri().scheme == ContentResolver.SCHEME_CONTENT
@@ -874,13 +894,14 @@ class DownloadsViewModel @Inject internal constructor(
                                         }
                                     }
                                     val siblings = playlists.map { uri ->
-                                        runCatching {
+                                        safCallWithTimeout {
                                             applicationContext.contentResolver.openInputStream(uri.toUri())?.use {
                                                 PlaylistUtils.parseMediaPlaylist(it)
                                             }
-                                        }.getOrNull()
+                                        }?.takeIf { it.segments.isNotEmpty() }
+                                            ?: throw IOException("Cannot read sibling download playlist")
                                     }
-                                    val tracks = playlist?.let { PlaylistUtils.unsharedAssetUris(it, siblings) }.orEmpty()
+                                    val tracks = PlaylistUtils.unsharedAssetUris(playlist, siblings)
                                         .filter { uri ->
                                             when (uri.toUri().scheme) {
                                                 null -> true
@@ -892,95 +913,67 @@ class DownloadsViewModel @Inject internal constructor(
                                         maxProgress = tracks.size
                                     })
                                     val deletedCount = AtomicInteger(0)
+                                    val providerFailures = AtomicInteger(0)
+                                    val providerAbandoned = AtomicBoolean(false)
                                     coroutineScope {
                                         val deleteSemaphore = Semaphore(6)
                                         tracks.forEach { track ->
                                             launch {
                                                 deleteSemaphore.withPermit {
-                                                    try {
-                                                        val assetUri = if (track.toUri().scheme == ContentResolver.SCHEME_CONTENT) {
-                                                            track.toUri()
-                                                        } else {
-                                                            "$videoDirectoryUri%2F${Uri.encode(PlaylistUtils.localAssetName(track))}".toUri()
-                                                        }
-                                                        DocumentsContract.deleteDocument(applicationContext.contentResolver, assetUri)
-                                                    } catch (_: Exception) {
-
+                                                    if (providerAbandoned.get()) return@withPermit
+                                                    val assetUri = if (track.toUri().scheme == ContentResolver.SCHEME_CONTENT) {
+                                                        track.toUri()
+                                                    } else {
+                                                        "$videoDirectoryUri%2F${Uri.encode(PlaylistUtils.localAssetName(track))}".toUri()
                                                     }
-                                                    val deleted = deletedCount.incrementAndGet()
-                                                    // Batched Room writes: one per ~50 segments instead of one per segment.
-                                                    if (deleted % 50 == 0 || deleted == tracks.size) {
-                                                        repository.updateProgress(video.apply {
-                                                            progress = deleted
-                                                        })
+                                                    if (!deleteSharedDocument(assetUri)) {
+                                                        if (providerFailures.incrementAndGet() >= 3) providerAbandoned.set(true)
+                                                    } else {
+                                                        val deleted = deletedCount.incrementAndGet()
+                                                        // Batched Room writes: first segment + one per ~50 instead of one per segment.
+                                                        if (deleted == 1 || deleted % 50 == 0 || deleted == tracks.size) {
+                                                            repository.updateProgress(video.apply {
+                                                                progress = deleted
+                                                            })
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                    try {
-                                        DocumentsContract.deleteDocument(applicationContext.contentResolver, videoUrl.toUri())
-                                    } catch (e: Exception) {
-
-                                    }
+                                    check(deletedCount.get() == tracks.size) { "Could not delete all download segments" }
+                                    video.chatUrl?.let { check(deleteSharedDocument(it.toUri())) }
                                     if (playlists.isEmpty()) {
-                                        // Chat + sidecar first: either one pins the
-                                        // directory and the folder survives.
-                                        video.chatUrl?.let {
-                                            runCatching {
-                                                DocumentsContract.deleteDocument(applicationContext.contentResolver, it.toUri())
-                                            }
-                                        }
-                                        runCatching {
-                                            DocumentsContract.deleteDocument(
-                                                applicationContext.contentResolver,
-                                                "$videoDirectoryUri%2F${DownloadStorage.INFO_FILE_NAME}".toUri()
-                                            )
-                                        }
-                                        try {
+                                        check(deleteSharedDocument("$videoDirectoryUri%2F${DownloadStorage.INFO_FILE_NAME}".toUri()))
+                                    }
+                                    check(deleteSharedDocument(videoUrl.toUri())) { "Could not delete download playlist" }
+                                    if (playlists.isEmpty()) {
+                                        safCallWithTimeout {
                                             SafStorageUtils.deleteIfEmptyDirectory(applicationContext, videoDirectoryUri.toUri())
-                                        } catch (e: Exception) {
-
                                         }
                                     }
                                 } else {
-                                    try {
-                                        DocumentsContract.deleteDocument(applicationContext.contentResolver, videoUrl.toUri())
-                                    } catch (e: Exception) {
-
-                                    }
-                                    video.chatUrl?.let {
-                                        runCatching {
-                                            DocumentsContract.deleteDocument(applicationContext.contentResolver, it.toUri())
-                                        }
-                                    }
+                                    video.chatUrl?.let { check(deleteSharedDocument(it.toUri())) }
                                     // Sidecar + container: single files own their container
                                     // (no shared segments), so remove both when done. The
                                     // directory delete is a no-op when siblings remain.
                                     // Chat goes first — otherwise it pins the folder.
                                     val containerUri = DownloadStorage.containerOfUrl(videoUrl, video.downloadPath)
                                     if (containerUri != null && containerUri != videoUrl) {
-                                        runCatching {
-                                            DocumentsContract.deleteDocument(
-                                                applicationContext.contentResolver,
-                                                "$containerUri%2F${DownloadStorage.INFO_FILE_NAME}".toUri()
-                                            )
-                                        }
-                                        runCatching {
+                                        check(deleteSharedDocument("$containerUri%2F${DownloadStorage.INFO_FILE_NAME}".toUri()))
+                                    }
+                                    check(deleteSharedDocument(videoUrl.toUri())) { "Could not delete download file" }
+                                    if (containerUri != null && containerUri != videoUrl) {
+                                        safCallWithTimeout {
                                             SafStorageUtils.deleteIfEmptyDirectory(applicationContext, containerUri.toUri())
                                         }
-                                    }
-                                }
-                                video.chatUrl?.let {
-                                    try {
-                                        DocumentsContract.deleteDocument(applicationContext.contentResolver, it.toUri())
-                                    } catch (e: Exception) {
-
                                     }
                                 }
                             } else {
                                 val playlistFile = File(videoUrl)
                                 if (!playlistFile.exists()) {
+                                    video.chatUrl?.let { File(it).delete() }
+                                    repository.deleteVideo(video, keepFiles)
                                     return@withVideoDeletion
                                 }
                                 if (videoUrl.endsWith(".m3u8")) {
@@ -1032,12 +1025,85 @@ class DownloadsViewModel @Inject internal constructor(
                                 video.chatUrl?.let { File(it).delete() }
                             }
                         }
-                    } finally {
                         withContext(NonCancellable) { repository.deleteVideo(video, keepFiles) }
+                    } catch (error: Exception) {
+                        withContext(NonCancellable) {
+                            repository.updateOperationProgress(video.apply {
+                                progress = originalProgress
+                                maxProgress = originalMaxProgress
+                                status = if (activeRecording) OfflineVideo.STATUS_PENDING else originalStatus
+                            })
+                        }
+                        if (error is CancellationException) throw error
+                        DiagnosticLogger.e("Downloads", "Could not delete download", error)
                     }
                 }
             }.invokeOnCompletion {
                 videosInUse.remove(video.id)
+            }
+        }
+    }
+
+    private suspend fun deleteSharedDocument(uri: Uri): Boolean = safCallWithTimeout {
+        try {
+            DocumentsContract.deleteDocument(applicationContext.contentResolver, uri)
+        } catch (_: FileNotFoundException) {
+            true
+        }
+    } == true
+
+    /**
+     * Runs a blocking storage-provider call with a timeout. DocumentsContract and
+     * ContentResolver binder calls cannot be interrupted once hung, so the call is
+     * detached onto [externalScope] and abandoned when the timeout elapses — this
+     * coroutine moves on and treats the call as failed instead of freezing deletion.
+     */
+    private suspend fun <T> safCallWithTimeout(block: suspend () -> T): T? {
+        val deferred = externalScope.async(safCallDispatcher) {
+            runCatching { block() }
+        }
+        return try {
+            withTimeoutOrNull(SAF_CALL_TIMEOUT_MS) { deferred.await() }?.getOrNull()
+        } catch (error: CancellationException) {
+            if (!currentCoroutineContext().isActive) throw error
+            null
+        } finally {
+            deferred.cancel()
+        }
+    }
+
+    /**
+     * Deletion marks rows STATUS_DELETING before touching files, so process death
+     * mid-delete leaves them stuck with no retry path. Reset to DOWNLOADED so the
+     * entry stays actionable; only drop the row when a plain file path is reliably
+     * proven gone — DownloadStorage.exists() also returns false on provider
+     * errors, so dropping content:// rows here could destroy intact entries.
+     */
+    private suspend fun recoverInterruptedDeletions() {
+        val stuckVideos = try {
+            repository.getDeletingVideos()
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            DiagnosticLogger.e("Downloads", "Could not query interrupted deletions", error)
+            return
+        }
+        stuckVideos.forEach { video ->
+            try {
+                repository.withVideoDeletion(video) { fresh ->
+                    if (fresh.status != OfflineVideo.STATUS_DELETING) {
+                        return@withVideoDeletion
+                    }
+                    val fileState = safCallWithTimeout { DownloadStorage.exists(applicationContext, fresh.url) }
+                    val fileProvenGone = fileState == false && fresh.url?.toUri()?.scheme != ContentResolver.SCHEME_CONTENT
+                    if (fileProvenGone) {
+                        repository.deleteVideo(fresh, keepFiles = false)
+                    } else {
+                        repository.updateStatus(fresh.apply { status = OfflineVideo.STATUS_DOWNLOADED })
+                    }
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                DiagnosticLogger.e("Downloads", "Could not recover interrupted deletion", error)
             }
         }
     }

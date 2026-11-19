@@ -6790,8 +6790,12 @@ class KickRepository @Inject constructor(
         if (requireAuth && bearer == null) {
             throw IOException("Kick login is required.")
         }
-        val engine = cronetEngine?.get()
-            ?: return executeKickWebSessionRequestWithOkHttp(url, body, post, extraHeaders, method)
+        val engine = try {
+            cronetEngine?.get()
+        } catch (t: Throwable) {
+            DiagnosticLogger.w(tag, "Failed to resolve CronetEngine, falling back to OkHttp", t)
+            null
+        } ?: return executeKickWebSessionRequestWithOkHttp(url, body, post, extraHeaders, method)
         DiagnosticLogger.i(tag, "executeKickWebSessionRequest [Cronet] $method $url")
         return try {
             val response = withTimeout(15_000L) {

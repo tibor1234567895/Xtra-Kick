@@ -9,8 +9,10 @@ import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import com.xtrakick.app.model.chat.Image
+import com.xtrakick.app.ui.view.CenteredImageSpan
 import com.xtrakick.app.util.chat.ChatAdapterUtils
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -58,6 +60,130 @@ class ChatImageBindingTest {
         checkLateImage(withOverlay = true) { _, textView ->
             ChatAdapterUtils.beginImageBinding(textView)
             textView.text = "new message"
+        }
+    }
+
+    @Test
+    fun loadImagesWithZeroOrNegativeSizesDoesNotCrash() {
+        val activityController = Robolectric.buildActivity(FragmentActivity::class.java).setup()
+        val activity = activityController.get()
+        val fragment = Fragment()
+        activity.supportFragmentManager.beginTransaction().add(fragment, "chat").commitNow()
+        val textView = TextView(activity).apply { text = "original" }
+        val image = Image(url1x = "https://example.invalid/emote", isEmote = true, start = 0, end = 1)
+        ChatAdapterUtils.beginImageBinding(textView)
+        ChatAdapterUtils.loadImages(
+            fragment = fragment,
+            itemView = textView,
+            bind = { textView.text = it },
+            images = listOf(image),
+            imagePaint = null,
+            userName = null,
+            userNameStartIndex = null,
+            backgroundColor = Color.BLACK,
+            imageLibrary = "0", // Coil
+            builder = SpannableStringBuilder("."),
+            emoteSize = 0,
+            badgeSize = -5,
+            emoteQuality = "1",
+            animateGifs = false,
+            enableOverlayEmotes = false,
+        )
+        activityController.pause().stop().destroy()
+    }
+
+    @Test
+    fun loadImagesWithZeroOrNegativeSizesGlideDoesNotCrash() {
+        val activityController = Robolectric.buildActivity(FragmentActivity::class.java).setup()
+        val activity = activityController.get()
+        val fragment = Fragment()
+        activity.supportFragmentManager.beginTransaction().add(fragment, "chat").commitNow()
+        val textView = TextView(activity).apply { text = "original" }
+        val image = Image(url1x = "https://example.invalid/emote", isEmote = true, start = 0, end = 1)
+        ChatAdapterUtils.beginImageBinding(textView)
+        ChatAdapterUtils.loadImages(
+            fragment = fragment,
+            itemView = textView,
+            bind = { textView.text = it },
+            images = listOf(image),
+            imagePaint = null,
+            userName = null,
+            userNameStartIndex = null,
+            backgroundColor = Color.BLACK,
+            imageLibrary = "2", // Glide
+            builder = SpannableStringBuilder("."),
+            emoteSize = 0,
+            badgeSize = -5,
+            emoteQuality = "1",
+            animateGifs = false,
+            enableOverlayEmotes = false,
+        )
+        activityController.pause().stop().destroy()
+    }
+
+    @Test
+    fun loadImagesWithDetachedFragmentDoesNotCrash() {
+        val activityController = Robolectric.buildActivity(FragmentActivity::class.java).setup()
+        val activity = activityController.get()
+        val fragment = Fragment()
+        activity.supportFragmentManager.beginTransaction().add(fragment, "chat").commitNow()
+        val textView = TextView(activity).apply { text = "original" }
+        val image = Image(url1x = "https://example.invalid/emote", isEmote = true, start = 0, end = 1)
+        activity.supportFragmentManager.beginTransaction().remove(fragment).commitNow()
+        ChatAdapterUtils.beginImageBinding(textView)
+        ChatAdapterUtils.loadImages(
+            fragment = fragment,
+            itemView = textView,
+            bind = { textView.text = it },
+            images = listOf(image),
+            imagePaint = null,
+            userName = null,
+            userNameStartIndex = null,
+            backgroundColor = Color.BLACK,
+            imageLibrary = "0", // Coil
+            builder = SpannableStringBuilder("."),
+            emoteSize = 28,
+            badgeSize = 18,
+            emoteQuality = "1",
+            animateGifs = false,
+            enableOverlayEmotes = false,
+        )
+        ChatAdapterUtils.loadImages(
+            fragment = fragment,
+            itemView = textView,
+            bind = { textView.text = it },
+            images = listOf(image),
+            imagePaint = null,
+            userName = null,
+            userNameStartIndex = null,
+            backgroundColor = Color.BLACK,
+            imageLibrary = "2", // Glide
+            builder = SpannableStringBuilder("."),
+            emoteSize = 28,
+            badgeSize = 18,
+            emoteQuality = "1",
+            animateGifs = false,
+            enableOverlayEmotes = false,
+        )
+        activityController.pause().stop().destroy()
+    }
+
+    @Test
+    fun reserveImagePlaceholdersCoercesZeroOrNegativeSizes() {
+        val builder = SpannableStringBuilder(". .")
+        val emote = Image(url1x = "https://example.invalid/emote", isEmote = true, start = 0, end = 1)
+        val badge = Image(url1x = "https://example.invalid/badge", isEmote = false, start = 2, end = 3)
+        ChatAdapterUtils.reserveImagePlaceholders(
+            builder = builder,
+            images = listOf(emote, badge),
+            emoteSize = 0,
+            badgeSize = -10,
+        )
+        val spans = builder.getSpans(0, builder.length, CenteredImageSpan::class.java)
+        assertEquals(2, spans.size)
+        spans.forEach { span ->
+            assertTrue(span.drawable.bounds.right >= 1)
+            assertTrue(span.drawable.bounds.bottom >= 1)
         }
     }
 

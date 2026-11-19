@@ -49,11 +49,15 @@ import com.xtrakick.app.ui.download.VideoDownloadWorker
 import com.xtrakick.app.ui.saved.LeftoverFilesUi
 import com.xtrakick.app.ui.settings.SettingsViewModel
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.DownloadStorage
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
+import com.xtrakick.app.util.m3u8.PlaylistUtils
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 @AndroidEntryPoint
@@ -145,27 +149,12 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
                     )
                     viewModel.checkLiveDownloadStatus(channelLogin)
                 }
+            } else if (isConvertedDownload(it)) {
+                viewLifecycleOwner.lifecycleScope.launch {
+                    if (isSavedVideoAvailable(it)) resumeDownloadAction(it) else showVideoMissingDialog(it)
+                }
             } else {
-                WorkManager.getInstance(requireContext()).enqueueUniqueWork(
-                    VideoDownloadWorker.workName(it.id),
-                    ExistingWorkPolicy.REPLACE,
-                    OneTimeWorkRequestBuilder<VideoDownloadWorker>()
-                        .setInputData(workDataOf(VideoDownloadWorker.KEY_VIDEO_ID to it.id))
-                        .addTag(it.id.toString())
-                        .setConstraints(
-                            Constraints.Builder()
-                                .setRequiredNetworkType(
-                                    if (requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_WIFI_ONLY, false)) {
-                                        NetworkType.UNMETERED
-                                    } else {
-                                        NetworkType.CONNECTED
-                                    }
-                                )
-                                .build()
-                        )
-                        .build()
-                )
-                viewModel.checkDownloadStatus(it.id)
+                resumeDownloadAction(it)
             }
         }, {
             // convertVideo
@@ -243,30 +232,34 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
         }, {
             // redownloadChat
             viewLifecycleOwner.lifecycleScope.launch {
-                viewModel.redownloadChat(it)
-                WorkManager.getInstance(requireContext()).enqueueUniqueWork(
-                    VideoDownloadWorker.workName(it.id),
-                    ExistingWorkPolicy.REPLACE,
-                    OneTimeWorkRequestBuilder<VideoDownloadWorker>()
-                        .setInputData(workDataOf(
-                            VideoDownloadWorker.KEY_VIDEO_ID to it.id,
-                            VideoDownloadWorker.KEY_FORCE_CHAT_REDOWNLOAD to true,
-                        ))
-                        .addTag(it.id.toString())
-                        .setConstraints(
-                            Constraints.Builder()
-                                .setRequiredNetworkType(
-                                    if (requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_WIFI_ONLY, false)) {
-                                        NetworkType.UNMETERED
-                                    } else {
-                                        NetworkType.CONNECTED
-                                    }
-                                )
-                                .build()
-                        )
-                        .build()
-                )
-                viewModel.checkDownloadStatus(it.id)
+                if (isSavedVideoAvailable(it)) {
+                    viewModel.redownloadChat(it)
+                    WorkManager.getInstance(requireContext()).enqueueUniqueWork(
+                        VideoDownloadWorker.workName(it.id),
+                        ExistingWorkPolicy.REPLACE,
+                        OneTimeWorkRequestBuilder<VideoDownloadWorker>()
+                            .setInputData(workDataOf(
+                                VideoDownloadWorker.KEY_VIDEO_ID to it.id,
+                                VideoDownloadWorker.KEY_FORCE_CHAT_REDOWNLOAD to true,
+                            ))
+                            .addTag(it.id.toString())
+                            .setConstraints(
+                                Constraints.Builder()
+                                    .setRequiredNetworkType(
+                                        if (requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_WIFI_ONLY, false)) {
+                                            NetworkType.UNMETERED
+                                        } else {
+                                            NetworkType.CONNECTED
+                                        }
+                                    )
+                                    .build()
+                            )
+                            .build()
+                    )
+                    viewModel.checkDownloadStatus(it.id)
+                } else {
+                    showVideoMissingDialog(it)
+                }
             }
         }, {
             // shareVideo
@@ -289,30 +282,7 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
             openDownloadInFolder(it)
         }, {
             // deleteVideo
-            val delete = getString(R.string.delete)
-            val checkBox = CheckBox(requireContext()).apply {
-                text = getString(R.string.keep_files)
-                isChecked = false
-            }
-            val checkBoxView = LinearLayout(requireContext()).apply {
-                addView(checkBox)
-                val padding = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 20f, resources.displayMetrics).toInt()
-                setPadding(padding, 0, padding, 0)
-            }
-            requireActivity().getAlertDialogBuilder()
-                .setTitle(delete)
-                .setMessage(getString(R.string.are_you_sure))
-                .setView(checkBoxView)
-                .setPositiveButton(delete) { _, _ ->
-                    viewModel.delete(it, checkBox.isChecked)
-                    if (checkBox.isChecked) {
-                        Snackbar.make(binding.root, getString(R.string.leftover_files_kept), Snackbar.LENGTH_LONG)
-                            .setAction(R.string.leftover_files_delete) { leftoverUi.open() }
-                            .show()
-                    }
-                }
-                .setNegativeButton(getString(android.R.string.cancel), null)
-                .show()
+            confirmDelete(it)
         }, {
             // fileMissing: files were deleted outside the app (e.g. in a file
             // explorer). Never open a blank player; offer entry removal instead.
@@ -447,6 +417,83 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
         } catch (_: Exception) {
             Toast.makeText(context, getString(R.string.no_file_explorer), Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun resumeDownloadAction(video: OfflineVideo) {
+        WorkManager.getInstance(requireContext()).enqueueUniqueWork(
+            VideoDownloadWorker.workName(video.id),
+            ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<VideoDownloadWorker>()
+                .setInputData(workDataOf(VideoDownloadWorker.KEY_VIDEO_ID to video.id))
+                .addTag(video.id.toString())
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(
+                            if (requireContext().prefs().getBoolean(AppConstants.DOWNLOAD_WIFI_ONLY, false)) {
+                                NetworkType.UNMETERED
+                            } else {
+                                NetworkType.CONNECTED
+                            }
+                        )
+                        .build()
+                )
+                .build()
+        )
+        viewModel.checkDownloadStatus(video.id)
+    }
+
+    private fun confirmDelete(video: OfflineVideo) {
+        val delete = getString(R.string.delete)
+        val checkBox = CheckBox(requireContext()).apply {
+            text = getString(R.string.keep_files)
+            isChecked = false
+        }
+        val checkBoxView = LinearLayout(requireContext()).apply {
+            addView(checkBox)
+            val padding = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 20f, resources.displayMetrics).toInt()
+            setPadding(padding, 0, padding, 0)
+        }
+        requireActivity().getAlertDialogBuilder()
+            .setTitle(delete)
+            .setMessage(getString(R.string.are_you_sure))
+            .setView(checkBoxView)
+            .setPositiveButton(delete) { _, _ ->
+                viewModel.delete(video, checkBox.isChecked)
+                if (checkBox.isChecked) {
+                    Snackbar.make(binding.root, getString(R.string.leftover_files_kept), Snackbar.LENGTH_LONG)
+                        .setAction(R.string.leftover_files_delete) { leftoverUi.open() }
+                        .show()
+                }
+            }
+            .setNegativeButton(getString(android.R.string.cancel), null)
+            .show()
+    }
+
+    private suspend fun isSavedVideoAvailable(video: OfflineVideo): Boolean {
+        val appContext = requireContext().applicationContext
+        return withContext(Dispatchers.IO) { DownloadStorage.isOutputIntact(appContext, video.url) }
+    }
+
+    private fun isConvertedDownload(video: OfflineVideo): Boolean =
+        !video.playlistToFile && video.url?.endsWith(".m3u8") == false &&
+            video.sourceUrl?.let { runCatching { PlaylistUtils.isHlsUrl(it) }.getOrDefault(false) } == true
+
+    /** Redownload-chat/resume on a row whose output file is gone: explain why the
+     * action is refused and offer the repair that actually works for the row. */
+    private fun showVideoMissingDialog(video: OfflineVideo) {
+        val converted = isConvertedDownload(video)
+        requireActivity().getAlertDialogBuilder()
+            .setTitle(getString(R.string.saved_video_missing))
+            .setMessage(getString(if (converted) R.string.download_converted_missing else R.string.download_video_missing))
+            .setPositiveButton(getString(if (converted) R.string.delete else R.string.resume)) { _, _ ->
+                if (converted) {
+                    confirmDelete(video)
+                } else {
+                    resumeDownloadAction(video)
+                }
+            }
+            .setNegativeButton(getString(android.R.string.cancel), null)
+            .show()
     }
 
     override fun onNetworkRestored() {

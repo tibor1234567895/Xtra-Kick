@@ -476,10 +476,12 @@ class ChannelPagerViewModel @Inject constructor(
                         val path = filesDir + File.separator + "profile_pics" + File.separator + userId
                         viewModelScope.launch(Dispatchers.IO) {
                             try {
+                                val http = httpEngine?.get()
+                                val cronet = cronetEngine?.get()
                                 when {
-                                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
                                         val response = suspendCoroutine { continuation ->
-                                            httpEngine.get().newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
+                                            http.newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
                                         }
                                         if (response.first.httpStatusCode in 200..299) {
                                             FileOutputStream(path).use {
@@ -487,10 +489,10 @@ class ChannelPagerViewModel @Inject constructor(
                                             }
                                         }
                                     }
-                                    networkLibrary == "Cronet" && cronetEngine != null -> {
+                                    networkLibrary == "Cronet" && cronet != null -> {
                                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                                             val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                            cronetEngine.get().newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
+                                            cronet.newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
                                             val response = request.future.get()
                                             if (response.urlResponseInfo.httpStatusCode in 200..299) {
                                                 FileOutputStream(path).use {
@@ -499,7 +501,7 @@ class ChannelPagerViewModel @Inject constructor(
                                             }
                                         } else {
                                             val response = suspendCoroutine { continuation ->
-                                                cronetEngine.get().newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
+                                                cronet.newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
                                             }
                                             if (response.first.httpStatusCode in 200..299) {
                                                 FileOutputStream(path).use {

@@ -719,6 +719,9 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="download_blocked_wifi">Waiting for Wi-Fi connection</string>
     <string name="download_wifi_only">Download using Wi-Fi only</string>
     <string name="download_waiting_for_stream">Waiting for stream</string>
+    <string name="download_video_missing">The saved video file is missing. Resume the download to restore it.</string>
+    <string name="saved_video_missing">Saved video missing</string>
+    <string name="download_converted_missing">The converted video file is missing. Delete this download and download it again.</string>
     <string name="download_live_check">Stream playlist check frequency</string>
     <string name="download_live_check_summary">Seconds to wait between checks to see if the playlist has new segments</string>
     <string name="download_offline_check">Live check frequency</string>

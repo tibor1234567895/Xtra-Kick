@@ -8,6 +8,7 @@ import androidx.annotation.OptIn
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.prefs
 import dagger.Module
 import dagger.Provides
@@ -40,12 +41,17 @@ class AppModule {
     @Singleton
     @Provides
     fun providesHttpEngine(application: Application): HttpEngine? {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7) {
-            HttpEngine.Builder(application).apply {
-                addQuicHint("7tv.io", 443, 443)
-                addQuicHint("cdn.7tv.app", 443, 443)
-            }.build()
-        } else {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7) {
+                HttpEngine.Builder(application).apply {
+                    addQuicHint("7tv.io", 443, 443)
+                    addQuicHint("cdn.7tv.app", 443, 443)
+                }.build()
+            } else {
+                null
+            }
+        } catch (t: Throwable) {
+            DiagnosticLogger.w("AppModule", "Failed to initialize HttpEngine", t)
             null
         }
     }
@@ -54,15 +60,20 @@ class AppModule {
     @Provides
     @OptIn(QuicOptions.Experimental::class)
     fun providesCronetEngine(application: Application): CronetEngine? {
-        return if (CronetProvider.getAllProviders(application).any { it.isEnabled }) {
-            CronetEngine.Builder(application).apply {
-                val userAgent = "Cronet/" + defaultUserAgent.substringAfter("Cronet/", "").substringBefore(')')
-                setUserAgent(userAgent)
-                setQuicOptions(QuicOptions.builder().setHandshakeUserAgent(userAgent).build())
-                addQuicHint("7tv.io", 443, 443)
-                addQuicHint("cdn.7tv.app", 443, 443)
-            }.build()
-        } else {
+        return try {
+            if (CronetProvider.getAllProviders(application).any { it.isEnabled }) {
+                CronetEngine.Builder(application).apply {
+                    val userAgent = "Cronet/" + defaultUserAgent.substringAfter("Cronet/", "").substringBefore(')')
+                    setUserAgent(userAgent)
+                    setQuicOptions(QuicOptions.builder().setHandshakeUserAgent(userAgent).build())
+                    addQuicHint("7tv.io", 443, 443)
+                    addQuicHint("cdn.7tv.app", 443, 443)
+                }.build()
+            } else {
+                null
+            }
+        } catch (t: Throwable) {
+            DiagnosticLogger.w("AppModule", "Failed to initialize CronetEngine", t)
             null
         }
     }

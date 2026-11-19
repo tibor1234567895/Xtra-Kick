@@ -197,6 +197,33 @@ class DownloadsViewModelTest {
         assertTrue(Uri.parse(playlistUri) in provider.deletedUris)
     }
 
+    @Test fun sharedStorageSegmentDeletionFailureRetainsThePlaylistForRetry() = runBlocking {
+        initializeWorkManager()
+        val playlistUri = "content://download.chat.test/document/primary%3AVOD%2Fvideo.m3u8"
+        val assetUri = Uri.parse("content://download.chat.test/document/primary%3AVOD%2Fasset.ts")
+        chatFile.writeText("#EXTM3U\n#EXTINF:1,\nasset.ts\n#EXT-X-ENDLIST\n")
+        val provider = ChatProvider().apply {
+            files = mapOf(playlistUri to chatFile)
+            beforeDelete = { if (it == assetUri) throw SecurityException("Provider denied deletion") }
+            attachInfo(this@DownloadsViewModelTest.context, ProviderInfo().apply { authority = "download.chat.test" })
+        }
+        ShadowContentResolver.registerProviderInternal("download.chat.test", provider)
+        val video = OfflineVideo(url = playlistUri, status = OfflineVideo.STATUS_DOWNLOADED, progress = 1, maxProgress = 1)
+        video.id = repository.saveVideo(video).toInt()
+        viewModel.delete(video, keepFiles = false)
+        withTimeout(5000) { scope.coroutineContext[Job]!!.children.toList().joinAll() }
+        val retained = repository.getVideoById(video.id)!!
+        assertEquals(OfflineVideo.STATUS_DOWNLOADED, retained.status)
+        assertEquals(1, retained.progress)
+        assertEquals(1, retained.maxProgress)
+        assertFalse(Uri.parse(playlistUri) in provider.deletedUris)
+
+        provider.beforeDelete = null
+        viewModel.delete(video, keepFiles = false)
+        withTimeout(5000) { while (repository.getVideoById(video.id) != null) delay(10) }
+        assertTrue(Uri.parse(playlistUri) in provider.deletedUris)
+    }
+
     @Test fun cancellingAMoveRestoresItsStatusAndKeepsTheSourceReference() = runBlocking {
         val sourceUri = "content://download.chat.test/document/primary%3AVOD%2Fvideo.mp4"
         chatFile.writeText("video data")
@@ -496,6 +523,7 @@ class DownloadsViewModelTest {
         var files: Map<String, File>? = null
         var beforeOpen: ((String) -> Unit)? = null
         var beforeOpenUri: ((Uri) -> Unit)? = null
+        var beforeDelete: ((Uri) -> Unit)? = null
         val deletedUris = CopyOnWriteArrayList<Uri>()
         override fun onCreate() = true
         override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
@@ -508,7 +536,10 @@ class DownloadsViewModelTest {
         @Suppress("DEPRECATION")
         override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
             check(method == "android:deleteDocument")
-            extras?.getParcelable<Uri>("uri")?.let(deletedUris::add)
+            extras?.getParcelable<Uri>("uri")?.let {
+                beforeDelete?.invoke(it)
+                deletedUris.add(it)
+            }
             return Bundle()
         }
         override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null

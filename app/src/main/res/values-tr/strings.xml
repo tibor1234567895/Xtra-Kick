@@ -714,6 +714,9 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="download_blocked_wifi">Wi-Fi bağlantısı bekleniyor</string>
     <string name="download_wifi_only">Yalnızca Wi-Fi kullanarak indir</string>
     <string name="download_waiting_for_stream">Yayın bekleniyor</string>
+    <string name="download_video_missing">Kaydedilen video dosyası eksik. Geri yüklemek için indirmeyi sürdür.</string>
+    <string name="saved_video_missing">Kaydedilen video eksik</string>
+    <string name="download_converted_missing">Dönüştürülen video dosyası eksik. Bu indirmeyi silin ve yeniden indirin.</string>
     <string name="download_live_check">Yayın oynatma listesi kontrol sıklığı</string>
     <string name="download_live_check_summary">Oynatma listesinde yeni bölümler olup olmadığını kontrol etmek için saniye cinsinden bekleme süresi</string>
     <string name="download_offline_check">Canlı yayın kontrol sıklığı</string>

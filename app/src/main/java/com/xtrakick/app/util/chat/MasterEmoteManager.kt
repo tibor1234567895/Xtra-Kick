@@ -37,7 +37,7 @@ internal object MasterEmoteManager {
         fps: Int,
     ): MasterAnimatedEmote = synchronized(masters) {
         masters.getOrPut(key) {
-            MasterAnimatedEmote(key, rawDrawable, targetHeight, fps)
+            MasterAnimatedEmote(key, rawDrawable, targetHeight.coerceAtLeast(1), fps)
         }
     }
 

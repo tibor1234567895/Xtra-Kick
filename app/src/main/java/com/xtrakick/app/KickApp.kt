@@ -182,6 +182,20 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     @JvmField
     var cronetEngine: Lazy<CronetEngine>? = null
 
+    fun isCronetAvailable(): Boolean = try {
+        cronetEngine?.get() != null
+    } catch (_: Throwable) {
+        false
+    }
+
+    fun isHttpEngineAvailable(): Boolean = try {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+            httpEngine?.get() != null
+    } catch (_: Throwable) {
+        false
+    }
+
     @Inject
     lateinit var cronetExecutor: ExecutorService
 
@@ -261,8 +275,10 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                     add(GifDecoder.Factory())
                 }
                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
+                val http = httpEngine?.get()
+                val cronet = cronetEngine?.get()
                 when {
-                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && httpEngine != null -> {
+                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
                         add(NetworkFetcher.Factory(
                             networkClient = {
                                 object : NetworkClient {
@@ -274,7 +290,7 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                         }
                                         val requestMillis = System.currentTimeMillis()
                                         val response = suspendCoroutine { continuation ->
-                                            httpEngine!!.get().newUrlRequestBuilder(request.url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                                            http.newUrlRequestBuilder(request.url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
                                                 request.headers.asMap().forEach { entry ->
                                                     entry.value.forEach {
                                                         addHeader(entry.key, it)
@@ -309,14 +325,14 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                             cacheStrategy = { CacheControlCacheStrategy() }
                         ))
                     }
-                    networkLibrary == "Cronet" && cronetEngine != null -> {
+                    networkLibrary == "Cronet" && cronet != null -> {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                             add(NetworkFetcher.Factory(
                                 networkClient = {
                                     object : NetworkClient {
                                         override suspend fun <T> executeRequest(request: NetworkRequest, block: suspend (NetworkResponse) -> T): T {
                                             val cronetRequest = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                            cronetEngine!!.get().newUrlRequestBuilder(request.url, cronetRequest.callback, cronetExecutor).apply {
+                                            cronet.newUrlRequestBuilder(request.url, cronetRequest.callback, cronetExecutor).apply {
                                                 request.headers.asMap().forEach { entry ->
                                                     entry.value.forEach {
                                                         addHeader(entry.key, it)
@@ -365,7 +381,7 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                             }
                                             val requestMillis = System.currentTimeMillis()
                                             val response = suspendCoroutine { continuation ->
-                                                cronetEngine!!.get().newUrlRequestBuilder(request.url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
+                                                cronet.newUrlRequestBuilder(request.url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
                                                     request.headers.asMap().forEach { entry ->
                                                         entry.value.forEach {
                                                             addHeader(entry.key, it)

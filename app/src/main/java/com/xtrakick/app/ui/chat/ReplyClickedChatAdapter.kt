@@ -169,7 +169,7 @@ class ReplyClickedChatAdapter(
                         holder.textView.setBackgroundColor(resolveSelectedBackgroundColor(holder.textView.context))
                     }
                 }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
-                backgroundColor, imageLibrary, result.builder, emoteSize, badgeSize, emoteQuality, animateGifs, enableOverlayEmotes
+                backgroundColor, imageLibrary, result.builder, emoteSize.coerceAtLeast(1), badgeSize.coerceAtLeast(1), emoteQuality, animateGifs, enableOverlayEmotes
             )
         }
         if (chatMessage == selectedMessage) {
