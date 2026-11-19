@@ -12,7 +12,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowDisplayManager
 
 @RunWith(RobolectricTestRunner::class)
-@Config(application = Application::class, sdk = [30])
+@Config(application = Application::class, sdk = [31])
 class PlaybackRefreshRateControllerTest {
     @Test
     fun scrollingOnSingleModeDisplayPreservesTheWindowPreference() {

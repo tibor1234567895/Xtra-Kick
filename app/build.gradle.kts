@@ -323,6 +323,9 @@ testImplementation("org.json:json:20260814")
 // Robolectric reaches FileDescriptor internals via jdk.internal.access.SharedSecrets,
 // which JPMS hides by default. Export and open it for the unit-test JVM.
 tasks.withType<Test> {
+    if (providers.environmentVariable("GITHUB_ACTIONS").orNull == "true") {
+        testLogging.events("started", "failed")
+    }
     jvmArgs(
         "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED",
         "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED"
