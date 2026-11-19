@@ -100,6 +100,7 @@ import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.color.MaterialColors
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.text.NumberFormat
@@ -401,6 +402,17 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         binding.emoteSections.adapter = emoteSectionAdapter
         binding.emoteSections.setHasFixedSize(true)
         binding.emoteSections.setItemViewCacheSize(64)
+        // setupEmotePicker re-runs on every messaging-state change; listeners stack.
+        if (binding.emoteSections.tag == null) {
+            binding.emoteSections.tag = true
+            binding.emoteSections.addOnScrollListener(scrollActivityListener())
+            viewLifecycleOwner.lifecycleScope.launch {
+                EmoteImageLoader.warmingCacheEvents.collect {
+                    emoteSectionAdapter?.notifyDataSetChanged()
+                    delay(2_000)
+                }
+            }
+        }
         if (binding.emoteSearch.tag == null) {
             binding.emoteSearch.setText(emoteSearchQuery)
             binding.emoteSearch.addTextChangedListener(onTextChanged = { text, _, _, _ ->
@@ -1516,6 +1528,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                                 super.onScrollStateChanged(recyclerView, newState)
                                 isChatTouched = newState != RecyclerView.SCROLL_STATE_IDLE
+                                if (isChatTouched) onScrollActivity?.invoke()
                                 if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                                     programmaticTailScroll = false
                                 } else if (newState == RecyclerView.SCROLL_STATE_IDLE && !programmaticTailScroll) {
@@ -1537,6 +1550,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
                             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                                 super.onScrolled(recyclerView, dx, dy)
+                                // Follow-chat tail-scrolls are programmatic: they must not
+                                // count as user activity or the 60 Hz cap never engages.
+                                if (dy != 0 && !programmaticTailScroll) onScrollActivity?.invoke()
                                 if (!recyclerView.canScrollVertically(1)) {
                                     setScrollDownButtonVisible(false)
                                 } else if (!programmaticTailScroll && dy < 0 &&
@@ -2254,6 +2270,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     autoCompleteRecyclerView.apply {
                         layoutManager = SafeLinearLayoutManager(ctx)
                         adapter = autoCompleteAdapter
+                        addOnScrollListener(scrollActivityListener())
                     }
                     (autoCompleteContainer.parent as? View)?.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
                         if ((bottom - top) != (oldBottom - oldTop) && autoCompleteContainer.isVisible) {
@@ -2354,8 +2371,33 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         viewModel.stopReplayChat()
     }
 
+    /** Invoked on user scroll activity (used by the refresh-rate cap to boost). */
+    var onScrollActivity: (() -> Unit)? = null
+
+    private fun scrollActivityListener() = object : RecyclerView.OnScrollListener() {
+        override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+            // Refresh per delta, not just per state change: a sustained drag or fling
+            // outlasts the boost hold window and would drop back to the cap mid-scroll.
+            if (dx != 0 || dy != 0) onScrollActivity?.invoke()
+        }
+
+        override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+            if (newState != RecyclerView.SCROLL_STATE_IDLE) onScrollActivity?.invoke()
+        }
+    }
+
     fun updatePosition(position: Long) {
         viewModel.updatePosition(position)
+    }
+
+    /** Stops animated emote decoding while the chat panel is invisible. */
+    fun freezeEmoteAnimations() {
+        _binding?.let { EmoteImageLoader.freezeAll(it.root) }
+    }
+
+    /** Resumes emote animations after [freezeEmoteAnimations]. */
+    fun unfreezeEmoteAnimations() {
+        _binding?.let { EmoteImageLoader.unfreezeAll(it.root) }
     }
 
     fun seekTo(position: Long) {

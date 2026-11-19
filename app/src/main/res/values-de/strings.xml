@@ -901,6 +901,9 @@
     <string name="player_latency_profile_stable">Maximale Stabilität (höhere Verzögerung)</string>
     <string name="player_ivs_latency_catchup">IVS-Live-Latenzaufholung</string>
     <string name="player_ivs_latency_catchup_summary">Erhöht automatisch die Wiedergabegeschwindigkeit (bis zu ~1,08x, unhörbar), wenn die Latenz des Livestreams hinter das Live-Signal zurückfällt.</string>
+    <string name="player_rendering">Rendering</string>
+    <string name="player_high_refresh_rate">Hohe Bildwiederholrate</string>
+    <string name="player_high_refresh_rate_summary">Erlaubt die volle Bildwiederholrate des Displays während der Wiedergabe. Andernfalls läuft die Wiedergabe mit 60 Hz, um Akku zu sparen; Chat-Scrolling nutzt weiterhin die volle Rate.</string>
     <string name="player_lock_quality">Gewählte Videoqualität fixieren</string>
     <string name="player_lock_quality_summary">Deaktiviert die adaptive Bitrate-Herunterskalierung (ABR) bei manueller Qualitätsauswahl und behält die gewählte Auflösung bei.</string>
     <string name="syncing_to_live">Synchronisiere mit Live-Signal…</string>

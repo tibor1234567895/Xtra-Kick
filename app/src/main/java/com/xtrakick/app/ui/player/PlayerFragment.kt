@@ -151,10 +151,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     protected val bindingOrNull get() = _binding
     protected val viewModel: PlayerViewModel by viewModels()
     protected var chatFragment: ChatFragment? = null
+    private var refreshRateController: PlaybackRefreshRateController? = null
 
     /** Attached chat fragment; the cached field can reference a replaced instance. */
     protected fun activeChatFragment(): ChatFragment? {
         chatFragment?.takeIf { it.isAdded }?.let { return it }
+        if (!isAdded) return null
         return childFragmentManager.findFragmentById(R.id.chatFragmentContainer) as? ChatFragment
     }
 
@@ -2323,6 +2325,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
                 chatFragment = fragment
             }
+            chatFragment?.onScrollActivity = { onScrollActivity() }
         }
         viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -2354,6 +2357,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     gravity = Gravity.BOTTOM
                 }
                 chatLayout.visibility = if (isMaximized) View.VISIBLE else View.GONE
+                // Rotations land here without going through applyChatOpenProgress:
+                // match emote animation state to the final visibility.
+                if (isMaximized) {
+                    activeChatFragment()?.unfreezeEmoteAnimations()
+                } else {
+                    activeChatFragment()?.freezeEmoteAnimations()
+                }
                 aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 if (videoZoomFillMode) {
                     aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -2410,6 +2420,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         height = ViewGroup.LayoutParams.MATCH_PARENT
                         gravity = Gravity.END
                     }
+                    activeChatFragment()?.freezeEmoteAnimations()
                     chatLayout.visibility = View.GONE
                 }
                 aspectRatioFrameLayout.resizeMode = if (isMaximized) resizeMode else AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -2475,6 +2486,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         if (chatOnly) {
             if (chatOnlyPositionMs == null) startChatOnlyClock()
             chatProgressAnimator?.cancel()
+            activeChatFragment()?.unfreezeEmoteAnimations()
             binding.chatLayout.isPortrait = false
             binding.chatLayout.translationX = 0f
             binding.chatLayout.isVisible = true
@@ -2824,11 +2836,16 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         val margin = (width * p).roundToInt().coerceIn(0, width)
         val chatTranslation = (width - margin).toFloat()
 
+        if (finalize && p > 0f) {
+            activeChatFragment()?.unfreezeEmoteAnimations()
+        }
+
         with(binding) {
             // Always clear any player translation (regression guard).
             playerLayout.translationX = 0f
 
             if (p <= 0f && finalize) {
+                activeChatFragment()?.freezeEmoteAnimations()
                 (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
                     .hideSoftInputFromWindow(chatLayout.windowToken, 0)
                 chatLayout.clearFocus()
@@ -3482,6 +3499,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         updateChatOnlyLayout()
         with(binding) {
             if (canEnterPictureInPicture()) {
+                audioOnlyBadge.isVisible = false
                 if (!controllerHideOnTouch && !controllerIsAnimating && controllerAutoHide && !binding.playerControls.progressBar.isPressed) {
                     playerControls.root.postDelayed(controllerHideAction, 3000)
                 }
@@ -3493,9 +3511,19 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     setPipActions(isPlaybackPlaying())
                 }
             } else {
-                controllerHideOnTouch = false
-                showController(true)
-                updateProgress()
+                val audioOnly = viewModel.quality == AUDIO_ONLY_QUALITY
+                audioOnlyBadge.isVisible = audioOnly
+                if (audioOnly) {
+                    // Controls on tap with auto-hide, like video modes — a pinned
+                    // overlay forces 50 fps redraws for no visual benefit.
+                    controllerHideOnTouch = true
+                    rescheduleHideController()
+                    updateProgress()
+                } else {
+                    controllerHideOnTouch = false
+                    showController(true)
+                    updateProgress()
+                }
                 requireView().keepScreenOn = true
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
@@ -3911,6 +3939,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         val isInPIPMode = activity?.isInPictureInPictureMode == true
         if (isInPIPMode) {
             if (isPortrait) {
+                activeChatFragment()?.freezeEmoteAnimations()
                 binding.chatLayout.visibility = View.GONE
             } else {
                 hideChatLayout()
@@ -3920,6 +3949,24 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             clearPipDismissState()
             setPipActions(isPlaybackPlaying())
         }
+        applyRefreshRateCap()
+    }
+
+    /** Lazy controller access; prefs arrive with the activity in [onAttach]. */
+    private fun refreshRateController(): PlaybackRefreshRateController {
+        return refreshRateController ?: PlaybackRefreshRateController(
+            prefs = { requireContext().prefs() }
+        ).also { refreshRateController = it }
+    }
+
+    /** Cap only applies maximized; a docked mini player browses at the native rate. */
+    private fun applyRefreshRateCap() {
+        activity?.window?.let { refreshRateController().onPlayerActive(it, minimized = !isMaximized) }
+    }
+
+    private fun onScrollActivity() {
+        val window = activity?.window ?: return
+        refreshRateController().onScrollActivity(window)
     }
 
     fun refreshFollowStatus() {
@@ -4231,6 +4278,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 resetVideoZoom(false)
                 if (!isMaximized) {
                     isMaximized = true
+                    applyRefreshRateCap()
                     requireActivity().onBackPressedDispatcher.addCallback(this@PlayerFragment, backPressedCallback)
                     if (videoType == STREAM && chatFragment?.emoteMenuIsVisible() == true) {
                         chatFragment?.toggleBackPressedCallback(true)
@@ -4241,6 +4289,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     slidingLayout.scaleY = 1f
                 }
                 if (isPortrait) {
+                    activeChatFragment()?.freezeEmoteAnimations()
                     chatLayout.visibility = View.GONE
                 } else {
                     hideChatLayout()
@@ -4269,6 +4318,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
                 if (isMaximized && isPortrait) {
                     chatLayout.visibility = View.VISIBLE
+                    activeChatFragment()?.unfreezeEmoteAnimations()
                 }
                 if (isMaximized && videoStatsActiveInSession) {
                     videoStatsOverlay.visibility = View.VISIBLE
@@ -4617,6 +4667,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             hideController(true)
             videoStatsOverlay.visibility = View.GONE
             videoStatsOverlay.removeCallbacks(updateVideoStatsAction)
+            applyRefreshRateCap()
             fun animate() {
                 val (minimizedScaleX, minimizedScaleY) = getScaleValues()
                 val (x, y) = getMinimizedTranslation(minimizedScaleX, minimizedScaleY)
@@ -4647,6 +4698,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
             }
             if (isPortrait) {
+                activeChatFragment()?.freezeEmoteAnimations()
                 chatLayout.visibility = View.GONE
                 slidingLayout.doOnLayout {
                     animate()
@@ -4681,6 +4733,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             isMaximized = true
             playerLayout.isMinimized = false
             restoreVideoResizeMode()
+            applyRefreshRateCap()
             requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backPressedCallback)
             if (videoType == STREAM && chatFragment?.emoteMenuIsVisible() == true) {
                 chatFragment?.toggleBackPressedCallback(true)
@@ -4691,6 +4744,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 updateProgress()
             }
             if (isPortrait) {
+                activeChatFragment()?.unfreezeEmoteAnimations()
                 chatLayout.visibility = View.VISIBLE
             } else {
                 hideStatusBar()
@@ -5211,6 +5265,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     override fun onDestroyView() {
         @Suppress("DEPRECATION")
         activity?.window?.decorView?.setOnSystemUiVisibilityChangeListener(null)
+        activity?.window?.let { refreshRateController?.onPlayerInactive(it) }
         cancelPendingSkip()
         disengageHoldToSpeed()
         if (screenReceiverRegistered) {

@@ -127,6 +127,40 @@ class DownloadsViewModelTest {
     }
 
     @Test
+    fun canceledDeletionLetsQueuedWriterProceed() = runBlocking {
+        val coordinator = DownloadFileCoordinator()
+        val cleanupStarted = CompletableDeferred<Unit>()
+        val finishCleanup = CompletableDeferred<Unit>()
+        val writer = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            coordinator.use("video:1", deleting = false, wait = true) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    withContext(NonCancellable) {
+                        cleanupStarted.complete(Unit)
+                        finishCleanup.await()
+                    }
+                }
+            }
+        }
+        val deletion = async {
+            coordinator.use("video:1", deleting = true, wait = true) { error("Deletion should not start") }
+        }
+        cleanupStarted.await()
+        val queued = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            coordinator.use("video:1", deleting = false, wait = true) { "resumed" }
+        }
+        try {
+            deletion.cancel()
+            deletion.join()
+        } finally {
+            finishCleanup.complete(Unit)
+        }
+        assertEquals("resumed", queued.await())
+        writer.join()
+    }
+
+    @Test
     fun statusWriteFromAnOldRowPreservesPlaybackPositionAndChatProgress() = runBlocking {
         val video = OfflineVideo(url = chatFile.path)
         video.id = repository.saveVideo(video).toInt()

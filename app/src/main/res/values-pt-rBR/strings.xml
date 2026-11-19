@@ -903,6 +903,9 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="player_latency_profile_stable">Máxima estabilidade (maior atraso)</string>
     <string name="player_ivs_latency_catchup">Compensação de latência ao vivo do IVS</string>
     <string name="player_ivs_latency_catchup_summary">Aumentar automaticamente a velocidade de reprodução (até ~1.08x, sem alteração audível) quando a transmissão ao vivo ficar atrasada em relação ao ponto ao vivo.</string>
+    <string name="player_rendering">Renderização</string>
+    <string name="player_high_refresh_rate">Taxa de atualização alta</string>
+    <string name="player_high_refresh_rate_summary">Permite a taxa de atualização completa da tela durante a reprodução. Quando desativada, a reprodução é limitada a 60 Hz para economizar bateria; a rolagem do chat ainda usa a taxa completa.</string>
     <string name="player_lock_quality">Manter a qualidade de vídeo selecionada</string>
     <string name="player_lock_quality_summary">Desativa a redução adaptativa da taxa de bits (ABR) para seleções manuais de qualidade, mantendo a resolução escolhida.</string>
     <string name="syncing_to_live">Sincronizando com o ponto ao vivo…</string>

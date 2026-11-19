@@ -25,6 +25,7 @@ import coil3.network.NetworkResponse
 import coil3.network.NetworkResponseBody
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.svg.SvgDecoder
+import coil3.disk.directory
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.DiagnosticCoilLogger
@@ -36,11 +37,15 @@ import com.xtrakick.app.util.getByteArrayCronetCallback
 import com.xtrakick.app.util.UsagePing
 import com.xtrakick.app.util.CrashReports
 import com.xtrakick.app.util.prefs
+import com.xtrakick.app.util.chat.StvCdnHealth
 import com.xtrakick.app.repository.NotificationUsersRepository
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
+import okhttp3.Call
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Interceptor
+import okhttp3.Protocol
 import okio.Buffer
 import okio.buffer
 import okio.source
@@ -233,6 +238,16 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     @kotlin.OptIn(ExperimentalCoilApi::class)
     override fun newImageLoader(context: PlatformContext): ImageLoader {
         return ImageLoader.Builder(context).apply {
+            // Coil 3 ships with disk caching disabled unless configured. Without this, every
+            // successful emote/image load dies with the process and each app start refetches
+            // everything from the wire — brutal under a throttling image CDN. The 7TV CDN
+            // marks emote files immutable with a 1-year max-age, so CacheControlCacheStrategy
+            // persists them for as long as the LRU eviction allows.
+            diskCache {
+                coil3.disk.DiskCache.Builder()
+                    .directory(context.cacheDir.resolve("image_cache"))
+                    .build()
+            }
             if (BuildConfig.DEBUG && prefs().getBoolean(AppConstants.DEBUG_NETWORK_LOGS, false)) {
                 logger(DiagnosticCoilLogger(coil3.util.Logger.Level.Debug))
             } else {
@@ -402,8 +417,18 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                 }
                             })
                             .build()
+                        // Keep CDN stalls off the multiplexed connections other images use.
+                        val stvClient = coilClient.newBuilder()
+                            .dispatcher(StvCdnHealth.DEFAULT.createDispatcher())
+                            .connectionPool(ConnectionPool())
+                            .protocols(listOf(Protocol.HTTP_1_1))
+                            .build()
+                        val imageCalls = Call.Factory { request ->
+                            val client = if (request.url.host == StvCdnHealth.CDN_HOST) stvClient else coilClient
+                            client.newCall(request)
+                        }
                         add(OkHttpNetworkFetcherFactory(
-                            callFactory = { coilClient },
+                            callFactory = { imageCalls },
                             cacheStrategy = { CacheControlCacheStrategy() }
                         ))
                     }

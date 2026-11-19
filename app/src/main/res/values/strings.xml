@@ -916,6 +916,9 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="player_latency_profile_stable">Maximum stability (higher delay)</string>
     <string name="player_ivs_latency_catchup">IVS live latency catch-up</string>
     <string name="player_ivs_latency_catchup_summary">Automatically increase playback speed (up to ~1.08x, inaudible) when live stream latency drifts behind the live edge.</string>
+    <string name="player_rendering">Rendering</string>
+    <string name="player_high_refresh_rate">High refresh rate</string>
+    <string name="player_high_refresh_rate_summary">Allow the display\'s full refresh rate while playing. When off, playback runs at 60 Hz to save battery; chat scrolling still uses the full rate.</string>
     <string name="player_lock_quality">Lock selected video quality</string>
     <string name="player_lock_quality_summary">Disables adaptive bitrate (ABR) downscaling for manual quality selections, keeping the chosen resolution.</string>
     <string name="syncing_to_live">Syncing to live edge…</string>

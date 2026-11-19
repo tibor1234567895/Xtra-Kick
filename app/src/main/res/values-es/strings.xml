@@ -908,6 +908,9 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="player_latency_profile_stable">Estabilidad máxima (mayor retraso)</string>
     <string name="player_ivs_latency_catchup">Aceleración de latencia en vivo de IVS</string>
     <string name="player_ivs_latency_catchup_summary">Aumenta automáticamente la velocidad de reproducción (hasta ~1.08x, imperceptible) cuando la latencia de la transmisión en vivo se retrasa respecto al directo.</string>
+    <string name="player_rendering">Renderizado</string>
+    <string name="player_high_refresh_rate">Tasa de refresco alta</string>
+    <string name="player_high_refresh_rate_summary">Permite la tasa de refresco completa de la pantalla durante la reproducción. Cuando está desactivada, la reproducción se limita a 60 Hz para ahorrar batería; el desplazamiento del chat sigue usando la tasa completa.</string>
     <string name="player_lock_quality">Fijar la calidad de video seleccionada</string>
     <string name="player_lock_quality_summary">Desactiva la reducción de bitrate adaptativo (ABR) para selecciones manuales de calidad, manteniendo la resolución elegida.</string>
     <string name="syncing_to_live">Sincronizando con el directo…</string>

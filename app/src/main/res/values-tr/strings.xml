@@ -903,6 +903,9 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="player_latency_profile_stable">Maksimum kararlılık (daha yüksek gecikme)</string>
     <string name="player_ivs_latency_catchup">IVS canlı gecikme yakalama</string>
     <string name="player_ivs_latency_catchup_summary">Canlı yayın gecikmesi canlı akış noktasının gerisine düştüğünde oynatma hızını otomatik olarak artırır (duyulmayacak şekilde ~1.08 kata kadar).</string>
+    <string name="player_rendering">Görüntü oluşturma</string>
+    <string name="player_high_refresh_rate">Yüksek yenileme hızı</string>
+    <string name="player_high_refresh_rate_summary">Oynatma sırasında ekranın tam yenileme hızına izin verir. Kapalıyken oynatma, pil tasarrufu için 60 Hz ile sınırlandırılır; sohbet kaydırma yine tam hızı kullanır.</string>
     <string name="player_lock_quality">Seçilen video kalitesini kilitle</string>
     <string name="player_lock_quality_summary">Manuel kalite seçimleri için uyarlanabilir bit hızı (ABR) düşürmesini devre dışı bırakarak seçilen çözünürlüğü korur.</string>
     <string name="syncing_to_live">Canlı akış noktasına eşitleniyor…</string>

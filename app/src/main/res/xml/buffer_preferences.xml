@@ -102,4 +102,16 @@
         app:singleLineTitle="false"
         app:useSimpleSummaryProvider="true" />
 
+    <PreferenceCategory
+        android:title="@string/player_rendering"
+        app:iconSpaceReserved="false" />
+
+    <SwitchPreferenceCompat
+        android:defaultValue="false"
+        android:key="player_high_refresh_rate"
+        android:title="@string/player_high_refresh_rate"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false"
+        app:summary="@string/player_high_refresh_rate_summary" />
+
 </androidx.preference.PreferenceScreen>

@@ -57,6 +57,7 @@ import com.xtrakick.app.util.chat.ChatReplayPacing
 import com.xtrakick.app.util.chat.ChatUtils
 import com.xtrakick.app.util.chat.KickCentrifugoChatWebSocket
 import com.xtrakick.app.util.chat.KickChatSendErrorMapper
+import com.xtrakick.app.util.chat.StvEmotePrefetcher
 import com.xtrakick.app.util.chat.StvEventApiUtils
 import com.xtrakick.app.util.chat.StvEventApiWebSocket
 import com.xtrakick.app.util.chat.WebSocketDisconnectUtils
@@ -1173,6 +1174,7 @@ class ChatViewModel @Inject constructor(
         appendToAllEmotes(emotes.mapNotNull { it.name })
         reloadMessages.value = true
         thirdPartyEmotesUpdated.emit(Unit)
+        StvEmotePrefetcher.prefetch(applicationContext, viewModelScope, emotes)
     }
 
     private fun appendToAutoCompleteList(items: Collection<Any?>) {

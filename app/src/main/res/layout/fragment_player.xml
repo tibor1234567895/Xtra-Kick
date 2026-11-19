@@ -101,6 +101,24 @@
                 android:id="@+id/playerControls"
                 layout="@layout/player_layout" />
 
+            <TextView
+                android:id="@+id/audioOnlyBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|center_horizontal"
+                android:layout_marginBottom="120dp"
+                android:background="@drawable/bg_player_zoom_indicator"
+                android:elevation="4dp"
+                android:gravity="center"
+                android:minWidth="54dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:text="@string/audio_only"
+                android:textColor="@android:color/white"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
             <LinearLayout
                 android:id="@+id/offlineOverlay"
                 android:layout_width="match_parent"

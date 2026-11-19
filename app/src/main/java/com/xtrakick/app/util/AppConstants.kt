@@ -219,6 +219,7 @@ object AppConstants {
     const val PROXY_PASSWORD = "proxy_password"
     const val PLAYER_SHOW_UPTIME = "player_show_uptime"
     const val PLAYER_SHOW_LATENCY = "player_show_latency"
+    const val PLAYER_HIGH_REFRESH_RATE = "player_high_refresh_rate"
     const val ANIMATED_EMOTES = "animatedGifEmotes"
     const val CHAT_ANIMATED_EMOTE_FPS = "chat_animated_emote_fps"
     const val CHAT_IMAGE_LIBRARY = "chat_image_library"

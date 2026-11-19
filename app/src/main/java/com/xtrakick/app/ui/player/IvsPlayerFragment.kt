@@ -75,6 +75,7 @@ class IvsPlayerFragment : PlayerFragment() {
     private var pendingAutomaticQualityTransport: NetworkMonitor.NetworkType? = null
     private var lastBufferRecoveryTimeMs = 0L
     private val rebufferBreaker = RebufferCircuitBreaker()
+    private val audioTransitionWatchdog = AudioTransitionWatchdog()
     private var networkLossGraceRunnable: Runnable? = null
     private var networkPauseApplied = false
     private var lastBandwidthKbps: Long? = null
@@ -565,7 +566,8 @@ class IvsPlayerFragment : PlayerFragment() {
         lastBufferRecoveryTimeMs = 0L
         viewModel.playlistUrl = null
         viewModel.loaded.value = false
-        binding.playerSurface.visibility = View.VISIBLE
+        binding.playerSurface.visibility =
+            if (viewModel.quality == AUDIO_ONLY_QUALITY) View.GONE else View.VISIBLE
         binding.playerControls.progressBar.setDuration(0L)
         binding.playerControls.duration.text = null
         binding.playerControls.position.text = null
@@ -868,9 +870,19 @@ class IvsPlayerFragment : PlayerFragment() {
                 } else {
                     resetCatchupState()
                 }
+
+                if (audioTransitionWatchdog.isArmed()) {
+                    if (recoveryInProgress) {
+                        audioTransitionWatchdog.resetObservation()
+                    } else if (audioTransitionWatchdog.onPosition(ivsPlayer.position, now)) {
+                        playerDebugLog("audio-only watchdog: PLAYING without position progress, reloading")
+                        reloadIvsLiveStreamWithFreshUrl("audio-only watchdog")
+                    }
+                }
             } else {
                 downscaleRecoveryTicks = 0
                 resetCatchupState()
+                audioTransitionWatchdog.resetObservation()
             }
 
             val currentPosition = ivsPlayer?.position ?: 0L
@@ -1218,6 +1230,9 @@ class IvsPlayerFragment : PlayerFragment() {
             }
         )?.let { qualitiesByKey[it] } ?: return false
         playerDebugLog("applyAudioSaverCeiling target saver=${saver.name} (${saver.bitrate} bps) deferred=$deferred")
+        if (viewModel.quality == AUDIO_ONLY_QUALITY && !audioTransitionWatchdog.isArmed()) {
+            audioTransitionWatchdog.arm(SystemClock.uptimeMillis())
+        }
         val service = playbackService
         if (service != null) {
             if (deferred) {
@@ -1372,6 +1387,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun onStop() {
+        audioTransitionWatchdog.resetObservation()
         surfaceHolderCallback?.let { bindingOrNull?.playerSurface?.holder?.removeCallback(it) }
         surfaceHolderCallback = null
         clearCaptions()
@@ -1652,7 +1668,8 @@ class IvsPlayerFragment : PlayerFragment() {
         if (resolvedUrl.isNullOrBlank()) {
             return false
         }
-        binding.playerSurface.visibility = View.VISIBLE
+        binding.playerSurface.visibility =
+            if (viewModel.quality == AUDIO_ONLY_QUALITY) View.GONE else View.VISIBLE
         attachSurfaceIfAvailable()
         val started = reloadKickStreamWithFreshResolvedUrl(
             stalePlaybackUrl = resolvedUrl,
@@ -1679,6 +1696,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     private fun exitAudioOnlyMode() {
+        audioTransitionWatchdog.disarm()
         binding.playerSurface.visibility = View.VISIBLE
         attachSurfaceIfAvailable()
         changePlayerMode()

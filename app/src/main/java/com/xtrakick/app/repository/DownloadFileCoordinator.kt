@@ -21,11 +21,14 @@ internal class DownloadFileCoordinator {
             entries.getOrPut(key, ::Entry).also { it.references++ }
         }
         var locked = false
+        var deletionClaimed = false
+        var deletionStarted = false
         try {
             if (deleting) {
                 val owner = synchronized(entries) {
                     if (entry.deleting) return null
                     entry.deleting = true
+                    deletionClaimed = true
                     entry.owner
                 }
                 owner?.cancel()
@@ -43,10 +46,12 @@ internal class DownloadFileCoordinator {
                 if (entry.deleting && !deleting) return null
                 entry.owner = job
             }
+            deletionStarted = deleting
             return block()
         } finally {
             synchronized(entries) {
                 if (locked) entry.owner = null
+                if (deletionClaimed && !deletionStarted) entry.deleting = false
             }
             if (locked) entry.mutex.unlock()
             synchronized(entries) {
