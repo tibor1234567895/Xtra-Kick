@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 
 def gh(*args, input_text=None):
@@ -70,7 +71,44 @@ def promote(release_id, current, staged):
             print(f"Previous asset {previous['name']} could not be removed", file=sys.stderr)
 
 
-def publish(code, sha, notes, paths):
+def release_api(release_id):
+    return f"repos/{{owner}}/{{repo}}/releases/{release_id}"
+
+
+def finish_publication(recovery_path):
+    state = json.loads(recovery_path.read_text(encoding="utf-8"))
+    endpoint = release_api(state["release_id"])
+    payload = {"draft": False, "name": "Latest", "body": state["notes"], "make_latest": "true"}
+    for attempt in range(1, 4):
+        try:
+            current = assets(state["release_id"])
+            for name, expected in state["assets"].items():
+                asset = current.get(name, {})
+                if (asset.get("id"), asset.get("digest"), asset.get("state")) != (*expected, "uploaded"):
+                    raise ValueError(f"Prepared asset {name} is missing or has changed")
+            release = json.loads(gh("api", endpoint))
+            if release.get("tag_name") != "latest":
+                raise ValueError("Prepared release no longer has the latest tag")
+            release = json.loads(gh("api", "--method", "PATCH", endpoint, "--input", "-",
+                                    input_text=json.dumps(payload)))
+            if release.get("tag_name") != "latest" or release.get("draft") is not False:
+                raise ValueError("GitHub did not confirm the latest release is public")
+            break
+        except (subprocess.CalledProcessError, ValueError) as error:
+            if attempt == 3:
+                raise
+            print(f"Publication attempt {attempt}/3 failed: {getattr(error, 'stderr', None) or error}",
+                  file=sys.stderr)
+            time.sleep(attempt * 2)
+
+    before = state["published_at"]
+    after = release.get("published_at")
+    if before and (not after or after <= before):
+        print(f"::warning::GitHub kept the previous release publication date ({before}).")
+
+
+def publish(code, sha, notes, paths, recovery_path):
+    release_notes = Path(notes).read_text(encoding="utf-8")
     latest = latest_release()
     if latest is None:
         gh("release", "create", "latest", "--draft", "--target", sha, "--title", "Latest")
@@ -87,13 +125,34 @@ def publish(code, sha, notes, paths):
         for path, staging_name in staged:
             verify(current[staging_name], path)
         promote(release_id, current, staged)
+        state = {
+            "release_id": release_id,
+            "published_at": latest.get("published_at"),
+            "notes": release_notes,
+            "assets": {path.name: [current[name]["id"], current[name]["digest"]] for path, name in staged},
+        }
 
-    gh("release", "edit", "latest", "--draft=false", "--title", "Latest", "--notes-file", notes, "--latest=true")
+    # Record the exact release and assets before a request can hide them from public clients.
+    pending = recovery_path.with_suffix(".tmp")
+    pending.write_text(json.dumps(state), encoding="utf-8")
+    pending.replace(recovery_path)
+    try:
+        if not latest["draft"]:
+            gh("api", "--method", "PATCH", release_api(release_id), "-F", "draft=true")
+    except subprocess.CalledProcessError as error:
+        print(f"Warning: Could not set draft mode to refresh timestamp: {error.stderr or error}", file=sys.stderr)
+    finally:
+        finish_publication(recovery_path)
 
 
 if __name__ == "__main__":
-    code, sha, notes, *files = sys.argv[1:]
     try:
-        publish(code, sha, notes, [Path(file) for file in files])
+        if sys.argv[1] == "--recover":
+            finish_publication(Path(sys.argv[2]))
+        else:
+            code, sha, notes, recovery, *files = sys.argv[1:]
+            publish(code, sha, notes, [Path(file) for file in files], Path(recovery))
     except subprocess.CalledProcessError as error:
         raise SystemExit(error.stderr or str(error)) from error
+    except (OSError, ValueError) as error:
+        raise SystemExit(str(error)) from error

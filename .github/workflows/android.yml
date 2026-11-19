@@ -107,13 +107,30 @@ jobs:
         echo "Active Changelog: https://github.com/tibor1234567895/Xtra-Kick/commits/main" >> notes.txt
 
     - name: Publish release
+      id: publish_release
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
+        recovery="$RUNNER_TEMP/xtra-release-recovery.json"
         python3 -B gradle/publish_release.py "${{ steps.version.outputs.code }}" "$GITHUB_SHA" notes.txt \
-          app/build/outputs/apk/release/app-release.apk build/release-version.json
+          "$recovery" app/build/outputs/apk/release/app-release.apk build/release-version.json || {
+            [ -f "$recovery" ] && python3 -B gradle/publish_release.py --recover "$recovery"
+          }
+
+    - name: Recover interrupted publication
+      id: recover_release
+      if: cancelled()
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        recovery="$RUNNER_TEMP/xtra-release-recovery.json"
+        if [ -f "$recovery" ]; then
+          python3 -B gradle/publish_release.py --recover "$recovery"
+          echo "published=true" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Update tag
+      if: always() && (steps.publish_release.outcome == 'success' || steps.recover_release.outputs.published == 'true')
       run: |
         git tag -f latest
         git push -f origin latest
