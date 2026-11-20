@@ -62,7 +62,7 @@ class Media3Fragment : PlayerFragment() {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var screenOffResumeFuture: ListenableFuture<MediaController>? = null
     private val player: MediaController?
-        get() = controllerFuture?.let { if (it.isDone && !it.isCancelled) it.get() else null }
+        get() = controllerFuture?.let { if (it.isDone && !it.isCancelled) runCatching { it.get() }.getOrNull() else null }
     private var playerListener: Player.Listener? = null
     private var pendingInitialLiveSync = false
     private var liveTargetOffsetMs: Long? = null
@@ -142,11 +142,11 @@ class Media3Fragment : PlayerFragment() {
         val showPlayButton = Util.shouldShowPlayButton(player)
         if (showPlayButton) {
             binding.playerControls.playPause.setImageResource(R.drawable.baseline_play_arrow_black_48)
-            binding.playerControls.playPause.contentDescription = null
+            binding.playerControls.playPause.contentDescription = getString(R.string.resume)
             binding.playerControls.playPause.visibility = View.VISIBLE
         } else {
             binding.playerControls.playPause.setImageResource(R.drawable.baseline_pause_black_48)
-            binding.playerControls.playPause.contentDescription = null
+            binding.playerControls.playPause.contentDescription = getString(R.string.pause)
             binding.playerControls.playPause.visibility = if (videoType == STREAM && !prefs.getBoolean(AppConstants.PLAYER_PAUSE, false)) {
                 View.GONE
             } else {
@@ -213,7 +213,7 @@ class Media3Fragment : PlayerFragment() {
         controllerFuture = future
         future.addListener({
             if (bindingOrNull == null || controllerFuture !== future || future.isCancelled) return@addListener
-            val controller = future.get() ?: return@addListener
+            val controller = runCatching { future.get() }.getOrNull() ?: return@addListener
             if (viewModel.quality != AUDIO_ONLY_QUALITY) {
                 showVideoSurface(controller)
             }
@@ -469,8 +469,10 @@ class Media3Fragment : PlayerFragment() {
                                 Bundle.EMPTY
                             )?.let { result ->
                                 result.addListener({
-                                    if (result.get().resultCode == SessionResult.RESULT_SUCCESS) {
-                                        val responseCode = result.get().extras.getInt(PlaybackService.RESULT)
+                                    if (bindingOrNull == null || !isAdded) return@addListener
+                                    val sessionResult = runCatching { result.get() }.getOrNull() ?: return@addListener
+                                    if (sessionResult.resultCode == SessionResult.RESULT_SUCCESS) {
+                                        val responseCode = sessionResult.extras.getInt(PlaybackService.RESULT)
                                         val context = context ?: return@addListener
                                         val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                                         val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
@@ -516,7 +518,7 @@ class Media3Fragment : PlayerFragment() {
                                             }
                                         }
                                     }
-                                }, MoreExecutors.directExecutor())
+                                }, ContextCompat.getMainExecutor(requireContext()))
                             }
                         }
                         VIDEO -> {
@@ -525,8 +527,10 @@ class Media3Fragment : PlayerFragment() {
                                 Bundle.EMPTY
                             )?.let { result ->
                                 result.addListener({
-                                    if (result.get().resultCode == SessionResult.RESULT_SUCCESS) {
-                                        val responseCode = result.get().extras.getInt(PlaybackService.RESULT)
+                                    if (bindingOrNull == null || !isAdded) return@addListener
+                                    val sessionResult = runCatching { result.get() }.getOrNull() ?: return@addListener
+                                    if (sessionResult.resultCode == SessionResult.RESULT_SUCCESS) {
+                                        val responseCode = sessionResult.extras.getInt(PlaybackService.RESULT)
                                         val context = context ?: return@addListener
                                         val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                                         val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
@@ -560,7 +564,7 @@ class Media3Fragment : PlayerFragment() {
                                             }
                                         }
                                     }
-                                }, MoreExecutors.directExecutor())
+                                }, ContextCompat.getMainExecutor(requireContext()))
                             }
                         }
                         CLIP -> {
@@ -1117,15 +1121,17 @@ class Media3Fragment : PlayerFragment() {
             ), Bundle.EMPTY
         )?.let { result ->
             result.addListener({
-                if (result.get().resultCode == SessionResult.RESULT_SUCCESS) {
-                    val state = result.get().extras.getBoolean(PlaybackService.RESULT)
+                val b = bindingOrNull ?: return@addListener
+                val sessionResult = runCatching { result.get() }.getOrNull() ?: return@addListener
+                if (sessionResult.resultCode == SessionResult.RESULT_SUCCESS) {
+                    val state = sessionResult.extras.getBoolean(PlaybackService.RESULT)
                     if (state) {
-                        binding.playerControls.audioCompressor.setImageResource(R.drawable.baseline_audio_compressor_on_24dp)
+                        b.playerControls.audioCompressor.setImageResource(R.drawable.baseline_audio_compressor_on_24dp)
                     } else {
-                        binding.playerControls.audioCompressor.setImageResource(R.drawable.baseline_audio_compressor_off_24dp)
+                        b.playerControls.audioCompressor.setImageResource(R.drawable.baseline_audio_compressor_off_24dp)
                     }
                 }
-            }, MoreExecutors.directExecutor())
+            }, ContextCompat.getMainExecutor(requireContext()))
         }
     }
 

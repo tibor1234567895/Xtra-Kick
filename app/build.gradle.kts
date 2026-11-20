@@ -181,6 +181,7 @@ android {
     }
     androidResources {
         generateLocaleConfig = true
+        localeFilters += listOf("en", "de", "es", "pt-rBR", "tr")
     }
     testOptions {
         unitTests.isIncludeAndroidResources = true
@@ -199,7 +200,6 @@ android {
             "GradleDependency",
             "IntentFilterUniqueDataAttributes",
             "LeanbackUsesWifi",
-            "MissingOnRenderProcessGone",
             "MissingQuantity",
             "NewerVersionAvailable",
             "NonConstantResourceId",
@@ -214,7 +214,6 @@ android {
             "SourceLockedOrientationActivity",
             "TypographyEllipsis",
             "Typos",
-            "UnsafeIntentLaunch",
             "UseCompatLoadingForDrawables",
             "UseCompoundDrawables",
             "UseKtx",
@@ -222,14 +221,6 @@ android {
             "UseTomlInstead",
         )
     }
-    packaging.jniLibs.excludes.addAll(listOf(
-        "lib/x86/libtranslate_jni.so",
-        "lib/x86/liblanguage_id_l2c_jni.so",
-        "lib/x86_64/libtranslate_jni.so",
-        "lib/x86_64/liblanguage_id_l2c_jni.so",
-        "lib/armeabi-v7a/libtranslate_jni.so",
-        "lib/armeabi-v7a/liblanguage_id_l2c_jni.so",
-    ))
 }
 
 androidComponents {
@@ -284,7 +275,6 @@ dependencies {
     implementation(libs.cronet.api)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
-    implementation(libs.conscrypt)
     implementation(libs.serialization.json)
     implementation(libs.ivs.player)
 
@@ -318,9 +308,6 @@ testImplementation("org.json:json:20260814")
     // ChatBackgroundUtilsTest computes its expected values with androidx ColorUtils,
     // which calls android.graphics.Color — absent on a plain JVM. Robolectric supplies it.
     testImplementation("org.robolectric:robolectric:4.18")
-    // conscrypt-android ships JNI only for Android. Robolectric loads it on the JVM, so the
-    // desktop build supplies the matching native library. Test runtime only.
-    testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.9.0")
 }
 
 // Robolectric reaches FileDescriptor internals via jdk.internal.access.SharedSecrets,

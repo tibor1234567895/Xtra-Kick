@@ -210,6 +210,7 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         streakPopAnimator?.cancel()
         streakPopAnimator = null
         releaseStagePlayers()
+        preloadedDrawables.values.forEach { (it as? android.graphics.drawable.Animatable)?.stop() }
         preloadedDrawables.clear()
         _binding = null
         super.onDestroyView()

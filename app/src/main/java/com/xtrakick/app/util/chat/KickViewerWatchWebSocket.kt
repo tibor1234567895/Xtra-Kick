@@ -52,13 +52,13 @@ class KickViewerWatchWebSocket(
             val resolvedLivestream = if (!channelLogin.isNullOrBlank()) {
                 runCatching {
                     kickRepository.getChannelLivestream(channelLogin, forceRefresh = true)
-                }.getOrNull()
+                }.onFailure { if (it is CancellationException) throw it }.getOrNull()
             } else null
 
             val resolvedChannel = if (!channelLogin.isNullOrBlank()) {
                 runCatching {
                     kickRepository.getChannel(channelLogin, prefetchBadgeCatalog = false, forceRefresh = false)
-                }.getOrNull()
+                }.onFailure { if (it is CancellationException) throw it }.getOrNull()
             } else null
 
             val activeLivestreamId = resolvedLivestream?.id?.toString()?.takeIf { it.isNotBlank() }
@@ -97,7 +97,8 @@ class KickViewerWatchWebSocket(
                 val token = runCatching {
                     kickRepository.getKickViewerSocketToken()
                 }.onFailure {
-                    if (it !is CancellationException && debugLogging) {
+                    if (it is CancellationException) throw it
+                    if (debugLogging) {
                         Log.w(tag, "viewer socket token fetch failed: ${it.message}")
                     }
                 }.getOrNull()
@@ -116,7 +117,7 @@ class KickViewerWatchWebSocket(
                         "Origin" to "https://kick.com",
                         "User-Agent" to kickRepository.kickWebUserAgent,
                     ),
-                    sendPings = false,
+                    sendPings = true,
                 )
                 webSocket = socket
 
@@ -185,6 +186,7 @@ class KickViewerWatchWebSocket(
                         Log.d(tag, "rewards cadence poll completed: ${raw.take(80)}")
                     }
                 }.onFailure {
+                    if (it is CancellationException) throw it
                     if (debugLogging) {
                         Log.w(tag, "rewards cadence poll failed: ${it.message}")
                     }
@@ -203,6 +205,7 @@ class KickViewerWatchWebSocket(
                         Log.d(tag, "current-viewers ping sent for $livestreamId result=${result?.take(80)}")
                     }
                 }.onFailure {
+                    if (it is CancellationException) throw it
                     if (debugLogging) {
                         Log.w(tag, "current-viewers ping failed for $livestreamId: ${it.message}")
                     }
@@ -215,7 +218,10 @@ class KickViewerWatchWebSocket(
     private suspend fun send(socket: WebSocket, payload: String) {
         writeMutex.withLock {
             runCatching { socket.write(payload) }
-                .onFailure { if (debugLogging) Log.w(tag, "viewer socket write failed: ${it.message}") }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    if (debugLogging) Log.w(tag, "viewer socket write failed: ${it.message}")
+                }
         }
     }
 

@@ -239,6 +239,13 @@ class KickLinkRouterTest {
         val linkTraversal = KickLinkRouter.parse("https://kick.com/buddha/videos/../../etc")
         assertNull(linkTraversal)
 
+        // Double-encoded path traversal (%252e%252e)
+        assertNull(KickLinkRouter.parse("https://kick.com/%252e%252e"))
+        assertNull(KickLinkRouter.parse("https://kick.com/buddha/videos/%252e%252e"))
+
+        // Fragment-based host spoofing
+        assertNull(KickLinkRouter.parse("https://evil.com#/@kick.com/buddha"))
+
         // Control characters in identifier
         val linkControl = KickLinkRouter.parse("https://kick.com/buddha\nlogin")
         assertNull(linkControl)

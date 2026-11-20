@@ -5,19 +5,21 @@ import android.app.Dialog
 import android.content.Context
 import android.content.DialogInterface
 import android.os.Bundle
+import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import androidx.core.content.edit
-import com.xtrakick.app.util.bundleOf
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
 import androidx.webkit.WebViewClientCompat
 import com.xtrakick.app.databinding.DialogIntegrityBinding
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
+import com.xtrakick.app.util.bundleOf
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
@@ -44,7 +46,6 @@ class IntegrityDialog : DialogFragment() {
         val context = requireContext()
         val builder = context.getAlertDialogBuilder()
             .setView(binding.root)
-        CookieManager.getInstance().removeAllCookies(null)
         val token = KickApiHelper.getKickWebHeaders(context, true)[AppConstants.HEADER_TOKEN]?.removePrefix("OAuth ")
         if (!token.isNullOrBlank()) {
             CookieManager.getInstance().setCookie("https://kick.com", "auth-token=$token")
@@ -60,7 +61,10 @@ class IntegrityDialog : DialogFragment() {
             webViewClient = object : WebViewClientCompat() {
 
                 override fun shouldInterceptRequest(view: WebView, webViewRequest: WebResourceRequest): WebResourceResponse? {
-                    if (!webViewRequest.requestHeaders.entries.firstOrNull { it.key.equals("Client-Integrity", true) }?.value.isNullOrBlank()) {
+                    val host = webViewRequest.url.host.orEmpty()
+                    val isKickOrigin = webViewRequest.url.scheme.equals("https", ignoreCase = true) &&
+                        (host.equals("kick.com", ignoreCase = true) || host.endsWith(".kick.com", ignoreCase = true))
+                    if (isKickOrigin && !webViewRequest.requestHeaders.entries.firstOrNull { it.key.equals("Client-Integrity", true) }?.value.isNullOrBlank()) {
                         context.tokenPrefs().edit {
                             putLong(AppConstants.INTEGRITY_EXPIRATION, System.currentTimeMillis() + 57600000)
                             putString(AppConstants.GQL_HEADERS, JSONObject(
@@ -81,6 +85,15 @@ class IntegrityDialog : DialogFragment() {
                     }
                     return super.shouldInterceptRequest(view, webViewRequest)
                 }
+
+                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                    _binding?.webView?.let { webView ->
+                        (webView.parent as? ViewGroup)?.removeView(webView)
+                        runCatching { webView.destroy() }
+                    }
+                    dismissAllowingStateLoss()
+                    return true
+                }
             }
             loadUrl("https://kick.com/login")
         }
@@ -88,11 +101,15 @@ class IntegrityDialog : DialogFragment() {
     }
 
     override fun onDismiss(dialog: DialogInterface) {
-        binding.webView.loadUrl("about:blank")
+        _binding?.webView?.loadUrl("about:blank")
         super.onDismiss(dialog)
     }
 
     override fun onDestroyView() {
+        _binding?.webView?.let { webView ->
+            (webView.parent as? ViewGroup)?.removeView(webView)
+            runCatching { webView.destroy() }
+        }
         super.onDestroyView()
         _binding = null
     }

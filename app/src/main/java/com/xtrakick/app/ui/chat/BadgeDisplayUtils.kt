@@ -4,17 +4,24 @@ import com.xtrakick.app.model.chat.Badge
 import com.xtrakick.app.model.chat.StvBadge
 import java.util.Locale
 
+private val BADGE_NON_ALNUM_REGEX = Regex("[^a-z0-9_]+")
+private val BADGE_SUFFIX_BADGES_REGEX = Regex("_badges?$")
+private val BADGE_SUFFIX_BADGE_DIGITS_REGEX = Regex("_badge_?\\d*$")
+private val BADGE_SUFFIX_V_DIGITS_REGEX = Regex("_v\\d+$")
+private val BADGE_SUFFIX_DIGITS_REGEX = Regex("_\\d+$")
+private val BADGE_WHITESPACE_REGEX = Regex("\\s+")
+
 internal fun normalizeDisplayBadgeId(setId: String): String {
     val normalized = setId
         .substringAfterLast(':')
         .trim()
         .lowercase(Locale.ROOT)
-        .replace(Regex("[^a-z0-9_]+"), "_")
+        .replace(BADGE_NON_ALNUM_REGEX, "_")
         .removePrefix("badge_")
-        .replace(Regex("_badges?$"), "")
-        .replace(Regex("_badge_?\\d*$"), "")
-        .replace(Regex("_v\\d+$"), "")
-        .replace(Regex("_\\d+$"), "")
+        .replace(BADGE_SUFFIX_BADGES_REGEX, "")
+        .replace(BADGE_SUFFIX_BADGE_DIGITS_REGEX, "")
+        .replace(BADGE_SUFFIX_V_DIGITS_REGEX, "")
+        .replace(BADGE_SUFFIX_DIGITS_REGEX, "")
         .trim('_')
     return when (normalized) {
         "sub", "subscription", "subscribers" -> "subscriber"
@@ -37,7 +44,7 @@ internal fun prettifyBadgeName(value: String): String {
         .replace('-', ' ')
         .trim()
         .lowercase(Locale.getDefault())
-        .split(Regex("\\s+"))
+        .split(BADGE_WHITESPACE_REGEX)
         .filter { it.isNotBlank() }
         .joinToString(" ") { token ->
             token.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }

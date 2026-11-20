@@ -140,7 +140,7 @@ class DownloadsAdapter(
                     item.uploadDate?.let {
                         date.visibility = View.VISIBLE
                         date.text = context.getString(R.string.uploaded_date, KickApiHelper.formatTime(context, it))
-                    } ?: {
+                    } ?: run {
                         date.visibility = View.GONE
                     }
                     if (item.downloadDate != null) {
@@ -198,7 +198,7 @@ class DownloadsAdapter(
                     item.name?.let {
                         title.visibility = View.VISIBLE
                         title.text = it.trim()
-                    } ?: {
+                    } ?: run {
                         title.visibility = View.GONE
                     }
                     val effectiveGameName = item.gameName ?: item.gameSlug
@@ -218,7 +218,7 @@ class DownloadsAdapter(
                             sourceStart.text = context.getString(R.string.source_vod_start, DateUtils.formatElapsedTime(sourceStartPosition / 1000L))
                             sourceEnd.visibility = View.VISIBLE
                             sourceEnd.text = context.getString(R.string.source_vod_end, DateUtils.formatElapsedTime((sourceStartPosition + itemDuration) / 1000L))
-                        } ?: {
+                        } ?: run {
                             sourceStart.visibility = View.GONE
                             sourceEnd.visibility = View.GONE
                         }
@@ -228,7 +228,7 @@ class DownloadsAdapter(
                         } else {
                             progressBar.visibility = View.GONE
                         }
-                    } ?: {
+                    } ?: run {
                         duration.visibility = View.GONE
                         sourceStart.visibility = View.GONE
                         sourceEnd.visibility = View.GONE
@@ -312,19 +312,29 @@ class DownloadsAdapter(
                     if (item.status == OfflineVideo.STATUS_DOWNLOADED) {
                         status.visibility = View.GONE
                     } else {
+                        val videoPercent = if (item.maxProgress > 0) {
+                            ((item.progress.toFloat() / item.maxProgress) * 100f).toInt().coerceIn(0, 100)
+                        } else {
+                            0
+                        }
+                        val chatPercent = if (item.maxChatProgress > 0) {
+                            min(((item.chatProgress.toFloat() / item.maxChatProgress) * 100f).toInt(), 100).coerceAtLeast(0)
+                        } else {
+                            0
+                        }
                         downloadProgress.text = when (item.status) {
                             OfflineVideo.STATUS_DOWNLOADING -> {
                                 if (!item.live && item.downloadChat && item.progress >= item.maxProgress && item.chatProgress < item.maxChatProgress) {
-                                    context.getString(R.string.chat_downloading_progress, min(((item.chatProgress.toFloat() / item.maxChatProgress) * 100f).toInt(), 100))
+                                    context.getString(R.string.chat_downloading_progress, chatPercent)
                                 } else if (item.live) {
                                     context.getString(R.string.downloading)
                                 } else {
-                                    context.getString(R.string.downloading_progress, ((item.progress.toFloat() / item.maxProgress) * 100f).toInt())
+                                    context.getString(R.string.downloading_progress, videoPercent)
                                 }
                             }
-                            OfflineVideo.STATUS_MOVING -> context.getString(R.string.download_moving, ((item.progress.toFloat() / item.maxProgress) * 100f).toInt())
-                            OfflineVideo.STATUS_DELETING -> context.getString(R.string.download_deleting, ((item.progress.toFloat() / item.maxProgress) * 100f).toInt())
-                            OfflineVideo.STATUS_CONVERTING -> context.getString(R.string.download_converting, ((item.progress.toFloat() / item.maxProgress) * 100f).toInt())
+                            OfflineVideo.STATUS_MOVING -> context.getString(R.string.download_moving, videoPercent)
+                            OfflineVideo.STATUS_DELETING -> context.getString(R.string.download_deleting, videoPercent)
+                            OfflineVideo.STATUS_CONVERTING -> context.getString(R.string.download_converting, videoPercent)
                             OfflineVideo.STATUS_BLOCKED -> context.getString(R.string.download_queued)
                             OfflineVideo.STATUS_QUEUED -> context.getString(R.string.download_blocked)
                             OfflineVideo.STATUS_QUEUED_WIFI -> context.getString(R.string.download_blocked_wifi)
@@ -333,7 +343,7 @@ class DownloadsAdapter(
                         }
                         if (item.downloadChat && item.status == OfflineVideo.STATUS_DOWNLOADING && !item.live && item.progress < item.maxProgress) {
                             chatDownloadProgress.visibility = View.VISIBLE
-                            chatDownloadProgress.text = context.getString(R.string.chat_downloading_progress, min(((item.chatProgress.toFloat() / item.maxChatProgress) * 100f).toInt(), 100))
+                            chatDownloadProgress.text = context.getString(R.string.chat_downloading_progress, chatPercent)
                         } else {
                             chatDownloadProgress.visibility = View.GONE
                         }

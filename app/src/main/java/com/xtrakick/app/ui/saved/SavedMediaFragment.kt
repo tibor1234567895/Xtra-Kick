@@ -47,6 +47,7 @@ class SavedMediaFragment : Fragment(), Scrollable, FragmentHost {
 
     private var _binding: FragmentMediaBinding? = null
     private val binding get() = _binding!!
+    private var childLifecycleCallbacks: FragmentManager.FragmentLifecycleCallbacks? = null
     private val viewModel: SavedPagerViewModel by viewModels()
     private val settingsViewModel: SettingsViewModel by activityViewModels()
     private val leftoverUi by lazy { LeftoverFilesUi(this, settingsViewModel) }
@@ -208,35 +209,39 @@ class SavedMediaFragment : Fragment(), Scrollable, FragmentHost {
                     setText(adapter.getItem(previousItem).toString(), false)
                 }
             }
-            childFragmentManager.registerFragmentLifecycleCallbacks(object : FragmentManager.FragmentLifecycleCallbacks() {
+            childLifecycleCallbacks?.let { childFragmentManager.unregisterFragmentLifecycleCallbacks(it) }
+            val callbacks = object : FragmentManager.FragmentLifecycleCallbacks() {
                 override fun onFragmentViewCreated(fm: FragmentManager, f: Fragment, v: View, savedInstanceState: Bundle?) {
+                    val b = _binding ?: return
                     if (requireContext().prefs().getBoolean(AppConstants.UI_THEME_APPBAR_LIFT, true)) {
                         f.view?.findViewById<RecyclerView>(R.id.recyclerView)?.let {
-                            appBar.setLiftOnScrollTargetView(it)
+                            b.appBar.setLiftOnScrollTargetView(it)
                             it.addOnScrollListener(object : RecyclerView.OnScrollListener() {
                                 override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                                     super.onScrolled(recyclerView, dx, dy)
-                                    appBar.isLifted = recyclerView.canScrollVertically(-1)
+                                    _binding?.appBar?.isLifted = recyclerView.canScrollVertically(-1)
                                 }
                             })
                             it.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                                appBar.isLifted = it.canScrollVertically(-1)
+                                _binding?.appBar?.isLifted = it.canScrollVertically(-1)
                             }
                         }
                     } else {
-                        appBar.setLiftable(false)
-                        appBar.background = null
+                        b.appBar.setLiftable(false)
+                        b.appBar.background = null
                     }
                     if (f is Sortable) {
-                        f.setupSortBar(sortBar)
+                        f.setupSortBar(b.sortBar)
                     } else {
-                        sortBar.root.visibility = View.GONE
+                        b.sortBar.root.visibility = View.GONE
                     }
-                    toolbar.menu.findItem(R.id.importFolders).isVisible = f is DownloadsFragment
-                    toolbar.menu.findItem(R.id.importFiles).isVisible = f is DownloadsFragment
-                    toolbar.menu.findItem(R.id.cleanLeftoverFiles).isVisible = f is DownloadsFragment
+                    b.toolbar.menu.findItem(R.id.importFolders).isVisible = f is DownloadsFragment
+                    b.toolbar.menu.findItem(R.id.importFiles).isVisible = f is DownloadsFragment
+                    b.toolbar.menu.findItem(R.id.cleanLeftoverFiles).isVisible = f is DownloadsFragment
                 }
-            }, false)
+            }
+            childLifecycleCallbacks = callbacks
+            childFragmentManager.registerFragmentLifecycleCallbacks(callbacks, false)
             ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
                 val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
                 toolbar.updateLayoutParams<ViewGroup.MarginLayoutParams> {
@@ -283,6 +288,8 @@ class SavedMediaFragment : Fragment(), Scrollable, FragmentHost {
     }
 
     override fun onDestroyView() {
+        childLifecycleCallbacks?.let { childFragmentManager.unregisterFragmentLifecycleCallbacks(it) }
+        childLifecycleCallbacks = null
         super.onDestroyView()
         _binding = null
     }

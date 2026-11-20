@@ -3,14 +3,17 @@ package com.xtrakick.app.util
 import android.os.Build
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
@@ -21,7 +24,6 @@ import java.io.OutputStreamWriter
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.security.MessageDigest
-import java.util.Timer
 import java.util.zip.Deflater
 import java.util.zip.Inflater
 import javax.net.ssl.SSLContext
@@ -29,7 +31,6 @@ import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
-import kotlin.concurrent.schedule
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
 import kotlin.math.min
@@ -45,8 +46,8 @@ class WebSocket(
     @Volatile private var socket: Socket? = null
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
-    private var pingTimer: Timer? = null
-    private var pongTimer: Timer? = null
+    private var pingJob: Job? = null
+    private val pongChannel = Channel<Unit>(Channel.CONFLATED)
     private var messageBytes: ByteArrayOutputStream? = null
     private val inflater = Inflater(true)
     private var serverNoContextTakeover = false
@@ -75,6 +76,29 @@ class WebSocket(
                         return@withContext
                     }
                     connectionAttempt = 0
+                    if (sendPings) {
+                        pingJob?.cancel()
+                        pingJob = launch {
+                            while (isActive && socket?.isClosed == false) {
+                                delay(PING_INTERVAL_MS)
+                                if (socket?.isClosed != false) break
+                                pongChannel.tryReceive()
+                                try {
+                                    writeControlFrame(OPCODE_PING, byteArrayOf())
+                                } catch (_: Exception) {
+                                    runCatching { socket?.close() }
+                                    return@launch
+                                }
+                                val gotPong = withTimeoutOrNull(PONG_TIMEOUT_MS) {
+                                    pongChannel.receive()
+                                } != null
+                                if (!gotPong) {
+                                    runCatching { socket?.close() }
+                                    return@launch
+                                }
+                            }
+                        }
+                    }
                     var end = false
                     while (!end) {
                         end = readNextFrame()
@@ -223,40 +247,10 @@ class WebSocket(
             listener.onDisconnect(this@WebSocket, "")
             return@withContext true
         }
-        if (sendPings) {
-            startPingTimer()
-        }
         finalSocket.soTimeout = 0
         setConnectedState(true)
         listener.onConnect(this@WebSocket)
         return@withContext false
-    }
-
-    private suspend fun startPingTimer() = withContext(Dispatchers.IO) {
-        pingTimer?.cancel()
-        pingTimer = Timer().apply {
-            schedule(270000) {
-                if (socket?.isClosed == false) {
-                    launch {
-                        writeControlFrame(OPCODE_PING, byteArrayOf())
-                        startPongTimer()
-                    }
-                }
-            }
-        }
-    }
-
-    private suspend fun startPongTimer() = withContext(Dispatchers.IO) {
-        pongTimer?.cancel()
-        pongTimer = Timer().apply {
-            schedule(10000) {
-                try {
-                    socket?.close()
-                } catch (e: Exception) {
-
-                }
-            }
-        }
     }
 
     suspend fun readNextFrame(): Boolean = withContext(Dispatchers.IO) {
@@ -306,9 +300,7 @@ class WebSocket(
                 }
                 OPCODE_PONG -> {
                     if (sendPings) {
-                        pingTimer?.cancel()
-                        pongTimer?.cancel()
-                        startPingTimer()
+                        pongChannel.trySend(Unit)
                     }
                 }
                 OPCODE_CLOSE -> {
@@ -430,10 +422,8 @@ class WebSocket(
     }
 
     suspend fun disconnect() = withContext(Dispatchers.IO) {
-        pingTimer?.cancel()
-        pongTimer?.cancel()
-        pingTimer = null
-        pongTimer = null
+        pingJob?.cancel()
+        pingJob = null
         if (socket?.isClosed == false) {
             try {
                 val currentSocket = socket
@@ -451,10 +441,8 @@ class WebSocket(
     }
 
     private suspend fun close() = withContext(Dispatchers.IO) {
-        pingTimer?.cancel()
-        pongTimer?.cancel()
-        pingTimer = null
-        pongTimer = null
+        pingJob?.cancel()
+        pingJob = null
         try {
             socket?.close()
         } catch (e: Exception) {
@@ -539,5 +527,7 @@ class WebSocket(
         private const val BACKGROUND_BASE_RECONNECT_DELAY_MS = 4000L
         private const val BACKGROUND_MAX_RECONNECT_DELAY_MS = 60000L
         private const val MAX_RECONNECT_JITTER_MS = 1000L
+        private const val PING_INTERVAL_MS = 270_000L
+        private const val PONG_TIMEOUT_MS = 10_000L
     }
 }

@@ -22,6 +22,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.ensureActive
 import okhttp3.Call
 import okhttp3.Callback
@@ -419,7 +420,13 @@ object NetworkUtils {
             )
         }
 
-    fun resolveHttpEngine(networkLibrary: String?, httpEngine: Lazy<HttpEngine>?): HttpEngine? {
+    /**
+     * Typed [Any] on purpose; guard use sites with `http is HttpEngine`. A suspend function keeps
+     * locals across suspension points and restores them with a cast to their declared type on every
+     * resume. A local declared as [HttpEngine] therefore throws NoClassDefFoundError after an OkHttp
+     * or Cronet suspension on devices without the class (b223, Android 10-13).
+     */
+    fun resolveHttpEngine(networkLibrary: String?, httpEngine: Lazy<HttpEngine>?): Any? {
         if (networkLibrary != "HttpEngine" || !HttpEngineAvailability.isAvailable) return null
         return runCatching { httpEngine?.get() }.getOrNull()
     }
@@ -444,28 +451,32 @@ object NetworkUtils {
         val http = resolveHttpEngine(networkLibrary, httpEngine)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-            http != null) {
-            val response = suspendCancellableCoroutine { continuation ->
-                val request = http.newUrlRequestBuilder(
-                    url,
-                    executor,
-                    HttpEngineUtils.byteArrayUrlCallback(continuation)
-                ).build()
-                continuation.invokeOnCancellation { request.cancel() }
-                request.start()
+            http is HttpEngine) {
+            val response = withTimeout(DEFAULT_TIMEOUT_MS) {
+                suspendCancellableCoroutine { continuation ->
+                    val request = http.newUrlRequestBuilder(
+                        url,
+                        executor,
+                        HttpEngineUtils.byteArrayUrlCallback(continuation)
+                    ).build()
+                    continuation.invokeOnCancellation { request.cancel() }
+                    request.start()
+                }
             }
             return response.first.httpStatusCode to response.second
         }
         val cronet = resolveCronetEngine(networkLibrary, cronetEngine)
         if (cronet != null) {
-            val response = suspendCancellableCoroutine { continuation ->
-                val request = cronet.newUrlRequestBuilder(
-                    url,
-                    getByteArrayCronetCallback(continuation),
-                    executor
-                ).build()
-                continuation.invokeOnCancellation { request.cancel() }
-                request.start()
+            val response = withTimeout(DEFAULT_TIMEOUT_MS) {
+                suspendCancellableCoroutine { continuation ->
+                    val request = cronet.newUrlRequestBuilder(
+                        url,
+                        getByteArrayCronetCallback(continuation),
+                        executor
+                    ).build()
+                    continuation.invokeOnCancellation { request.cancel() }
+                    request.start()
+                }
             }
             return response.first.httpStatusCode to response.second
         }

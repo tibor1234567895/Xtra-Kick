@@ -58,6 +58,7 @@ import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.UsagePing
+import com.xtrakick.app.util.getProxyPassword
 import com.xtrakick.app.util.prefs
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -293,8 +294,8 @@ class PlaybackService : MediaSessionService() {
             setLoadControl(LiveLatencySettings.toLoadControl(activeLatencyConfig))
             setAudioAttributes(AudioAttributes.DEFAULT, prefs().getBoolean(AppConstants.PLAYER_AUDIO_FOCUS, true))
             setHandleAudioBecomingNoisy(prefs().getBoolean(AppConstants.PLAYER_HANDLE_AUDIO_BECOMING_NOISY, true))
-            setSeekBackIncrementMs((prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10) * 1000)
-            setSeekForwardIncrementMs((prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10) * 1000)
+            setSeekBackIncrementMs((prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10L).coerceIn(1L, 300L) * 1000L)
+            setSeekForwardIncrementMs((prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10L).coerceIn(1L, 300L) * 1000L)
             setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
         }.build()
         logBufferDebug(
@@ -546,7 +547,7 @@ class PlaybackService : MediaSessionService() {
                                 val proxyHost = prefs().getString(AppConstants.PROXY_HOST, null)
                                 val proxyPort = prefs().getString(AppConstants.PROXY_PORT, null)?.toIntOrNull()
                                 val proxyUser = prefs().getString(AppConstants.PROXY_USER, null)
-                                val proxyPassword = prefs().getString(AppConstants.PROXY_PASSWORD, null)
+                                val proxyPassword = getProxyPassword()
                                 val proxyMultivariantPlaylist = prefs().getBoolean(AppConstants.PROXY_MULTIVARIANT_PLAYLIST, false)
                                 val validProxyConfiguration = PlaybackProxyUtils.isValidProxyConfiguration(proxyHost, proxyPort)
                                 val streamLatencyConfig = activeLatencyConfig
@@ -586,7 +587,7 @@ class PlaybackService : MediaSessionService() {
                                             when {
                                                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                                                     SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                                    http != null -> {
+                                                    http is HttpEngine -> {
                                                     HttpEngineDataSource.Factory(http, cronetExecutor, multivariantPlaylistProxyClient, null) { false }
                                                 }
                                                 cronet != null -> {
@@ -685,7 +686,7 @@ class PlaybackService : MediaSessionService() {
                                             when {
                                                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                                                     SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                                    http != null -> {
+                                                    http is HttpEngine -> {
                                                     HttpEngineDataSource.Factory(http, cronetExecutor, null, null) { false }
                                                 }
                                                 cronet != null -> {
@@ -742,7 +743,7 @@ class PlaybackService : MediaSessionService() {
                                     when {
                                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                                             SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                            http != null -> {
+                                            http is HttpEngine -> {
                                             HttpEngineDataSource.Factory(http, cronetExecutor, null, null) { false }
                                         }
                                         cronet != null -> {
@@ -983,28 +984,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun reinitializeDynamicsProcessing(audioSessionId: Int) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            dynamicsProcessing = DynamicsProcessing(0, audioSessionId, null).apply {
-                for (channelIdx in 0 until channelCount) {
-                    for (bandIdx in 0 until getMbcByChannelIndex(channelIdx).bandCount) {
-                        setMbcBandByChannelIndex(
-                            channelIdx,
-                            bandIdx,
-                            getMbcBandByChannelIndex(channelIdx, bandIdx).apply {
-                                attackTime = 0f
-                                releaseTime = 0.25f
-                                ratio = 1.6f
-                                threshold = -50f
-                                kneeWidth = 40f
-                                preGain = 0f
-                                postGain = 10f
-                            }
-                        )
-                    }
-                }
-                enabled = true
-            }
-        }
+        runCatching { dynamicsProcessing?.release() }
+        dynamicsProcessing = createVoiceCompressorDynamicsProcessing(audioSessionId, TAG)
     }
 
     private fun savePosition() {
@@ -1049,6 +1030,9 @@ class PlaybackService : MediaSessionService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP_PLAYBACK) {
+            if (intent.getStringExtra(EXTRA_STOP_TOKEN) != STOP_TOKEN) {
+                return START_NOT_STICKY
+            }
             DiagnosticLogger.i(TAG, "ACTION_STOP_PLAYBACK intent received, stopping service")
             watchOwner.clearMetadata()
             clearActiveLiveChannel()
@@ -1184,6 +1168,8 @@ class PlaybackService : MediaSessionService() {
         const val UPDATE_CHANNEL_LOGO = "updateChannelLogo"
         const val SET_PIP_DISMISSED_BACKGROUND_AUDIO = "setPipDismissedBackgroundAudio"
         const val ACTION_STOP_PLAYBACK = "com.xtrakick.app.ACTION_STOP_PLAYBACK"
+        private const val EXTRA_STOP_TOKEN = "stop_token"
+        private val STOP_TOKEN = java.util.UUID.randomUUID().toString()
         private const val PIP_DISMISS_HANDOFF_TTL_MS = 15_000L
 
         @Volatile
@@ -1195,6 +1181,7 @@ class PlaybackService : MediaSessionService() {
             try {
                 val intent = Intent(context, PlaybackService::class.java).apply {
                     action = ACTION_STOP_PLAYBACK
+                    putExtra(EXTRA_STOP_TOKEN, STOP_TOKEN)
                 }
                 context.startService(intent)
             } catch (e: Exception) {

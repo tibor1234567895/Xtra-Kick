@@ -3,6 +3,7 @@ package com.xtrakick.app.util.chat
 import android.util.Log
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.WebSocket
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -73,11 +74,13 @@ class KickCentrifugoChatWebSocket(
 
     fun connect(coroutineScope: CoroutineScope): Job {
         return coroutineScope.launch(Dispatchers.IO) {
-            val resolvedUrl = runCatching { fetchConnectionUrl() }.getOrNull()?.takeIf { it.isNotBlank() } ?: DEFAULT_WS_URL
+            val resolvedUrl = runCatching { fetchConnectionUrl() }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()?.takeIf { it.isNotBlank() } ?: DEFAULT_WS_URL
             if (debugLogging) {
                 Log.d(tag, "connect url=$resolvedUrl channels=$channelNames")
             }
-            webSocket = WebSocket(resolvedUrl, trustManager, WebSocketListener())
+            webSocket = WebSocket(resolvedUrl, trustManager, WebSocketListener(), sendPings = true)
             webSocket?.start()
         }
     }
@@ -97,7 +100,9 @@ class KickCentrifugoChatWebSocket(
                         put("channel", channelName)
                         // Official app mints a per-subscription token; best-effort —
                         // subscribe without one if minting fails (as before).
-                        val channelToken = runCatching { fetchChannelToken(channelName) }.getOrNull()
+                        val channelToken = runCatching { fetchChannelToken(channelName) }
+                            .onFailure { if (it is CancellationException) throw it }
+                            .getOrNull()
                         if (!channelToken.isNullOrBlank()) {
                             put("token", channelToken)
                         }
@@ -113,10 +118,14 @@ class KickCentrifugoChatWebSocket(
 
     private inner class WebSocketListener : WebSocket.Listener {
         override suspend fun onConnect(webSocket: WebSocket) {
-            var token = runCatching { fetchAuthToken() }.getOrNull()
+            var token = runCatching { fetchAuthToken() }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
             if (token.isNullOrBlank()) {
                 delay(500L)
-                token = runCatching { fetchAuthToken() }.getOrNull()
+                token = runCatching { fetchAuthToken() }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrNull()
             }
             if (token.isNullOrBlank()) {
                 DiagnosticLogger.wIfForeground(tag, "failed to obtain fresh centrifugo token on connect")
@@ -192,6 +201,7 @@ class KickCentrifugoChatWebSocket(
                     }
                 }
             }.onFailure {
+                if (it is CancellationException) throw it
                 if (debugLogging) {
                     DiagnosticLogger.w(tag, "parse_error: ${it.message}", it)
                 }

@@ -116,6 +116,7 @@ object ChatAdapterUtils {
         }
 
         fun requestInvalidate(view: View) {
+            if (!view.isShown) return
             dirtyViews[view] = Unit
             val rootView = rootViewRef.get() ?: return
             val now = SystemClock.uptimeMillis()
@@ -159,6 +160,14 @@ object ChatAdapterUtils {
 
     fun clearMasterEmotes() {
         MasterEmoteManager.clear()
+    }
+
+    fun clearViewCaches() {
+        MasterEmoteManager.clear()
+        synchronized(preparedMessages) {
+            preparedMessages.clear()
+        }
+        chatImageCoordinator.clear()
     }
 
     private class ThrottledAnimatedDrawable(
@@ -964,6 +973,14 @@ object ChatAdapterUtils {
         for (i in 0 until existingSpans.size) {
             val existing = existingSpans[i]
             if (builder.getSpanStart(existing) == start && builder.getSpanEnd(existing) == end) {
+                val drawable = existing.drawable
+                if (drawable is Animatable) {
+                    drawable.stop()
+                } else if (drawable is LayerDrawable) {
+                    for (layer in 0 until drawable.numberOfLayers) {
+                        (drawable.getDrawable(layer) as? Animatable)?.stop()
+                    }
+                }
                 builder.removeSpan(existing)
             }
         }
@@ -1316,7 +1333,7 @@ object ChatAdapterUtils {
                     chatEmotes.remove(chatEmote)
                     builder.replace(builderIndex, builderIndex + value.length, ".")
                     builder.setSpan(ForegroundColorSpan(Color.TRANSPARENT), builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
-                    val emote = localChatEmotes.find { emote -> emote.id == chatEmote.id }?.let { emote ->
+                    val emote = localEmotesById[chatEmote.id]?.let { emote ->
                         ChatEmote(
                             id = emote.id,
                             name = emote.name,
@@ -1824,7 +1841,7 @@ object ChatAdapterUtils {
      * starts the animation if the row scrolls back into view.
      */
     private fun startAnimationIfOnScreen(drawable: Drawable, itemView: View) {
-        if (itemView.isAttachedToWindow) {
+        if (itemView.isAttachedToWindow && itemView.isShown) {
             (drawable as? Animatable)?.start()
         }
     }

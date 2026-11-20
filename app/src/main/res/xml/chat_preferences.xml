@@ -267,7 +267,6 @@
 
     <SeekBarPreference
         android:defaultValue="5"
-        android:dependency="chat_delay_mode"
         android:key="chat_delay_custom_secs"
         android:max="120"
         android:title="@string/chat_delay_custom_secs"
@@ -278,7 +277,6 @@
 
     <SwitchPreferenceCompat
         android:defaultValue="true"
-        android:dependency="chat_delay_mode"
         android:key="chat_show_delay_indicator"
         android:title="@string/chat_show_delay_indicator"
         app:iconSpaceReserved="false"

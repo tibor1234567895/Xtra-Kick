@@ -286,6 +286,8 @@ class ChatAdapter(
     // taps of a double-tap, so the pair is matched by tapped message instead of coordinates.
     private var lastTapBindKey: String? = null
     private var lastTapAt = 0L
+    @Volatile
+    var animationsFrozen: Boolean = false
 
     private fun bindMessage(holder: ViewHolder, position: Int) {
         val messages = currentList
@@ -339,7 +341,7 @@ class ChatAdapter(
             ChatAdapterUtils.loadImages(
                 fragment, holder.textView, { updatedBuilder ->
                     if (holder.isBoundTo(bindKey)) {
-                        holder.bind(bindKey, chatMessage, updatedBuilder, position, result.backgroundRes)
+                        holder.updateFormattedText(updatedBuilder)
                     }
                 }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
                 backgroundColor, imageLibrary, result.builder, effectiveEmoteSize, effectiveBadgeSize, emoteQuality, animateGifs, enableOverlayEmotes,
@@ -486,7 +488,7 @@ class ChatAdapter(
 
     override fun onViewAttachedToWindow(holder: ViewHolder) {
         super.onViewAttachedToWindow(holder)
-        if (animateGifs) {
+        if (animateGifs && !animationsFrozen && holder.itemView.isShown) {
             ChatAdapterUtils.startSpanAnimations(holder.textView.text)
         }
     }
@@ -536,8 +538,18 @@ class ChatAdapter(
 
         fun isBoundTo(bindKey: String): Boolean = currentBindKey == bindKey
 
+        fun updateFormattedText(updatedBuilder: SpannableStringBuilder) {
+            textView.text = updatedBuilder
+            if (animateGifs && animationsFrozen) {
+                ChatAdapterUtils.stopSpanAnimations(updatedBuilder)
+            }
+        }
+
         @android.annotation.SuppressLint("ClickableViewAccessibility")
         fun bind(bindKey: String, chatMessage: ChatMessage, formattedMessage: SpannableStringBuilder, position: Int, backgroundRes: Int) {
+            if (animateGifs && textView.text !== formattedMessage) {
+                ChatAdapterUtils.stopSpanAnimations(textView.text)
+            }
             currentBindKey = bindKey
             bindSeq++
             val boundSeq = bindSeq

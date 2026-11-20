@@ -4,20 +4,22 @@ import com.xtrakick.app.model.chat.Emote
 
 internal class ConcatenatedEmoteMatcher(emotes: List<Emote>) {
     private val emoteByName = LinkedHashMap<String, Emote>()
-    private val names: List<String>
+    private val namesByFirstChar: Map<Char, List<String>>
 
     init {
         for (emote in emotes) {
             val name = emote.name?.takeIf(String::isNotBlank) ?: continue
             emoteByName.putIfAbsent(name, emote)
         }
-        names = emoteByName.keys.sortedByDescending(String::length)
+        namesByFirstChar = emoteByName.keys
+            .sortedByDescending(String::length)
+            .groupBy { it[0] }
     }
 
     fun getExactEmote(name: String): Emote? = emoteByName[name]
 
     fun split(token: String): List<Emote>? {
-        if (token.length < 2 || names.isEmpty()) return null
+        if (token.length < 2 || namesByFirstChar.isEmpty() || !namesByFirstChar.containsKey(token[0])) return null
         val failed = BooleanArray(token.length + 1)
         val nextCandidate = IntArray(token.length + 1)
         val matches = ArrayList<Emote>()
@@ -25,15 +27,18 @@ internal class ConcatenatedEmoteMatcher(emotes: List<Emote>) {
 
         while (true) {
             var matched = false
-            while (nextCandidate[position] < names.size) {
-                val name = names[nextCandidate[position]++]
-                val end = position + name.length
-                if (end > token.length || failed[end] || !token.startsWith(name, position)) continue
-                matches.add(emoteByName.getValue(name))
-                position = end
-                if (position == token.length) return matches.takeIf { it.size > 1 }
-                matched = true
-                break
+            val candidates = namesByFirstChar[token[position]]
+            if (candidates != null) {
+                while (nextCandidate[position] < candidates.size) {
+                    val name = candidates[nextCandidate[position]++]
+                    val end = position + name.length
+                    if (end > token.length || failed[end] || !token.startsWith(name, position)) continue
+                    matches.add(emoteByName.getValue(name))
+                    position = end
+                    if (position == token.length) return matches.takeIf { it.size > 1 }
+                    matched = true
+                    break
+                }
             }
             if (matched) continue
             failed[position] = true

@@ -176,17 +176,19 @@ class LocalFollowChannelRepository @Inject constructor(
     suspend fun markKickFollows(logins: Collection<String>, notify: Boolean = true): Int = withContext(Dispatchers.IO) {
         val normalized = logins.mapNotNull { it.trim().takeIf(String::isNotBlank)?.lowercase() }.toSet()
         if (normalized.isEmpty()) return@withContext 0
-        var marked = 0
+        val toUpdate = ArrayList<LocalFollowChannel>()
         loadFollows().forEach { existing ->
             val loginKey = existing.userLogin?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return@forEach
             if (loginKey in normalized && !existing.isKickFollow) {
                 existing.sourceMask = existing.sourceMask or AppConstants.FOLLOW_SOURCE_MASK_KICK
-                localFollowsChannelDao.update(existing)
-                marked++
+                toUpdate.add(existing)
             }
         }
-        if (marked > 0 && notify) notifyFollowsChanged()
-        marked
+        if (toUpdate.isNotEmpty()) {
+            localFollowsChannelDao.updateAll(toUpdate)
+            if (notify) notifyFollowsChanged()
+        }
+        toUpdate.size
     }
 
     private fun upsertLocalFollowInternal(

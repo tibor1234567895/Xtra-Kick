@@ -31,6 +31,24 @@ fun Context.prefs(): SharedPreferences = PreferenceManager.getDefaultSharedPrefe
 
 fun Context.tokenPrefs(): SharedPreferences = getSharedPreferences("prefs2", Context.MODE_PRIVATE)
 
+fun Context.getProxyPassword(): String? {
+    val secure = tokenPrefs()
+    val existing = secure.getString(AppConstants.PROXY_PASSWORD, null)
+    if (existing != null) return existing
+    val legacyPrefs = prefs()
+    val legacy = legacyPrefs.getString(AppConstants.PROXY_PASSWORD, null) ?: return null
+    secure.edit().putString(AppConstants.PROXY_PASSWORD, legacy).apply()
+    legacyPrefs.edit().remove(AppConstants.PROXY_PASSWORD).apply()
+    return legacy
+}
+
+fun Context.setProxyPassword(value: String?) {
+    tokenPrefs().edit().apply {
+        if (value.isNullOrEmpty()) remove(AppConstants.PROXY_PASSWORD) else putString(AppConstants.PROXY_PASSWORD, value)
+    }.apply()
+    prefs().edit().remove(AppConstants.PROXY_PASSWORD).apply()
+}
+
 /**
  * Reads a boolean preference safely, handling legacy/backup corruptions where a boolean
  * value was mistakenly stored or restored as a String (avoiding ClassCastException).
@@ -177,10 +195,13 @@ private class GuardedAlertDialogBuilder(context: Context) : AlertDialog.Builder(
         super.create().also { it.setOnKeyListener(callKeyEventGuardListener) }
 }
 
-fun getByteArrayCronetCallback(continuation: Continuation<Pair<UrlResponseInfo, ByteArray>>): ByteArrayCronetCallback {
+fun getByteArrayCronetCallback(
+    continuation: Continuation<Pair<UrlResponseInfo, ByteArray>>,
+    shouldFollowRedirect: (String?) -> Boolean = { true },
+): ByteArrayCronetCallback {
     return object : ByteArrayCronetCallback() {
         override fun shouldFollowRedirect(info: UrlResponseInfo?, newLocationUrl: String?): Boolean {
-            return true
+            return shouldFollowRedirect(newLocationUrl)
         }
     }.also {
         it.addCompletionListener(object : CronetRequestCompletionListener<ByteArray> {

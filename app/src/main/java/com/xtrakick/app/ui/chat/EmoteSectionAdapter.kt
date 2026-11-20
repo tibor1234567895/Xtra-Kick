@@ -1,7 +1,9 @@
 package com.xtrakick.app.ui.chat
 
+import android.graphics.drawable.Animatable
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import android.widget.ImageView
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
@@ -104,6 +106,27 @@ class EmoteSectionAdapter(
             is EmotePickerListItem.SectionHeader -> (holder as SectionHeaderViewHolder).bind(item.section)
             is EmotePickerListItem.EmoteEntry -> (holder as EmoteViewHolder).bind(item.emote)
         }
+    }
+
+    override fun onViewAttachedToWindow(holder: RecyclerView.ViewHolder) {
+        super.onViewAttachedToWindow(holder)
+        if (holder is EmoteViewHolder && holder.itemView.isShown) {
+            ((holder.itemView as? ImageView)?.drawable as? Animatable)?.start()
+        }
+    }
+
+    override fun onViewDetachedFromWindow(holder: RecyclerView.ViewHolder) {
+        super.onViewDetachedFromWindow(holder)
+        if (holder is EmoteViewHolder) {
+            ((holder.itemView as? ImageView)?.drawable as? Animatable)?.stop()
+        }
+    }
+
+    override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+        if (holder is EmoteViewHolder) {
+            ((holder.itemView as? ImageView)?.drawable as? Animatable)?.stop()
+        }
+        super.onViewRecycled(holder)
     }
 
     inner class SectionHeaderViewHolder(

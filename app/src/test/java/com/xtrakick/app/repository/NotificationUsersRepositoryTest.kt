@@ -30,7 +30,7 @@ class NotificationUsersRepositoryTest {
         override fun getByUserId(id: String): NotificationUser? =
             rows.firstOrNull { it.channelId == id }
 
-        override fun getByKeys(keys: List<String>): List<NotificationUser> =
+        override fun getByKeysChunk(keys: List<String>): List<NotificationUser> =
             rows.filter { it.channelId in keys }
 
         override fun insert(item: NotificationUser) {
@@ -50,7 +50,7 @@ class NotificationUsersRepositoryTest {
             rows.removeAll { it.channelId == item.channelId }
         }
 
-        override fun deleteByKeys(keys: List<String>): Int {
+        override fun deleteByKeysChunk(keys: List<String>): Int {
             val count = rows.count { it.channelId in keys }
             rows.removeAll { it.channelId in keys }
             return count

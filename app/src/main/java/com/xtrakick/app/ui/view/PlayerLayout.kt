@@ -29,6 +29,28 @@ class PlayerLayout : FrameLayout {
         }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        if (MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.EXACTLY &&
+            MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.EXACTLY
+        ) {
+            val givenWidth = MeasureSpec.getSize(widthMeasureSpec)
+            val givenHeight = MeasureSpec.getSize(heightMeasureSpec)
+            if (isMinimized) {
+                val playerWidth = minOf(givenWidth, (givenHeight * videoAspectRatio).toInt())
+                val playerHeight = (playerWidth / videoAspectRatio).toInt()
+                super.onMeasure(
+                    MeasureSpec.makeMeasureSpec(playerWidth, MeasureSpec.EXACTLY),
+                    MeasureSpec.makeMeasureSpec(playerHeight, MeasureSpec.EXACTLY)
+                )
+                return
+            } else if (isPortrait) {
+                val playerHeight = (givenWidth / (16f / 9f)).toInt()
+                super.onMeasure(
+                    widthMeasureSpec,
+                    MeasureSpec.makeMeasureSpec(playerHeight, MeasureSpec.EXACTLY)
+                )
+                return
+            }
+        }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
         if (isMinimized) {
             val playerWidth = minOf(measuredWidth, (measuredHeight * videoAspectRatio).toInt())

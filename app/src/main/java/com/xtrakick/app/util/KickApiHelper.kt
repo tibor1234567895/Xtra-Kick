@@ -30,10 +30,23 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.ConcurrentHashMap
 
 object KickApiHelper {
 
     private val DIMENSION_PATTERN = Regex("""-\d+x\d+\.""")
+    private val SLUG_TRAILING_PAREN_REGEX = Regex("\\s*[\\[(][^\\])]*[\\])]$")
+    private val SLUG_PUNCTUATION_REGEX = Regex("['\"!?:,.]")
+    private val SLUG_SEPARATOR_REGEX = Regex("[\\s&/_+]+")
+    private val SLUG_NON_ALNUM_REGEX = Regex("[^a-zA-Z0-9-]")
+    private val SLUG_MULTI_DASH_REGEX = Regex("-+")
+    private val dateTimeFormatterCache = ConcurrentHashMap<String, DateTimeFormatter>()
+
+    private fun cachedDateTimeFormatter(pattern: String): DateTimeFormatter {
+        return dateTimeFormatterCache.getOrPut(pattern) {
+            DateTimeFormatter.ofPattern(pattern)
+        }
+    }
 
     var checkedValidation = false
     var checkedUpdates = false
@@ -231,7 +244,7 @@ object KickApiHelper {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val date = LocalDateTime.ofInstant(Instant.ofEpochMilli(input), ZoneOffset.systemDefault())
-                DateTimeFormatter.ofPattern(pattern).format(date)
+                cachedDateTimeFormatter(pattern).format(date)
             } else {
                 val format = SimpleDateFormat(pattern, Locale.getDefault())
                 format.format(Date(input))
@@ -244,7 +257,7 @@ object KickApiHelper {
     fun getClipTime(days: Int): String {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val date = LocalDateTime.ofInstant(Instant.now().minus(days.toLong(), ChronoUnit.DAYS), ZoneOffset.UTC)
-            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'").format(date)
+            cachedDateTimeFormatter("yyyy-MM-dd'T'HH:mm:ss'Z'").format(date)
         } else {
             val calendar = Calendar.getInstance()
             calendar.add(Calendar.DAY_OF_YEAR, -days)
@@ -291,14 +304,14 @@ object KickApiHelper {
         val trimmed = name?.trim() ?: return null
         if (trimmed.isEmpty()) return null
 
-        var cleaned = trimmed.replace(Regex("\\s*[\\[(][^\\])]*[\\])]$"), "").trim()
+        var cleaned = trimmed.replace(SLUG_TRAILING_PAREN_REGEX, "").trim()
         if (cleaned.isEmpty()) {
             cleaned = trimmed
         }
-        cleaned = cleaned.replace(Regex("['\"!?:,.]"), "")
-        cleaned = cleaned.replace(Regex("[\\s&/_+]+"), "-")
-        cleaned = cleaned.replace(Regex("[^a-zA-Z0-9-]"), "")
-        val slug = cleaned.replace(Regex("-+"), "-").trim('-').lowercase(Locale.ROOT)
+        cleaned = cleaned.replace(SLUG_PUNCTUATION_REGEX, "")
+        cleaned = cleaned.replace(SLUG_SEPARATOR_REGEX, "-")
+        cleaned = cleaned.replace(SLUG_NON_ALNUM_REGEX, "")
+        val slug = cleaned.replace(SLUG_MULTI_DASH_REGEX, "-").trim('-').lowercase(Locale.ROOT)
         return slug.ifBlank { null }
     }
 

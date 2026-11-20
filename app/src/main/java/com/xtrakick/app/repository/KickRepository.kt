@@ -7005,8 +7005,12 @@ class KickRepository @Inject constructor(
         return decoded.takeIf { it.isNotBlank() }
     }
 
+    private val KICK_CHANNEL_API_REFERER_REGEX = Regex("""https://kick\.com/api/v\d+/channels/([^/?]+)/""")
+    private val ROOM_STATE_KEY_NORMALIZE_REGEX = Regex("[^a-z0-9]")
+    private val WHITESPACE_COLLAPSE_REGEX = Regex("\\s+")
+
     private fun buildKickWebReferer(url: String): String {
-        val channelSlug = Regex("""https://kick\.com/api/v\d+/channels/([^/?]+)/""")
+        val channelSlug = KICK_CHANNEL_API_REFERER_REGEX
             .find(url)
             ?.groupValues
             ?.getOrNull(1)
@@ -7122,7 +7126,7 @@ class KickRepository @Inject constructor(
         )
 
         fun normalize(key: String): String {
-            return key.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "")
+            return key.lowercase(Locale.ROOT).replace(ROOM_STATE_KEY_NORMALIZE_REGEX, "")
         }
 
         fun captureCanonicalValue(canonical: String, value: JsonElement) {
@@ -7259,7 +7263,7 @@ class KickRepository @Inject constructor(
 
         return find(root)
             ?.toString()
-            ?.replace(Regex("\\s+"), " ")
+            ?.replace(WHITESPACE_COLLAPSE_REGEX, " ")
             ?.trim()
             ?.take(220)
             ?: "null"
@@ -7278,7 +7282,7 @@ class KickRepository @Inject constructor(
             else -> null
         }
         return sample
-            ?.replace(Regex("\\s+"), " ")
+            ?.replace(WHITESPACE_COLLAPSE_REGEX, " ")
             ?.trim()
             ?.take(220)
             ?: "null"
@@ -7296,7 +7300,7 @@ class KickRepository @Inject constructor(
                         val nextPath = path + key
                         if (fragments.any { lower.contains(it) } && snippets.size < 12) {
                             snippets[nextPath.joinToString(".")] = value.toString()
-                                .replace(Regex("\\s+"), " ")
+                                .replace(WHITESPACE_COLLAPSE_REGEX, " ")
                                 .trim()
                                 .take(120)
                         }
@@ -7322,7 +7326,7 @@ class KickRepository @Inject constructor(
     }
 
     private fun String.compactDebugSnippet(limit: Int = 260): String {
-        return replace(Regex("\\s+"), " ")
+        return replace(WHITESPACE_COLLAPSE_REGEX, " ")
             .trim()
             .take(limit)
     }

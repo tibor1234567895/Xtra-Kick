@@ -4644,6 +4644,19 @@ class ChatViewModel @Inject constructor(
                                                         while (reader.hasNext()) {
                                                             val message = reader.nextString().also { position += it.length + 2 + it.count { c -> c == '"' || c == '\\' } }
                                                             when {
+                                                                message.startsWith("{") -> {
+                                                                    runCatching {
+                                                                        val root = JSONObject(message)
+                                                                        val eventName = root.optString("kickEvent", "App\\Events\\ChatMessageEvent")
+                                                                        val payload = root.optString("kickData", message)
+                                                                        kickRepository.parseKickRealtimeEvent(eventName, payload)?.allChatMessages?.forEach { parsed ->
+                                                                            val relativeTs = parsed.timestamp?.let { ts -> (ts - startTimeMs).coerceAtLeast(0L) } ?: 0L
+                                                                            val normalized = parsed.copyContent(timestamp = relativeTs)
+                                                                            buildReplyPreviewMessage(normalized, messages)?.let(messages::add)
+                                                                            messages.add(normalized)
+                                                                        }
+                                                                    }
+                                                                }
                                                                 message.contains("PRIVMSG") -> {
                                                                     val chatMessage = ChatUtils.parseChatMessage(message, false)
                                                                     buildReplyPreviewMessage(chatMessage, messages)?.let(messages::add)

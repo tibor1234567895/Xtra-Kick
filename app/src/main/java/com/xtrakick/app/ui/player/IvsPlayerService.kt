@@ -484,6 +484,7 @@ class IvsPlayerService : Service() {
                 state == Player.State.PLAYING || state == Player.State.BUFFERING
             }
             if (isPlaying) {
+                wakeLock?.takeUnless { it.isHeld }?.acquire(WAKE_LOCK_TIMEOUT_MS)
                 armWifiLockSafetyTimeout()
             } else {
                 releasePlaybackLocks()
@@ -705,8 +706,8 @@ class IvsPlayerService : Service() {
                 }
             }.also { servicePlayerListener = it }
         )
-        val rewindMs = (prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10) * 1000
-        val fastForwardMs = (prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10) * 1000
+        val rewindMs = (prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10L).coerceIn(1L, 300L) * 1000L
+        val fastForwardMs = (prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10L).coerceIn(1L, 300L) * 1000L
         session = MediaSession(this, TAG).apply {
             setSessionActivity(PendingIntent.getActivity(
                 this@IvsPlayerService, REQUEST_CODE_RESUME,
@@ -1572,11 +1573,36 @@ class IvsPlayerService : Service() {
                 ).build()
             )
         }.build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            DiagnosticLogger.w(TAG, "startForeground not allowed from background state", e)
+            notificationManager?.notify(NOTIFICATION_ID, notification)
         }
+    }
+
+    private fun stopAfterUnrestorableForegroundStart() {
+        runCatching {
+            val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, getString(R.string.notification_playback_channel_id))
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(this)
+            }.setSmallIcon(R.drawable.notification_icon)
+                .setContentTitle(getString(R.string.app_name))
+                .setOnlyAlertOnce(true)
+                .build()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        }
+        stopPlayback()
     }
 
     private fun dismissMediaNotificationAndSession() {
@@ -1601,141 +1627,142 @@ class IvsPlayerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent != null) {
-            if (intent.action == ACTION_STOP_PLAYBACK) {
-                DiagnosticLogger.i(TAG, "ACTION_STOP_PLAYBACK intent received, stopping service")
-                stopPlayback()
-                return START_NOT_STICKY
-            }
-            if (Intent.ACTION_MEDIA_BUTTON == intent.action) {
-                val keyEvent = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
-                if (keyEvent != null && keyEvent.action == KeyEvent.ACTION_DOWN) {
-                    when (keyEvent.keyCode) {
-                        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> {
-                            if (multiPovDelegate != null) {
-                                if (multiPovDelegate?.isPlaying() == true) {
-                                    multiPovDelegate?.onPause()
-                                } else {
-                                    multiPovDelegate?.onPlay()
-                                }
+        if (intent == null) {
+            return START_NOT_STICKY
+        }
+        if (intent.action == ACTION_STOP_PLAYBACK) {
+            DiagnosticLogger.i(TAG, "ACTION_STOP_PLAYBACK intent received, stopping service")
+            stopPlayback()
+            return START_NOT_STICKY
+        }
+        if (Intent.ACTION_MEDIA_BUTTON == intent.action) {
+            val keyEvent = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+            if (keyEvent != null && keyEvent.action == KeyEvent.ACTION_DOWN) {
+                when (keyEvent.keyCode) {
+                    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> {
+                        if (multiPovDelegate != null) {
+                            if (multiPovDelegate?.isPlaying() == true) {
+                                multiPovDelegate?.onPause()
                             } else {
-                                val ivsPlayer = player
-                                if (ivsPlayer?.state == Player.State.PLAYING) {
-                                    DiagnosticLogger.logNonUiPause(
-                                        this@IvsPlayerService,
-                                        "IvsPlayerService.onStartCommand.ACTION_MEDIA_BUTTON",
-                                        "keyCode=${keyEvent.keyCode} (PLAY_PAUSE/HEADSETHOOK)",
-                                        "state=${ivsPlayer.state} channel=$channelName"
-                                    )
-                                    pause(clearPlaybackRequest = true)
-                                } else {
-                                    if (ivsPlayer?.state == Player.State.READY || ivsPlayer?.state == Player.State.ENDED || playbackRequested) {
-                                        play()
-                                    } else if (!restoreFromSavedRequest()) {
-                                        // See KEYCODE_MEDIA_PLAY: startForegroundService
-                                        // requires the service to go foreground here.
-                                        stopPlayback()
-                                        return START_NOT_STICKY
-                                    }
-                                }
-                                updatePlaybackState()
-                                updateNotification()
-                            }
-                        }
-                        KeyEvent.KEYCODE_MEDIA_PLAY -> {
-                            if (multiPovDelegate != null) {
                                 multiPovDelegate?.onPlay()
+                            }
+                        } else {
+                            val ivsPlayer = player
+                            if (ivsPlayer?.state == Player.State.PLAYING) {
+                                DiagnosticLogger.logNonUiPause(
+                                    this@IvsPlayerService,
+                                    "IvsPlayerService.onStartCommand.ACTION_MEDIA_BUTTON",
+                                    "keyCode=${keyEvent.keyCode} (PLAY_PAUSE/HEADSETHOOK)",
+                                    "state=${ivsPlayer.state} channel=$channelName"
+                                )
+                                pause(clearPlaybackRequest = true)
                             } else {
-                                val ivsPlayer = player
                                 if (ivsPlayer?.state == Player.State.READY || ivsPlayer?.state == Player.State.ENDED || playbackRequested) {
                                     play()
                                 } else if (!restoreFromSavedRequest()) {
-                                    // Started via startForegroundService (headset PLAY with
-                                    // the process dead) and nothing to restore: the service
-                                    // must still enter the foreground within the system
-                                    // timeout or the app crashes — post the idle state.
-                                    stopPlayback()
+                                    // See KEYCODE_MEDIA_PLAY: startForegroundService
+                                    // requires the service to go foreground here.
+                                    stopAfterUnrestorableForegroundStart()
                                     return START_NOT_STICKY
                                 }
-                                updatePlaybackState()
-                                updateNotification()
                             }
-                        }
-                        KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP -> {
-                            DiagnosticLogger.logNonUiPause(
-                                this@IvsPlayerService,
-                                "IvsPlayerService.onStartCommand.ACTION_MEDIA_BUTTON",
-                                "keyCode=${keyEvent.keyCode} (PAUSE/STOP)",
-                                "state=${player?.state} channel=$channelName"
-                            )
-                            if (multiPovDelegate != null) {
-                                multiPovDelegate?.onPause()
-                            } else {
-                                pause(clearPlaybackRequest = true)
-                                if (keyEvent.keyCode == KeyEvent.KEYCODE_MEDIA_STOP) {
-                                    clearLastPlaybackRequestIfCurrent()
-                                }
-                                updatePlaybackState()
-                                updateNotification()
-                            }
-                        }
-                        KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                            if (!isLivePlayback()) {
-                                val fastForwardMs = (prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10) * 1000
-                                runPlayerOp("media-next") { it.seekTo(it.position + fastForwardMs) }
-                            }
-                        }
-                        KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                            if (!isLivePlayback()) {
-                                val rewindMs = (prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10) * 1000
-                                runPlayerOp("media-prev") { it.seekTo((it.position - rewindMs).coerceAtLeast(0L)) }
-                            }
-                        }
-                    }
-                }
-            } else when (intent.action) {
-                INTENT_PLAY_PAUSE -> {
-                    if (multiPovDelegate != null) {
-                        if (multiPovDelegate?.isPlaying() == true) {
-                            multiPovDelegate?.onPause()
-                        } else {
-                            multiPovDelegate?.onPlay()
-                        }
-                    } else {
-                        val ivsPlayer = player
-                        if (ivsPlayer?.state == Player.State.PLAYING) {
-                            DiagnosticLogger.logPause(
-                                callingContext = this@IvsPlayerService,
-                                source = "IvsPlayerService.INTENT_PLAY_PAUSE",
-                                reason = "Notification/Widget play/pause action received",
-                                isUserInitiated = true,
-                                engine = "AmazonIVS",
-                                details = "channel=$channelName",
-                            )
-                            pause(clearPlaybackRequest = true)
-                        } else {
-                            play()
-                        }
-                        updatePlaybackState()
-                        updateNotification()
-                    }
-                }
-                INTENT_RESUME_BACKGROUND_IF_LOCKED -> {
-                    if (multiPovDelegate != null) {
-                        if (isDeviceLockedOrScreenOff() && !currentUrl.isNullOrBlank()) {
-                            multiPovDelegate?.onPlay()
-                        }
-                    } else if (isDeviceLockedOrScreenOff() && !currentUrl.isNullOrBlank()) {
-                        // Late SCREEN_OFF arrived after onStop paused for "unlocked PiP".
-                        // Only resume audio when the device is actually locked/off now.
-                        val state = player?.state
-                        if (state != null && state != Player.State.PLAYING && state != Player.State.ENDED) {
-                            playerDebugLog("late screen-off resume state=$state background=$backgroundPlaybackEnabled")
-                            backgroundPlaybackEnabled = true
-                            play()
                             updatePlaybackState()
                             updateNotification()
                         }
+                    }
+                    KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                        if (multiPovDelegate != null) {
+                            multiPovDelegate?.onPlay()
+                        } else {
+                            val ivsPlayer = player
+                            if (ivsPlayer?.state == Player.State.READY || ivsPlayer?.state == Player.State.ENDED || playbackRequested) {
+                                play()
+                            } else if (!restoreFromSavedRequest()) {
+                                // Started via startForegroundService (headset PLAY with
+                                // the process dead) and nothing to restore: the service
+                                // must still enter the foreground within the system
+                                // timeout or the app crashes — post the idle state.
+                                stopAfterUnrestorableForegroundStart()
+                                return START_NOT_STICKY
+                            }
+                            updatePlaybackState()
+                            updateNotification()
+                        }
+                    }
+                    KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP -> {
+                        DiagnosticLogger.logNonUiPause(
+                            this@IvsPlayerService,
+                            "IvsPlayerService.onStartCommand.ACTION_MEDIA_BUTTON",
+                            "keyCode=${keyEvent.keyCode} (PAUSE/STOP)",
+                            "state=${player?.state} channel=$channelName"
+                        )
+                        if (multiPovDelegate != null) {
+                            multiPovDelegate?.onPause()
+                        } else {
+                            pause(clearPlaybackRequest = true)
+                            if (keyEvent.keyCode == KeyEvent.KEYCODE_MEDIA_STOP) {
+                                clearLastPlaybackRequestIfCurrent()
+                            }
+                            updatePlaybackState()
+                            updateNotification()
+                        }
+                    }
+                    KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                        if (!isLivePlayback()) {
+                            val fastForwardMs = (prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10L).coerceIn(1L, 300L) * 1000L
+                            runPlayerOp("media-next") { it.seekTo(it.position + fastForwardMs) }
+                        }
+                    }
+                    KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                        if (!isLivePlayback()) {
+                            val rewindMs = (prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10L).coerceIn(1L, 300L) * 1000L
+                            runPlayerOp("media-prev") { it.seekTo((it.position - rewindMs).coerceAtLeast(0L)) }
+                        }
+                    }
+                }
+            }
+        } else when (intent.action) {
+            INTENT_PLAY_PAUSE -> {
+                if (multiPovDelegate != null) {
+                    if (multiPovDelegate?.isPlaying() == true) {
+                        multiPovDelegate?.onPause()
+                    } else {
+                        multiPovDelegate?.onPlay()
+                    }
+                } else {
+                    val ivsPlayer = player
+                    if (ivsPlayer?.state == Player.State.PLAYING) {
+                        DiagnosticLogger.logPause(
+                            callingContext = this@IvsPlayerService,
+                            source = "IvsPlayerService.INTENT_PLAY_PAUSE",
+                            reason = "Notification/Widget play/pause action received",
+                            isUserInitiated = true,
+                            engine = "AmazonIVS",
+                            details = "channel=$channelName",
+                        )
+                        pause(clearPlaybackRequest = true)
+                    } else {
+                        play()
+                    }
+                    updatePlaybackState()
+                    updateNotification()
+                }
+            }
+            INTENT_RESUME_BACKGROUND_IF_LOCKED -> {
+                if (multiPovDelegate != null) {
+                    if (isDeviceLockedOrScreenOff() && !currentUrl.isNullOrBlank()) {
+                        multiPovDelegate?.onPlay()
+                    }
+                } else if (isDeviceLockedOrScreenOff() && !currentUrl.isNullOrBlank()) {
+                    // Late SCREEN_OFF arrived after onStop paused for "unlocked PiP".
+                    // Only resume audio when the device is actually locked/off now.
+                    val state = player?.state
+                    if (state != null && state != Player.State.PLAYING && state != Player.State.ENDED) {
+                        playerDebugLog("late screen-off resume state=$state background=$backgroundPlaybackEnabled")
+                        backgroundPlaybackEnabled = true
+                        play()
+                        updatePlaybackState()
+                        updateNotification()
                     }
                 }
             }
@@ -1807,34 +1834,15 @@ class IvsPlayerService : Service() {
     }
 
     private fun reinitializeDynamicsProcessing(audioSessionId: Int) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            releaseDynamicsProcessing()
-            dynamicsProcessing = DynamicsProcessing(0, audioSessionId, null).apply {
-                for (channelIdx in 0 until channelCount) {
-                    for (bandIdx in 0 until getMbcByChannelIndex(channelIdx).bandCount) {
-                        setMbcBandByChannelIndex(
-                            channelIdx,
-                            bandIdx,
-                            getMbcBandByChannelIndex(channelIdx, bandIdx).apply {
-                                attackTime = 0f
-                                releaseTime = 0.25f
-                                ratio = 1.6f
-                                threshold = -50f
-                                kneeWidth = 40f
-                                preGain = 0f
-                                postGain = 10f
-                            }
-                        )
-                    }
-                }
-                enabled = true
-            }
+        releaseDynamicsProcessing()
+        createVoiceCompressorDynamicsProcessing(audioSessionId, TAG)?.let { instance ->
+            dynamicsProcessing = instance
             dynamicsProcessingAudioSessionId = audioSessionId
         }
     }
 
     private fun releaseDynamicsProcessing() {
-        dynamicsProcessing?.release()
+        runCatching { dynamicsProcessing?.release() }
         dynamicsProcessing = null
         dynamicsProcessingAudioSessionId = null
     }
@@ -1938,4 +1946,35 @@ class IvsPlayerService : Service() {
         private const val SAFE_RELEASE_WAIT_MS = 1_000L
         private const val SAFE_RELEASE_POLL_MS = 50L
     }
+}
+
+internal fun createVoiceCompressorDynamicsProcessing(audioSessionId: Int, tag: String): DynamicsProcessing? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+    var created: DynamicsProcessing? = null
+    return runCatching {
+        DynamicsProcessing(0, audioSessionId, null).apply {
+            created = this
+            for (channelIdx in 0 until channelCount) {
+                for (bandIdx in 0 until getMbcByChannelIndex(channelIdx).bandCount) {
+                    setMbcBandByChannelIndex(
+                        channelIdx,
+                        bandIdx,
+                        getMbcBandByChannelIndex(channelIdx, bandIdx).apply {
+                            attackTime = 0f
+                            releaseTime = 0.25f
+                            ratio = 1.6f
+                            threshold = -50f
+                            kneeWidth = 40f
+                            preGain = 0f
+                            postGain = 10f
+                        }
+                    )
+                }
+            }
+            enabled = true
+        }
+    }.onFailure { error ->
+        DiagnosticLogger.w(tag, "DynamicsProcessing initialization failed", error)
+        runCatching { created?.release() }
+    }.getOrNull()
 }

@@ -13,6 +13,19 @@ class ChatLayout : RelativeLayout {
     var isPortrait = false
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        if (isPortrait &&
+            MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.EXACTLY &&
+            MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.EXACTLY
+        ) {
+            val givenWidth = MeasureSpec.getSize(widthMeasureSpec)
+            val givenHeight = MeasureSpec.getSize(heightMeasureSpec)
+            val playerHeight = (givenWidth / (16f / 9f)).toInt()
+            super.onMeasure(
+                widthMeasureSpec,
+                MeasureSpec.makeMeasureSpec(givenHeight - playerHeight, MeasureSpec.EXACTLY)
+            )
+            return
+        }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
         if (isPortrait) {
             val playerHeight = (measuredWidth / (16f / 9f)).toInt()

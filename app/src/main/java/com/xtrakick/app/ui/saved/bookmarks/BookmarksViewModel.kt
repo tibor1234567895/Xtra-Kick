@@ -1,8 +1,6 @@
 package com.xtrakick.app.ui.saved.bookmarks
 
 import android.net.http.HttpEngine
-import android.os.Build
-import android.os.ext.SdkExtensions
 import com.xtrakick.app.util.NetworkUtils
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -15,25 +13,20 @@ import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.PlayerRepository
 import com.xtrakick.app.repository.SortChannelRepository
 import com.xtrakick.app.repository.VodBookmarkIgnoredUsersRepository
-import com.xtrakick.app.util.HttpEngineUtils
-import com.xtrakick.app.util.getByteArrayCronetCallback
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.chromium.net.CronetEngine
-import org.chromium.net.apihelpers.RedirectHandlers
-import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
-import kotlin.coroutines.suspendCoroutine
 
 @HiltViewModel
 class BookmarksViewModel @Inject internal constructor(
@@ -122,6 +115,38 @@ class BookmarksViewModel @Inject internal constructor(
         }
     }
 
+    private fun enqueueThumbnailDownload(
+        filesDir: String,
+        videoId: String?,
+        thumbUrl: String?,
+        networkLibrary: String?,
+    ): String? {
+        val validId = videoId?.takeIf { it.isNotBlank() } ?: return null
+        val validUrl = thumbUrl?.takeIf { it.isNotBlank() } ?: return null
+        File(filesDir, "thumbnails").mkdirs()
+        val path = filesDir + File.separator + "thumbnails" + File.separator + validId
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val (status, bytes) = NetworkUtils.fetchBytesRaw(
+                    httpEngine = httpEngine,
+                    cronetEngine = cronetEngine,
+                    executor = cronetExecutor,
+                    okHttp = okHttpClient,
+                    networkLibrary = networkLibrary,
+                    url = validUrl,
+                )
+                if (status in 200..299) {
+                    FileOutputStream(path).use { outputStream ->
+                        outputStream.write(bytes)
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
+        }
+        return path
+    }
+
     fun updateVideo(filesDir: String, videoId: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
         viewModelScope.launch {
             if (!videoId.isNullOrBlank()) {
@@ -145,72 +170,13 @@ class BookmarksViewModel @Inject internal constructor(
                             )
                         }
                     } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         null
                     }
                 } else null
                 val bookmark = bookmarksRepository.getBookmarkByVideoId(videoId)
                 if (video != null && bookmark != null) {
-                    val downloadedThumbnail = video.id.takeIf { !it.isNullOrBlank() }?.let { id ->
-                        video.thumbnail.takeIf { !it.isNullOrBlank() }?.let {
-                            File(filesDir, "thumbnails").mkdir()
-                            val path = filesDir + File.separator + "thumbnails" + File.separator + id
-                            viewModelScope.launch(Dispatchers.IO) {
-                                try {
-                                    val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
-                                    val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
-                                    when {
-                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                                            SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                            http != null -> {
-                                            val response = suspendCoroutine { continuation ->
-                                                http.newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                            }
-                                            if (response.first.httpStatusCode in 200..299) {
-                                                FileOutputStream(path).use {
-                                                    it.write(response.second)
-                                                }
-                                            }
-                                        }
-                                        cronet != null -> {
-                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                                val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                                cronet.newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                                val response = request.future.get()
-                                                if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                                    FileOutputStream(path).use {
-                                                        it.write(response.responseBody as ByteArray)
-                                                    }
-                                                }
-                                            } else {
-                                                val response = suspendCoroutine { continuation ->
-                                                    cronet.newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                                }
-                                                if (response.first.httpStatusCode in 200..299) {
-                                                    FileOutputStream(path).use {
-                                                        it.write(response.second)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        else -> {
-                                            okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                                if (response.isSuccessful) {
-                                                    FileOutputStream(path).use { outputStream ->
-                                                        response.body.byteStream().use { inputStream ->
-                                                            inputStream.copyTo(outputStream)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                } catch (e: Exception) {
-
-                                }
-                            }
-                            path
-                        }
-                    }
+                    val downloadedThumbnail = enqueueThumbnailDownload(filesDir, video.id, video.thumbnail, networkLibrary)
                     bookmarksRepository.updateBookmark(
                         Bookmark(
                             videoId = bookmark.videoId,
@@ -251,19 +217,8 @@ class BookmarksViewModel @Inject internal constructor(
                             ids = ids,
                         ).data
                     } catch (e: Exception) {
-                        // Kick 404s the whole batch if any id no longer exists (deleted
-                        // VOD); fall back to per-id lookups so the rest still update.
-                        ids.mapNotNull { id ->
-                            try {
-                                kickPublicApiRepository.getVideos(
-                                    networkLibrary = networkLibrary,
-                                    headers = kickPublicApiHeaders,
-                                    ids = listOf(id),
-                                ).data.firstOrNull()
-                            } catch (e: Exception) {
-                                null
-                            }
-                        }
+                        if (e is CancellationException) throw e
+                        emptyList()
                     }
                     videos.map {
                         Video(
@@ -289,65 +244,7 @@ class BookmarksViewModel @Inject internal constructor(
                                 bookmark.type != video.type ||
                                 bookmark.duration != video.duration
                             ) {
-                                val downloadedThumbnail = video.thumbnail.takeIf { !it.isNullOrBlank() }?.let {
-                                    File(filesDir, "thumbnails").mkdir()
-                                    val path = filesDir + File.separator + "thumbnails" + File.separator + video.id
-                                    viewModelScope.launch(Dispatchers.IO) {
-                                        try {
-                                            val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
-                                            val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
-                                            when {
-                                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                                                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                                    http != null -> {
-                                                    val response = suspendCoroutine { continuation ->
-                                                        http.newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                                    }
-                                                    if (response.first.httpStatusCode in 200..299) {
-                                                        FileOutputStream(path).use {
-                                                            it.write(response.second)
-                                                        }
-                                                    }
-                                                }
-                                                cronet != null -> {
-                                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                                        val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                                        cronet.newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                                        val response = request.future.get()
-                                                        if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                                            FileOutputStream(path).use {
-                                                                it.write(response.responseBody as ByteArray)
-                                                            }
-                                                        }
-                                                    } else {
-                                                        val response = suspendCoroutine { continuation ->
-                                                            cronet.newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                                        }
-                                                        if (response.first.httpStatusCode in 200..299) {
-                                                            FileOutputStream(path).use {
-                                                                it.write(response.second)
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                else -> {
-                                                    okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                                        if (response.isSuccessful) {
-                                                            FileOutputStream(path).use { outputStream ->
-                                                                response.body.byteStream().use { inputStream ->
-                                                                    inputStream.copyTo(outputStream)
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        } catch (e: Exception) {
-
-                                        }
-                                    }
-                                    path
-                                }
+                                val downloadedThumbnail = enqueueThumbnailDownload(filesDir, video.id, video.thumbnail, networkLibrary)
                                 bookmarksRepository.updateBookmark(
                                     Bookmark(
                                         videoId = bookmark.videoId,

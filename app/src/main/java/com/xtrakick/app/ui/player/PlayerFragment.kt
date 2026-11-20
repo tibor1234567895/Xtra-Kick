@@ -104,6 +104,7 @@ import com.xtrakick.app.util.KickClipApi
 import com.xtrakick.app.util.NotificationPermissionHelper
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.isKeyboardShown
+import com.xtrakick.app.util.getProxyPassword
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.safeGetBoolean
 import com.xtrakick.app.util.tokenPrefs
@@ -259,6 +260,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private var videoZoomFillHintActive = false
     private var videoZoomFillMode = false
     private var videoZoomFillHintAnimation: ViewPropertyAnimator? = null
+    private var keyboardGlobalLayoutListener: android.view.ViewTreeObserver.OnGlobalLayoutListener? = null
     private var videoZoomIndicatorAnimation: ViewPropertyAnimator? = null
     private var holdToSpeedActive = false
     private var holdToSpeedPreviousSpeed: Float? = null
@@ -691,11 +693,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     slidingLayout.updatePadding(left = 0, top = insets.top, right = 0)
                 } else {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && cornerPadding) {
-                        val rootWindowInsets = view.rootView.rootWindowInsets
-                        val topLeft = rootWindowInsets.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT)
-                        val topRight = rootWindowInsets.getRoundedCorner(RoundedCorner.POSITION_TOP_RIGHT)
-                        val bottomLeft = rootWindowInsets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT)
-                        val bottomRight = rootWindowInsets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT)
+                        val rootWindowInsets = view.rootView?.rootWindowInsets
+                        val topLeft = rootWindowInsets?.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT)
+                        val topRight = rootWindowInsets?.getRoundedCorner(RoundedCorner.POSITION_TOP_RIGHT)
+                        val bottomLeft = rootWindowInsets?.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT)
+                        val bottomRight = rootWindowInsets?.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT)
                         val leftRadius = max(topLeft?.radius ?: 0, bottomLeft?.radius ?: 0)
                         val rightRadius = max(topRight?.radius ?: 0, bottomRight?.radius ?: 0)
                         if (ignoreCutouts) {
@@ -1736,21 +1738,25 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 toggleChatBar()
                             }
                         }
-                        slidingLayout.viewTreeObserver.addOnGlobalLayoutListener {
-                            if (slidingLayout.isKeyboardShown) {
+                        keyboardGlobalLayoutListener?.let { oldListener ->
+                            slidingLayout.viewTreeObserver.removeOnGlobalLayoutListener(oldListener)
+                        }
+                        val layoutListener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                            val b = _binding ?: return@OnGlobalLayoutListener
+                            if (b.slidingLayout.isKeyboardShown) {
                                 if (!isKeyboardShown) {
                                     isKeyboardShown = true
                                     if (!isPortrait) {
-                                        chatLayout.updateLayoutParams { width = (slidingLayout.width / 1.8f).toInt() }
+                                        b.chatLayout.updateLayoutParams { width = (b.slidingLayout.width / 1.8f).toInt() }
                                         showStatusBar()
                                     }
                                 }
                             } else {
                                 if (isKeyboardShown) {
                                     isKeyboardShown = false
-                                    chatLayout.clearFocus()
+                                    b.chatLayout.clearFocus()
                                     if (!isPortrait) {
-                                        chatLayout.updateLayoutParams { width = chatWidthLandscape }
+                                        b.chatLayout.updateLayoutParams { width = chatWidthLandscape }
                                         if (isMaximized) {
                                             hideStatusBar()
                                         }
@@ -1758,6 +1764,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 }
                             }
                         }
+                        keyboardGlobalLayoutListener = layoutListener
+                        slidingLayout.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -3002,14 +3010,21 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     fun updateLatency(liveOffsetMs: Long?, targetOffsetMs: Long? = null) {
         with(binding.playerControls) {
             if (liveOffsetMs != null && prefs.getBoolean(AppConstants.PLAYER_SHOW_LATENCY, true)) {
-                latencyLayout.visibility = View.VISIBLE
-                val seconds = liveOffsetMs / 1000.0
-                latencyText.text = if (targetOffsetMs != null && !isPortrait) {
-                    "~%.1fs / %.1fs".format(seconds, targetOffsetMs / 1000.0)
-                } else {
-                    "~%.1fs".format(seconds)
+                if (latencyLayout.visibility != View.VISIBLE) {
+                    latencyLayout.visibility = View.VISIBLE
                 }
-            } else {
+                if (root.isVisible) {
+                    val seconds = liveOffsetMs / 1000.0
+                    val formatted = if (targetOffsetMs != null && !isPortrait) {
+                        "~%.1fs / %.1fs".format(seconds, targetOffsetMs / 1000.0)
+                    } else {
+                        "~%.1fs".format(seconds)
+                    }
+                    if (latencyText.text.toString() != formatted) {
+                        latencyText.text = formatted
+                    }
+                }
+            } else if (latencyLayout.visibility != View.GONE) {
                 latencyLayout.visibility = View.GONE
             }
         }
@@ -3524,7 +3539,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     showController(true)
                     updateProgress()
                 }
-                requireView().keepScreenOn = true
+                requireView().keepScreenOn = !audioOnly && viewModel.quality != CHAT_ONLY_QUALITY
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
                 ) {
@@ -4159,7 +4174,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     proxyHost = prefs.getString(AppConstants.PROXY_HOST, null),
                     proxyPort = prefs.getString(AppConstants.PROXY_PORT, null)?.toIntOrNull(),
                     proxyUser = prefs.getString(AppConstants.PROXY_USER, null),
-                    proxyPassword = prefs.getString(AppConstants.PROXY_PASSWORD, null),
+                    proxyPassword = requireContext().getProxyPassword(),
                     enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
                     forceRefresh = forceRefresh,
                     stalePlaybackUrl = stalePlaybackUrl
@@ -4279,7 +4294,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 if (!isMaximized) {
                     isMaximized = true
                     applyRefreshRateCap()
-                    requireActivity().onBackPressedDispatcher.addCallback(this@PlayerFragment, backPressedCallback)
+                    backPressedCallback.isEnabled = true
                     if (videoType == STREAM && chatFragment?.emoteMenuIsVisible() == true) {
                         chatFragment?.toggleBackPressedCallback(true)
                     }
@@ -4734,7 +4749,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             playerLayout.isMinimized = false
             restoreVideoResizeMode()
             applyRefreshRateCap()
-            requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backPressedCallback)
+            backPressedCallback.isEnabled = true
             if (videoType == STREAM && chatFragment?.emoteMenuIsVisible() == true) {
                 chatFragment?.toggleBackPressedCallback(true)
             }
@@ -4773,12 +4788,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 if (!isPortrait && isMaximized) {
                                     restoreLandscapeChatIfNeeded(animate = false)
                                 }
-                            }
-                            if (isMaximized && videoStatsActiveInSession && !requireActivity().isInPictureInPictureMode) {
-                                videoStatsOverlay.visibility = View.VISIBLE
-                                videoStatsOverlay.updateStats(getVideoStats())
-                                videoStatsOverlay.removeCallbacks(updateVideoStatsAction)
-                                videoStatsOverlay.postDelayed(updateVideoStatsAction, 1000L)
+                                if (isMaximized && videoStatsActiveInSession && !requireActivity().isInPictureInPictureMode) {
+                                    videoStatsOverlay.visibility = View.VISIBLE
+                                    videoStatsOverlay.updateStats(getVideoStats())
+                                    videoStatsOverlay.removeCallbacks(updateVideoStatsAction)
+                                    videoStatsOverlay.postDelayed(updateVideoStatsAction, 1000L)
+                                }
                             }
                             activePointerId = -1
                         }
@@ -5021,7 +5036,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     proxyHost = prefs.getString(AppConstants.PROXY_HOST, null),
                                     proxyPort = prefs.getString(AppConstants.PROXY_PORT, null)?.toIntOrNull(),
                                     proxyUser = prefs.getString(AppConstants.PROXY_USER, null),
-                                    proxyPassword = prefs.getString(AppConstants.PROXY_PASSWORD, null),
+                                    proxyPassword = requireContext().getProxyPassword(),
                                     enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
                                     forceRefresh = true
                                 )
@@ -5276,6 +5291,12 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
         isScreenOff = false
         videoStatsActiveInSession = false
+        videoZoomFillHintAnimation?.cancel()
+        videoZoomFillHintAnimation = null
+        keyboardGlobalLayoutListener?.let { oldListener ->
+            _binding?.slidingLayout?.viewTreeObserver?.removeOnGlobalLayoutListener(oldListener)
+        }
+        keyboardGlobalLayoutListener = null
         _binding?.videoStatsOverlay?.removeCallbacks(updateVideoStatsAction)
         clearFreezeFrame()
         super.onDestroyView()

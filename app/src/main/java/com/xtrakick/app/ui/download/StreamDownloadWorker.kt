@@ -30,8 +30,6 @@ import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.model.chat.ChatBadge
 import com.xtrakick.app.model.chat.ChatEmote
 import com.xtrakick.app.model.ui.OfflineVideo
-import com.xtrakick.app.model.ui.Stream
-import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.OfflineRepository
 import com.xtrakick.app.repository.PlayerRepository
@@ -39,19 +37,22 @@ import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.NetworkUtils
 import com.xtrakick.app.util.KickApiHelper
-import com.xtrakick.app.util.chat.ChatReadWebSocket
 import com.xtrakick.app.util.chat.ChatUtils
+import com.xtrakick.app.util.chat.KickCentrifugoChatWebSocket
 import com.xtrakick.app.util.DiagnosticLogger
+import org.json.JSONObject
 import com.xtrakick.app.util.hasPersistedUriPermission
 import com.xtrakick.app.util.m3u8.PlaylistUtils
 import com.xtrakick.app.util.DownloadStorage
 import com.xtrakick.app.util.SafStorageUtils
+import com.xtrakick.app.util.getProxyPassword
 import com.xtrakick.app.util.prefs
 import dagger.Lazy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -122,9 +123,6 @@ class StreamDownloadWorker @AssistedInject constructor(
     var trustManager: X509TrustManager? = null
 
     @Inject
-    lateinit var kickPublicApiRepository: KickPublicApiRepository
-
-    @Inject
     lateinit var kickRepository: KickRepository
 
     @Inject
@@ -136,7 +134,8 @@ class StreamDownloadWorker @AssistedInject constructor(
     private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private lateinit var offlineVideo: OfflineVideo
     private var chatReadJob: kotlinx.coroutines.Job? = null
-    private var chatReadWebSocket: ChatReadWebSocket? = null
+    private var chatScope: CoroutineScope? = null
+    private var kickChatWebSocket: KickCentrifugoChatWebSocket? = null
     private var chatFileWriter: BufferedWriter? = null
     private var chatPosition: Long = 0
 
@@ -145,7 +144,7 @@ class StreamDownloadWorker @AssistedInject constructor(
         offlineVideo = firstVideo
         try {
             offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_WAITING_FOR_STREAM })
-        setForeground(createForegroundInfo(false, firstVideo))
+        notificationManager.notify(firstVideo.id, createForegroundInfo(false, firstVideo).notification)
         val path = offlineVideo.downloadPath!!
         if (path.toUri().scheme == ContentResolver.SCHEME_CONTENT &&
             !context.hasPersistedUriPermission(path, read = true, write = true)) {
@@ -165,7 +164,7 @@ class StreamDownloadWorker @AssistedInject constructor(
         val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
         val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
         val proxyUser = context.prefs().getString(AppConstants.PROXY_USER, null)
-        val proxyPassword = context.prefs().getString(AppConstants.PROXY_PASSWORD, null)
+        val proxyPassword = context.getProxyPassword()
         var playlistUrl = kickRepository.getChannel(channelLogin)
             .let { kickRepository.getPlayableUrl(it) }
             ?: return Result.retry()
@@ -180,7 +179,7 @@ class StreamDownloadWorker @AssistedInject constructor(
             val playlist = when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                    http != null -> {
+                    http is HttpEngine -> {
                     val response = NetworkUtils.downloadHttpEngine(http, playlistUrl, cronetExecutor)
                     if (response.first.httpStatusCode in 200..299) {
                         String(response.second)
@@ -233,7 +232,8 @@ class StreamDownloadWorker @AssistedInject constructor(
                     val done = offlineRepository.withVideoFiles(offlineVideo, wait = true) { current ->
                         offlineVideo = current
                         offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
-                        setForeground(createForegroundInfo(true, firstVideo))
+                        runCatching { setForeground(createForegroundInfo(true, firstVideo)) }
+                            .onFailure { notificationManager.notify(firstVideo.id, createForegroundInfo(true, firstVideo).notification) }
                         val completed = try {
                             download(channelLogin, url, path)
                         } finally {
@@ -286,7 +286,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                     } else {
                         offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_WAITING_FOR_STREAM })
                     }
-                    setForeground(createForegroundInfo(false, firstVideo))
+                    notificationManager.notify(firstVideo.id, createForegroundInfo(false, firstVideo).notification)
                     endTime = endWait?.let { System.currentTimeMillis() + it }
                     if (endWait == null || endWait > 0) {
                         playlistUrl = kickRepository.getChannel(channelLogin)
@@ -333,7 +333,7 @@ class StreamDownloadWorker @AssistedInject constructor(
         val playlist = when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                http != null -> {
+                http is HttpEngine -> {
                 val response = NetworkUtils.downloadHttpEngine(http, sourceUrl, cronetExecutor)
                 if (response.first.httpStatusCode in 200..299) {
                     try {
@@ -420,7 +420,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                 when {
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                         SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                        http != null -> {
+                        http is HttpEngine -> {
                         val response = NetworkUtils.downloadHttpEngine(http, it, cronetExecutor)
                         if (isShared) {
                             context.contentResolver.openOutputStream(fileUri.toUri(), "wa")!!.use {
@@ -470,96 +470,38 @@ class StreamDownloadWorker @AssistedInject constructor(
                 initSegmentBytes?.let { bytes += it }
             })
             if (offlineVideo.name.isNullOrBlank()) {
-                var attempt = 1
-                while (attempt <= 10) {
-                    delay(10000L)
-                    val channelId = offlineVideo.channelId
-                    val stream = try {
-                        val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(context)
-                        if (kickPublicApiHeaders.isEmpty()) null else try {
-                            kickPublicApiRepository.getStreams(
+                val channel = runCatching { kickRepository.getChannel(channelLogin, forceRefresh = true) }.getOrNull()
+                val livestream = channel?.livestream
+                if (livestream != null) {
+                    val streamId = livestream.id?.toString()
+                    val thumbUrl = livestream.thumbnail?.src
+                    val downloadedThumbnail = if (!streamId.isNullOrBlank() && !thumbUrl.isNullOrBlank()) {
+                        val filesDir = context.filesDir.path
+                        File(filesDir, "thumbnails").mkdirs()
+                        val filePath = filesDir + File.separator + "thumbnails" + File.separator + streamId
+                        runCatching {
+                            val (status, bytes) = NetworkUtils.fetchBytesRaw(
+                                httpEngine = httpEngine,
+                                cronetEngine = cronetEngine,
+                                executor = cronetExecutor,
+                                okHttp = okHttpClient,
                                 networkLibrary = networkLibrary,
-                                headers = kickPublicApiHeaders,
-                                ids = channelId?.let { listOf(it) },
-                                logins = if (channelId.isNullOrBlank()) listOf(channelLogin) else null
-                            ).data.firstOrNull()?.let {
-                                Stream(
-                                    id = it.id,
-                                    channelId = it.channelId,
-                                    channelLogin = it.channelLogin,
-                                    channelName = it.channelName,
-                                    gameId = it.gameId,
-                                    gameName = it.gameName,
-                                    title = it.title,
-                                    viewerCount = it.viewerCount,
-                                    startedAt = it.startedAt,
-                                    thumbnailUrl = it.thumbnailUrl,
-                                    tags = it.tags
-                                )
-                            }
-                        } catch (e: Exception) {
-                            null
-                        }
-                    } catch (e: Exception) {
-                        null
-                    }
-                    if (stream != null) {
-                        val downloadedThumbnail = stream.id.takeIf { !it.isNullOrBlank() }?.let { id ->
-                            stream.thumbnail.takeIf { !it.isNullOrBlank() }?.let {
-                                val filesDir = context.filesDir.path
-                                File(filesDir, "thumbnails").mkdir()
-                                val filePath = filesDir + File.separator + "thumbnails" + File.separator + id
-                                CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
-                                    try {
-                                        when {
-                                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                                                SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                                http != null -> {
-                                                val response = NetworkUtils.downloadHttpEngine(http, it, cronetExecutor)
-                                                if (response.first.httpStatusCode in 200..299) {
-                                                    FileOutputStream(filePath).use {
-                                                        it.write(response.second)
-                                                    }
-                                                }
-                                            }
-                                            cronet != null -> {
-                                                val response = NetworkUtils.downloadCronet(cronet, it, cronetExecutor)
-                                                if (response.first.httpStatusCode in 200..299) {
-                                                    FileOutputStream(filePath).use {
-                                                        it.write(response.second)
-                                                    }
-                                                }
-                                            }
-                                            else -> {
-                                                okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                                    if (response.isSuccessful) {
-                                                        FileOutputStream(filePath).use { outputStream ->
-                                                            response.body.byteStream().use { inputStream ->
-                                                                inputStream.copyTo(outputStream)
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-
-                                    }
-                                }
-                                filePath
+                                url = thumbUrl,
+                            )
+                            if (status in 200..299) {
+                                FileOutputStream(filePath).use { it.write(bytes) }
                             }
                         }
-                        offlineRepository.updateStreamMetadata(offlineVideo.apply {
-                            name = stream.title
-                            thumbnail = downloadedThumbnail
-                            gameId = stream.gameId
-                            gameSlug = stream.gameSlug
-                            gameName = stream.gameName
-                            uploadDate = stream.startedAt?.let { KickApiHelper.parseIso8601DateUTC(it) }
-                        })
-                        attempt += 10
-                    }
-                    attempt += 1
+                        filePath
+                    } else null
+                    offlineRepository.updateStreamMetadata(offlineVideo.apply {
+                        name = livestream.title ?: channelLogin
+                        thumbnail = downloadedThumbnail
+                        gameId = livestream.category?.id?.toString()
+                        gameSlug = livestream.category?.slug
+                        gameName = livestream.category?.name
+                        uploadDate = livestream.createdAt?.let { KickApiHelper.parseIso8601DateUTC(it) }
+                    })
                 }
             }
             fileUri
@@ -578,7 +520,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                             when {
                                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                                     SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                    http != null -> {
+                                    http is HttpEngine -> {
                                     val response = NetworkUtils.downloadHttpEngine(http, segmentUrl, cronetExecutor)
                                     check(response.first.httpStatusCode in 200..299) { "Segment request failed (${response.first.httpStatusCode})" }
                                     firstCount.first { it == id }
@@ -630,7 +572,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                     val bytes = when {
                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                             SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                            http != null -> {
+                            http is HttpEngine -> {
                             val response = NetworkUtils.downloadHttpEngine(http, sourceUrl, cronetExecutor)
                             check(response.first.httpStatusCode in 200..299) { "Live playlist HTTP ${response.first.httpStatusCode}" }
                             response.second
@@ -682,7 +624,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                                     when {
                                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                                             SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                            http != null -> {
+                                            http is HttpEngine -> {
                                             val response = NetworkUtils.downloadHttpEngine(http, segmentUrl, cronetExecutor)
                                             check(response.first.httpStatusCode in 200..299) { "Segment request failed (${response.first.httpStatusCode})" }
                                             count.first { it == id }
@@ -748,11 +690,13 @@ class StreamDownloadWorker @AssistedInject constructor(
         val job = chatReadJob
         chatReadJob = null
         job?.cancel()
-        chatReadWebSocket?.disconnect(job)
+        kickChatWebSocket?.disconnect(job)
         job?.join()
+        chatScope?.cancel()
+        chatScope = null
         chatFileWriter?.close()
         chatFileWriter = null
-        chatReadWebSocket = null
+        kickChatWebSocket = null
     }
 
     private suspend fun startChatJob(channelLogin: String, path: String, downloadDate: Long, streamStartTime: String) {
@@ -917,26 +861,13 @@ class StreamDownloadWorker @AssistedInject constructor(
         }
         val downloadEmotes = offlineVideo.downloadChatEmotes
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-        val kickWebHeaders = KickApiHelper.getKickWebHeaders(context, true)
-        val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(context)
         val emoteQuality = context.prefs().getString(AppConstants.CHAT_IMAGE_QUALITY, "4") ?: "4"
         val useWebp = context.prefs().getBoolean(AppConstants.CHAT_USE_WEBP, true)
-        val channelId = offlineVideo.channelId
-        val badgeList = mutableListOf<ChatBadge>().apply {
-            if (downloadEmotes) {
-                val channelBadges = try { playerRepository.loadChannelBadges(networkLibrary, kickPublicApiHeaders, kickWebHeaders, channelId, channelLogin, emoteQuality, false) } catch (e: Exception) { emptyList() }
-                addAll(channelBadges)
-                val globalBadges = try { playerRepository.loadGlobalBadges(networkLibrary, kickPublicApiHeaders, kickWebHeaders, emoteQuality, false) } catch (e: Exception) { emptyList() }
-                addAll(globalBadges.filter { badge -> badge.setId !in channelBadges.map { it.setId } })
-            }
-        }
-        val cheerEmoteList = if (downloadEmotes) {
-            try {
-                playerRepository.loadCheerEmotes(networkLibrary, kickPublicApiHeaders, kickWebHeaders, channelId, channelLogin, animateGifs = true, enableIntegrity = false)
-            } catch (e: Exception) {
-                emptyList()
-            }
-        } else emptyList()
+        val resolvedChannel = runCatching { kickRepository.getChannel(channelLogin) }.getOrNull()
+        val channelId = resolvedChannel?.id?.toString() ?: offlineVideo.channelId
+        val chatroomId = resolvedChannel?.chatroom?.id?.toString()
+        val badgeList = emptyList<ChatBadge>()
+        val cheerEmoteList = emptyList<CheerEmote>()
         val emoteList = mutableListOf<Emote>().apply {
             if (downloadEmotes) {
                 if (channelId != null) {
@@ -969,24 +900,36 @@ class StreamDownloadWorker @AssistedInject constructor(
                 writer.name("liveStartTime".also { position += it.length + 4 }).value(streamStartTime.also { position += it.length + 2 })
             }
             chatPosition = position
-            chatReadWebSocket = ChatReadWebSocket(
-                channelLogin = channelLogin,
-                trustManager = trustManager,
-                listener = object : ChatReadWebSocket.Listener {
-                    override suspend fun onChatMessage(message: String, userNotice: Boolean) {
-                        saveMessage(message, writer, downloadEmotes, networkLibrary, emoteQuality, savedChatEmotes, savedBadges, savedEmotes, badgeList, cheerEmoteList, emoteList)
-                    }
-
-                    override suspend fun onClearMessage(message: String) {
-                        saveMessage(message, writer, downloadEmotes, networkLibrary, emoteQuality, savedChatEmotes, savedBadges, savedEmotes, badgeList, cheerEmoteList, emoteList)
-                    }
-
-                    override suspend fun onClearChat(message: String) {
-                        saveMessage(message, writer, downloadEmotes, networkLibrary, emoteQuality, savedChatEmotes, savedBadges, savedEmotes, badgeList, cheerEmoteList, emoteList)
-                    }
-                }
-            )
-            chatReadJob = chatReadWebSocket?.connect(CoroutineScope(Dispatchers.IO + SupervisorJob()))
+            if (!chatroomId.isNullOrBlank()) {
+                var centrifugoConnection = runCatching { kickRepository.getCentrifugoChatConnection(channelId) }.getOrNull()
+                kickChatWebSocket = KickCentrifugoChatWebSocket(
+                    chatroomId = chatroomId,
+                    channelId = channelId,
+                    fetchConnectionUrl = {
+                        val refreshed = kickRepository.getCentrifugoChatConnection(channelId)
+                        if (refreshed != null) centrifugoConnection = refreshed
+                        (refreshed ?: centrifugoConnection)?.wsUrl
+                    },
+                    fetchAuthToken = { kickRepository.getCentrifugoToken(centrifugoConnection?.clientId) },
+                    fetchChannelToken = { channelName -> kickRepository.getCentrifugoChannelToken(channelName) },
+                    trustManager = trustManager,
+                    listener = object : KickCentrifugoChatWebSocket.Listener {
+                        override suspend fun onChatEvent(eventName: String, channelName: String?, messageJson: String) {
+                            val parsed = kickRepository.parseKickRealtimeEvent(eventName, messageJson, chatScopeId = chatroomId)
+                            if (parsed != null && parsed.allChatMessages.isNotEmpty()) {
+                                val envelope = JSONObject().apply {
+                                    put("kickEvent", eventName)
+                                    put("kickData", messageJson)
+                                }.toString()
+                                saveMessage(envelope, writer, downloadEmotes, networkLibrary, emoteQuality, savedChatEmotes, savedBadges, savedEmotes, badgeList, cheerEmoteList, emoteList)
+                            }
+                        }
+                    },
+                )
+                val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+                chatScope = scope
+                chatReadJob = kickChatWebSocket?.connect(scope)
+            }
         }
     }
 
@@ -999,13 +942,20 @@ class StreamDownloadWorker @AssistedInject constructor(
         writer.value(message.also { position += it.toByteArray().size + it.count { c -> c == '"' || c == '\\' } + 3 })
         writer.endArray()
         if (downloadEmotes) {
-            val userNotice = when {
-                message.contains("PRIVMSG") -> false
-                message.contains("USERNOTICE") -> true
-                else -> null
+            val parsedChatMessages = when {
+                message.startsWith("{") -> {
+                    runCatching {
+                        val root = JSONObject(message)
+                        val eventName = root.optString("kickEvent", "App\\Events\\ChatMessageEvent")
+                        val payload = root.optString("kickData", message)
+                        kickRepository.parseKickRealtimeEvent(eventName, payload)?.allChatMessages.orEmpty()
+                    }.getOrDefault(emptyList())
+                }
+                message.contains("PRIVMSG") -> listOf(ChatUtils.parseChatMessage(message, false))
+                message.contains("USERNOTICE") -> listOf(ChatUtils.parseChatMessage(message, true))
+                else -> emptyList()
             }
-            if (userNotice != null) {
-                val chatMessage = ChatUtils.parseChatMessage(message, userNotice)
+            for (chatMessage in parsedChatMessages) {
                 val chatEmotes = mutableListOf<ChatEmote>()
                 val ChatBadges = mutableListOf<ChatBadge>()
                 val cheerEmotes = mutableListOf<CheerEmote>()
@@ -1057,7 +1007,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                         val response = when {
                             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                                 SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                http != null -> {
+                                http is HttpEngine -> {
                                 val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
                                 response.second
                             }
@@ -1097,7 +1047,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                         val response = when {
                             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                                 SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                http != null -> {
+                                http is HttpEngine -> {
                                 val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
                                 response.second
                             }
@@ -1138,7 +1088,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                         val response = when {
                             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                                 SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                http != null -> {
+                                http is HttpEngine -> {
                                 val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
                                 response.second
                             }
@@ -1180,7 +1130,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                         val response = when {
                             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                                 SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                http != null -> {
+                                http is HttpEngine -> {
                                 val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
                                 response.second
                             }

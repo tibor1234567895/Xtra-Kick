@@ -1,8 +1,6 @@
 package com.xtrakick.app.ui.channel
 
 import android.net.http.HttpEngine
-import android.os.Build
-import android.os.ext.SdkExtensions
 import com.xtrakick.app.util.NetworkUtils
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -19,10 +17,8 @@ import com.xtrakick.app.repository.NotificationUsersRepository
 import com.xtrakick.app.repository.OfflineRepository
 import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.DiagnosticLogger
-import com.xtrakick.app.util.getByteArrayCronetCallback
 import android.content.Context
 import android.util.Log
 import dagger.Lazy
@@ -34,15 +30,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.chromium.net.CronetEngine
-import org.chromium.net.apihelpers.RedirectHandlers
-import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
-import kotlin.coroutines.suspendCoroutine
 
 @HiltViewModel
 class ChannelPagerViewModel @Inject constructor(
@@ -472,61 +464,25 @@ class ChannelPagerViewModel @Inject constructor(
             updatedLocalUser = true
             user.channelId.takeIf { !it.isNullOrBlank() }?.let { userId ->
                 viewModelScope.launch {
-                    val downloadedLogo = user.channelLogo.takeIf { !it.isNullOrBlank() }?.let {
+                    val downloadedLogo = user.channelLogo.takeIf { !it.isNullOrBlank() }?.let { logoUrl ->
                         File(filesDir, "profile_pics").mkdir()
                         val path = filesDir + File.separator + "profile_pics" + File.separator + userId
                         viewModelScope.launch(Dispatchers.IO) {
                             try {
-                                val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
-                                val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
-                                when {
-                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                                        SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                        http != null -> {
-                                        val response = suspendCoroutine { continuation ->
-                                            http.newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                                        }
-                                        if (response.first.httpStatusCode in 200..299) {
-                                            FileOutputStream(path).use {
-                                                it.write(response.second)
-                                            }
-                                        }
-                                    }
-                                    cronet != null -> {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                            val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                            cronet.newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()
-                                            val response = request.future.get()
-                                            if (response.urlResponseInfo.httpStatusCode in 200..299) {
-                                                FileOutputStream(path).use {
-                                                    it.write(response.responseBody as ByteArray)
-                                                }
-                                            }
-                                        } else {
-                                            val response = suspendCoroutine { continuation ->
-                                                cronet.newUrlRequestBuilder(it, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                                            }
-                                            if (response.first.httpStatusCode in 200..299) {
-                                                FileOutputStream(path).use {
-                                                    it.write(response.second)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    else -> {
-                                        okHttpClient.newCall(Request.Builder().url(it).build()).execute().use { response ->
-                                            if (response.isSuccessful) {
-                                                FileOutputStream(path).use { outputStream ->
-                                                    response.body.byteStream().use { inputStream ->
-                                                        inputStream.copyTo(outputStream)
-                                                    }
-                                                }
-                                            }
-                                        }
+                                val (status, bytes) = NetworkUtils.fetchBytesRaw(
+                                    httpEngine = httpEngine,
+                                    cronetEngine = cronetEngine,
+                                    executor = cronetExecutor,
+                                    okHttp = okHttpClient,
+                                    networkLibrary = networkLibrary,
+                                    url = logoUrl,
+                                )
+                                if (status in 200..299) {
+                                    FileOutputStream(path).use { outputStream ->
+                                        outputStream.write(bytes)
                                     }
                                 }
-                            } catch (e: Exception) {
-
+                            } catch (_: Exception) {
                             }
                         }
                         path

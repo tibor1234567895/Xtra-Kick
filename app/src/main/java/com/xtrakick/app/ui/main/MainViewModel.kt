@@ -125,8 +125,33 @@ class MainViewModel @Inject constructor(
     var isPlayerOpened = false
     var isMultiPovOpened = false
 
-    var sleepTimer: Timer? = null
+    private var sleepTimerJob: Job? = null
     var sleepTimerEndTime = 0L
+    val sleepTimerExpired = MutableSharedFlow<Long>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        sleepTimerEndTime = 0L
+        sleepTimerExpired.resetReplayCache()
+    }
+
+    fun scheduleSleepTimer(durationMs: Long) {
+        cancelSleepTimer()
+        if (durationMs > 0L) {
+            val deadline = System.currentTimeMillis() + durationMs
+            sleepTimerEndTime = deadline
+            sleepTimerJob = viewModelScope.launch {
+                kotlinx.coroutines.delay(durationMs)
+                if (sleepTimerEndTime == deadline) {
+                    sleepTimerExpired.tryEmit(deadline)
+                }
+            }
+        }
+    }
+
+    suspend fun getOfflineVideoById(id: Int): OfflineVideo? = offlineRepository.getVideoById(id)
 
     val video = MutableStateFlow<Pair<Video?, Long?>?>(null)
     val clip = MutableStateFlow<Clip?>(null)

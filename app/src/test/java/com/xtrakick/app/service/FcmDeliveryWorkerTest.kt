@@ -23,7 +23,9 @@ class FcmDeliveryWorkerTest {
     @Test
     fun deliveryRemainsScheduledAfterFirebaseServiceIsDestroyed() {
         val context = RuntimeEnvironment.getApplication()
-        WorkManager.initialize(context, Configuration.Builder().build())
+        if (runCatching { WorkManager.getInstance(context) }.isFailure) {
+            WorkManager.initialize(context, Configuration.Builder().build())
+        }
         val service = Robolectric.buildService(XtraFirebaseMessagingService::class.java).create()
         val message = RemoteMessage.Builder("test")
             .addData("type", "stream_live")

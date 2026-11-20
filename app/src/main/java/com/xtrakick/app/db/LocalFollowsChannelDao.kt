@@ -33,4 +33,7 @@ interface LocalFollowsChannelDao {
 
     @Update
     fun update(video: LocalFollowChannel)
+
+    @Update
+    fun updateAll(items: List<LocalFollowChannel>)
 }

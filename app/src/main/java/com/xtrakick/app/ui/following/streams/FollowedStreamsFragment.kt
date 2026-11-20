@@ -138,8 +138,9 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
                     val shouldScrollToTop = wasRefreshing && !state.isRefreshing && state.items.isNotEmpty()
                     @Suppress("UNCHECKED_CAST")
                     (listAdapter as ListAdapter<Stream, RecyclerView.ViewHolder>).submitList(state.items.toList()) {
+                        val b = _binding ?: return@submitList
                         if (shouldScrollToTop || scrollToTopAfterSort) {
-                            binding.recyclerView.scrollToPosition(0)
+                            b.recyclerView.scrollToPosition(0)
                             scrollToTopAfterSort = false
                         }
                     }

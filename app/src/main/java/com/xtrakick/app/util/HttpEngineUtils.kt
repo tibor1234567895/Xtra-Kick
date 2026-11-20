@@ -30,6 +30,7 @@ object HttpEngineUtils {
         progressListener: NetworkUtils.ProgressListener? = null,
         output: OutputStream? = null,
         onContentLength: ((Long) -> Unit)? = null,
+        shouldFollowRedirect: (String) -> Boolean = { true },
     ): UrlRequest.Callback {
         return object : UrlRequest.Callback {
             private lateinit var mResponseBodyStream: ByteArrayOutputStream
@@ -37,7 +38,11 @@ object HttpEngineUtils {
             private var bytesRead = 0
 
             override fun onRedirectReceived(request: UrlRequest, info: UrlResponseInfo, newLocationUrl: String) {
-                request.followRedirect()
+                if (shouldFollowRedirect(newLocationUrl)) {
+                    request.followRedirect()
+                } else {
+                    request.cancel()
+                }
             }
 
             override fun onResponseStarted(request: UrlRequest, info: UrlResponseInfo) {

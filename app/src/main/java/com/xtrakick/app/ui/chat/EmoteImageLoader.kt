@@ -6,6 +6,7 @@ import android.graphics.drawable.Drawable
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import coil3.decode.DataSource
@@ -27,6 +28,7 @@ import com.bumptech.glide.request.target.Target
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.model.chat.Emote
+import com.xtrakick.app.util.chat.ChatAdapterUtils
 import com.xtrakick.app.util.chat.StvCdnHealth
 import com.xtrakick.app.util.chat.stvPrefetchUrl
 import kotlinx.coroutines.CompletableDeferred
@@ -235,22 +237,32 @@ object EmoteImageLoader {
      * is hidden: the decode loop keeps running against invisible views otherwise.
      */
     fun freezeAll(root: View) {
-        forEachImageView(root) { imageView -> (imageView.drawable as? Animatable)?.stop() }
+        forEachAnimatedView(root) { view ->
+            when (view) {
+                is ImageView -> (view.drawable as? Animatable)?.stop()
+                is TextView -> ChatAdapterUtils.stopSpanAnimations(view.text)
+            }
+        }
     }
 
     /** Resumes animations stopped by [freezeAll]. */
     fun unfreezeAll(root: View) {
-        forEachImageView(root) { imageView -> (imageView.drawable as? Animatable)?.start() }
+        forEachAnimatedView(root) { view ->
+            when (view) {
+                is ImageView -> (view.drawable as? Animatable)?.start()
+                is TextView -> ChatAdapterUtils.startSpanAnimations(view.text)
+            }
+        }
     }
 
-    private fun forEachImageView(root: View, action: (ImageView) -> Unit) {
-        if (root is ImageView) {
+    private fun forEachAnimatedView(root: View, action: (View) -> Unit) {
+        if (root is ImageView || root is TextView) {
             action(root)
             return
         }
         if (root is ViewGroup) {
             for (i in 0 until root.childCount) {
-                forEachImageView(root.getChildAt(i), action)
+                forEachAnimatedView(root.getChildAt(i), action)
             }
         }
     }

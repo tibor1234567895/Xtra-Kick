@@ -16,6 +16,9 @@ import kotlinx.coroutines.ensureActive
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
+import java.util.concurrent.atomic.AtomicInteger
+
+internal val activeUpdateSessionId = AtomicInteger(-1)
 
 internal suspend fun installAppUpdate(context: Context, url: String, download: suspend (OutputStream) -> Unit) {
     require(isTrustedUpdateUrl(url)) { "Update URL must point to an official release asset" }
@@ -43,9 +46,11 @@ internal suspend fun installAppUpdate(context: Context, url: String, download: s
                     flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                     action = MainActivity.INTENT_INSTALL_UPDATE
                 }
+                activeUpdateSessionId.set(sessionId)
                 session.commit(PendingIntent.getActivity(context, sessionId, callback, PendingIntent.FLAG_MUTABLE).intentSender)
             }
         } catch (error: Exception) {
+            activeUpdateSessionId.compareAndSet(sessionId, -1)
             runCatching { installer.abandonSession(sessionId) }
             throw error
         }

@@ -14,6 +14,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.webkit.CookieManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -88,6 +89,13 @@ class LoginActivity : BaseStateActivity() {
 
     override fun onDestroy() {
         cancelDelayedFallbackButton()
+        if (::binding.isInitialized) {
+            runCatching {
+                (binding.webView.parent as? ViewGroup)?.removeView(binding.webView)
+                binding.webView.stopLoading()
+                binding.webView.destroy()
+            }
+        }
         super.onDestroy()
     }
 
@@ -110,7 +118,11 @@ class LoginActivity : BaseStateActivity() {
         binding = ActivityLoginBinding.inflate(layoutInflater)
         setContentView(binding.root)
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, windowInsets ->
-            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout() or
+                    WindowInsetsCompat.Type.ime()
+            )
             binding.root.updateLayoutParams<ViewGroup.MarginLayoutParams> {
                 topMargin = insets.top
                 leftMargin = insets.left
@@ -230,6 +242,14 @@ class LoginActivity : BaseStateActivity() {
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
                 return !url.isNullOrBlank() && tryHandleKickCallback(Uri.parse(url))
             }
+
+            override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                Log.w(TAG, "Login WebView renderer process gone didCrash=${detail?.didCrash()}")
+                cancelDelayedFallbackButton()
+                showLoginOptions()
+                Toast.makeText(this@LoginActivity, R.string.kick_browser_fallback_webview, Toast.LENGTH_SHORT).show()
+                return true
+            }
         }
     }
 
@@ -248,6 +268,13 @@ class LoginActivity : BaseStateActivity() {
         if (callbackHandled || uri == null || !isKickCallbackUri(uri)) {
             return false
         }
+        val state = uri.getQueryParameter("state")
+        val expectedState = tokenPrefs().getString(AppConstants.KICK_AUTH_STATE, null)
+        if (state.isNullOrBlank() || expectedState.isNullOrBlank() || state != expectedState) {
+            Toast.makeText(this, R.string.connection_error, Toast.LENGTH_LONG).show()
+            finish()
+            return true
+        }
         callbackHandled = true
 
         val error = uri.getQueryParameter("error")
@@ -258,11 +285,9 @@ class LoginActivity : BaseStateActivity() {
         }
 
         val code = uri.getQueryParameter("code")
-        val state = uri.getQueryParameter("state")
-        val expectedState = tokenPrefs().getString(AppConstants.KICK_AUTH_STATE, null)
         val verifier = tokenPrefs().getString(AppConstants.KICK_PKCE_VERIFIER, null)
 
-        if (code.isNullOrBlank() || state.isNullOrBlank() || verifier.isNullOrBlank() || state != expectedState) {
+        if (code.isNullOrBlank() || verifier.isNullOrBlank()) {
             Toast.makeText(this, R.string.connection_error, Toast.LENGTH_LONG).show()
             finish()
             return true

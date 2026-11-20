@@ -19,15 +19,21 @@ import java.io.StringWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
 object DiagnosticLogger {
     private const val DIRECTORY = "diagnostics"
+    private const val EXPORT_DIRECTORY = "diagnostics-export"
     private const val FILE_NAME = "xtra-diagnostic.log"
     private const val PREVIOUS_FILE_NAME = "xtra-diagnostic.previous.log"
     private const val MAX_BYTES = 512L * 1024L
     private const val LEVEL_CRASH = "crash"
     private const val LEVEL_ERROR = "error"
     private const val LEVEL_WARNING = "warning"
+
+    private val writeExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "xtra-diag-writer").apply { isDaemon = true }
+    }
 
     // Typed as Application, not Context: this object is a singleton, so holding an Activity
     // or Service context here would be a genuine leak. The narrower type makes "only ever the
@@ -120,7 +126,7 @@ object DiagnosticLogger {
 
     fun testEntry() {
         val appContext = context ?: return
-        write(appContext, LEVEL_WARNING, "DiagnosticLogger", "Test diagnostic log entry", null)
+        write(appContext, LEVEL_WARNING, "DiagnosticLogger", "Test diagnostic log entry", null, synchronous = true)
         logPause(
             callingContext = appContext,
             source = "DiagnosticLogger.testEntry",
@@ -129,6 +135,7 @@ object DiagnosticLogger {
             engine = "TestEngine",
             details = "Verification entry to confirm pause logging functionality",
         )
+        flushPendingWrites()
     }
 
     fun logCrash(throwable: Throwable) {
@@ -276,7 +283,12 @@ object DiagnosticLogger {
         }.getOrDefault("")
     }
 
+    private fun flushPendingWrites() {
+        runCatching { writeExecutor.submit {}.get() }
+    }
+
     fun clear(context: Context) {
+        flushPendingWrites()
         synchronized(this) {
             currentFile(context).delete()
             previousFile(context).delete()
@@ -284,13 +296,14 @@ object DiagnosticLogger {
     }
 
     fun exportFile(context: Context): File? {
+        flushPendingWrites()
         synchronized(this) {
             val current = currentFile(context)
             val previous = previousFile(context)
             if (!current.exists() && !previous.exists()) {
                 return null
             }
-            val export = File(context.cacheDir, "xtra-diagnostic-export.txt")
+            val export = File(File(context.cacheDir, EXPORT_DIRECTORY), "xtra-diagnostic-export.txt")
             export.parentFile?.mkdirs()
             export.bufferedWriter().use { writer ->
                 if (previous.exists()) {
@@ -319,6 +332,7 @@ object DiagnosticLogger {
      * log can't blow up a dialog; entry count feeds the status line.
      */
     fun readForView(context: Context, tailChars: Int = 60_000): DiagnosticLogView? {
+        flushPendingWrites()
         synchronized(this) {
             val previous = previousFile(context).takeIf { it.exists() }
             val current = currentFile(context).takeIf { it.exists() }
@@ -370,7 +384,7 @@ object DiagnosticLogger {
         if (!forceCrash && !shouldLogForMinimum(level, prefs.getString(AppConstants.DEBUG_DIAGNOSTIC_FILE_LOG_LEVEL, LEVEL_ERROR))) {
             return
         }
-        write(appContext, level, tag, message, throwable)
+        write(appContext, level, tag, message, throwable, synchronous = forceCrash)
     }
 
     internal fun shouldLogForMinimum(level: String, minimum: String?): Boolean {
@@ -381,14 +395,29 @@ object DiagnosticLogger {
         }
     }
 
-    private fun write(context: Context, level: String, tag: String, message: String, throwable: Throwable?) {
-        synchronized(this) {
-            runCatching {
-                val file = currentFile(context)
-                file.parentFile?.mkdirs()
-                rotateIfNeeded(context, file)
-                file.appendText(formatEntry(context, level, tag, message, throwable))
+    private fun write(
+        context: Context,
+        level: String,
+        tag: String,
+        message: String,
+        throwable: Throwable?,
+        synchronous: Boolean = false,
+    ) {
+        val callerThreadName = Thread.currentThread().name
+        val task = Runnable {
+            synchronized(this) {
+                runCatching {
+                    val file = currentFile(context)
+                    file.parentFile?.mkdirs()
+                    rotateIfNeeded(context, file)
+                    file.appendText(formatEntry(context, level, tag, message, throwable, callerThreadName))
+                }
             }
+        }
+        if (synchronous) {
+            task.run()
+        } else {
+            runCatching { writeExecutor.execute(task) }.onFailure { task.run() }
         }
     }
 
@@ -401,7 +430,14 @@ object DiagnosticLogger {
         file.renameTo(previous)
     }
 
-    private fun formatEntry(context: Context, level: String, tag: String, message: String, throwable: Throwable?): String {
+    private fun formatEntry(
+        context: Context,
+        level: String,
+        tag: String,
+        message: String,
+        throwable: Throwable?,
+        callerThreadName: String = Thread.currentThread().name,
+    ): String {
         val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z", Locale.US).format(Date())
         val runtime = Runtime.getRuntime()
         val memoryClass = runCatching {
@@ -413,7 +449,7 @@ object DiagnosticLogger {
             appendLine("message=$message")
             appendLine("app=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) ${BuildConfig.BUILD_TYPE}")
             appendLine("device=${Build.MANUFACTURER} ${Build.MODEL}; sdk=${Build.VERSION.SDK_INT}")
-            appendLine("thread=${Thread.currentThread().name}; foreground=$isAppInForeground; activity=${lastResumedActivity ?: "unknown"}")
+            appendLine("thread=$callerThreadName; foreground=$isAppInForeground; activity=${lastResumedActivity ?: "unknown"}")
             appendLine("memory=usedKb:${(runtime.totalMemory() - runtime.freeMemory()) / 1024L} maxKb:${runtime.maxMemory() / 1024L} nativeKb:$nativeHeapKb classMb:${memoryClass ?: "unknown"}")
             throwable?.let {
                 if (level == LEVEL_WARNING && isNetworkException(it)) {

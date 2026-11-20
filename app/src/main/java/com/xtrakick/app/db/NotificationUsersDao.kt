@@ -18,7 +18,13 @@ interface NotificationUsersDao {
     fun getByUserId(id: String): NotificationUser?
 
     @Query("SELECT * FROM notifications WHERE channelId IN (:keys)")
-    fun getByKeys(keys: List<String>): List<NotificationUser>
+    fun getByKeysChunk(keys: List<String>): List<NotificationUser>
+
+    @Transaction
+    fun getByKeys(keys: List<String>): List<NotificationUser> {
+        if (keys.isEmpty()) return emptyList()
+        return keys.chunked(500).flatMap(::getByKeysChunk)
+    }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insert(item: NotificationUser)
@@ -33,7 +39,13 @@ interface NotificationUsersDao {
     fun delete(item: NotificationUser)
 
     @Query("DELETE FROM notifications WHERE channelId IN (:keys)")
-    fun deleteByKeys(keys: List<String>): Int
+    fun deleteByKeysChunk(keys: List<String>): Int
+
+    @Transaction
+    fun deleteByKeys(keys: List<String>): Int {
+        if (keys.isEmpty()) return 0
+        return keys.chunked(500).sumOf(::deleteByKeysChunk)
+    }
 
     /** Atomically replace all notification subscriptions. */
     @Transaction

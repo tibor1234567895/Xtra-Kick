@@ -27,11 +27,8 @@ interface RecentSearchDao {
     @Query("DELETE FROM recent_search WHERE id NOT IN (SELECT id FROM recent_search WHERE type = :type ORDER BY lastSearched DESC, id DESC LIMIT 20) AND type = :type")
     fun deleteOld(type: String)
 
-    @Transaction
-    fun deleteMatching(query: String, type: String) {
-        val normalizedQuery = query.trim().lowercase(Locale.ROOT)
-        getAll(type).filter { it.query.trim().lowercase(Locale.ROOT) == normalizedQuery }.forEach(::delete)
-    }
+    @Query("DELETE FROM recent_search WHERE type = :type AND LOWER(TRIM(query)) = LOWER(TRIM(:query))")
+    fun deleteMatching(query: String, type: String)
 
     @Transaction
     fun ensureMaxSizeAndInsert(item: RecentSearch) {

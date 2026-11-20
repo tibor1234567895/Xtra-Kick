@@ -45,6 +45,7 @@ import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.Call
 import okhttp3.ConnectionPool
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Interceptor
 import okhttp3.Protocol
@@ -52,23 +53,48 @@ import okio.Buffer
 import okio.buffer
 import okio.source
 import org.chromium.net.CronetEngine
-import org.chromium.net.apihelpers.RedirectHandlers
 import org.chromium.net.apihelpers.UploadDataProviders
-import org.chromium.net.apihelpers.UrlRequestCallbacks
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
-import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 
 
 @HiltAndroidApp
 class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Factory {
 
+    internal enum class KickImageHostTier {
+        AUTHENTICATED_THUMBNAIL,
+        PUBLIC_CDN,
+    }
+
     companion object {
         lateinit var INSTANCE: Application
         var showUnexpectedLogoutNoticeThisProcess = false
+        private const val IMAGE_REQUEST_TIMEOUT_MS = 30_000L
+
+        internal fun classifyKickImageUrl(url: String): KickImageHostTier? {
+            val parsed = url.toHttpUrlOrNull() ?: return null
+            if (!parsed.scheme.equals("https", ignoreCase = true)) return null
+            return when {
+                parsed.host.equals("stream.kick.com", ignoreCase = true) ||
+                    parsed.host.equals("images.kick.com", ignoreCase = true) -> KickImageHostTier.AUTHENTICATED_THUMBNAIL
+                parsed.host.equals("ext.cdn.kick.com", ignoreCase = true) ||
+                    parsed.host.equals("files.kick.com", ignoreCase = true) -> KickImageHostTier.PUBLIC_CDN
+                else -> null
+            }
+        }
+
+        internal fun canFollowKickImageRedirect(originalUrl: String, newLocationUrl: String?): Boolean {
+            if (classifyKickImageUrl(originalUrl) != KickImageHostTier.AUTHENTICATED_THUMBNAIL) {
+                return true
+            }
+            if (newLocationUrl.isNullOrBlank()) return false
+            return classifyKickImageUrl(newLocationUrl) == KickImageHostTier.AUTHENTICATED_THUMBNAIL
+        }
     }
 
     // Below Android 13, AppCompat applies stored app locales to activity contexts only,
@@ -103,8 +129,6 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         super.onCreate()
         INSTANCE = this
         DiagnosticLogger.init(this)
-        // Warmup WebSettings user agent on main thread to prevent background thread latch deadlock
-        runCatching { WebSettings.getDefaultUserAgent(this) }
         val previousUncaughtExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
@@ -136,12 +160,20 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         }
         UsagePing.maybeSend(this, delayMillis = 15_000L)
         var startedActivities = 0
+        var userAgentWarmedUp = false
         registerActivityLifecycleCallbacks(
             object : ActivityLifecycleCallbacks {
                 override fun onActivityStarted(activity: android.app.Activity) {
                     startedActivities += 1
                     WebSocketRuntime.isAppInForeground = startedActivities > 0
                     DiagnosticLogger.updateAppState(WebSocketRuntime.isAppInForeground)
+                    if (!userAgentWarmedUp) {
+                        userAgentWarmedUp = true
+                        android.os.Looper.myQueue().addIdleHandler {
+                            runCatching { WebSettings.getDefaultUserAgent(this@KickApp) }
+                            false
+                        }
+                    }
                     if (startedActivities == 1) {
                         UsagePing.noteSessionStarted(activity)
                         UsagePing.maybeSend(activity.applicationContext, delayMillis = 3_000L)
@@ -240,12 +272,10 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     }
 
     private fun kickImageHeaders(url: String): Map<String, String>? {
-        return when {
-            url.contains("://stream.kick.com/", ignoreCase = true) ||
-                url.contains("://images.kick.com/", ignoreCase = true) -> kickStreamThumbnailHeaders()
-            url.contains("://ext.cdn.kick.com/", ignoreCase = true) ||
-                url.contains("://files.kick.com/", ignoreCase = true) -> kickCdnHeaders
-            else -> null
+        return when (classifyKickImageUrl(url)) {
+            KickImageHostTier.AUTHENTICATED_THUMBNAIL -> kickStreamThumbnailHeaders()
+            KickImageHostTier.PUBLIC_CDN -> kickCdnHeaders
+            null -> null
         }
     }
 
@@ -280,7 +310,7 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                 when {
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                         SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                        http != null -> {
+                        http is HttpEngine -> {
                         add(NetworkFetcher.Factory(
                             networkClient = {
                                 object : NetworkClient {
@@ -291,21 +321,34 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                             buffer.readByteArray()
                                         }
                                         val requestMillis = System.currentTimeMillis()
-                                        val response = suspendCoroutine { continuation ->
-                                            http.newUrlRequestBuilder(request.url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                                                request.headers.asMap().forEach { entry ->
-                                                    entry.value.forEach {
-                                                        addHeader(entry.key, it)
+                                        val response = withTimeout(IMAGE_REQUEST_TIMEOUT_MS) {
+                                            suspendCancellableCoroutine { continuation ->
+                                                val urlRequest = http.newUrlRequestBuilder(
+                                                    request.url,
+                                                    cronetExecutor,
+                                                    HttpEngineUtils.byteArrayUrlCallback(
+                                                        continuation = continuation,
+                                                        shouldFollowRedirect = { newLocationUrl ->
+                                                            canFollowKickImageRedirect(request.url, newLocationUrl)
+                                                        },
+                                                    ),
+                                                ).apply {
+                                                    request.headers.asMap().forEach { entry ->
+                                                        entry.value.forEach {
+                                                            addHeader(entry.key, it)
+                                                        }
                                                     }
-                                                }
-                                                kickImageHeaders(request.url)?.forEach { (name, value) ->
-                                                    addHeader(name, value)
-                                                }
-                                                requestBody?.let {
-                                                    setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(requestBody), cronetExecutor)
-                                                }
-                                                setHttpMethod(request.method)
-                                            }.build().start()
+                                                    kickImageHeaders(request.url)?.forEach { (name, value) ->
+                                                        addHeader(name, value)
+                                                    }
+                                                    requestBody?.let {
+                                                        setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(requestBody), cronetExecutor)
+                                                    }
+                                                    setHttpMethod(request.method)
+                                                }.build()
+                                                continuation.invokeOnCancellation { urlRequest.cancel() }
+                                                urlRequest.start()
+                                            }
                                         }
                                         val responseMillis = System.currentTimeMillis()
                                         return block(
@@ -328,62 +371,28 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                         ))
                     }
                     cronet != null -> {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                            add(NetworkFetcher.Factory(
-                                networkClient = {
-                                    object : NetworkClient {
-                                        override suspend fun <T> executeRequest(request: NetworkRequest, block: suspend (NetworkResponse) -> T): T {
-                                            val cronetRequest = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
-                                            cronet.newUrlRequestBuilder(request.url, cronetRequest.callback, cronetExecutor).apply {
-                                                request.headers.asMap().forEach { entry ->
-                                                    entry.value.forEach {
-                                                        addHeader(entry.key, it)
-                                                    }
-                                                }
-                                                kickImageHeaders(request.url)?.forEach { (name, value) ->
-                                                    addHeader(name, value)
-                                                }
-                                                request.body?.let {
-                                                    val buffer = Buffer()
-                                                    it.writeTo(buffer)
-                                                    setUploadDataProvider(UploadDataProviders.create(buffer.readByteArray()), cronetExecutor)
-                                                }
-                                                setHttpMethod(request.method)
-                                            }.build().start()
-                                            val requestMillis = System.currentTimeMillis()
-                                            val response = cronetRequest.future.get()
-                                            val responseMillis = System.currentTimeMillis()
-                                            return block(
-                                                NetworkResponse(
-                                                    code = response.urlResponseInfo.httpStatusCode,
-                                                    requestMillis = requestMillis,
-                                                    responseMillis = responseMillis,
-                                                    headers = NetworkHeaders.Builder().apply {
-                                                        response.urlResponseInfo.allHeadersAsList.forEach {
-                                                            add(it.key, it.value)
-                                                        }
-                                                    }.build(),
-                                                    body = (response.responseBody as ByteArray).inputStream().source().buffer().let(::NetworkResponseBody),
-                                                )
-                                            )
+                        add(NetworkFetcher.Factory(
+                            networkClient = {
+                                object : NetworkClient {
+                                    override suspend fun <T> executeRequest(request: NetworkRequest, block: suspend (NetworkResponse) -> T): T {
+                                        val requestBody = request.body?.let {
+                                            val buffer = Buffer()
+                                            it.writeTo(buffer)
+                                            buffer.readByteArray()
                                         }
-                                    }
-                                },
-                                cacheStrategy = { CacheControlCacheStrategy() }
-                            ))
-                        } else {
-                            add(NetworkFetcher.Factory(
-                                networkClient = {
-                                    object : NetworkClient {
-                                        override suspend fun <T> executeRequest(request: NetworkRequest, block: suspend (NetworkResponse) -> T): T {
-                                            val requestBody = request.body?.let {
-                                                val buffer = Buffer()
-                                                it.writeTo(buffer)
-                                                buffer.readByteArray()
-                                            }
-                                            val requestMillis = System.currentTimeMillis()
-                                            val response = suspendCoroutine { continuation ->
-                                                cronet.newUrlRequestBuilder(request.url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
+                                        val requestMillis = System.currentTimeMillis()
+                                        val response = withTimeout(IMAGE_REQUEST_TIMEOUT_MS) {
+                                            suspendCancellableCoroutine { continuation ->
+                                                val urlRequest = cronet.newUrlRequestBuilder(
+                                                    request.url,
+                                                    getByteArrayCronetCallback(
+                                                        continuation = continuation,
+                                                        shouldFollowRedirect = { newLocationUrl ->
+                                                            canFollowKickImageRedirect(request.url, newLocationUrl)
+                                                        },
+                                                    ),
+                                                    cronetExecutor,
+                                                ).apply {
                                                     request.headers.asMap().forEach { entry ->
                                                         entry.value.forEach {
                                                             addHeader(entry.key, it)
@@ -396,28 +405,30 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                                         setUploadDataProvider(UploadDataProviders.create(requestBody), cronetExecutor)
                                                     }
                                                     setHttpMethod(request.method)
-                                                }.build().start()
+                                                }.build()
+                                                continuation.invokeOnCancellation { urlRequest.cancel() }
+                                                urlRequest.start()
                                             }
-                                            val responseMillis = System.currentTimeMillis()
-                                            return block(
-                                                NetworkResponse(
-                                                    code = response.first.httpStatusCode,
-                                                    requestMillis = requestMillis,
-                                                    responseMillis = responseMillis,
-                                                    headers = NetworkHeaders.Builder().apply {
-                                                        response.first.allHeadersAsList.forEach {
-                                                            add(it.key, it.value)
-                                                        }
-                                                    }.build(),
-                                                    body = response.second.inputStream().source().buffer().let(::NetworkResponseBody),
-                                                )
-                                            )
                                         }
+                                        val responseMillis = System.currentTimeMillis()
+                                        return block(
+                                            NetworkResponse(
+                                                code = response.first.httpStatusCode,
+                                                requestMillis = requestMillis,
+                                                responseMillis = responseMillis,
+                                                headers = NetworkHeaders.Builder().apply {
+                                                    response.first.allHeadersAsList.forEach {
+                                                        add(it.key, it.value)
+                                                    }
+                                                }.build(),
+                                                body = response.second.inputStream().source().buffer().let(::NetworkResponseBody),
+                                            )
+                                        )
                                     }
-                                },
-                                cacheStrategy = { CacheControlCacheStrategy() }
-                            ))
-                        }
+                                }
+                            },
+                            cacheStrategy = { CacheControlCacheStrategy() }
+                        ))
                     }
                     else -> {
                         val coilClient = okHttpClient.newBuilder()
@@ -430,6 +441,13 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                         newReq.header(name, value)
                                     }
                                     chain.proceed(newReq.build())
+                                } else if (request.header("Cookie") != null || request.header("Authorization") != null) {
+                                    chain.proceed(
+                                        request.newBuilder()
+                                            .removeHeader("Cookie")
+                                            .removeHeader("Authorization")
+                                            .build()
+                                    )
                                 } else {
                                     chain.proceed(request)
                                 }

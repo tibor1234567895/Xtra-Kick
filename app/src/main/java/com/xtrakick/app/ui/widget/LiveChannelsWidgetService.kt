@@ -69,7 +69,9 @@ class LiveChannelsRemoteViewsFactory(
     override fun onDataSetChanged() {
         streams = runCatching {
             runBlocking {
-                repository.loadLiveFollowed(forceRefresh = LiveChannelsWidgetProvider.consumeRefreshRequest()).items
+                kotlinx.coroutines.withTimeout(15_000L) {
+                    repository.loadLiveFollowed(forceRefresh = LiveChannelsWidgetProvider.consumeRefreshRequest()).items
+                }
             }
         }.getOrElse { repository.peekCache(maxAgeMs = TimeUnit.HOURS.toMillis(24)) }
     }

@@ -571,8 +571,9 @@ class DownloadsViewModel @Inject internal constructor(
                     } finally {
                         videosInUse.remove(video.id)
                         withContext(NonCancellable) {
+                            val intact = DownloadStorage.isOutputIntact(applicationContext, video.url)
                             repository.updateStatus(video.apply {
-                                status = OfflineVideo.STATUS_DOWNLOADED
+                                status = if (intact) OfflineVideo.STATUS_DOWNLOADED else OfflineVideo.STATUS_PENDING
                             })
                         }
                     }
@@ -743,8 +744,9 @@ class DownloadsViewModel @Inject internal constructor(
                     } finally {
                         videosInUse.remove(video.id)
                         withContext(NonCancellable) {
+                            val intact = DownloadStorage.isOutputIntact(applicationContext, video.url)
                             repository.updateStatus(video.apply {
-                                status = OfflineVideo.STATUS_DOWNLOADED
+                                status = if (intact) OfflineVideo.STATUS_DOWNLOADED else OfflineVideo.STATUS_PENDING
                             })
                         }
                     }

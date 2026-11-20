@@ -54,6 +54,23 @@ class MainActivityIntentTest {
         })
     }
 
+    @Test fun isSystemInstallerIntentRejectsUriGrantsAndChooserPayloads() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).get()
+        val chooserIntent = Intent(Intent.ACTION_CHOOSER).apply { `package` = "android" }
+        val dataIntent = Intent("android.content.pm.action.CONFIRM_INSTALL").apply {
+            `package` = "android"
+            data = android.net.Uri.parse("content://com.github.andreyasadchy.xtrakick.test.diagnostic-file-provider/diagnostics/xtrakick-diagnostics.log")
+        }
+        val flagIntent = Intent("android.content.pm.action.CONFIRM_INSTALL").apply {
+            `package` = "android"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        org.junit.Assert.assertFalse(activity.isSystemInstallerIntent(chooserIntent))
+        org.junit.Assert.assertFalse(activity.isSystemInstallerIntent(dataIntent))
+        org.junit.Assert.assertFalse(activity.isSystemInstallerIntent(flagIntent))
+    }
+
     @Test fun unexpectedParcelableTypesAreIgnored() {
         handleIntent(Intent(MainActivity.INTENT_LIVE_NOTIFICATION).putExtra(MainActivity.KEY_VIDEO, OfflineVideo()))
         handleIntent(Intent(MainActivity.INTENT_OPEN_DOWNLOADED_VIDEO).putExtra(MainActivity.KEY_VIDEO, Stream()))

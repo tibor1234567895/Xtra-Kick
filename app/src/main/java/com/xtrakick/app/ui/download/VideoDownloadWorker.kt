@@ -201,7 +201,8 @@ class VideoDownloadWorker @AssistedInject constructor(
         var videoOutputTouched = false
         try {
             offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
-            setForeground(createForegroundInfo())
+            runCatching { setForeground(createForegroundInfo()) }
+                .onFailure { notificationManager.notify(offlineVideo.id, createForegroundInfo().notification) }
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
         val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
         val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
@@ -250,7 +251,7 @@ class VideoDownloadWorker @AssistedInject constructor(
             var playlist = when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                    http != null -> {
+                    http is HttpEngine -> {
                     val response = NetworkUtils.downloadHttpEngine(http, sourceUrl, cronetExecutor)
                     response.second.inputStream().use {
                         PlaylistUtils.parseMediaPlaylist(it)
@@ -505,7 +506,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                             when {
                                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                                     SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                    http != null -> {
+                                    http is HttpEngine -> {
                                     val rangeHeader = segmentRangeHeader(it)
                                     val response = NetworkUtils.downloadHttpEngine(http, segmentTargetUrl, cronetExecutor, range = rangeHeader)
                                     check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
@@ -776,6 +777,17 @@ class VideoDownloadWorker @AssistedInject constructor(
         }
         return Result.success()
         } catch (e: CancellationException) {
+            withContext(kotlinx.coroutines.NonCancellable) {
+                runCatching {
+                    val completedIntact = !videoOutputTouched &&
+                        (preRunStatus == OfflineVideo.STATUS_DOWNLOADED || forceChatRedownload ||
+                            (offlineVideo.maxProgress > 0 && offlineVideo.progress == offlineVideo.maxProgress)) &&
+                        DownloadStorage.isOutputIntact(context, offlineVideo.url)
+                    offlineRepository.updateStatus(offlineVideo.apply {
+                        status = if (completedIntact) OfflineVideo.STATUS_DOWNLOADED else OfflineVideo.STATUS_PENDING
+                    })
+                }
+            }
             throw e
         } catch (e: Throwable) {
             Log.e("VideoDownloadWorker", "Video download failed: ${e.message}", e)
@@ -1155,7 +1167,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                             } else when {
                                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                                     SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                    http != null -> {
+                                    http is HttpEngine -> {
                                     val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
                                     response.second
                                 }
@@ -1506,7 +1518,7 @@ class VideoDownloadWorker @AssistedInject constructor(
         val now = SystemClock.elapsedRealtime()
         if (force || now - lastNotificationAt >= 1_000L) {
             lastNotificationAt = now
-            setForeground(createForegroundInfo())
+            notificationManager.notify(offlineVideo.id, createForegroundInfo().notification)
         }
     }
 
@@ -1588,7 +1600,7 @@ class VideoDownloadWorker @AssistedInject constructor(
         val written = when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                http != null -> {
+                http is HttpEngine -> {
                 val response = NetworkUtils.downloadHttpEngine(http, initUrl, cronetExecutor)
                 check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading init segment" }
                 openDownloadOutput(fileUri, shared).use { it.write(response.second) }
@@ -1649,7 +1661,7 @@ class VideoDownloadWorker @AssistedInject constructor(
             val status = when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                    http != null -> {
+                    http is HttpEngine -> {
                     val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor, output = countedOutput, onContentLength = contentLength::set)
                     response.first.httpStatusCode
                 }

@@ -216,7 +216,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     private val prewarmedEmoteUrls = LinkedHashSet<String>()
     private var pickerWarmupQueued = false
 
-    private val backPressedCallback = object : OnBackPressedCallback(true) {
+    private val backPressedCallback = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
             if (_binding?.autoCompleteContainer?.isVisible == true) {
                 hideAutoComplete()
@@ -1276,7 +1276,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     view.width + (layoutParams?.leftMargin ?: 0) + (layoutParams?.rightMargin ?: 0)
                 }
             val availableWidth = (row.width - siblingsWidth - horizontalMarginPx).coerceAtLeast(minWidthPx)
-            binding.chatModeText.maxWidth = availableWidth
+            if (binding.chatModeText.maxWidth != availableWidth) {
+                binding.chatModeText.maxWidth = availableWidth
+            }
         }
         if (row.width > 0) {
             applyLayout()
@@ -2205,6 +2207,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     override fun onResume() {
         super.onResume()
+        if (requireContext().prefs().getBoolean(AppConstants.CHAT_DISABLE, false)) return
         updateMessagingState()
         view?.post { renderBufferedMessages() }
         val args = requireArguments()
@@ -2392,11 +2395,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     /** Stops animated emote decoding while the chat panel is invisible. */
     fun freezeEmoteAnimations() {
+        adapter?.animationsFrozen = true
         _binding?.let { EmoteImageLoader.freezeAll(it.root) }
     }
 
     /** Resumes emote animations after [freezeEmoteAnimations]. */
     fun unfreezeEmoteAnimations() {
+        adapter?.animationsFrozen = false
         _binding?.let { EmoteImageLoader.unfreezeAll(it.root) }
     }
 
@@ -2431,11 +2436,14 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 flashDelayBadge()
             }
         } else {
+            val wasActive = delayBadgeActive || b.chatDelayText.visibility != View.GONE
             delayBadgeActive = false
             delayBadgeFirstShown = false
             b.chatDelayText.removeCallbacks(hideDelayBadgeRunnable)
-            b.chatDelayText.visibility = View.GONE
-            updateHeaderBadgeLayout()
+            if (wasActive) {
+                b.chatDelayText.visibility = View.GONE
+                updateHeaderBadgeLayout()
+            }
             featureDebugLog("delayBadge inactive mode=${ctx.prefs().getString(AppConstants.CHAT_DELAY_MODE, "0")}")
         }
     }
@@ -2463,7 +2471,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         if (enable) {
             hideAutoComplete()
             binding.emoteMenu.visibility = View.VISIBLE
+            EmoteImageLoader.unfreezeAll(binding.emoteMenu)
         } else {
+            EmoteImageLoader.freezeAll(binding.emoteMenu)
             binding.emoteMenu.visibility = View.GONE
         }
         toggleBackPressedCallback(enable)
@@ -2767,7 +2777,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         emoteSectionAdapter = null
         _binding?.recyclerView?.adapter = null
         adapter = null
-        ChatAdapterUtils.clearMasterEmotes()
+        ChatAdapterUtils.clearViewCaches()
         _binding?.autoCompleteRecyclerView?.adapter = null
         autoCompleteAdapter = null
         pinnedGiftUiHelper.resetPinnedGiftUiState()

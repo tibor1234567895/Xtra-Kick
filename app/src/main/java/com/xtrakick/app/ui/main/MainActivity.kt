@@ -99,6 +99,7 @@ import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.KickLink
 import com.xtrakick.app.util.KickLinkRouter
 import com.xtrakick.app.util.NotificationPermissionHelper
+import com.xtrakick.app.util.activeUpdateSessionId
 import com.xtrakick.app.util.applyTheme
 import com.xtrakick.app.util.cancelLiveNotificationsPollingWork
 import com.xtrakick.app.util.enqueueLiveNotificationsPollingWork
@@ -110,10 +111,10 @@ import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.repository.ShownNotificationsRepository
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import java.util.Timer
-import kotlin.concurrent.schedule
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -121,6 +122,7 @@ class MainActivity : BaseStateActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        private const val EXTRA_INTENT_HANDLED = "com.xtrakick.app.EXTRA_INTENT_HANDLED"
         const val KEY_VIDEO = "video"
         const val KEY_AUDIO_ONLY = "key_audio_only"
         const val KEY_OPEN_CHAT = "key_open_chat"
@@ -359,35 +361,39 @@ class MainActivity : BaseStateActivity() {
         fun checkUpdatesIfNeeded() {
             if (checkedUpdatesOnLaunch) return
             if (!prefs.getBoolean(AppConstants.UPDATE_CHECK_ENABLED, true)) return
+            checkedUpdatesOnLaunch = true
 
             val frequencyDays = prefs.getString(AppConstants.UPDATE_CHECK_FREQUENCY, "1")?.toLongOrNull() ?: 1L
             val frequencyMs = frequencyDays * 86_400_000L
             val lastCheckTimestamp = tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, 0L)
             val now = System.currentTimeMillis()
-            // A queued crash report from a previous run means the user is hitting a
-            // crasher — surface a newer release immediately instead of waiting out
-            // the frequency window (max once per cooldown so crash loops stay quiet).
             val lastForcedCheck = tokenPrefs().getLong(AppConstants.UPDATE_LAST_FORCED_CHECK_TIMESTAMP, 0L)
-            val forcedCheck = shouldForceAppUpdateCheck(CrashReports.hasPending(applicationContext), lastForcedCheck, now)
             val dueCheck = frequencyDays <= 0L || lastCheckTimestamp + frequencyMs < now
 
-            if (dueCheck || forcedCheck) {
-                checkedUpdatesOnLaunch = true
-                tokenPrefs().edit {
-                    putLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, now)
-                    if (forcedCheck) {
-                        putLong(AppConstants.UPDATE_LAST_FORCED_CHECK_TIMESTAMP, now)
-                    }
+            lifecycleScope.launch {
+                val hasPendingCrash = withContext(Dispatchers.IO) {
+                    CrashReports.hasPending(applicationContext)
                 }
-                val skippedReleaseTime = tokenPrefs().getLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, 0L)
-                val lastInstallTime = tokenPrefs().getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
-                val cutoff = maxOf(skippedReleaseTime, lastInstallTime)
+                val forcedCheck = shouldForceAppUpdateCheck(hasPendingCrash, lastForcedCheck, now)
+                if (dueCheck || forcedCheck) {
+                    tokenPrefs().edit {
+                        putLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, now)
+                        if (forcedCheck) {
+                            putLong(AppConstants.UPDATE_LAST_FORCED_CHECK_TIMESTAMP, now)
+                        }
+                    }
+                    val skippedReleaseTime = tokenPrefs().getLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, 0L)
+                    val lastInstallTime = tokenPrefs().getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
+                    val cutoff = maxOf(skippedReleaseTime, lastInstallTime)
 
-                viewModel.checkUpdates(
-                    prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                    prefs.getString(AppConstants.UPDATE_URL, null) ?: "https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest",
-                    cutoff
-                )
+                    viewModel.checkUpdates(
+                        prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+                        prefs.getString(AppConstants.UPDATE_URL, null) ?: "https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest",
+                        cutoff
+                    )
+                } else {
+                    checkedUpdatesOnLaunch = false
+                }
             }
         }
         if (isNetworkAvailableOnCreate) {
@@ -532,7 +538,23 @@ class MainActivity : BaseStateActivity() {
         )
         isPipReceiverRegistered = true
         restorePlayerFragment()
-        handleIntent(intent)
+        if (savedInstanceState == null) {
+            handleIntent(intent)
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.sleepTimerExpired.collectLatest { deadline ->
+                    if (viewModel.sleepTimerEndTime == deadline) {
+                        viewModel.cancelSleepTimer()
+                        playerFragment?.let {
+                            it.minimize()
+                            it.close()
+                            closePlayer()
+                        }
+                    }
+                }
+            }
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.video.collectLatest { pair ->
@@ -848,7 +870,18 @@ class MainActivity : BaseStateActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        when (intent?.action) {
+        if (intent == null || intent.getBooleanExtra(EXTRA_INTENT_HANDLED, false)) {
+            return
+        }
+        when (intent.action) {
+            Intent.ACTION_VIEW,
+            INTENT_INSTALL_UPDATE,
+            INTENT_LIVE_NOTIFICATION,
+            INTENT_OPEN_DOWNLOADS_TAB,
+            INTENT_OPEN_DOWNLOADED_VIDEO,
+            INTENT_OPEN_PLAYER -> intent.putExtra(EXTRA_INTENT_HANDLED, true)
+        }
+        when (intent.action) {
             Intent.ACTION_VIEW -> {
                 val url = intent.data?.toString()
                 if (url != null) {
@@ -921,9 +954,14 @@ class MainActivity : BaseStateActivity() {
             }
             INTENT_INSTALL_UPDATE -> {
                 val extras = intent.extras
-                if (extras?.getInt(PackageInstaller.EXTRA_STATUS) == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                val sessionId = extras?.getInt(PackageInstaller.EXTRA_SESSION_ID, -1) ?: -1
+                if (sessionId != -1 &&
+                    sessionId == activeUpdateSessionId.get() &&
+                    extras?.getInt(PackageInstaller.EXTRA_STATUS) == PackageInstaller.STATUS_PENDING_USER_ACTION
+                ) {
                     val rawIntent = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)
                     rawIntent?.takeIf(::isSystemInstallerIntent)?.let { verifiedIntent ->
+                        activeUpdateSessionId.compareAndSet(sessionId, -1)
                         tokenPrefs().edit {
                             putLong(AppConstants.UPDATE_LAST_CHECKED, System.currentTimeMillis())
                         }
@@ -942,7 +980,27 @@ class MainActivity : BaseStateActivity() {
                 }
             }
             INTENT_LIVE_NOTIFICATION -> {
-                val stream = IntentCompat.getParcelableExtra(intent, KEY_VIDEO, Stream::class.java) ?: run {
+                val stream = IntentCompat.getParcelableExtra(intent, KEY_VIDEO, Stream::class.java)?.let { candidate ->
+                    Stream(
+                        id = candidate.id,
+                        source = AppConstants.KICK,
+                        channelId = candidate.channelId,
+                        channelLogin = candidate.channelLogin,
+                        channelName = candidate.channelName,
+                        playbackUrl = null,
+                        gameId = candidate.gameId,
+                        gameSlug = candidate.gameSlug,
+                        gameName = candidate.gameName,
+                        title = candidate.title,
+                        viewerCount = candidate.viewerCount,
+                        startedAt = candidate.startedAt,
+                        thumbnailUrl = candidate.thumbnailUrl,
+                        profileImageUrl = candidate.profileImageUrl,
+                        tags = candidate.tags,
+                        user = candidate.user,
+                        eventTitle = candidate.eventTitle,
+                    )
+                } ?: run {
                     val channelLogin = intent.getStringExtra("stream_channel_login")
                         ?: intent.getStringExtra("channel_login")
                         ?: intent.getStringExtra("channelLogin")
@@ -950,24 +1008,13 @@ class MainActivity : BaseStateActivity() {
                         Stream(
                             channelLogin = channelLogin,
                             channelName = intent.getStringExtra("channel_name") ?: channelLogin,
-                            source = intent.getStringExtra("stream_source") ?: AppConstants.KICK
+                            source = AppConstants.KICK
                         )
                     } else null
                 }
                 if (stream != null) {
-                    lifecycleScope.launch {
-                        runCatching {
-                            val startedAtMs = stream.startedAt?.takeUnless { it.isBlank() }
-                                ?.let { KickApiHelper.parseIso8601DateUTC(it) }
-                            shownNotificationsRepository.markStreamSessionShown(
-                                channelId = stream.channelId,
-                                channelLogin = stream.channelLogin,
-                                startedAtMs = startedAtMs,
-                            )
-                        }
-                    }
-                    val login = stream.channelLogin
-                    if (!login.isNullOrBlank() && stream.source.equals(AppConstants.KICK, true)) {
+                    val login = stream.channelLogin?.trim()?.takeIf { it.isNotBlank() }
+                    if (login != null) {
                         lifecycleScope.launch {
                             if (stream.profileImageUrl.isNullOrBlank()) {
                                 stream.profileImageUrl = kickRepository.getCachedChannel(login)?.user?.profileImage
@@ -1015,8 +1062,6 @@ class MainActivity : BaseStateActivity() {
                                 )
                             }
                         }
-                    } else {
-                        startStream(stream)
                     }
                 }
             }
@@ -1028,8 +1073,14 @@ class MainActivity : BaseStateActivity() {
                 }
             }
             INTENT_OPEN_DOWNLOADED_VIDEO -> {
-                IntentCompat.getParcelableExtra(intent, KEY_VIDEO, OfflineVideo::class.java)?.let {
-                    startOfflineVideo(it)
+                IntentCompat.getParcelableExtra(intent, KEY_VIDEO, OfflineVideo::class.java)?.let { candidate ->
+                    if (candidate.id > 0) {
+                        lifecycleScope.launch {
+                            viewModel.getOfflineVideoById(candidate.id)?.let { verified ->
+                                startOfflineVideo(verified)
+                            }
+                        }
+                    }
                 }
             }
             INTENT_OPEN_PLAYER -> {
@@ -1048,13 +1099,33 @@ class MainActivity : BaseStateActivity() {
      * MainActivity is exported (it is the launcher), so any app can send it an
      * [INTENT_INSTALL_UPDATE] intent carrying an arbitrary [Intent.EXTRA_INTENT] and have us
      * start it with our own identity — an intent-redirection hole that can reach our own
-     * non-exported components.
+     * non-exported components or abuse system choosers to grant FileProvider URI permissions.
      *
      * The legitimate value is written by PackageInstaller into the FLAG_MUTABLE PendingIntent
-     * committed in MainViewModel, and always resolves to the platform's install-confirmation
-     * activity. Requiring a system target is therefore lossless and blocks the redirect.
+     * committed in AppUpdateInstaller, and always resolves to the platform's install-confirmation
+     * activity without data URIs, ClipData, or URI permission grant flags.
      */
-    private fun isSystemInstallerIntent(candidate: Intent): Boolean {
+    internal fun isSystemInstallerIntent(candidate: Intent): Boolean {
+        if (candidate.data != null || candidate.clipData != null) return false
+        val uriGrantFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+            Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+            Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        if ((candidate.flags and uriGrantFlags) != 0) return false
+        val action = candidate.action
+        if (action == Intent.ACTION_CHOOSER ||
+            action == Intent.ACTION_SEND ||
+            action == Intent.ACTION_SEND_MULTIPLE ||
+            action == Intent.ACTION_VIEW
+        ) {
+            return false
+        }
+        if (action != "android.content.pm.action.CONFIRM_INSTALL" &&
+            action != "android.content.pm.action.CONFIRM_PERMISSIONS" &&
+            candidate.component == null
+        ) {
+            return false
+        }
         val resolved = packageManager.resolveActivity(candidate, PackageManager.MATCH_DEFAULT_ONLY)
         val appInfo = resolved?.activityInfo?.applicationInfo ?: return false
         val systemFlags = ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP
@@ -1283,8 +1354,7 @@ class MainActivity : BaseStateActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             safeSetPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).setSeamlessResizeEnabled(true).build())
         }
-        viewModel.sleepTimer?.cancel()
-        viewModel.sleepTimerEndTime = 0L
+        viewModel.cancelSleepTimer()
     }
 
     private fun restorePlayerFragment() {
@@ -1324,36 +1394,8 @@ class MainActivity : BaseStateActivity() {
     }
 
     fun setSleepTimer(duration: Long) {
-        viewModel.sleepTimer?.cancel()
-        viewModel.sleepTimerEndTime = 0L
+        viewModel.scheduleSleepTimer(duration)
         (playerFragment as? IvsPlayerFragment)?.setServiceSleepTimer(duration)
-        if (duration > 0L) {
-            val deadline = System.currentTimeMillis() + duration
-            viewModel.sleepTimerEndTime = deadline
-            viewModel.sleepTimer = Timer().apply {
-                schedule(duration) {
-                    lifecycleScope.launch {
-                        if (viewModel.sleepTimerEndTime != deadline) return@launch
-                        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-                            playerFragment?.let {
-                                it.minimize()
-                                it.close()
-                                closePlayer()
-                            }
-                        } else {
-                            withStarted {
-                                if (viewModel.sleepTimerEndTime != deadline) return@withStarted
-                                playerFragment?.let {
-                                    it.minimize()
-                                    it.close()
-                                    closePlayer()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     fun getSleepTimerTimeLeft(): Long {

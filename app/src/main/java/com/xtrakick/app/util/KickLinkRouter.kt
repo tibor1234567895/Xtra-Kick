@@ -76,7 +76,7 @@ object KickLinkRouter {
         val (host, rawPath, rawQuery) = try {
             val uri = URI(normalized.replace(" ", "%20"))
             if (uri.host != null) {
-                Triple(uri.host, uri.path.orEmpty(), uri.rawQuery)
+                Triple(uri.host, uri.rawPath.orEmpty(), uri.rawQuery)
             } else {
                 extractHostPathQueryFallback(normalized)
             }
@@ -87,14 +87,23 @@ object KickLinkRouter {
         if (!isKickHost(host)) return null
         if (rawPath.contains("..")) return null
 
-        val segments = rawPath.split('/')
-            .mapNotNull { rawSegment ->
-                val segment = rawSegment.substringBefore('?').substringBefore('#')
-                if (segment.isBlank() || segment == "." || segment == "..") null
-                else runCatching { URLDecoder.decode(segment, "UTF-8") }.getOrDefault(segment)
+        val rawSegments = rawPath.split('/')
+        val segments = ArrayList<String>(rawSegments.size)
+        for (rawSegment in rawSegments) {
+            val segment = rawSegment.substringBefore('?').substringBefore('#')
+            if (segment.isBlank() || segment == ".") continue
+            if (segment == "..") return null
+            val decoded = runCatching { URLDecoder.decode(segment, "UTF-8") }.getOrDefault(segment)
+            if (decoded.isBlank() || decoded == ".") continue
+            if (decoded == ".." || decoded.contains("..")) return null
+            if (decoded.contains('%')) {
+                val doubleDecoded = runCatching { URLDecoder.decode(decoded, "UTF-8") }.getOrDefault(decoded)
+                if (doubleDecoded == "." || doubleDecoded == ".." || doubleDecoded.contains("..")) return null
             }
+            segments.add(decoded)
+        }
 
-        val query = rawQuery ?: normalized.substringAfter('?', "").takeIf { it.isNotEmpty() }
+        val query = rawQuery ?: normalized.substringBefore('#').substringAfter('?', "").takeIf { it.isNotEmpty() }
         val params = extractQueryParams(query)
 
         return route(host = host.lowercase(Locale.ROOT), segments = segments, params = params)
@@ -108,11 +117,12 @@ object KickLinkRouter {
 
     private fun extractHostPathQueryFallback(url: String): Triple<String?, String, String?>? {
         val noScheme = url.substringAfter("://")
-        val hostAndRest = noScheme.substringBefore('?')
+        val beforeFragment = noScheme.substringBefore('#')
+        val hostAndRest = beforeFragment.substringBefore('?')
         val rawHost = hostAndRest.substringBefore('/')
         val host = rawHost.substringAfterLast('@').substringBefore(':').takeIf { it.isNotBlank() } ?: return null
         val path = if (hostAndRest.contains('/')) "/" + hostAndRest.substringAfter('/') else ""
-        val query = if (url.contains('?')) url.substringAfter('?').substringBefore('#') else null
+        val query = if (beforeFragment.contains('?')) beforeFragment.substringAfter('?') else null
         return Triple(host, path, query)
     }
 

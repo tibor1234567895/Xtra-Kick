@@ -49,6 +49,7 @@ import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 import com.xtrakick.app.util.NetworkUtils.useCancellable
 
 @Singleton
@@ -78,35 +79,39 @@ class KickPublicApiRepository @Inject constructor(
         when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                http != null -> {
-                val response = suspendCancellableCoroutine { continuation ->
-                    val request = http.newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        setHttpMethod(method)
-                        headers.forEach { addHeader(it.key, it.value) }
-                        if (bodyJson != null) {
-                            addHeader("Content-Type", "application/json")
-                            val bytes = bodyJson.toByteArray(Charsets.UTF_8)
-                            setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(bytes), cronetExecutor)
-                        }
-                    }.build()
-                    continuation.invokeOnCancellation { request.cancel() }
-                    request.start()
+                http is HttpEngine -> {
+                val response = withTimeout(20_000L) {
+                    suspendCancellableCoroutine { continuation ->
+                        val request = http.newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                            setHttpMethod(method)
+                            headers.forEach { addHeader(it.key, it.value) }
+                            if (bodyJson != null) {
+                                addHeader("Content-Type", "application/json")
+                                val bytes = bodyJson.toByteArray(Charsets.UTF_8)
+                                setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(bytes), cronetExecutor)
+                            }
+                        }.build()
+                        continuation.invokeOnCancellation { request.cancel() }
+                        request.start()
+                    }
                 }
                 Pair(response.first.httpStatusCode, String(response.second))
             }
             cronet != null -> {
-                val response = suspendCancellableCoroutine { continuation ->
-                    val request = cronet.newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                        setHttpMethod(method)
-                        headers.forEach { addHeader(it.key, it.value) }
-                        if (bodyJson != null) {
-                            addHeader("Content-Type", "application/json")
-                            val bytes = bodyJson.toByteArray(Charsets.UTF_8)
-                            setUploadDataProvider(UploadDataProviders.create(bytes), cronetExecutor)
-                        }
-                    }.build()
-                    continuation.invokeOnCancellation { request.cancel() }
-                    request.start()
+                val response = withTimeout(20_000L) {
+                    suspendCancellableCoroutine { continuation ->
+                        val request = cronet.newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
+                            setHttpMethod(method)
+                            headers.forEach { addHeader(it.key, it.value) }
+                            if (bodyJson != null) {
+                                addHeader("Content-Type", "application/json")
+                                val bytes = bodyJson.toByteArray(Charsets.UTF_8)
+                                setUploadDataProvider(UploadDataProviders.create(bytes), cronetExecutor)
+                            }
+                        }.build()
+                        continuation.invokeOnCancellation { request.cancel() }
+                        request.start()
+                    }
                 }
                 Pair(response.first.httpStatusCode, String(response.second))
             }

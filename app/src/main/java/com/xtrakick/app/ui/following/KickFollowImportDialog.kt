@@ -10,11 +10,13 @@ import android.view.View
 import android.view.WindowManager
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.ViewGroup
 import android.widget.Toast
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
@@ -25,8 +27,10 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.ByteArrayInputStream
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -60,9 +64,14 @@ class KickFollowImportDialog : DialogFragment() {
      */
     @Volatile
     private var lastCommittedUrl: String = KICK_FOLLOWING_URL
+    private val bridgeToken: String = UUID.randomUUID().toString()
     private val logTag = "KickFollowImport"
 
-    private fun isBridgeCallerTrusted(method: String): Boolean {
+    private fun isBridgeCallerTrusted(method: String, token: String?): Boolean {
+        if (token != bridgeToken) {
+            debugLogW("rejected $method with invalid bridge capability token")
+            return false
+        }
         val trusted = KickFollowImportResolver.isAllowedImportOrigin(lastCommittedUrl)
         if (!trusted) {
             debugLogW("rejected $method from untrusted origin: $lastCommittedUrl")
@@ -147,6 +156,19 @@ class KickFollowImportDialog : DialogFragment() {
                   return
                 }
                 handleResolvedPage(if (activeUrl.isNotBlank()) activeUrl else url)
+                }
+
+                override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                    debugLogW("import webview renderer process gone didCrash=${detail?.didCrash()}")
+                    _binding?.webView?.let { webView ->
+                        (webView.parent as? ViewGroup)?.removeView(webView)
+                        runCatching { webView.destroy() }
+                    }
+                    context?.let {
+                        Toast.makeText(it, R.string.connection_error, Toast.LENGTH_SHORT).show()
+                    }
+                    dismissAllowingStateLoss()
+                    return true
                 }
             }
             updateStatus(getString(R.string.import_kick_followed_status_loading), loading = true)
@@ -281,6 +303,8 @@ class KickFollowImportDialog : DialogFragment() {
     }
 
     private fun logRenderedPageState(webView: WebView, pageFinishedUrl: String) {
+      if (!isDebugLoggingEnabled()) return
+      val quotedPageFinishedUrl = JSONObject.quote(pageFinishedUrl)
       webView.evaluateJavascript(
         """
         (function() {
@@ -298,7 +322,7 @@ class KickFollowImportDialog : DialogFragment() {
             bodySnippet: bodyText.substring(0, 120),
             activeTag: activeTag,
             activeId: activeId,
-            pageFinishedUrl: '$pageFinishedUrl'
+            pageFinishedUrl: $quotedPageFinishedUrl
           });
           } catch (e) {
           return 'render_state_error:' + (e && e.message ? e.message : String(e));
@@ -374,7 +398,9 @@ class KickFollowImportDialog : DialogFragment() {
         }
         debugLogI("dom scrape import starting on $currentUrl")
         updateStatus(getString(R.string.import_kick_followed_status_loading), loading = true)
-        _binding?.webView?.evaluateJavascript(DOM_SCRAPE_SCRIPT) { result ->
+        _binding?.webView?.evaluateJavascript(
+            DOM_SCRAPE_SCRIPT.replace("__BRIDGE_TOKEN__", JSONObject.quote(bridgeToken))
+        ) { result ->
           debugLogI("DOM_SCRAPE_SCRIPT result=${result?.take(200)}")
         }
     }
@@ -397,8 +423,8 @@ class KickFollowImportDialog : DialogFragment() {
 
     private inner class ImportBridge {
         @JavascriptInterface
-        fun onImport(payload: String?) {
-            if (!isBridgeCallerTrusted("onImport")) return
+        fun onImport(token: String?, payload: String?) {
+            if (!isBridgeCallerTrusted("onImport", token)) return
             debugLogI("onImport payloadLength=${payload?.length ?: 0}")
             if (payload.isNullOrBlank()) {
                 handleImportError(IllegalStateException("empty payload"))
@@ -416,15 +442,15 @@ class KickFollowImportDialog : DialogFragment() {
         }
 
         @JavascriptInterface
-        fun onError(message: String?) {
-            if (!isBridgeCallerTrusted("onError")) return
+        fun onError(token: String?, message: String?) {
+            if (!isBridgeCallerTrusted("onError", token)) return
             debugLogW("onError: $message")
             handleImportError(IllegalStateException(message ?: "unknown import error"))
         }
 
         @JavascriptInterface
-        fun onStatus(message: String?) {
-            if (!isBridgeCallerTrusted("onStatus")) return
+        fun onStatus(token: String?, message: String?) {
+            if (!isBridgeCallerTrusted("onStatus", token)) return
             val status = message ?: ""
             _binding?.webView?.post {
                 if (_binding == null) return@post
@@ -504,7 +530,9 @@ class KickFollowImportDialog : DialogFragment() {
         resetWebViewViewportForLogin()
             webView.requestFocusFromTouch()
             webView.evaluateJavascript(
-                MANUAL_LOGIN_HELPER_SCRIPT.replace("__URL__", url.replace("\\", "\\\\").replace("'", "\\'")),
+                MANUAL_LOGIN_HELPER_SCRIPT
+                    .replace("__URL__", JSONObject.quote(url))
+                    .replace("__BRIDGE_TOKEN__", JSONObject.quote(bridgeToken)),
           ) { result ->
             debugLogI("MANUAL_LOGIN_HELPER_SCRIPT result=${result?.take(200)}")
           }
@@ -586,11 +614,12 @@ class KickFollowImportDialog : DialogFragment() {
                   return;
                 }
                 window.__kickImportManualHelperRunning = true;
-                const currentUrl = '__URL__';
+                const currentUrl = __URL__;
+                const bridgeToken = __BRIDGE_TOKEN__;
                 const status = (message) => {
                   try {
                     if (window.KickFollowImportBridge && typeof window.KickFollowImportBridge.onStatus === 'function') {
-                      window.KickFollowImportBridge.onStatus('manual ' + message);
+                      window.KickFollowImportBridge.onStatus(bridgeToken, 'manual ' + message);
                     }
                   } catch (_) {}
                 };
@@ -710,6 +739,7 @@ class KickFollowImportDialog : DialogFragment() {
 
         private val DOM_SCRAPE_SCRIPT = """
             (async function() {
+              const bridgeToken = __BRIDGE_TOKEN__;
               try {
                 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
                 const reserved = new Set([
@@ -849,10 +879,10 @@ class KickFollowImportDialog : DialogFragment() {
                   if (!onFollowingRoute) {
                     const partial = Array.from(collected.values());
                     if (partial.length > 0) {
-                      window.KickFollowImportBridge.onImport(JSON.stringify({ channels: partial }));
+                      window.KickFollowImportBridge.onImport(bridgeToken, JSON.stringify({ channels: partial }));
                       return;
                     }
-                    window.KickFollowImportBridge.onStatus('dom scrape aborted: route=' + (window.location && window.location.href));
+                    window.KickFollowImportBridge.onStatus(bridgeToken, 'dom scrape aborted: route=' + (window.location && window.location.href));
                     throw new Error('Following page redirected before channels were collected');
                   }
                   const root = getSectionRoot();
@@ -879,7 +909,7 @@ class KickFollowImportDialog : DialogFragment() {
                       tailMode = true;
                     }
                   }
-                  window.KickFollowImportBridge.onStatus('dom scrape pass ' + pass + ' visible=' + visibleChannels.length + ' added=' + addedThisPass + ' total=' + collected.size);
+                  window.KickFollowImportBridge.onStatus(bridgeToken, 'dom scrape pass ' + pass + ' visible=' + visibleChannels.length + ' added=' + addedThisPass + ' total=' + collected.size);
                   if (pass % 2 === 1 || addedThisPass === 0) {
                     clickLoadMore();
                   }
@@ -906,11 +936,11 @@ class KickFollowImportDialog : DialogFragment() {
                 if (!allChannels.length) {
                   throw new Error('No followed channels found in WebView DOM');
                 }
-                window.KickFollowImportBridge.onStatus('dom scrape complete total=' + allChannels.length);
-                window.KickFollowImportBridge.onImport(JSON.stringify({ channels: allChannels }));
+                window.KickFollowImportBridge.onStatus(bridgeToken, 'dom scrape complete total=' + allChannels.length);
+                window.KickFollowImportBridge.onImport(bridgeToken, JSON.stringify({ channels: allChannels }));
               } catch (error) {
                 const message = error && error.message ? error.message : String(error);
-                window.KickFollowImportBridge.onError(message);
+                window.KickFollowImportBridge.onError(bridgeToken, message);
               }
             })();
         """.trimIndent()

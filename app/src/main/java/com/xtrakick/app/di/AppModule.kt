@@ -25,16 +25,10 @@ import okhttp3.logging.HttpLoggingInterceptor
 import org.chromium.net.CronetEngine
 import org.chromium.net.CronetProvider
 import org.chromium.net.QuicOptions
-import org.conscrypt.Conscrypt
-import java.security.KeyStore
-import java.security.Security
-import java.security.cert.CertificateFactory
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 
 @RequiresApi(Build.VERSION_CODES.S)
@@ -100,7 +94,7 @@ class AppModule {
 
     @Singleton
     @Provides
-    fun providesOkHttpClient(application: Application, trustManager: X509TrustManager?): OkHttpClient {
+    fun providesOkHttpClient(application: Application): OkHttpClient {
         val builder = OkHttpClient.Builder().apply {
             fastFallback(true)
             dispatcher(Dispatcher().apply {
@@ -111,46 +105,13 @@ class AppModule {
             if (BuildConfig.DEBUG && application.prefs().getBoolean(AppConstants.DEBUG_NETWORK_LOGS, false)) {
                 addInterceptor(HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC })
             }
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                val conscrypt = Conscrypt.newProvider()
-                Security.insertProviderAt(conscrypt, 1)
-            }
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N && trustManager != null) {
-                val sslContext = SSLContext.getInstance("TLSv1.3")
-                sslContext.init(null, arrayOf(trustManager), null)
-                sslSocketFactory(sslContext.socketFactory, trustManager)
-            }
         }
         return builder.build()
     }
 
     @Singleton
     @Provides
-    fun providesTrustManager(application: Application): X509TrustManager? {
-        return if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            val keyStore = KeyStore.getInstance(KeyStore.getDefaultType())
-            keyStore.load(null, null)
-            var count = 0
-            val certificateFactory = CertificateFactory.getInstance("X.509")
-            application.resources.openRawResource(R.raw.isrgrootx1).use {
-                val certificate = certificateFactory.generateCertificate(it)
-                keyStore.setCertificateEntry("cert_0", certificate)
-                count += 1
-            }
-            val defaultTrustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-            defaultTrustManagerFactory.init(null as KeyStore?)
-            val defaultTrustManager = defaultTrustManagerFactory.trustManagers.first() as X509TrustManager
-            defaultTrustManager.acceptedIssuers.forEach {
-                keyStore.setCertificateEntry("cert_$count", it)
-                count += 1
-            }
-            val trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-            trustManagerFactory.init(keyStore)
-            trustManagerFactory.trustManagers.first() as X509TrustManager
-        } else {
-            null
-        }
-    }
+    fun providesTrustManager(): X509TrustManager? = null
 
     @Singleton
     @Provides

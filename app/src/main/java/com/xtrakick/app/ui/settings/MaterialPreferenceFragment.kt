@@ -94,7 +94,9 @@ abstract class MaterialPreferenceFragment : PreferenceFragmentCompat() {
     protected fun setupStandardListBehavior() {
         view?.let { root ->
             ViewCompat.setOnApplyWindowInsetsListener(root) { _, windowInsets ->
-                val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+                val insets = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()
+                )
                 listView.updatePadding(bottom = insets.bottom)
                 WindowInsetsCompat.CONSUMED
             }

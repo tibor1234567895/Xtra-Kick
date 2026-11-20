@@ -98,7 +98,9 @@ import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.applyTheme
 import com.xtrakick.app.util.chat.ChatBackgroundUtils
 import com.xtrakick.app.util.getAlertDialogBuilder
+import com.xtrakick.app.util.getProxyPassword
 import com.xtrakick.app.util.prefs
+import com.xtrakick.app.util.setProxyPassword
 import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.appbar.AppBarLayout
 import com.google.android.material.button.MaterialButton
@@ -1030,6 +1032,19 @@ class SettingsActivity : BaseStateActivity() {
                 MutedUsersDialog().show(childFragmentManager, "muted_users")
                 true
             }
+            val delayModePref = findPreference<ListPreference>(AppConstants.CHAT_DELAY_MODE)
+            val customDelayPref = findPreference<SeekBarPreference>(AppConstants.CHAT_DELAY_CUSTOM_SECS)
+            val delayIndicatorPref = findPreference<SwitchPreferenceCompat>(AppConstants.CHAT_SHOW_DELAY_INDICATOR)
+            fun updateDelayDependents(mode: String?) {
+                val activeMode = mode ?: "0"
+                customDelayPref?.isEnabled = activeMode == "2"
+                delayIndicatorPref?.isEnabled = activeMode != "0"
+            }
+            updateDelayDependents(delayModePref?.value ?: requireContext().prefs().getString(AppConstants.CHAT_DELAY_MODE, "0"))
+            delayModePref?.setOnPreferenceChangeListener { _, newValue ->
+                updateDelayDependents(newValue?.toString())
+                true
+            }
         }
 
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -1048,7 +1063,9 @@ class SettingsActivity : BaseStateActivity() {
                 findPreference<EditTextPreference>(key)?.apply {
                     summary = getString(R.string.seconds_full, requireContext().prefs().getString(key, "10"))
                     setOnPreferenceChangeListener { _, newValue ->
-                        summary = getString(R.string.seconds_full, newValue.toString())
+                        val parsed = newValue?.toString()?.trim()?.toLongOrNull() ?: return@setOnPreferenceChangeListener false
+                        if (parsed !in 1L..300L) return@setOnPreferenceChangeListener false
+                        summary = getString(R.string.seconds_full, parsed.toString())
                         true
                     }
                     setOnBindEditTextListener {
@@ -1134,6 +1151,24 @@ class SettingsActivity : BaseStateActivity() {
     class ProxySettingsFragment : MaterialPreferenceFragment() {
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.proxy_preferences, rootKey)
+            findPreference<EditTextPreference>(AppConstants.PROXY_PORT)?.setOnBindEditTextListener { editText ->
+                editText.inputType = InputType.TYPE_CLASS_NUMBER
+                editText.setSelection(editText.text.length)
+            }
+            findPreference<EditTextPreference>(AppConstants.PROXY_PASSWORD)?.apply {
+                isPersistent = false
+                text = requireContext().getProxyPassword()
+                setOnPreferenceChangeListener { _, newValue ->
+                    val updated = newValue?.toString()
+                    requireContext().setProxyPassword(updated)
+                    text = updated.orEmpty()
+                    false
+                }
+                setOnBindEditTextListener { editText ->
+                    editText.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    editText.setSelection(editText.text.length)
+                }
+            }
         }
 
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -1999,7 +2034,9 @@ class SettingsActivity : BaseStateActivity() {
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
             super.onViewCreated(view, savedInstanceState)
             ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
-                val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+                val insets = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()
+                )
                 view.updatePadding(bottom = insets.bottom)
                 WindowInsetsCompat.CONSUMED
             }
@@ -2077,6 +2114,9 @@ class SettingsActivity : BaseStateActivity() {
                     searchSources.add(searchSource(R.xml.developer_preferences, SettingsNavGraphDirections.actionGlobalDeveloperSettingsFragment(), R.string.developer_tokens))
                 }
                 fun collectPreferences(pref: Preference, navDirections: androidx.navigation.NavDirections, location: String) {
+                    if (!BuildConfig.DEBUG && (pref.key == "nav_developer_settings" || pref.key == "nav_debug_settings")) {
+                        return
+                    }
                     if (pref is PreferenceGroup) {
                         pref.forEach { child ->
                             collectPreferences(child, navDirections, location)

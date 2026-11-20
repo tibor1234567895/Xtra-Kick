@@ -37,7 +37,7 @@ class MediaButtonReceiver : BroadcastReceiver() {
                 ) {
                     val resumeIntent = Intent(context, IvsPlayerService::class.java).apply {
                         action = Intent.ACTION_MEDIA_BUTTON
-                        fillIn(intent, 0)
+                        putExtra(Intent.EXTRA_KEY_EVENT, keyEvent)
                     }
                     try {
                         context.startForegroundService(resumeIntent)

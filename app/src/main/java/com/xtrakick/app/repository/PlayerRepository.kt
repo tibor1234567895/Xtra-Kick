@@ -107,23 +107,31 @@ class PlayerRepository @Inject constructor(
         val status = when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                http != null -> {
-                val response = suspendCancellableCoroutine { continuation ->
+                http is HttpEngine -> {
+                val response = NetworkUtils.awaitDownloadRequest { continuation, touch ->
+                    val trackedProgress = NetworkUtils.ProgressListener {
+                        touch()
+                        progress.update(it)
+                    }
                     val request = http.newUrlRequestBuilder(
-                        url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation, progress, output)
+                        url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation, trackedProgress, output)
                     ).build()
-                    continuation.invokeOnCancellation { request.cancel() }
                     request.start()
+                    return@awaitDownloadRequest { request.cancel() }
                 }
                 response.first.httpStatusCode
             }
             cronet != null -> {
-                val response = suspendCancellableCoroutine { continuation ->
+                val response = NetworkUtils.awaitDownloadRequest { continuation, touch ->
+                    val trackedProgress = NetworkUtils.ProgressListener {
+                        touch()
+                        progress.update(it)
+                    }
                     val request = cronet.newUrlRequestBuilder(
-                        url, NetworkUtils.ByteArrayCronetUrlCallback(continuation, progress, output), cronetExecutor
+                        url, NetworkUtils.ByteArrayCronetUrlCallback(continuation, trackedProgress, output), cronetExecutor
                     ).build()
-                    continuation.invokeOnCancellation { request.cancel() }
                     request.start()
+                    return@awaitDownloadRequest { request.cancel() }
                 }
                 response.first.httpStatusCode
             }
@@ -151,25 +159,29 @@ class PlayerRepository @Inject constructor(
         when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                http != null -> {
-                val response = suspendCancellableCoroutine { continuation ->
-                    val request = http.newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                        headers.forEach { (name, value) -> addHeader(name, value) }
-                    }.build()
-                    continuation.invokeOnCancellation { request.cancel() }
-                    request.start()
+                http is HttpEngine -> {
+                val response = kotlinx.coroutines.withTimeout(20_000L) {
+                    suspendCancellableCoroutine { continuation ->
+                        val request = http.newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
+                            headers.forEach { (name, value) -> addHeader(name, value) }
+                        }.build()
+                        continuation.invokeOnCancellation { request.cancel() }
+                        request.start()
+                    }
                 }
                 if (response.first.httpStatusCode in 200..299) {
                     String(response.second)
                 } else null
             }
             cronet != null -> {
-                val response = suspendCancellableCoroutine { continuation ->
-                    val request = cronet.newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                        headers.forEach { (name, value) -> addHeader(name, value) }
-                    }.build()
-                    continuation.invokeOnCancellation { request.cancel() }
-                    request.start()
+                val response = kotlinx.coroutines.withTimeout(20_000L) {
+                    suspendCancellableCoroutine { continuation ->
+                        val request = cronet.newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
+                            headers.forEach { (name, value) -> addHeader(name, value) }
+                        }.build()
+                        continuation.invokeOnCancellation { request.cancel() }
+                        request.start()
+                    }
                 }
                 String(response.second).takeIf { response.first.httpStatusCode in 200..299 }
             }
@@ -207,7 +219,7 @@ class PlayerRepository @Inject constructor(
             when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                    http != null -> {
+                    http is HttpEngine -> {
                     val response = suspendCoroutine { continuation ->
                         http.newUrlRequestBuilder("https://kick.com/${channelLogin}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
                     }
@@ -239,7 +251,7 @@ class PlayerRepository @Inject constructor(
                 when {
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                         SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                        http != null -> {
+                        http is HttpEngine -> {
                         val response = suspendCoroutine { continuation ->
                             http.newUrlRequestBuilder(settingsUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
                         }
@@ -281,7 +293,7 @@ class PlayerRepository @Inject constructor(
                     when {
                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                             SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                            http != null -> {
+                            http is HttpEngine -> {
                             suspendCoroutine { continuation ->
                                 http.newUrlRequestBuilder(spadeUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
                                     addHeader("Content-Type", "application/x-www-form-urlencoded")
@@ -624,7 +636,7 @@ class PlayerRepository @Inject constructor(
         when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                http != null -> {
+                http is HttpEngine -> {
                 suspendCancellableCoroutine { continuation ->
                     val request = http.newUrlRequestBuilder("https://7tv.io/v3/users/${stvUserId}/presences", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
                         addHeader("Content-Type", "application/json")

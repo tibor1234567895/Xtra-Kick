@@ -138,6 +138,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     private var chatDragStartY = 0f
     private var chatDragStartProgress = 0f
     private var chatProgressAnimator: ValueAnimator? = null
+    private var dividerSnapAnimator: ValueAnimator? = null
     private var velocityTracker: VelocityTracker? = null
     private var latencyPollJob: Job? = null
     private var backgroundPauseRunnable: Runnable? = null
@@ -1271,7 +1272,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                         hoveredPreset = newHoverPreset
                         binding.chatDividerLabel.text = getString(newHoverPreset.labelRes(isPortrait))
                         binding.chatDividerLabel.animate().scaleX(1.15f).scaleY(1.15f).setDuration(80).setInterpolator(DecelerateInterpolator()).withEndAction {
-                            binding.chatDividerLabel.animate().scaleX(1f).scaleY(1f).setDuration(80).setInterpolator(DecelerateInterpolator()).start()
+                            _binding?.chatDividerLabel?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(80)?.setInterpolator(DecelerateInterpolator())?.start()
                         }.start()
                         view?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     }
@@ -1292,32 +1293,36 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                     val endScale = targetHeight.toFloat() / initialVideoHeight.toFloat()
 
                     // Smooth deceleration animation to snap directly into the target position
-                    ValueAnimator.ofFloat(0f, 1f).apply {
+                    dividerSnapAnimator?.cancel()
+                    dividerSnapAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
                         duration = 180L
                         interpolator = DecelerateInterpolator()
                         addUpdateListener { va ->
+                            val b = _binding ?: return@addUpdateListener
                             val frac = va.animatedFraction
                             val currentTrans = startTrans + (endTrans - startTrans) * frac
                             val currentScale = startScale + (endScale - startScale) * frac
-                            binding.chatDivider.translationY = currentTrans
-                            binding.chatFragmentContainer.translationY = currentTrans
-                            binding.tileGrid.scaleY = currentScale
-                            binding.tileGrid.scaleX = currentScale
+                            b.chatDivider.translationY = currentTrans
+                            b.chatFragmentContainer.translationY = currentTrans
+                            b.tileGrid.scaleY = currentScale
+                            b.tileGrid.scaleX = currentScale
                         }
                         addListener(object : AnimatorListenerAdapter() {
                             override fun onAnimationEnd(animation: Animator) {
-                                binding.tileGrid.scaleX = 1f
-                                binding.tileGrid.scaleY = 1f
-                                binding.chatDivider.translationY = 0f
-                                binding.chatFragmentContainer.translationY = 0f
-                                binding.chatDividerHandle.backgroundTintList = null
-                                binding.chatDividerHandle.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120).setInterpolator(DecelerateInterpolator()).start()
-                                binding.chatDividerLabel.animate().alpha(0f).setDuration(120).setInterpolator(DecelerateInterpolator()).withEndAction {
-                                    binding.chatDividerLabel.isVisible = false
+                                dividerSnapAnimator = null
+                                val b = _binding ?: return
+                                b.tileGrid.scaleX = 1f
+                                b.tileGrid.scaleY = 1f
+                                b.chatDivider.translationY = 0f
+                                b.chatFragmentContainer.translationY = 0f
+                                b.chatDividerHandle.backgroundTintList = null
+                                b.chatDividerHandle.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120).setInterpolator(DecelerateInterpolator()).start()
+                                b.chatDividerLabel.animate().alpha(0f).setDuration(120).setInterpolator(DecelerateInterpolator()).withEndAction {
+                                    _binding?.chatDividerLabel?.isVisible = false
                                 }.start()
 
                                 android.transition.TransitionManager.beginDelayedTransition(
-                                    binding.multiPovRoot,
+                                    b.multiPovRoot,
                                     android.transition.AutoTransition().apply {
                                         duration = 200L
                                         interpolator = DecelerateInterpolator()
@@ -1326,7 +1331,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                                 saveLayoutPreset(targetPreset)
                                 applyPortraitChatLayout()
                                 render(viewModel.uiState.value, forceGridRebuild = true)
-                                if (targetPreset != initialPreset) {
+                                if (targetPreset != initialPreset && isAdded) {
                                     Toast.makeText(
                                         requireContext(),
                                         getString(R.string.multipov_layout_toast, getString(targetPreset.labelRes(isPortrait))),
@@ -1490,6 +1495,10 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         view?.removeCallbacks(hideTransientChromeRunnable)
         chatProgressAnimator?.cancel()
         chatProgressAnimator = null
+        dividerSnapAnimator?.cancel()
+        dividerSnapAnimator = null
+        _binding?.chatDividerLabel?.animate()?.cancel()
+        _binding?.chatDividerHandle?.animate()?.cancel()
         velocityTracker?.recycle()
         velocityTracker = null
         keyboardLayoutListener?.let {

@@ -45,6 +45,8 @@ class KickPollPredictionUiHelper(
     private val lifecycleScope get() = fragment.viewLifecycleOwner.lifecycleScope
 
     private fun showKickApiError(error: Throwable) {
+        if (error is kotlinx.coroutines.CancellationException) throw error
+        if (!fragment.isAdded) return
         Toast.makeText(context, error.message ?: context.getString(R.string.connection_error), Toast.LENGTH_LONG).show()
     }
 
