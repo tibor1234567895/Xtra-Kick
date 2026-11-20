@@ -162,8 +162,8 @@ class StreamDownloadWorker @AssistedInject constructor(
         val proxyPort = context.prefs().getString(AppConstants.PROXY_PORT, null)?.toIntOrNull()
         val proxyMultivariantPlaylist = context.prefs().getBoolean(AppConstants.PROXY_MULTIVARIANT_PLAYLIST, false)
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-        val http = httpEngine?.get()
-        val cronet = cronetEngine?.get()
+        val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+        val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
         val proxyUser = context.prefs().getString(AppConstants.PROXY_USER, null)
         val proxyPassword = context.prefs().getString(AppConstants.PROXY_PASSWORD, null)
         var playlistUrl = kickRepository.getChannel(channelLogin)
@@ -178,13 +178,15 @@ class StreamDownloadWorker @AssistedInject constructor(
                 return Result.failure()
             }
             val playlist = when {
-                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                    http != null -> {
                     val response = NetworkUtils.downloadHttpEngine(http, playlistUrl, cronetExecutor)
                     if (response.first.httpStatusCode in 200..299) {
                         String(response.second)
                     } else null
                 }
-                networkLibrary == "Cronet" && cronet != null -> {
+                cronet != null -> {
                     val response = NetworkUtils.downloadCronet(cronet, playlistUrl, cronetExecutor)
                     if (response.first.httpStatusCode in 200..299) {
                         response.second.toString(Charsets.UTF_8)
@@ -326,10 +328,12 @@ class StreamDownloadWorker @AssistedInject constructor(
         var lastUrl = offlineVideo.lastSegmentUrl
         var initSegmentUri: String? = null
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-        val http = httpEngine?.get()
-        val cronet = cronetEngine?.get()
+        val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+        val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
         val playlist = when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                http != null -> {
                 val response = NetworkUtils.downloadHttpEngine(http, sourceUrl, cronetExecutor)
                 if (response.first.httpStatusCode in 200..299) {
                     try {
@@ -343,7 +347,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                     return false
                 }
             }
-            networkLibrary == "Cronet" && cronet != null -> {
+            cronet != null -> {
                 val response = NetworkUtils.downloadCronet(cronet, sourceUrl, cronetExecutor)
                 if (response.first.httpStatusCode in 200..299) {
                     try {
@@ -414,7 +418,9 @@ class StreamDownloadWorker @AssistedInject constructor(
             }
             val initSegmentBytes = initSegmentUri?.let {
                 when {
-                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                        SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                        http != null -> {
                         val response = NetworkUtils.downloadHttpEngine(http, it, cronetExecutor)
                         if (isShared) {
                             context.contentResolver.openOutputStream(fileUri.toUri(), "wa")!!.use {
@@ -427,7 +433,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                         }
                         response.second.size.toLong()
                     }
-                    networkLibrary == "Cronet" && cronet != null -> {
+                    cronet != null -> {
                         val response = NetworkUtils.downloadCronet(cronet, it, cronetExecutor).let { result ->
                             check(result.first.httpStatusCode in 200..299) { "Segment request failed (${result.first.httpStatusCode})" }
                             result.second
@@ -506,7 +512,9 @@ class StreamDownloadWorker @AssistedInject constructor(
                                 CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
                                     try {
                                         when {
-                                            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                                SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                                http != null -> {
                                                 val response = NetworkUtils.downloadHttpEngine(http, it, cronetExecutor)
                                                 if (response.first.httpStatusCode in 200..299) {
                                                     FileOutputStream(filePath).use {
@@ -514,7 +522,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                                                     }
                                                 }
                                             }
-                                            networkLibrary == "Cronet" && cronet != null -> {
+                                            cronet != null -> {
                                                 val response = NetworkUtils.downloadCronet(cronet, it, cronetExecutor)
                                                 if (response.first.httpStatusCode in 200..299) {
                                                     FileOutputStream(filePath).use {
@@ -568,7 +576,9 @@ class StreamDownloadWorker @AssistedInject constructor(
                     launch(start = CoroutineStart.UNDISPATCHED) {
                         requestSemaphore.withPermit {
                             when {
-                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                    http != null -> {
                                     val response = NetworkUtils.downloadHttpEngine(http, segmentUrl, cronetExecutor)
                                     check(response.first.httpStatusCode in 200..299) { "Segment request failed (${response.first.httpStatusCode})" }
                                     firstCount.first { it == id }
@@ -579,7 +589,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                                         lastSegmentUrl = segmentUrl
                                     })
                                 }
-                                networkLibrary == "Cronet" && cronet != null -> {
+                                cronet != null -> {
                                     val response = NetworkUtils.downloadCronet(cronet, segmentUrl, cronetExecutor).let { result ->
                                         check(result.first.httpStatusCode in 200..299) { "Segment request failed (${result.first.httpStatusCode})" }
                                         result.second
@@ -618,12 +628,14 @@ class StreamDownloadWorker @AssistedInject constructor(
             while (true) {
                 val playlist = try {
                     val bytes = when {
-                        networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                            SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                            http != null -> {
                             val response = NetworkUtils.downloadHttpEngine(http, sourceUrl, cronetExecutor)
                             check(response.first.httpStatusCode in 200..299) { "Live playlist HTTP ${response.first.httpStatusCode}" }
                             response.second
                         }
-                        networkLibrary == "Cronet" && cronet != null -> {
+                        cronet != null -> {
                             val response = NetworkUtils.downloadCronet(cronet, sourceUrl, cronetExecutor)
                             check(response.first.httpStatusCode in 200..299) { "Live playlist HTTP ${response.first.httpStatusCode}" }
                             response.second
@@ -668,7 +680,9 @@ class StreamDownloadWorker @AssistedInject constructor(
                             launch(start = CoroutineStart.UNDISPATCHED) {
                                 requestSemaphore.withPermit {
                                     when {
-                                        networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                            SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                            http != null -> {
                                             val response = NetworkUtils.downloadHttpEngine(http, segmentUrl, cronetExecutor)
                                             check(response.first.httpStatusCode in 200..299) { "Segment request failed (${response.first.httpStatusCode})" }
                                             count.first { it == id }
@@ -679,7 +693,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                                                 lastSegmentUrl = segmentUrl
                                             })
                                         }
-                                        networkLibrary == "Cronet" && cronet != null -> {
+                                        cronet != null -> {
                                             val response = NetworkUtils.downloadCronet(cronet, segmentUrl, cronetExecutor).let { result ->
                                                 check(result.first.httpStatusCode in 200..299) { "Segment request failed (${result.first.httpStatusCode})" }
                                                 result.second
@@ -977,8 +991,8 @@ class StreamDownloadWorker @AssistedInject constructor(
     }
 
     private suspend fun saveMessage(message: String, writer: JsonWriter, downloadEmotes: Boolean, networkLibrary: String?, emoteQuality: String, savedChatEmotes: MutableSet<String>, savedBadges: MutableSet<Pair<String, String>>, savedEmotes: MutableSet<String>, badgeList: List<ChatBadge>, cheerEmoteList: List<CheerEmote>, emoteList: List<Emote>) {
-        val http = httpEngine?.get()
-        val cronet = cronetEngine?.get()
+        val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+        val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
         var position = chatPosition
         writer.name("liveComments".also { position += it.length + 4 })
         writer.beginArray().also { position += 1 }
@@ -1041,11 +1055,13 @@ class StreamDownloadWorker @AssistedInject constructor(
                             else -> emote.url1x
                         }!!
                         val response = when {
-                            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                http != null -> {
                                 val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
                                 response.second
                             }
-                            networkLibrary == "Cronet" && cronet != null -> {
+                            cronet != null -> {
                                 NetworkUtils.downloadCronet(cronet, url, cronetExecutor).let { result ->
                                     check(result.first.httpStatusCode in 200..299) { "Segment request failed (${result.first.httpStatusCode})" }
                                     result.second
@@ -1079,11 +1095,13 @@ class StreamDownloadWorker @AssistedInject constructor(
                             else -> badge.url1x
                         }!!
                         val response = when {
-                            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                http != null -> {
                                 val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
                                 response.second
                             }
-                            networkLibrary == "Cronet" && cronet != null -> {
+                            cronet != null -> {
                                 NetworkUtils.downloadCronet(cronet, url, cronetExecutor).let { result ->
                                     check(result.first.httpStatusCode in 200..299) { "Segment request failed (${result.first.httpStatusCode})" }
                                     result.second
@@ -1118,11 +1136,13 @@ class StreamDownloadWorker @AssistedInject constructor(
                             else -> cheerEmote.url1x
                         }!!
                         val response = when {
-                            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                http != null -> {
                                 val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
                                 response.second
                             }
-                            networkLibrary == "Cronet" && cronet != null -> {
+                            cronet != null -> {
                                 NetworkUtils.downloadCronet(cronet, url, cronetExecutor).let { result ->
                                     check(result.first.httpStatusCode in 200..299) { "Segment request failed (${result.first.httpStatusCode})" }
                                     result.second
@@ -1158,11 +1178,13 @@ class StreamDownloadWorker @AssistedInject constructor(
                             else -> emote.url1x
                         }!!
                         val response = when {
-                            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                http != null -> {
                                 val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
                                 response.second
                             }
-                            networkLibrary == "Cronet" && cronet != null -> {
+                            cronet != null -> {
                                 NetworkUtils.downloadCronet(cronet, url, cronetExecutor).let { result ->
                                     check(result.first.httpStatusCode in 200..299) { "Segment request failed (${result.first.httpStatusCode})" }
                                     result.second

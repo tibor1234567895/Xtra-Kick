@@ -184,6 +184,9 @@ android {
     }
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.maxHeapSize = "2g"
+        }
     }
     lint {
         checkReleaseBuilds = false

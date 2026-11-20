@@ -132,15 +132,36 @@ class PlayerRepositoryCancellationTest {
         }
     }
 
-    private suspend fun <T> withRepository(client: OkHttpClient, block: suspend (PlayerRepository) -> T): T {
+    @Test
+    @Config(sdk = [android.os.Build.VERSION_CODES.R])
+    fun textFetchFallsBackToOkHttpOnAndroidRWhenHttpEngineSelected() = runBlocking {
+        com.xtrakick.app.util.HttpEngineAvailability.resetForTests()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body("fallback".toByteArray().toResponseBody("text/plain".toMediaType())).build()
+        }.build()
+        val failingEngine = dagger.Lazy<android.net.http.HttpEngine> {
+            throw NoClassDefFoundError("android.net.http.HttpEngine")
+        }
+        withRepository(client, httpEngine = failingEngine) { repository ->
+            val result = repository.loadTextFromUrl("HttpEngine", "https://example.invalid/fallback")
+            assertEquals("fallback", result)
+        }
+    }
+
+    private suspend fun <T> withRepository(
+        client: OkHttpClient,
+        httpEngine: dagger.Lazy<android.net.http.HttpEngine>? = null,
+        block: suspend (PlayerRepository) -> T
+    ): T {
         val executor = Executors.newSingleThreadExecutor()
         val context = RuntimeEnvironment.getApplication()
         val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
         val json = Json { ignoreUnknownKeys = true }
         val auth = AuthRepository(null, null, executor, client, json)
         val kick = KickRepository(context, client, null, executor, json, auth, KickOfficialApiClient(context, client, json))
-        val repository = PlayerRepository(context, null, null, executor, client, json, kick,
-            KickPublicApiRepository(null, null, executor, client, json), database.recentEmotes(), database.videoPositions())
+        val repository = PlayerRepository(context, httpEngine, null, executor, client, json, kick,
+            KickPublicApiRepository(httpEngine, null, executor, client, json), database.recentEmotes(), database.videoPositions())
         try {
             return block(repository)
         } finally {

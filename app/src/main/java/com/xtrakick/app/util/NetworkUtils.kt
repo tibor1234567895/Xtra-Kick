@@ -7,16 +7,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.EmptyCoroutineContext
-import android.net.http.HttpException
-import android.net.http.UploadDataProvider
-import android.net.http.UploadDataSink
-import android.net.http.UrlRequest
 import android.net.http.UrlResponseInfo
 import android.os.Build
 import android.os.ext.SdkExtensions
 import dagger.Lazy
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresExtension
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.CoroutineStart
@@ -105,6 +102,7 @@ object NetworkUtils {
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.S)
     @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
     suspend fun downloadHttpEngine(
         engine: HttpEngine, url: String, executor: ExecutorService,
@@ -225,86 +223,6 @@ object NetworkUtils {
         }
     }
 
-    class HttpEngineResponse(
-        val info: UrlResponseInfo,
-        val body: ByteArray,
-    )
-
-    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
-    class ByteArrayUrlCallback(
-        val continuation: Continuation<HttpEngineResponse>,
-        val timeout: HttpEngineTimeout,
-        val progressListener: ProgressListener? = null,
-    ) : UrlRequest.Callback {
-        private lateinit var mResponseBodyStream: ByteArrayOutputStream
-        private lateinit var mResponseBodyChannel: WritableByteChannel
-
-        override fun onRedirectReceived(request: UrlRequest, info: UrlResponseInfo, newLocationUrl: String) {
-            request.followRedirect()
-        }
-
-        override fun onResponseStarted(request: UrlRequest, info: UrlResponseInfo) {
-            val bodyLength = info.headers.asMap[CONTENT_LENGTH_HEADER_NAME]?.takeIf { it.size == 1 }?.getOrNull(0)?.toLongOrNull() ?: -1
-            require(bodyLength <= MAX_ARRAY_SIZE) { "The body is too large and wouldn't fit in a byte array!" }
-            mResponseBodyStream = if (bodyLength >= 0) {
-                ByteArrayOutputStream(bodyLength.toInt())
-            } else {
-                ByteArrayOutputStream()
-            }
-            mResponseBodyChannel = Channels.newChannel(mResponseBodyStream)
-            request.read(ByteBuffer.allocateDirect(BYTE_BUFFER_CAPACITY))
-        }
-
-        override fun onReadCompleted(request: UrlRequest, info: UrlResponseInfo, byteBuffer: ByteBuffer) {
-            byteBuffer.flip()
-            mResponseBodyChannel.write(byteBuffer)
-            byteBuffer.clear()
-            timeout.updateTimeout()
-            progressListener?.update(mResponseBodyStream.size())
-            request.read(byteBuffer)
-        }
-
-        override fun onSucceeded(request: UrlRequest, info: UrlResponseInfo) {
-            timeout.stop()
-            continuation.resume(HttpEngineResponse(info, mResponseBodyStream.toByteArray()))
-        }
-
-        override fun onFailed(request: UrlRequest, info: UrlResponseInfo?, error: HttpException) {
-            timeout.stop()
-            continuation.resumeWithException(error)
-        }
-
-        override fun onCanceled(request: UrlRequest, info: UrlResponseInfo?) {
-        }
-    }
-
-    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
-    class ByteArrayUploadProvider(data: ByteArray, offset: Int = 0, length: Int = data.size) : UploadDataProvider() {
-        private val mUploadBuffer = ByteBuffer.wrap(data, offset, length).slice()
-
-        override fun getLength(): Long {
-            return mUploadBuffer.limit().toLong()
-        }
-
-        override fun read(uploadDataSink: UploadDataSink, byteBuffer: ByteBuffer) {
-            check(byteBuffer.hasRemaining())
-            if (byteBuffer.remaining() >= mUploadBuffer.remaining()) {
-                byteBuffer.put(mUploadBuffer)
-            } else {
-                val oldLimit = mUploadBuffer.limit()
-                mUploadBuffer.limit(mUploadBuffer.position() + byteBuffer.remaining())
-                byteBuffer.put(mUploadBuffer)
-                mUploadBuffer.limit(oldLimit)
-            }
-            uploadDataSink.onReadSucceeded(false)
-        }
-
-        override fun rewind(uploadDataSink: UploadDataSink) {
-            mUploadBuffer.position(0)
-            uploadDataSink.onRewindSucceeded()
-        }
-    }
-
     class CronetResponse(
         val info: CronetUrlResponseInfo,
         val body: ByteArray,
@@ -354,23 +272,6 @@ object NetworkUtils {
         }
 
         override fun onCanceled(request: CronetUrlRequest, info: CronetUrlResponseInfo?) {
-        }
-    }
-
-    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
-    class HttpEngineTimeout(timeout: Long = DEFAULT_TIMEOUT_MS) : Timeout(timeout) {
-        lateinit var request: UrlRequest
-        lateinit var continuation: Continuation<HttpEngineResponse>
-
-        fun start(request: UrlRequest, continuation: Continuation<HttpEngineResponse>) {
-            this.request = request
-            this.continuation = continuation
-            updateTimeout()
-        }
-
-        override fun timeout() {
-            request.cancel()
-            continuation.resumeWithException(IOException("Timed out"))
         }
     }
 
@@ -518,6 +419,16 @@ object NetworkUtils {
             )
         }
 
+    fun resolveHttpEngine(networkLibrary: String?, httpEngine: Lazy<HttpEngine>?): HttpEngine? {
+        if (networkLibrary != "HttpEngine" || !HttpEngineAvailability.isAvailable) return null
+        return runCatching { httpEngine?.get() }.getOrNull()
+    }
+
+    fun resolveCronetEngine(networkLibrary: String?, cronetEngine: Lazy<CronetEngine>?): CronetEngine? {
+        if (networkLibrary != "Cronet") return null
+        return runCatching { cronetEngine?.get() }.getOrNull()
+    }
+
     /**
      * Small-file GET across the three engines. Preserves current behavior:
      * no timeout, follow redirects, OkHttp fallback. Cancellable.
@@ -530,12 +441,10 @@ object NetworkUtils {
         networkLibrary: String?,
         url: String,
     ): Pair<Int, ByteArray> {
-        val http = httpEngine?.get()
-        if (networkLibrary == "HttpEngine" &&
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+        val http = resolveHttpEngine(networkLibrary, httpEngine)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-            http != null
-        ) {
+            http != null) {
             val response = suspendCancellableCoroutine { continuation ->
                 val request = http.newUrlRequestBuilder(
                     url,
@@ -547,8 +456,8 @@ object NetworkUtils {
             }
             return response.first.httpStatusCode to response.second
         }
-        val cronet = cronetEngine?.get()
-        if (networkLibrary == "Cronet" && cronet != null) {
+        val cronet = resolveCronetEngine(networkLibrary, cronetEngine)
+        if (cronet != null) {
             val response = suspendCancellableCoroutine { continuation ->
                 val request = cronet.newUrlRequestBuilder(
                     url,

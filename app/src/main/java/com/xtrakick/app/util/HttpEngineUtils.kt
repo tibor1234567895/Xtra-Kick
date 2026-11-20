@@ -6,6 +6,7 @@ import android.net.http.UploadDataSink
 import android.net.http.UrlRequest
 import android.net.http.UrlResponseInfo
 import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresExtension
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -17,6 +18,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+@RequiresApi(Build.VERSION_CODES.S)
 @RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
 object HttpEngineUtils {
     private const val CONTENT_LENGTH_HEADER_NAME = "Content-Length"

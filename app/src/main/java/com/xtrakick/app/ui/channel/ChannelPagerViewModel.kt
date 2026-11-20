@@ -3,6 +3,7 @@ package com.xtrakick.app.ui.channel
 import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
+import com.xtrakick.app.util.NetworkUtils
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -476,10 +477,12 @@ class ChannelPagerViewModel @Inject constructor(
                         val path = filesDir + File.separator + "profile_pics" + File.separator + userId
                         viewModelScope.launch(Dispatchers.IO) {
                             try {
-                                val http = httpEngine?.get()
-                                val cronet = cronetEngine?.get()
+                                val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+                                val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
                                 when {
-                                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                        SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                        http != null -> {
                                         val response = suspendCoroutine { continuation ->
                                             http.newUrlRequestBuilder(it, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
                                         }
@@ -489,7 +492,7 @@ class ChannelPagerViewModel @Inject constructor(
                                             }
                                         }
                                     }
-                                    networkLibrary == "Cronet" && cronet != null -> {
+                                    cronet != null -> {
                                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                                             val request = UrlRequestCallbacks.forByteArrayBody(RedirectHandlers.alwaysFollow())
                                             cronet.newUrlRequestBuilder(it, request.callback, cronetExecutor).build().start()

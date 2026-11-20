@@ -16,7 +16,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
-import android.os.ext.SdkExtensions
 import android.provider.Settings
 import android.text.format.Formatter
 import android.util.TypedValue
@@ -53,6 +52,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.withResumed
 import androidx.navigation.fragment.NavHostFragment
+import com.xtrakick.app.util.HttpEngineAvailability
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.setupWithNavController
@@ -1772,7 +1772,7 @@ class SettingsActivity : BaseStateActivity() {
                 }
             }
             val app = requireActivity().application as? KickApp
-            val httpEngine = app?.isHttpEngineAvailable() == true
+            val httpEngine = HttpEngineAvailability.isAvailable && app?.isHttpEngineAvailable() == true
             val cronet = app?.isCronetAvailable() == true
             findPreference<ListPreference>(AppConstants.NETWORK_LIBRARY)?.apply {
                 setOnPreferenceChangeListener { _, _ ->
@@ -1786,14 +1786,23 @@ class SettingsActivity : BaseStateActivity() {
                     when {
                         !httpEngine && !cronet -> {
                             isVisible = false
+                            if (value != "OkHttp") {
+                                value = "OkHttp"
+                            }
                         }
                         !cronet -> {
                             setEntries(R.array.networkLibraryEntriesNoCronet)
                             setEntryValues(R.array.networkLibraryEntriesNoCronet)
+                            if (value == "Cronet") {
+                                value = if (httpEngine) "HttpEngine" else "OkHttp"
+                            }
                         }
                         else -> {
                             setEntries(R.array.networkLibraryEntriesNoHttpEngine)
                             setEntryValues(R.array.networkLibraryEntriesNoHttpEngine)
+                            if (value == "HttpEngine") {
+                                value = if (cronet) "Cronet" else "OkHttp"
+                            }
                         }
                     }
                 }

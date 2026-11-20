@@ -30,6 +30,8 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.DiagnosticCoilLogger
 import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.NetworkUtils
+import com.xtrakick.app.util.HttpEngineAvailability
 import com.xtrakick.app.util.HttpEngineUtils
 import com.xtrakick.app.util.WebSocketRuntime
 import com.xtrakick.app.util.coil.CacheControlCacheStrategy
@@ -189,9 +191,7 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     }
 
     fun isHttpEngineAvailable(): Boolean = try {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-            SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-            httpEngine?.get() != null
+        NetworkUtils.resolveHttpEngine("HttpEngine", httpEngine) != null
     } catch (_: Throwable) {
         false
     }
@@ -275,10 +275,12 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                     add(GifDecoder.Factory())
                 }
                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-                val http = httpEngine?.get()
-                val cronet = cronetEngine?.get()
+                val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+                val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
                 when {
-                    networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                        SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                        http != null -> {
                         add(NetworkFetcher.Factory(
                             networkClient = {
                                 object : NetworkClient {
@@ -325,7 +327,7 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                             cacheStrategy = { CacheControlCacheStrategy() }
                         ))
                     }
-                    networkLibrary == "Cronet" && cronet != null -> {
+                    cronet != null -> {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                             add(NetworkFetcher.Factory(
                                 networkClient = {

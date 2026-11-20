@@ -5,10 +5,13 @@ import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
 import androidx.annotation.OptIn
+import androidx.annotation.RequiresApi
+import androidx.annotation.RequiresExtension
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.HttpEngineAvailability
 import com.xtrakick.app.util.prefs
 import dagger.Module
 import dagger.Provides
@@ -34,6 +37,17 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 
+@RequiresApi(Build.VERSION_CODES.S)
+@RequiresExtension(extension = Build.VERSION_CODES.S, version = 7)
+private object HttpEngineLoader {
+    fun build(application: Application): HttpEngine {
+        return HttpEngine.Builder(application).apply {
+            addQuicHint("7tv.io", 443, 443)
+            addQuicHint("cdn.7tv.app", 443, 443)
+        }.build()
+    }
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 class AppModule {
@@ -41,12 +55,12 @@ class AppModule {
     @Singleton
     @Provides
     fun providesHttpEngine(application: Application): HttpEngine? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !HttpEngineAvailability.isAvailable) {
+            return null
+        }
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7) {
-                HttpEngine.Builder(application).apply {
-                    addQuicHint("7tv.io", 443, 443)
-                    addQuicHint("cdn.7tv.app", 443, 443)
-                }.build()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7) {
+                HttpEngineLoader.build(application)
             } else {
                 null
             }

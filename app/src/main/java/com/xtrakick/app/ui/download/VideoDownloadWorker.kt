@@ -203,8 +203,8 @@ class VideoDownloadWorker @AssistedInject constructor(
             offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADING })
             setForeground(createForegroundInfo())
         val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-        val http = httpEngine?.get()
-        val cronet = cronetEngine?.get()
+        val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+        val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
         val sourceUrl = offlineVideo.sourceUrl!!
         if (isStopped) {
             runCatching { offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_PENDING }) }
@@ -248,13 +248,15 @@ class VideoDownloadWorker @AssistedInject constructor(
             val isShared = path.toUri().scheme == ContentResolver.SCHEME_CONTENT
             var playlistUrl = sourceUrl
             var playlist = when {
-                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                    http != null -> {
                     val response = NetworkUtils.downloadHttpEngine(http, sourceUrl, cronetExecutor)
                     response.second.inputStream().use {
                         PlaylistUtils.parseMediaPlaylist(it)
                     }
                 }
-                networkLibrary == "Cronet" && cronet != null -> {
+                cronet != null -> {
                     val response = NetworkUtils.downloadCronet(cronet, sourceUrl, cronetExecutor).second
                     response.inputStream().use {
                         PlaylistUtils.parseMediaPlaylist(it)
@@ -501,7 +503,9 @@ class VideoDownloadWorker @AssistedInject constructor(
                         try {
                             val segmentTargetUrl = resolveSegmentUrl(urlPath, it.uri)
                             when {
-                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                    http != null -> {
                                     val rangeHeader = segmentRangeHeader(it)
                                     val response = NetworkUtils.downloadHttpEngine(http, segmentTargetUrl, cronetExecutor, range = rangeHeader)
                                     check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading segment ${it.uri}" }
@@ -511,7 +515,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                                     }
                                     stagedBytes = body.size.toLong()
                                 }
-                                networkLibrary == "Cronet" && cronet != null -> {
+                                cronet != null -> {
                                     val rangeHeader = segmentRangeHeader(it)
                                     val cronetResponse = NetworkUtils.downloadCronet(cronet, segmentTargetUrl, cronetExecutor, range = rangeHeader)
                                     val statusCode = cronetResponse.first.httpStatusCode
@@ -940,8 +944,8 @@ class VideoDownloadWorker @AssistedInject constructor(
                 }
                 val downloadEmotes = offlineVideo.downloadChatEmotes
                 val networkLibrary = context.prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-                val http = httpEngine?.get()
-                val cronet = cronetEngine?.get()
+                val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+                val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
                 val kickWebHeaders = KickApiHelper.getKickWebHeaders(context, true)
                 val kickPublicApiHeaders = KickApiHelper.getKickWebHeaders(context)
                 val emoteQuality = context.prefs().getString(AppConstants.CHAT_IMAGE_QUALITY, "4") ?: "4"
@@ -1149,11 +1153,13 @@ class VideoDownloadWorker @AssistedInject constructor(
                             if (url.startsWith("data:", ignoreCase = true)) {
                                 decodeDataUriToByteArray(url)
                             } else when {
-                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                    http != null -> {
                                     val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
                                     response.second
                                 }
-                                networkLibrary == "Cronet" && cronet != null -> {
+                                cronet != null -> {
                                     NetworkUtils.downloadCronet(cronet, url, cronetExecutor).second
                                 }
                                 else -> {
@@ -1576,17 +1582,19 @@ class VideoDownloadWorker @AssistedInject constructor(
      * count actually written — content-length is unreliable for chunked responses.
      */
     private suspend fun downloadInitSegment(networkLibrary: String?, playlistUrl: String, initUri: String, fileUri: String, shared: Boolean): Long {
-        val http = httpEngine?.get()
-        val cronet = cronetEngine?.get()
+        val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+        val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
         val initUrl = resolveSegmentUrl(playlistUrl, initUri)
         val written = when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                http != null -> {
                 val response = NetworkUtils.downloadHttpEngine(http, initUrl, cronetExecutor)
                 check(response.first.httpStatusCode in 200..299) { "HTTP ${response.first.httpStatusCode} downloading init segment" }
                 openDownloadOutput(fileUri, shared).use { it.write(response.second) }
                 response.second.size.toLong()
             }
-            networkLibrary == "Cronet" && cronet != null -> {
+            cronet != null -> {
                 val cronetResponse = NetworkUtils.downloadCronet(cronet, initUrl, cronetExecutor)
                 check(cronetResponse.first.httpStatusCode in 200..299) { "HTTP ${cronetResponse.first.httpStatusCode} downloading init segment" }
                 val response = cronetResponse.second
@@ -1611,8 +1619,8 @@ class VideoDownloadWorker @AssistedInject constructor(
     }
 
     private suspend fun downloadAsset(networkLibrary: String?, url: String, output: OutputStream, reportProgress: Boolean = false) = coroutineScope {
-        val http = httpEngine?.get()
-        val cronet = cronetEngine?.get()
+        val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+        val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
         val bytesWritten = AtomicLong()
         val contentLength = AtomicLong(-1L)
         val countedOutput = object : java.io.FilterOutputStream(output) {
@@ -1639,11 +1647,13 @@ class VideoDownloadWorker @AssistedInject constructor(
         } else null
         try {
             val status = when {
-                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                    http != null -> {
                     val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor, output = countedOutput, onContentLength = contentLength::set)
                     response.first.httpStatusCode
                 }
-                networkLibrary == "Cronet" && cronet != null -> {
+                cronet != null -> {
                     val response = NetworkUtils.downloadCronet(cronet, url, cronetExecutor, output = countedOutput, onContentLength = contentLength::set)
                     response.first.httpStatusCode
                 }

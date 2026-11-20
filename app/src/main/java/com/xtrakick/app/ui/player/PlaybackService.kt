@@ -13,6 +13,7 @@ import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
 import android.os.ext.SdkExtensions
+import com.xtrakick.app.util.NetworkUtils
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.content.edit
@@ -576,17 +577,19 @@ class PlaybackService : MediaSessionService() {
                                     }.build()
                                 } else null
                                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-                                val http = httpEngine?.get()
-                                val cronet = cronetEngine?.get()
+                                val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+                                val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
                                 player.setMediaSource(
                                     HlsMediaSource.Factory(
                                         DefaultDataSource.Factory(
                                             this@PlaybackService,
                                             when {
-                                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                                    http != null -> {
                                                     HttpEngineDataSource.Factory(http, cronetExecutor, multivariantPlaylistProxyClient, null) { false }
                                                 }
-                                                networkLibrary == "Cronet" && cronet != null -> {
+                                                cronet != null -> {
                                                     CronetDataSource.Factory(cronet, cronetExecutor, multivariantPlaylistProxyClient, null) { false }
                                                 }
                                                 else -> {
@@ -673,17 +676,19 @@ class PlaybackService : MediaSessionService() {
                                 // A new item gets its own full retry budget.
                                 if (backgroundPrepareRetryCount > 0) backgroundPrepareRetryCount = 0
                                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-                                val http = httpEngine?.get()
-                                val cronet = cronetEngine?.get()
+                                val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+                                val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
                                 player.setMediaSource(
                                     HlsMediaSource.Factory(
                                         DefaultDataSource.Factory(
                                             this@PlaybackService,
                                             when {
-                                                networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                                    http != null -> {
                                                     HttpEngineDataSource.Factory(http, cronetExecutor, null, null) { false }
                                                 }
-                                                networkLibrary == "Cronet" && cronet != null -> {
+                                                cronet != null -> {
                                                     CronetDataSource.Factory(cronet, cronetExecutor, null, null) { false }
                                                 }
                                                 else -> {
@@ -730,15 +735,17 @@ class PlaybackService : MediaSessionService() {
                                 // A new item gets its own full retry budget.
                                 if (backgroundPrepareRetryCount > 0) backgroundPrepareRetryCount = 0
                                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-                                val http = httpEngine?.get()
-                                val cronet = cronetEngine?.get()
+                                val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+                                val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
                                 val dataSourceFactory = DefaultDataSource.Factory(
                                     this@PlaybackService,
                                     when {
-                                        networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                            SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                                            http != null -> {
                                             HttpEngineDataSource.Factory(http, cronetExecutor, null, null) { false }
                                         }
-                                        networkLibrary == "Cronet" && cronet != null -> {
+                                        cronet != null -> {
                                             CronetDataSource.Factory(cronet, cronetExecutor, null, null) { false }
                                         }
                                         else -> {

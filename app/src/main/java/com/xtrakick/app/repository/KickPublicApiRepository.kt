@@ -3,6 +3,7 @@ package com.xtrakick.app.repository
 import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
+import com.xtrakick.app.util.NetworkUtils
 import com.xtrakick.app.model.kick.api.channel.ChannelSearchResponse
 import com.xtrakick.app.model.kick.api.chat.BadgesResponse
 import com.xtrakick.app.model.kick.api.chat.ChatUsersResponse
@@ -72,10 +73,12 @@ class KickPublicApiRepository @Inject constructor(
         bodyJson: String? = null,
     ): Pair<Int, String> = withContext(Dispatchers.IO) {
         val url = "https://api.kick.com$path$query"
-        val http = httpEngine?.get()
-        val cronet = cronetEngine?.get()
+        val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+        val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
         when {
-            networkLibrary == "HttpEngine" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 && http != null -> {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                http != null -> {
                 val response = suspendCancellableCoroutine { continuation ->
                     val request = http.newUrlRequestBuilder(url, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
                         setHttpMethod(method)
@@ -91,7 +94,7 @@ class KickPublicApiRepository @Inject constructor(
                 }
                 Pair(response.first.httpStatusCode, String(response.second))
             }
-            networkLibrary == "Cronet" && cronet != null -> {
+            cronet != null -> {
                 val response = suspendCancellableCoroutine { continuation ->
                     val request = cronet.newUrlRequestBuilder(url, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
                         setHttpMethod(method)
