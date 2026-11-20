@@ -81,7 +81,6 @@ import com.xtrakick.app.ui.game.GameMediaFragmentDirections
 import com.xtrakick.app.ui.game.GamePagerFragmentDirections
 import com.xtrakick.app.ui.games.GamesFragmentDirections
 import com.xtrakick.app.ui.multipov.MultiPovFragment
-import com.xtrakick.app.ui.multipov.MultiPovSessionStore
 import com.xtrakick.app.ui.multipov.multiPovKey
 import com.xtrakick.app.ui.player.IvsPlayerFragment
 import com.xtrakick.app.ui.player.IvsPlayerService
@@ -1127,22 +1126,6 @@ class MainActivity : BaseStateActivity() {
         }
     }
 
-    fun addToMultiPov(stream: Stream, resolvedUrl: String? = null): Boolean {
-        val existing = multiPovFragment
-            ?: supportFragmentManager.findFragmentById(R.id.playerContainer) as? MultiPovFragment
-        if (existing != null) {
-            multiPovFragment = existing
-            return existing.addStream(stream, resolvedUrl)
-        }
-        val key = stream.multiPovKey()
-        val urls = buildMap {
-            if (!resolvedUrl.isNullOrBlank()) put(key, resolvedUrl)
-            else stream.playbackUrl?.takeIf { it.isNotBlank() }?.let { put(key, it) }
-        }
-        startMultiPov(listOf(stream), urls)
-        return true
-    }
-
     fun expandMultiPovFocus(stream: Stream, resolvedUrl: String?) {
         closeMultiPovInternal()
         startStream(stream, resolvedUrl)
@@ -1154,22 +1137,6 @@ class MainActivity : BaseStateActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
             safeSetPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).setSeamlessResizeEnabled(true).build())
         }
-    }
-
-    fun resumeMultiPovSession(): Boolean {
-        if (!prefs.getBoolean(AppConstants.MULTIPOV_ENABLED, true)) return false
-        val session = MultiPovSessionStore.load(prefs) ?: return false
-        val streams = session.toStreams()
-        if (streams.isEmpty()) return false
-        prefs.edit {
-            if (session.streamQuality.isNotBlank()) {
-                putString(AppConstants.MULTIPOV_QUALITY, session.streamQuality)
-                putString(AppConstants.MULTIPOV_SECONDARY_QUALITY, session.streamQuality)
-            }
-            putBoolean(AppConstants.MULTIPOV_BANDWIDTH_SAVING, session.bandwidthSaving)
-        }
-        startMultiPov(streams = streams, focusedKey = session.focusedKey)
-        return true
     }
 
     private fun closeMultiPovInternal() {
@@ -1268,9 +1235,11 @@ class MainActivity : BaseStateActivity() {
         closeMultiPovInternal()
         playerFragment?.close()
         playerFragment = fragment
+        // Intent coroutines (handleIntent) can resume after the activity is already
+        // stopped and state-saved; commit() would throw IllegalStateException there.
         supportFragmentManager.beginTransaction()
             .replace(R.id.playerContainer, fragment)
-            .commit()
+            .commitAllowingStateLoss()
         viewModel.isPlayerOpened = true
         viewModel.isMultiPovOpened = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
