@@ -776,6 +776,7 @@ class SettingsActivity : BaseStateActivity() {
 
     class AdvancedSettingsFragment : MaterialPreferenceFragment() {
         private val viewModel: SettingsViewModel by activityViewModels()
+        private var updateDownloadDialog: AppUpdateDialogHelper.UpdateDownloadDialog? = null
         private var backupResultLauncher: ActivityResultLauncher<Intent>? = null
         private var restoreResultLauncher: ActivityResultLauncher<Intent>? = null
 
@@ -843,7 +844,6 @@ class SettingsActivity : BaseStateActivity() {
             findPreference<Preference>("action_check_updates")?.setOnPreferenceClickListener {
                 val lastInstallTime = requireContext().tokenPrefs().getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
                 viewModel.checkUpdates(
-                    requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
                     requireContext().prefs().getString(AppConstants.UPDATE_URL, null) ?: "https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest",
                     lastInstallTime
                 )
@@ -944,20 +944,6 @@ class SettingsActivity : BaseStateActivity() {
                     viewModel.updateInfo.collectLatest { updateInfo ->
                         viewModel.consumeUpdateInfo()
                         if (updateInfo != null) {
-                            if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-                                !requireContext().prefs().getBoolean(AppConstants.UPDATE_USE_BROWSER, false) &&
-                                !requireContext().packageManager.canRequestPackageInstalls()
-                            ) {
-                                try {
-                                    val intent = Intent(
-                                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                        Uri.parse("package:${requireContext().packageName}")
-                                    )
-                                    startActivity(intent)
-                                } catch (e: ActivityNotFoundException) {
-
-                                }
-                            }
                             AppUpdateDialogHelper.showUpdateDialog(
                                 context = requireContext(),
                                 updateInfo = updateInfo,
@@ -972,7 +958,20 @@ class SettingsActivity : BaseStateActivity() {
                                             Toast.makeText(requireContext(), R.string.no_browser_found, Toast.LENGTH_LONG).show()
                                         }
                                     } else {
-                                        viewModel.downloadUpdate(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), updateInfo.downloadUrl)
+                                        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+                                            !requireContext().packageManager.canRequestPackageInstalls()
+                                        ) {
+                                            try {
+                                                val intent = Intent(
+                                                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                                    Uri.parse("package:${requireContext().packageName}")
+                                                )
+                                                startActivity(intent)
+                                                return@showUpdateDialog
+                                            } catch (_: ActivityNotFoundException) {
+                                            }
+                                        }
+                                        viewModel.downloadUpdate(updateInfo.downloadUrl, updateInfo.size)
                                     }
                                 },
                                 onRemindLater = {},
@@ -989,6 +988,28 @@ class SettingsActivity : BaseStateActivity() {
                     }
                 }
             }
+            viewLifecycleOwner.lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    viewModel.updateDownloadProgress.collectLatest { progress ->
+                        if (progress != null) {
+                            val dialog = updateDownloadDialog
+                                ?: AppUpdateDialogHelper.showDownloadDialog(requireContext(), progress) {
+                                    viewModel.cancelUpdateDownload()
+                                }.also { updateDownloadDialog = it }
+                            dialog.update(progress)
+                        } else {
+                            updateDownloadDialog?.dismiss()
+                            updateDownloadDialog = null
+                        }
+                    }
+                }
+            }
+        }
+
+        override fun onDestroyView() {
+            updateDownloadDialog?.dismiss()
+            updateDownloadDialog = null
+            super.onDestroyView()
         }
     }
 

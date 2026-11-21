@@ -17,8 +17,10 @@ import androidx.work.workDataOf
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.model.AppUpdateInfo
+import com.xtrakick.app.util.AppUpdateDownloader
+import com.xtrakick.app.util.UpdateDownloadProgress
 import com.xtrakick.app.util.fetchAppUpdate
-import com.xtrakick.app.util.installAppUpdate
+import com.xtrakick.app.util.fetchAppUpdateText
 import com.xtrakick.app.model.VideoPosition
 import com.xtrakick.app.model.kick.auth.KickBackendIntrospectRequest
 import com.xtrakick.app.model.ui.Clip
@@ -42,7 +44,6 @@ import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.KickApiHelper
-import com.xtrakick.app.util.NetworkUtils
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import com.xtrakick.app.util.FcmSyncManager
@@ -62,7 +63,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
-import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import java.util.Timer
 import javax.inject.Inject
 import kotlin.math.max
@@ -75,6 +76,7 @@ class MainViewModel @Inject constructor(
     private val playerRepository: PlayerRepository,
     private val offlineRepository: OfflineRepository,
     private val authRepository: AuthRepository,
+    private val okHttpClient: OkHttpClient,
     private val json: Json,
     private val fcmSyncManager: Lazy<FcmSyncManager>,
     private val kickAccountMutedUsersStore: KickAccountMutedUsersStore,
@@ -160,16 +162,15 @@ class MainViewModel @Inject constructor(
     val game = MutableStateFlow<Pair<Game?, String?>?>(null)
 
     val updateInfo = MutableSharedFlow<AppUpdateInfo?>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    val updateUrl = MutableSharedFlow<String?>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    var updateSize: Long? = null
-    var updateJob: Job? = null
-    val updateProgress = MutableSharedFlow<Int>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    val closeUpdateDialog = MutableSharedFlow<Boolean>()
+    private val appUpdateDownloader by lazy {
+        AppUpdateDownloader(applicationContext, okHttpClient, viewModelScope, "MainViewModel")
+    }
+    val updateDownloadProgress: StateFlow<UpdateDownloadProgress?>
+        get() = appUpdateDownloader.progress
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     fun consumeUpdateInfo() {
         updateInfo.resetReplayCache()
-        updateUrl.resetReplayCache()
     }
 
     private fun markKickValidationComplete() {
@@ -713,11 +714,11 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun checkUpdates(networkLibrary: String?, url: String, lastChecked: Long) {
+    fun checkUpdates(url: String, lastInstallTime: Long, skippedReleaseTime: Long = lastInstallTime) {
         viewModelScope.launch(Dispatchers.IO) {
             if (BuildConfig.DEBUG && applicationContext.prefs().getBoolean(AppConstants.DEBUG_MOCK_UPDATE_AVAILABLE, false)) {
                 val mockTime = System.currentTimeMillis() + 86_400_000L
-                if (mockTime > lastChecked) {
+                if (mockTime > maxOf(lastInstallTime, skippedReleaseTime)) {
                     val mockInfo = AppUpdateInfo(
                         downloadUrl = "https://github.com/tibor1234567895/Xtra-Kick/releases/latest",
                         size = 25_000_000L,
@@ -725,18 +726,19 @@ class MainViewModel @Inject constructor(
                         releaseTitle = "v99.0.0 (Debug Test Update)",
                         releaseNotes = "### Simulated Release Notes\n- Verified in-app updater startup checks\n- Verified Remind Me Later and Skip actions"
                     )
-                    updateSize = mockInfo.size
                     updateInfo.emit(mockInfo)
-                    updateUrl.emit(mockInfo.downloadUrl)
                     KickApiHelper.checkedUpdates = true
                     return@launch
                 }
             }
             val updateInfoResult: AppUpdateInfo? = try {
-                fetchAppUpdate(json, url, lastChecked) { feedUrl ->
-                    playerRepository.loadTextFromUrl(networkLibrary, feedUrl)
-                }.also { info ->
-                    if (info != null) updateSize = info.size
+                fetchAppUpdate(
+                    json = json,
+                    configuredFeed = url,
+                    lastChecked = lastInstallTime,
+                    skippedReleaseTime = skippedReleaseTime,
+                ) { feedUrl ->
+                    fetchAppUpdateText(okHttpClient, feedUrl)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -748,30 +750,13 @@ class MainViewModel @Inject constructor(
                 null
             }
             updateInfo.emit(updateInfoResult)
-            updateUrl.emit(updateInfoResult?.downloadUrl)
         }
         KickApiHelper.checkedUpdates = true
     }
 
-    fun downloadUpdate(networkLibrary: String?, url: String) {
-        updateJob = viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val progressListener = NetworkUtils.ProgressListener { bytesRead ->
-                    updateProgress.tryEmit(bytesRead)
-                }
-                installAppUpdate(applicationContext, url) { output ->
-                    playerRepository.downloadTo(networkLibrary, url, output, progressListener)
-                }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                DiagnosticLogger.e("MainViewModel", "downloadUpdate failed", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(applicationContext, R.string.update_download_failed, Toast.LENGTH_LONG).show()
-                }
-            }
-            closeUpdateDialog.emit(true)
-        }
-    }
+    fun downloadUpdate(url: String, expectedSize: Long?) = appUpdateDownloader.start(url, expectedSize)
+
+    fun cancelUpdateDownload() = appUpdateDownloader.cancel()
 
     fun deleteOldImages() {
         viewModelScope.launch(Dispatchers.IO) {

@@ -63,6 +63,14 @@ jobs:
     - name: Build Release with Gradle
       run: ./gradlew assembleRelease -PreleaseVersionCode=${{ steps.version.outputs.code }} --build-cache --parallel
 
+    - name: Upload R8 mapping artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: mapping-b${{ steps.version.outputs.code }}
+        path: app/build/outputs/mapping/release/mapping.txt
+        retention-days: 90
+        if-no-files-found: error
+
     - name: Verify release signature
       run: |
         APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -r | head -1)

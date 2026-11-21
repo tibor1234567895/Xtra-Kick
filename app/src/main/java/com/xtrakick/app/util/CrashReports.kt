@@ -26,6 +26,25 @@ object CrashReports {
     private const val MAX_BYTES = 24 * 1024
     private val symbolPattern = Regex("[A-Za-z0-9_.$<>-]+")
     private val filePattern = Regex("[A-Za-z0-9_.$-]+")
+    private val safeMessageTypes = setOf(
+        "java.lang.NoClassDefFoundError",
+        "java.lang.ClassNotFoundException",
+        "java.lang.NoSuchMethodError",
+        "java.lang.NoSuchFieldError",
+        "java.lang.IncompatibleClassChangeError",
+        "java.lang.AbstractMethodError",
+        "java.lang.IllegalAccessError",
+        "java.lang.UnsatisfiedLinkError",
+        "java.lang.VerifyError",
+        "java.lang.LinkageError",
+    )
+    private val printableAscii = Regex("^[\\x20-\\x7E]+$")
+    private val unsafeMessagePattern = Regex(
+        "://|@|/data/|/storage/|/sdcard/|/mnt/|bearer\\s|token|secret|password|cookie|authorization",
+        RegexOption.IGNORE_CASE,
+    )
+    private val whitespace = Regex("\\s+")
+    private const val MAX_MESSAGE_LENGTH = 160
     private val inFlight = AtomicBoolean(false)
     @Volatile private var lastAttempt = -60_000L
 
@@ -75,6 +94,7 @@ object CrashReports {
             for (exception in causes) {
                 add(buildJsonObject {
                     put("type", safeSymbol(exception.javaClass.name))
+                    safeMessage(exception)?.let { put("message", it) }
                     put("frames", buildJsonArray {
                         for (frame in exception.stackTrace.take(framesPerCause)) {
                             add(buildJsonObject {
@@ -92,6 +112,16 @@ object CrashReports {
 
     private fun safeSymbol(value: String): String =
         value.takeIf { it.length <= 200 && symbolPattern.matches(it) } ?: "unknown"
+
+    internal fun safeMessage(throwable: Throwable): String? {
+        if (throwable.javaClass.name !in safeMessageTypes) return null
+        val raw = throwable.message ?: return null
+        // Android ClassNotFoundException appends DexPathList with /data/app/... APK paths; strip it.
+        val trimmed = raw.substringBefore(" on path:").replace(whitespace, " ").trim()
+        if (trimmed.isEmpty() || unsafeMessagePattern.containsMatchIn(trimmed)) return null
+        val capped = trimmed.take(MAX_MESSAGE_LENGTH).trim()
+        return capped.takeIf { it.isNotEmpty() && printableAscii.matches(it) }
+    }
 
     internal fun enqueue(dir: File, report: JsonObject, now: Long = System.currentTimeMillis()) {
         synchronized(this) {

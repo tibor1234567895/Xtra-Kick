@@ -98,6 +98,7 @@ object UsagePing {
             val country = runCatching { java.util.Locale.getDefault().country }.getOrNull().orEmpty()
             val body = buildString {
                 append("{\"pid\":\"").append(pid).append("\",\"v\":\"").append(escapeJson(BuildConfig.VERSION_NAME)).append("\"")
+                append(",\"b\":").append(BuildConfig.VERSION_CODE)
                 append(",\"os\":\"").append(Build.VERSION.SDK_INT).append('"')
                 if (country.length == 2) append(",\"cc\":\"").append(country).append('"')
                 if (sessions > 0) append(",\"s\":").append(sessions)

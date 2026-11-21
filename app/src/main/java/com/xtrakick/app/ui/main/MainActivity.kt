@@ -23,7 +23,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import android.os.PowerManager
-import android.text.format.Formatter
 import android.util.Log
 import android.util.Rational
 import android.view.Menu
@@ -35,7 +34,6 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.OptIn
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
@@ -65,7 +63,6 @@ import com.xtrakick.app.KickApp
 import com.xtrakick.app.ui.following.KickFollowSync
 import com.xtrakick.app.util.AppUpdateDialogHelper
 import com.xtrakick.app.databinding.ActivityMainBinding
-import com.xtrakick.app.databinding.DialogUpdateDownloadBinding
 import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.model.ui.Stream
@@ -100,10 +97,10 @@ import com.xtrakick.app.util.KickLink
 import com.xtrakick.app.util.KickLinkRouter
 import com.xtrakick.app.util.NotificationPermissionHelper
 import com.xtrakick.app.util.activeUpdateSessionId
+import com.xtrakick.app.util.pendingInstallConfirmationSessionId
 import com.xtrakick.app.util.applyTheme
 import com.xtrakick.app.util.cancelLiveNotificationsPollingWork
 import com.xtrakick.app.util.enqueueLiveNotificationsPollingWork
-import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.color.MaterialColors
@@ -201,8 +198,7 @@ class MainActivity : BaseStateActivity() {
 
     private lateinit var prefs: SharedPreferences
     private var checkedUpdatesOnLaunch = false
-    private var updateDownloadDialogBinding: DialogUpdateDownloadBinding? = null
-    private var updateDownloadDialog: AlertDialog? = null
+    private var updateDownloadDialog: AppUpdateDialogHelper.UpdateDownloadDialog? = null
     var settingsResultLauncher: ActivityResultLauncher<Intent>? = null
     var loginResultLauncher: ActivityResultLauncher<Intent>? = null
     var logoutResultLauncher: ActivityResultLauncher<Intent>? = null
@@ -384,12 +380,11 @@ class MainActivity : BaseStateActivity() {
                     }
                     val skippedReleaseTime = tokenPrefs().getLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, 0L)
                     val lastInstallTime = tokenPrefs().getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
-                    val cutoff = maxOf(skippedReleaseTime, lastInstallTime)
 
                     viewModel.checkUpdates(
-                        prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
                         prefs.getString(AppConstants.UPDATE_URL, null) ?: "https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest",
-                        cutoff
+                        lastInstallTime,
+                        skippedReleaseTime,
                     )
                 } else {
                     checkedUpdatesOnLaunch = false
@@ -455,30 +450,7 @@ class MainActivity : BaseStateActivity() {
                                         Toast.makeText(this@MainActivity, R.string.no_browser_found, Toast.LENGTH_LONG).show()
                                     }
                                 } else {
-                                    val binding = DialogUpdateDownloadBinding.inflate(layoutInflater)
-                                    updateDownloadDialogBinding = binding
-                                    val size = updateInfo.size ?: viewModel.updateSize
-                                    if (size != null) {
-                                        binding.textView.text = getString(
-                                            R.string.downloading_update_progress,
-                                            Formatter.formatFileSize(this@MainActivity, 0),
-                                            Formatter.formatFileSize(this@MainActivity, size),
-                                        )
-                                    } else {
-                                        binding.textView.text = getString(R.string.downloading_update)
-                                        binding.progressBar.visibility = View.GONE
-                                    }
-                                    viewModel.downloadUpdate(prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), updateInfo.downloadUrl)
-                                    val dialog = getAlertDialogBuilder()
-                                        .setView(binding.root)
-                                        .setNegativeButton(getString(android.R.string.cancel), null)
-                                        .setOnDismissListener {
-                                            viewModel.updateJob?.cancel()
-                                            updateDownloadDialogBinding = null
-                                            updateDownloadDialog = null
-                                        }
-                                        .show()
-                                    updateDownloadDialog = dialog
+                                    viewModel.downloadUpdate(updateInfo.downloadUrl, updateInfo.size)
                                 }
                             },
                             onRemindLater = {},
@@ -495,25 +467,17 @@ class MainActivity : BaseStateActivity() {
         }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.updateProgress.collectLatest {
-                    updateDownloadDialogBinding?.let { binding ->
-                        val size = viewModel.updateSize
-                        if (size != null && size > 0) {
-                            binding.textView.text = getString(
-                                R.string.downloading_update_progress,
-                                Formatter.formatFileSize(this@MainActivity, it.toLong()),
-                                Formatter.formatFileSize(this@MainActivity, size),
-                            )
-                            binding.progressBar.progress = (((it.toFloat() / size) * 100)).toInt()
-                        }
+                viewModel.updateDownloadProgress.collectLatest { progress ->
+                    if (progress != null) {
+                        val dialog = updateDownloadDialog
+                            ?: AppUpdateDialogHelper.showDownloadDialog(this@MainActivity, progress) {
+                                viewModel.cancelUpdateDownload()
+                            }.also { updateDownloadDialog = it }
+                        dialog.update(progress)
+                    } else {
+                        updateDownloadDialog?.dismiss()
+                        updateDownloadDialog = null
                     }
-                }
-            }
-        }
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.closeUpdateDialog.collectLatest {
-                    updateDownloadDialog?.dismiss()
                 }
             }
         }
@@ -803,6 +767,8 @@ class MainActivity : BaseStateActivity() {
         if (isFinishing && playerFragment?.shouldContinuePlaybackInBackground() != true) {
             playerFragment?.close()
         }
+        updateDownloadDialog?.dismiss()
+        updateDownloadDialog = null
         super.onDestroy()
     }
 
@@ -955,26 +921,37 @@ class MainActivity : BaseStateActivity() {
             INTENT_INSTALL_UPDATE -> {
                 val extras = intent.extras
                 val sessionId = extras?.getInt(PackageInstaller.EXTRA_SESSION_ID, -1) ?: -1
-                if (sessionId != -1 &&
-                    sessionId == activeUpdateSessionId.get() &&
-                    extras?.getInt(PackageInstaller.EXTRA_STATUS) == PackageInstaller.STATUS_PENDING_USER_ACTION
-                ) {
-                    val rawIntent = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)
-                    rawIntent?.takeIf(::isSystemInstallerIntent)?.let { verifiedIntent ->
-                        activeUpdateSessionId.compareAndSet(sessionId, -1)
-                        tokenPrefs().edit {
-                            putLong(AppConstants.UPDATE_LAST_CHECKED, System.currentTimeMillis())
-                        }
-                        try {
-                            startActivity(verifiedIntent)
-                        } catch (e: Exception) {
-                            DiagnosticLogger.e(TAG, "install confirmation activity launch failed", e)
-                            // Debug builds target a different applicationId than release;
-                            // PackageInstaller cannot hand off the confirmation dialog.
-                            // Open the release page in the browser so the user can install manually.
-                            runCatching {
-                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/tibor1234567895/Xtra-Kick/releases/latest")))
+                if (sessionId != -1 && sessionId == activeUpdateSessionId.get()) {
+                    val status = extras?.getInt(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+                        ?: PackageInstaller.STATUS_FAILURE
+                    if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                        val rawIntent = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)
+                        val verifiedIntent = rawIntent?.takeIf(::isSystemInstallerIntent)
+                        if (verifiedIntent != null && pendingInstallConfirmationSessionId.compareAndSet(sessionId, -1)) {
+                            tokenPrefs().edit {
+                                putLong(AppConstants.UPDATE_LAST_CHECKED, System.currentTimeMillis())
                             }
+                            try {
+                                startActivity(verifiedIntent)
+                            } catch (e: Exception) {
+                                DiagnosticLogger.e(TAG, "install confirmation activity launch failed", e)
+                                // Debug builds target a different applicationId than release;
+                                // PackageInstaller cannot hand off the confirmation dialog.
+                                // Open the release page in the browser so the user can install manually.
+                                runCatching {
+                                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/tibor1234567895/Xtra-Kick/releases/latest")))
+                                }
+                            }
+                        }
+                    } else {
+                        activeUpdateSessionId.compareAndSet(sessionId, -1)
+                        pendingInstallConfirmationSessionId.compareAndSet(sessionId, -1)
+                        if (status != PackageInstaller.STATUS_SUCCESS && status != PackageInstaller.STATUS_FAILURE_ABORTED) {
+                            DiagnosticLogger.e(
+                                TAG,
+                                "Update install failed: status=$status msg=${extras?.getString(PackageInstaller.EXTRA_STATUS_MESSAGE)}",
+                            )
+                            Toast.makeText(this, R.string.update_download_failed, Toast.LENGTH_LONG).show()
                         }
                     }
                 }

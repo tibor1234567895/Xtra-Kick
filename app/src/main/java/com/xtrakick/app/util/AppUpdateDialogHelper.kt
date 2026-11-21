@@ -6,7 +6,10 @@ import android.view.LayoutInflater
 import androidx.appcompat.app.AlertDialog
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.DialogAppUpdateBinding
+import com.xtrakick.app.databinding.DialogUpdateDownloadBinding
 import com.xtrakick.app.model.AppUpdateInfo
+
+data class UpdateDownloadProgress(val bytesRead: Long, val totalBytes: Long?)
 
 object AppUpdateDialogHelper {
 
@@ -77,8 +80,8 @@ object AppUpdateDialogHelper {
         }
 
         binding.updateButton.setOnClickListener {
-            onUpdate()
             dialog.dismiss()
+            onUpdate()
         }
 
         binding.remindLaterButton.setOnClickListener {
@@ -97,5 +100,74 @@ object AppUpdateDialogHelper {
 
         dialog.show()
         return dialog
+    }
+
+    class UpdateDownloadDialog internal constructor(
+        private val context: Context,
+        private val binding: DialogUpdateDownloadBinding,
+        private val dialog: AlertDialog,
+        private val formattedTotal: String?,
+    ) {
+        private var lastPercent = -1
+        private var lastFormattedRead: String? = null
+
+        fun update(progress: UpdateDownloadProgress) {
+            val total = progress.totalBytes
+            if (formattedTotal == null || total == null || total <= 0L) return
+
+            val formattedRead = Formatter.formatFileSize(context, progress.bytesRead)
+            if (formattedRead != lastFormattedRead) {
+                lastFormattedRead = formattedRead
+                binding.textView.text = context.getString(
+                    R.string.downloading_update_progress,
+                    formattedRead,
+                    formattedTotal,
+                )
+            }
+            val percent = ((progress.bytesRead * 100L) / total).toInt().coerceIn(0, 100)
+            if (percent != lastPercent) {
+                lastPercent = percent
+                binding.progressBar.setProgressCompat(percent, true)
+            }
+        }
+
+        fun dismiss() {
+            if (dialog.isShowing) {
+                dialog.dismiss()
+            }
+        }
+    }
+
+    fun showDownloadDialog(
+        context: Context,
+        initial: UpdateDownloadProgress,
+        onCancel: () -> Unit,
+    ): UpdateDownloadDialog {
+        val binding = DialogUpdateDownloadBinding.inflate(LayoutInflater.from(context))
+        val formattedTotal = initial.totalBytes?.takeIf { it > 0L }?.let {
+            Formatter.formatFileSize(context, it)
+        }
+        // Must configure indeterminate mode BEFORE the LinearProgressIndicator becomes visible.
+        binding.progressBar.isIndeterminate = formattedTotal == null
+        if (formattedTotal != null) {
+            binding.progressBar.max = 100
+        } else {
+            binding.textView.text = context.getString(R.string.downloading_update)
+        }
+
+        val dialog = context.getAlertDialogBuilder()
+            .setView(binding.root)
+            .setNegativeButton(context.getString(android.R.string.cancel)) { _, _ ->
+                onCancel()
+            }
+            .setOnCancelListener {
+                onCancel()
+            }
+            .create()
+
+        val handle = UpdateDownloadDialog(context, binding, dialog, formattedTotal)
+        handle.update(initial)
+        dialog.show()
+        return handle
     }
 }

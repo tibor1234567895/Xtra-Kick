@@ -5,6 +5,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -99,5 +100,43 @@ class CrashReportsTest {
         val frame = report.getValue("exceptions").jsonArray.first().jsonObject.getValue("frames").jsonArray.first().jsonObject
         assertEquals("unknown", frame.getValue("class").jsonPrimitive.content)
         assertEquals("Unknown", frame.getValue("file").jsonPrimitive.content)
+    }
+
+    @Test
+    fun allowlistedLinkageMessagesAreSanitizedAndNonAllowlistedOmitted() {
+        val noClassDef = NoClassDefFoundError("Failed resolution of: Landroid/net/http/HttpEngine;")
+        val report = CrashReports.report(noClassDef, "1.0", 1, 30)
+        assertEquals(
+            "Failed resolution of: Landroid/net/http/HttpEngine;",
+            report.getValue("exceptions").jsonArray.first().jsonObject.getValue("message").jsonPrimitive.content,
+        )
+
+        val classNotFound = ClassNotFoundException(
+            "Didn't find class \"android.net.http.HttpEngine\" on path: DexPathList[[zip file \"/data/app/~~abc/base.apk\"]]"
+        )
+        val cnfReport = CrashReports.report(classNotFound, "1.0", 1, 30)
+        val cnfMessage = cnfReport.getValue("exceptions").jsonArray.first().jsonObject.getValue("message").jsonPrimitive.content
+        assertEquals("Didn't find class \"android.net.http.HttpEngine\"", cnfMessage)
+        assertFalse(cnfMessage.contains("/data/app"))
+
+        for (unsafe in listOf(
+            NoClassDefFoundError("https://private.example/token"),
+            NoClassDefFoundError("user@example.com failed"),
+            NoClassDefFoundError("Failed in /storage/emulated/0/file"),
+            NoClassDefFoundError("Bearer abcdef"),
+            NoClassDefFoundError("Non-ASCII \u00e9 symbol"),
+        )) {
+            assertNull(CrashReports.safeMessage(unsafe))
+        }
+
+        for (disallowed in listOf(
+            NullPointerException("Attempt to invoke virtual method on null"),
+            IOException("GET https://api.example.com/secret?token=1"),
+            SecurityException("Missing permission for user"),
+            IllegalStateException("Bearer token"),
+        )) {
+            val disReport = CrashReports.report(disallowed, "1.0", 1, 35)
+            assertFalse(disReport.getValue("exceptions").jsonArray.first().jsonObject.containsKey("message"))
+        }
     }
 }

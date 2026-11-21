@@ -8,15 +8,16 @@ import android.net.http.HttpEngine
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.JsonReader
-import android.widget.Toast
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.model.AppUpdateInfo
+import com.xtrakick.app.util.AppUpdateDownloader
+import com.xtrakick.app.util.UpdateDownloadProgress
 import com.xtrakick.app.util.fetchAppUpdate
-import com.xtrakick.app.util.installAppUpdate
+import com.xtrakick.app.util.fetchAppUpdateText
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.repository.NotificationUsersRepository
 import com.xtrakick.app.repository.OfflineRepository
@@ -41,8 +42,8 @@ import kotlinx.coroutines.channels.BufferOverflow
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -73,12 +74,15 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
 
     val updateInfo = MutableSharedFlow<AppUpdateInfo?>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    val updateUrl = MutableSharedFlow<String?>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    private val appUpdateDownloader by lazy {
+        AppUpdateDownloader(applicationContext, okHttpClient, viewModelScope, "SettingsViewModel")
+    }
+    val updateDownloadProgress: StateFlow<UpdateDownloadProgress?>
+        get() = appUpdateDownloader.progress
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     fun consumeUpdateInfo() {
         updateInfo.resetReplayCache()
-        updateUrl.resetReplayCache()
     }
 
     /** Result of scanning app storage for download files with no matching library entry. */
@@ -500,11 +504,11 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun checkUpdates(networkLibrary: String?, url: String, lastChecked: Long) {
+    fun checkUpdates(url: String, lastInstallTime: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             if (BuildConfig.DEBUG && applicationContext.prefs().getBoolean(AppConstants.DEBUG_MOCK_UPDATE_AVAILABLE, false)) {
                 val mockTime = System.currentTimeMillis() + 86_400_000L
-                if (mockTime > lastChecked) {
+                if (mockTime > lastInstallTime) {
                     val mockInfo = AppUpdateInfo(
                         downloadUrl = "https://github.com/tibor1234567895/Xtra-Kick/releases/latest",
                         size = 25_000_000L,
@@ -513,13 +517,17 @@ class SettingsViewModel @Inject constructor(
                         releaseNotes = "### Simulated Release Notes\n- Verified in-app updater startup checks\n- Verified Remind Me Later and Skip actions"
                     )
                     updateInfo.emit(mockInfo)
-                    updateUrl.emit(mockInfo.downloadUrl)
                     return@launch
                 }
             }
             val updateInfoResult: AppUpdateInfo? = try {
-                fetchAppUpdate(json, url, lastChecked) { feedUrl ->
-                    playerRepository.loadTextFromUrl(networkLibrary, feedUrl)
+                fetchAppUpdate(
+                    json = json,
+                    configuredFeed = url,
+                    lastChecked = lastInstallTime,
+                    skippedReleaseTime = 0L,
+                ) { feedUrl ->
+                    fetchAppUpdateText(okHttpClient, feedUrl)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -527,25 +535,12 @@ class SettingsViewModel @Inject constructor(
                 null
             }
             updateInfo.emit(updateInfoResult)
-            updateUrl.emit(updateInfoResult?.downloadUrl)
         }
     }
 
-    fun downloadUpdate(networkLibrary: String?, url: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                installAppUpdate(applicationContext, url) { output ->
-                    playerRepository.downloadTo(networkLibrary, url, output)
-                }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                DiagnosticLogger.e("SettingsViewModel", "downloadUpdate failed", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(applicationContext, R.string.update_download_failed, Toast.LENGTH_LONG).show()
-                }
-            }
-        }
-    }
+    fun downloadUpdate(url: String, expectedSize: Long?) = appUpdateDownloader.start(url, expectedSize)
+
+    fun cancelUpdateDownload() = appUpdateDownloader.cancel()
 
     fun backupSettings(url: String) {
         viewModelScope.launch(Dispatchers.IO) {

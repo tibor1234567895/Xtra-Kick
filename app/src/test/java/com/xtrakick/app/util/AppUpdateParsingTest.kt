@@ -1,16 +1,32 @@
 package com.xtrakick.app.util
 
+import com.sun.net.httpserver.HttpServer
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.model.AppUpdateInfo
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.InetSocketAddress
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 class AppUpdateParsingTest {
     @Test
@@ -296,5 +312,146 @@ class AppUpdateParsingTest {
 
         val nullFallback = AppUpdateDialogHelper.formatChangelog(null, "Default Description")
         assertEquals("Default Description", nullFallback)
+    }
+
+    @Test
+    fun fetchAppUpdateTextReturnsBodyOn200AndNullOnErrors() = runBlocking {
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val (code, body) = when (chain.request().url.encodedPath) {
+                "/ok" -> 200 to """{"versionCode":225}"""
+                "/not-found" -> 404 to "missing"
+                else -> 500 to "error"
+            }
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(code)
+                .message("test")
+                .body(body.toResponseBody("application/json".toMediaType()))
+                .build()
+        }.build()
+
+        assertEquals("""{"versionCode":225}""", fetchAppUpdateText(client, "https://example.test/ok"))
+        assertNull(fetchAppUpdateText(client, "https://example.test/not-found"))
+        assertNull(fetchAppUpdateText(client, "https://example.test/error"))
+    }
+
+    @Test
+    fun downloadAppUpdateStreamsBytesTracksProgressAndRejectsEmptyOrHttpErrors() = runBlocking {
+        val payload = ByteArray(40_000) { (it % 251).toByte() }
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val (code, bytes) = when (chain.request().url.encodedPath) {
+                "/apk" -> 200 to payload
+                "/empty" -> 200 to ByteArray(0)
+                else -> 404 to "not found".encodeToByteArray()
+            }
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(code)
+                .message("test")
+                .body(bytes.toResponseBody("application/octet-stream".toMediaType()))
+                .build()
+        }.build()
+
+        val output = ByteArrayOutputStream()
+        val progressUpdates = mutableListOf<Long>()
+        downloadAppUpdate(client, "https://example.test/apk", output) { progressUpdates += it }
+
+        assertArrayEquals(payload, output.toByteArray())
+        assertTrue(progressUpdates.isNotEmpty())
+        assertEquals(payload.size.toLong(), progressUpdates.last())
+        assertEquals(progressUpdates.sorted(), progressUpdates)
+
+        val emptyFailure = runCatching {
+            downloadAppUpdate(client, "https://example.test/empty", ByteArrayOutputStream())
+        }.exceptionOrNull()
+        assertTrue(emptyFailure is IOException)
+
+        val httpFailure = runCatching {
+            downloadAppUpdate(client, "https://example.test/missing", ByteArrayOutputStream())
+        }.exceptionOrNull()
+        assertTrue(httpFailure is IOException)
+    }
+
+    @Test
+    fun executeUpdateCallPropagatesCancellationExceptionWhenJobIsCancelled() = runBlocking {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/hang") { exchange ->
+                started.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                exchange.sendResponseHeaders(200, 0)
+                exchange.close()
+            }
+            start()
+        }
+        try {
+            val client = OkHttpClient()
+            val completionCause = AtomicReference<Throwable?>()
+            val job = launch(Dispatchers.Default) {
+                executeUpdateCall(client, "http://127.0.0.1:${server.address.port}/hang") {
+                    it.body.string()
+                }
+            }
+            job.invokeOnCompletion { completionCause.set(it) }
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            job.cancel()
+            job.join()
+            assertTrue(completionCause.get() is CancellationException)
+        } finally {
+            release.countDown()
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun fetchAppUpdatePrefersVersionCodeOverLastInstallTimestampWhileRespectingSkips() = runBlocking {
+        val target = "https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/"
+        val releaseTime = checkNotNull(KickApiHelper.parseIso8601DateUTC("2026-11-18T12:00:00Z"))
+        val laterInstallTime = releaseTime + 3_600_000L
+        val releaseWithVersion = """
+            {"published_at":"2026-11-18T12:00:00Z","assets":[
+                {"name":"app-release.apk","browser_download_url":"${target}app-release.apk"},
+                {"name":"release-version.json","browser_download_url":"${target}release-version.json"}
+            ]}
+        """
+        val releaseWithoutVersion = """
+            {"published_at":"2026-11-18T12:00:00Z","assets":[
+                {"name":"app-release.apk","browser_download_url":"${target}app-release.apk"}
+            ]}
+        """
+
+        val foundByVersionCode = fetchAppUpdate(
+            json = json,
+            configuredFeed = OFFICIAL_UPDATE_FEED,
+            lastChecked = laterInstallTime,
+            skippedReleaseTime = 0L,
+            preferVersionCode = true,
+        ) { url ->
+            if (url == OFFICIAL_UPDATE_FEED) releaseWithVersion else """{"versionCode":${BuildConfig.VERSION_CODE + 1}}"""
+        }
+        assertEquals("${target}app-release.apk", foundByVersionCode?.downloadUrl)
+
+        val skipped = fetchAppUpdate(
+            json = json,
+            configuredFeed = OFFICIAL_UPDATE_FEED,
+            lastChecked = 0L,
+            skippedReleaseTime = releaseTime,
+            preferVersionCode = true,
+        ) { url ->
+            if (url == OFFICIAL_UPDATE_FEED) releaseWithVersion else """{"versionCode":${BuildConfig.VERSION_CODE + 1}}"""
+        }
+        assertNull(skipped)
+
+        val fallbackRejectedByTimestamp = fetchAppUpdate(
+            json = json,
+            configuredFeed = OFFICIAL_UPDATE_FEED,
+            lastChecked = laterInstallTime,
+            skippedReleaseTime = 0L,
+            preferVersionCode = true,
+        ) { releaseWithoutVersion }
+        assertNull(fallbackRejectedByTimestamp)
     }
 }

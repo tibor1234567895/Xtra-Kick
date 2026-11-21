@@ -3,6 +3,13 @@ package com.xtrakick.app.util
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.model.AppUpdateInfo
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -10,6 +17,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
 
 private val OFFICIAL_REPOSITORY = listOf("tibor1234567895", "Xtra-Kick")
 private val OFFICIAL_FEED_PATH = listOf("repos") + OFFICIAL_REPOSITORY + "releases"
@@ -31,11 +41,13 @@ internal suspend fun fetchAppUpdate(
     json: Json,
     configuredFeed: String,
     lastChecked: Long,
+    skippedReleaseTime: Long = lastChecked,
+    preferVersionCode: Boolean = !BuildConfig.DEBUG,
     loadText: suspend (String) -> String?,
 ): AppUpdateInfo? {
     val feed = configuredFeed.takeIf(::isOfficialUpdateFeed) ?: OFFICIAL_UPDATE_FEED
     val response = loadText(feed)?.let { json.parseToJsonElement(it) as? JsonObject } ?: return null
-    val candidate = parseAppUpdateInfo(response, lastChecked) ?: return null
+    val candidate = parseAppUpdateInfo(response, if (preferVersionCode) 0L else lastChecked) ?: return null
     val remoteCode = try {
         findReleaseVersionUrl(response)
             ?.let { loadText(it) }
@@ -46,8 +58,50 @@ internal suspend fun fetchAppUpdate(
         DiagnosticLogger.w("AppUpdate", "Could not load release version, using the release timestamp", error)
         null
     }
-    return candidate.takeIf { remoteCode == null || remoteCode > BuildConfig.VERSION_CODE }
+    return if (remoteCode != null) {
+        candidate.takeIf {
+            remoteCode > BuildConfig.VERSION_CODE &&
+                it.updatedAt > skippedReleaseTime &&
+                (preferVersionCode || it.updatedAt > lastChecked)
+        }
+    } else {
+        candidate.takeIf { it.updatedAt > maxOf(lastChecked, skippedReleaseTime) }
+    }
 }
+
+/**
+ * Self-contained plain OkHttp transport for update metadata/downloads so network-engine or
+ * SDK-specific changes elsewhere in the app cannot break self-updates.
+ */
+internal suspend fun <T> executeUpdateCall(
+    okHttpClient: OkHttpClient,
+    url: String,
+    block: suspend (Response) -> T,
+): T = coroutineScope {
+    val call = okHttpClient.newCall(Request.Builder().url(url).build())
+    val cancellationWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
+        try {
+            awaitCancellation()
+        } finally {
+            call.cancel()
+        }
+    }
+    try {
+        withContext(Dispatchers.IO) {
+            call.execute().use { block(it) }
+        }
+    } catch (error: Exception) {
+        ensureActive()
+        throw error
+    } finally {
+        cancellationWatcher.cancel()
+    }
+}
+
+internal suspend fun fetchAppUpdateText(okHttpClient: OkHttpClient, url: String): String? =
+    executeUpdateCall(okHttpClient, url) { response ->
+        if (response.isSuccessful) response.body.string() else null
+    }
 
 internal fun isTrustedUpdateUrl(url: String): Boolean {
     val parsed = url.trim().toHttpUrlOrNull() ?: return false

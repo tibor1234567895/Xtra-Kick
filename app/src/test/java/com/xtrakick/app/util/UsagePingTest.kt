@@ -1,6 +1,7 @@
 package com.xtrakick.app.util
 
 import android.app.Application
+import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.ui.player.KickLivePlayback
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -78,6 +79,7 @@ class UsagePingTest {
         val newBackend = Connection(acknowledged = true)
         UsagePing.sendOnce(context, "2026-11-14") { newBackend }
         val payload = Json.parseToJsonElement(newBackend.body.toString(Charsets.UTF_8)).jsonObject
+        assertEquals(BuildConfig.VERSION_CODE.toString(), payload.getValue("b").jsonPrimitive.content)
         assertEquals("1", payload.getValue("si").jsonPrimitive.content)
         assertEquals("1", payload.getValue("se").jsonPrimitive.content)
         assertFalse(newBackend.body.toString(Charsets.UTF_8).contains("stream-a"))

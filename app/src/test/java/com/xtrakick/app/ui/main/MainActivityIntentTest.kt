@@ -2,7 +2,11 @@ package com.xtrakick.app.ui.main
 
 import android.app.Application
 import android.app.Dialog
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.os.Bundle
 import android.os.Parcel
@@ -18,6 +22,8 @@ import com.xtrakick.app.ui.common.BaseStateActivity
 import com.xtrakick.app.ui.player.IvsPlayerService
 import com.xtrakick.app.ui.player.MediaButtonReceiver
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.activeUpdateSessionId
+import com.xtrakick.app.util.pendingInstallConfirmationSessionId
 import com.xtrakick.app.util.getAlertDialogBuilder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -27,6 +33,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
@@ -52,6 +59,52 @@ class MainActivityIntentTest {
         handleIntent(Intent(MainActivity.INTENT_INSTALL_UPDATE).apply {
             putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_PENDING_USER_ACTION)
         })
+    }
+
+    @Test fun installerFailureForActiveSessionClearsSessionId() {
+        val component = ComponentName("com.android.packageinstaller", "com.android.packageinstaller.InstallStart")
+        val confirmIntent = Intent("android.content.pm.action.CONFIRM_INSTALL").apply {
+            this.component = component
+        }
+        val appInfo = ApplicationInfo().apply {
+            packageName = component.packageName
+            flags = ApplicationInfo.FLAG_SYSTEM
+        }
+        val activityInfo = ActivityInfo().apply {
+            packageName = component.packageName
+            name = component.className
+            applicationInfo = appInfo
+        }
+        val packageInfo = PackageInfo().apply {
+            packageName = component.packageName
+            applicationInfo = appInfo
+            activities = arrayOf(activityInfo)
+        }
+        Shadows.shadowOf(RuntimeEnvironment.getApplication().packageManager).apply {
+            installPackage(packageInfo)
+            addOrUpdateActivity(activityInfo)
+        }
+        activeUpdateSessionId.set(42)
+        pendingInstallConfirmationSessionId.set(42)
+        try {
+            handleIntent(Intent(MainActivity.INTENT_INSTALL_UPDATE).apply {
+                putExtra(PackageInstaller.EXTRA_SESSION_ID, 42)
+                putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_PENDING_USER_ACTION)
+                putExtra(Intent.EXTRA_INTENT, confirmIntent)
+            })
+            assertEquals(-1, pendingInstallConfirmationSessionId.get())
+            assertEquals(42, activeUpdateSessionId.get())
+
+            handleIntent(Intent(MainActivity.INTENT_INSTALL_UPDATE).apply {
+                putExtra(PackageInstaller.EXTRA_SESSION_ID, 42)
+                putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+                putExtra(PackageInstaller.EXTRA_STATUS_MESSAGE, "Install rejected")
+            })
+            assertEquals(-1, activeUpdateSessionId.get())
+        } finally {
+            activeUpdateSessionId.set(-1)
+            pendingInstallConfirmationSessionId.set(-1)
+        }
     }
 
     @Test fun isSystemInstallerIntentRejectsUriGrantsAndChooserPayloads() {
