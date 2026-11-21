@@ -17,6 +17,7 @@ import com.sun.net.httpserver.HttpServer
 import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.repository.OfflineRepository
+import com.xtrakick.app.util.DownloadStorage
 import com.xtrakick.app.util.m3u8.PlaylistUtils
 import java.io.File
 import java.net.InetSocketAddress
@@ -138,8 +139,41 @@ class VideoDownloadWorkerTest {
         val playlist = localFile.inputStream().use(PlaylistUtils::parseMediaPlaylist)
         assertEquals(listOf(0L, 4L), playlist.segments.map { it.byteRangeStart })
         assertEquals(listOf(4L, 4L), playlist.segments.map { it.byteRangeLength })
-        assertEquals("abcdefgh", File(localFile.parentFile, playlist.segments.first().uri).readText())
+        val sharedAsset = File(localFile.parentFile, playlist.segments.first().uri)
+        assertEquals("abcdefgh", sharedAsset.readText())
         assertEquals("init", File(localFile.parentFile, playlist.initSegmentUri!!).readText())
+
+        sharedAsset.writeText("abcd")
+        assertFalse(DownloadStorage.isOutputIntact(context, stored.url))
+        assertEquals(failures(), ListenableWorker.Result.success(), worker(video.id).doWork())
+        assertEquals("abcdefgh", sharedAsset.readText())
+        assertEquals(2, requests["/asset.bin"]!!.get())
+    }
+
+    @Test fun playlistResumeRepairsAMissingMiddleSegmentEvenAtFullProgress() = runBlocking {
+        route("/repair-middle.m3u8") { playlistOf("first.ts", "middle.ts", "last.ts") }
+        route("/first.ts") { "first" }
+        route("/middle.ts") { "middle" }
+        route("/last.ts") { "last" }
+        server.start()
+        val video = OfflineVideo(sourceUrl = "http://127.0.0.1:${server.address.port}/repair-middle.m3u8",
+            downloadPath = root.path, downloadDate = 41, playlistToFile = false)
+        video.id = repository.saveVideo(video).toInt()
+        assertEquals(failures(), ListenableWorker.Result.success(), worker(video.id).doWork())
+        val saved = repository.getVideoById(video.id)!!
+        val playlistFile = File(saved.url!!)
+        val playlist = playlistFile.inputStream().use(PlaylistUtils::parseMediaPlaylist)
+        val middle = File(playlistFile.parentFile, playlist.segments[1].uri)
+        assertTrue(middle.delete())
+        assertFalse(DownloadStorage.isOutputIntact(context, saved.url))
+        repository.updateStatus(saved.apply { status = OfflineVideo.STATUS_PENDING })
+
+        assertEquals(failures(), ListenableWorker.Result.success(), worker(video.id).doWork())
+        assertEquals(OfflineVideo.STATUS_DOWNLOADED, repository.getVideoById(video.id)!!.status)
+        assertEquals("middle", middle.readText())
+        assertEquals(1, requests["/first.ts"]!!.get())
+        assertEquals(2, requests["/middle.ts"]!!.get())
+        assertEquals(1, requests["/last.ts"]!!.get())
     }
 
     @Test fun concatenationUsesExactRangesWhenTheServerIgnoresRangeHeaders() = runBlocking {

@@ -12,7 +12,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.atomic.AtomicInteger
 
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -54,19 +53,5 @@ class DownloadSegmentReuseTest {
         work.cancelAndJoin()
         assertTrue(processed.get() in 1..3)
         assertTrue(downloadSegments(emptyList(), 3) { _, _ -> error("empty") }.isEmpty())
-    }
-    @Test
-    fun knownReadableSegmentIsReused() {
-        assertTrue(canReuseDownloadedTrack("one.ts", setOf("one.ts")) { true })
-    }
-
-    @Test
-    fun missingKnownSegmentMustBeDownloaded() {
-        assertFalse(canReuseDownloadedTrack("one.ts", setOf("one.ts")) { false })
-    }
-
-    @Test
-    fun unknownSegmentDoesNotProbeStorage() {
-        assertFalse(canReuseDownloadedTrack("new.ts", setOf("one.ts")) { error("Unexpected storage probe") })
     }
 }

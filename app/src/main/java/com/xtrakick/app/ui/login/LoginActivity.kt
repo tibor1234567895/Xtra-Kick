@@ -82,6 +82,7 @@ class LoginActivity : BaseStateActivity() {
     lateinit var localFollowChannelRepository: LocalFollowChannelRepository
 
     private lateinit var binding: ActivityLoginBinding
+    private var loginWebView: WebView? = null
     private var callbackHandled = false
     private var pendingKickCallback: PendingKickCallback? = null
     private var fallbackButtonHandler: Handler? = null
@@ -89,13 +90,7 @@ class LoginActivity : BaseStateActivity() {
 
     override fun onDestroy() {
         cancelDelayedFallbackButton()
-        if (::binding.isInitialized) {
-            runCatching {
-                (binding.webView.parent as? ViewGroup)?.removeView(binding.webView)
-                binding.webView.stopLoading()
-                binding.webView.destroy()
-            }
-        }
+        loginWebView?.let(::disposeLoginWebView)
         super.onDestroy()
     }
 
@@ -132,7 +127,6 @@ class LoginActivity : BaseStateActivity() {
             windowInsets
         }
 
-        binding.secondaryWebView.visibility = View.GONE
         binding.textZoom.visibility = View.GONE
         binding.codeText.visibility = View.GONE
         binding.copyCode.visibility = View.GONE
@@ -143,8 +137,6 @@ class LoginActivity : BaseStateActivity() {
         binding.next.setOnClickListener { retryPendingKickCallback() }
         binding.googleLoginButton.setOnClickListener { startGoogleLogin() }
         binding.kickLoginButton.setOnClickListener { startKickLogin() }
-
-        configureWebView()
 
         if (!tryHandleKickCallback(intent.data)) {
             showLoginOptions()
@@ -159,8 +151,8 @@ class LoginActivity : BaseStateActivity() {
         binding.progressBar.visibility = View.GONE
         binding.loadingTitle.text = getString(R.string.sign_in_title)
         binding.loadingSubtitle.visibility = View.GONE
-        binding.webView.visibility = View.GONE
-        binding.secondaryWebView.visibility = View.GONE
+        binding.webViewContainer.visibility = View.GONE
+        binding.webProgressBar.visibility = View.GONE
         binding.codeText.visibility = View.GONE
         binding.copyCode.visibility = View.GONE
         binding.openUrl.visibility = View.GONE
@@ -184,18 +176,18 @@ class LoginActivity : BaseStateActivity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun configureWebView() {
+    private fun configureWebView(webView: WebView) {
         CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(binding.webView, true)
-        binding.webView.setBackgroundColor(Color.TRANSPARENT)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+        webView.setBackgroundColor(Color.TRANSPARENT)
 
-        val defaultUa = binding.webView.settings.userAgentString
+        val defaultUa = webView.settings.userAgentString
         val cleanUa = defaultUa
             .replace(Regex(";\\s*wv"), "")
             .replace(Regex("Version/[0-9.]+\\s*"), "")
             .replace(Regex(";\\s*\\)"), ")")
 
-        binding.webView.settings.apply {
+        webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
             cacheMode = WebSettings.LOAD_DEFAULT
@@ -206,11 +198,12 @@ class LoginActivity : BaseStateActivity() {
             mediaPlaybackRequiresUserGesture = true
             userAgentString = cleanUa
         }
-        binding.webView.isFocusable = true
-        binding.webView.isFocusableInTouchMode = true
-        binding.webView.webChromeClient = object : WebChromeClient() {
+        webView.isFocusable = true
+        webView.isFocusableInTouchMode = true
+        webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 super.onProgressChanged(view, newProgress)
+                if (webView !== loginWebView || callbackHandled) return
                 if (newProgress < 100) {
                     binding.webProgressBar.visibility = View.VISIBLE
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -219,32 +212,36 @@ class LoginActivity : BaseStateActivity() {
                         binding.webProgressBar.progress = newProgress
                     }
                     if (newProgress >= 80) {
-                        revealWebView()
+                        revealWebView(webView)
                     }
                 } else {
                     binding.webProgressBar.visibility = View.GONE
-                    revealWebView()
+                    revealWebView(webView)
                 }
             }
         }
-        binding.webView.webViewClient = object : WebViewClient() {
+        webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                revealWebView()
+                if (webView !== loginWebView || callbackHandled) return
+                revealWebView(webView)
                 binding.webProgressBar.visibility = View.GONE
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                return request?.url?.let(::tryHandleKickCallback) == true
+                return webView === loginWebView && request?.url?.let(::tryHandleKickCallback) == true
             }
 
             @Suppress("OVERRIDE_DEPRECATION")
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                return !url.isNullOrBlank() && tryHandleKickCallback(Uri.parse(url))
+                return webView === loginWebView && !url.isNullOrBlank() && tryHandleKickCallback(Uri.parse(url))
             }
 
             override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                if (webView !== loginWebView) return true
                 Log.w(TAG, "Login WebView renderer process gone didCrash=${detail?.didCrash()}")
+                disposeLoginWebView(webView)
+                if (callbackHandled) return true
                 cancelDelayedFallbackButton()
                 showLoginOptions()
                 Toast.makeText(this@LoginActivity, R.string.kick_browser_fallback_webview, Toast.LENGTH_SHORT).show()
@@ -253,10 +250,17 @@ class LoginActivity : BaseStateActivity() {
         }
     }
 
-    private fun revealWebView() {
+    private fun disposeLoginWebView(webView: WebView) {
+        loginWebView = null
+        runCatching { (webView.parent as? ViewGroup)?.removeView(webView) }
+        runCatching { webView.stopLoading() }
+        runCatching { webView.destroy() }
+    }
+
+    private fun revealWebView(webView: WebView) {
         binding.loadingContainer.visibility = View.GONE
-        if (binding.webView.alpha < 1f) {
-            binding.webView.animate()
+        if (webView.alpha < 1f) {
+            webView.animate()
                 .alpha(1f)
                 .setDuration(200L)
                 .setInterpolator(DecelerateInterpolator())
@@ -397,15 +401,19 @@ class LoginActivity : BaseStateActivity() {
     }
 
     private fun showKickLoginInWebView(url: String) {
+        val webView = loginWebView ?: WebView(this).also {
+            configureWebView(it)
+            binding.webViewContainer.addView(it, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            loginWebView = it
+        }
         hideLoginOptions()
         binding.loadingContainer.visibility = View.VISIBLE
         binding.loadingTitle.text = getString(R.string.loading_kick_login)
         binding.loadingSubtitle.visibility = View.GONE
         binding.webProgressBar.visibility = View.VISIBLE
         binding.webProgressBar.progress = 15
-        binding.webView.alpha = 0f
-        binding.webView.visibility = View.VISIBLE
-        binding.secondaryWebView.visibility = View.GONE
+        webView.alpha = 0f
+        binding.webViewContainer.visibility = View.VISIBLE
         binding.codeText.visibility = View.GONE
         binding.copyCode.visibility = View.GONE
         binding.openUrl.visibility = View.GONE
@@ -423,15 +431,14 @@ class LoginActivity : BaseStateActivity() {
         fallbackButtonRunnable = runnable
         handler.postDelayed(runnable, 3500L)
 
-        binding.webView.loadUrl(url)
+        webView.loadUrl(url)
     }
 
     private fun showKickExchangeLoading() {
         hideLoginOptions()
         cancelDelayedFallbackButton()
         binding.webProgressBar.visibility = View.GONE
-        binding.webView.visibility = View.GONE
-        binding.secondaryWebView.visibility = View.GONE
+        binding.webViewContainer.visibility = View.GONE
         binding.codeText.visibility = View.GONE
         binding.copyCode.visibility = View.GONE
         binding.openUrl.visibility = View.GONE
@@ -448,8 +455,7 @@ class LoginActivity : BaseStateActivity() {
         cancelDelayedFallbackButton()
         binding.loadingContainer.visibility = View.GONE
         binding.webProgressBar.visibility = View.GONE
-        binding.webView.visibility = View.GONE
-        binding.secondaryWebView.visibility = View.GONE
+        binding.webViewContainer.visibility = View.GONE
         binding.copyCode.visibility = View.GONE
         binding.codeText.text = getString(R.string.kick_oauth_backend_unreachable)
         binding.codeText.visibility = View.VISIBLE

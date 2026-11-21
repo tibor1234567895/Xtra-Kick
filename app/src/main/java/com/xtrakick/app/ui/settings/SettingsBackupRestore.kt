@@ -7,11 +7,40 @@ import android.util.AtomicFile
 import android.util.Xml
 import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.di.DatabaseModule
+import com.xtrakick.app.util.AppConstants
 import java.io.File
 import java.io.InputStream
+import java.io.OutputStream
 import org.xmlpull.v1.XmlPullParser
 
 internal object SettingsBackupRestore {
+    fun writePreferences(values: Map<String, *>, output: OutputStream) {
+        val xml = Xml.newSerializer().apply { setOutput(output, "utf-8") }
+        xml.startDocument("utf-8", true)
+        xml.startTag(null, "map")
+        for ((name, value) in values) {
+            if (name == AppConstants.PROXY_PASSWORD) continue
+            val type = when (value) {
+                is String -> "string"
+                is Set<*> -> "set"
+                is Boolean -> "boolean"
+                is Int -> "int"
+                is Long -> "long"
+                is Float -> "float"
+                else -> error("Unsupported preference value")
+            }
+            xml.startTag(null, type).attribute(null, "name", name)
+            when (value) {
+                is String -> xml.text(value)
+                is Set<*> -> value.forEach { xml.startTag(null, "string").text(it as String).endTag(null, "string") }
+                else -> xml.attribute(null, "value", value.toString())
+            }
+            xml.endTag(null, type)
+        }
+        xml.endTag(null, "map")
+        xml.endDocument()
+    }
+
     fun readPreferences(input: InputStream): Map<String, Any> {
         val parser = Xml.newPullParser().apply { setInput(input, "utf-8") }
         parser.nextTag()
@@ -110,9 +139,7 @@ internal object SettingsBackupRestore {
         if (preparedDatabase != null) validateDatabase(context, preparedDatabase, database.openHelper.readableDatabase.version)
         val oldPreferences = prefs.all
         val safetyDir = File(context.filesDir, "backup-before-restore").apply { check(isDirectory || mkdirs()) }
-        check(prefs.edit().commit())
-        File("${context.applicationInfo.dataDir}/shared_prefs/${context.packageName}_preferences.xml")
-            .takeIf { it.exists() }?.copyTo(File(safetyDir, "preferences.xml"), overwrite = true)
+        File(safetyDir, "preferences.xml").outputStream().use { writePreferences(oldPreferences, it) }
         val target = context.getDatabasePath("database")
         val savedDatabase = File(safetyDir, "database")
         if (preparedDatabase != null) {

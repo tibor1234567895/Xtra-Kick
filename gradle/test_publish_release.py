@@ -17,8 +17,10 @@ class PublishReleaseTest(unittest.TestCase):
         self.paths = [root / "app-release.apk", root / "release-version.json"]
         self.notes = root / "notes.txt"
         self.notes.write_text("Release notes", encoding="utf-8")
-        self.recovery = root / "recovery.json"
         self.remote = {path.name: {"id": index, "name": path.name} for index, path in enumerate(self.paths, 1)}
+        self.uploaded = {}
+        self.next_asset_id = 3
+        self.tag_sha = "old"
         self.fail_upload = False
         self.fail_metadata_promotion = False
         self.bad_metadata_digest = False
@@ -40,16 +42,21 @@ class PublishReleaseTest(unittest.TestCase):
             patch.object(publish_release.time, "sleep", return_value=None),
         ):
             if recover:
-                publish_release.finish_publication(self.recovery)
-            else:
-                publish_release.publish("219", "head", self.notes, self.paths, self.recovery)
+                return publish_release.recover_publication()
+            publish_release.publish("219", "head", self.notes, self.paths)
 
     def gh(self, *args, input_text=None):
         if args[:2] == ("release", "upload"):
             if self.fail_upload:
                 raise subprocess.CalledProcessError(1, args)
-            for index, path in enumerate(map(Path, args[4:]), 3):
-                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            for value in args[3:]:
+                if value == "--clobber":
+                    continue
+                path = Path(value)
+                index = self.next_asset_id
+                self.next_asset_id += 1
+                self.uploaded[index] = path.read_bytes()
+                digest = hashlib.sha256(self.uploaded[index]).hexdigest()
                 self.remote[path.name] = {
                     "id": index,
                     "name": path.name,
@@ -62,18 +69,27 @@ class PublishReleaseTest(unittest.TestCase):
             del self.remote[name]
         elif args == ("api", "repos/{owner}/{repo}/releases/10"):
             return json.dumps(self.release)
+        elif args == ("api", "repos/{owner}/{repo}/git/ref/tags/latest"):
+            return json.dumps({"object": {"sha": self.tag_sha}})
+        elif args[:4] == ("api", "--method", "PATCH", "repos/{owner}/{repo}/git/refs/tags/latest"):
+            self.assertTrue(self.release["draft"])
+            self.tag_sha = json.loads(input_text)["sha"]
+        elif args[-2:] == ("-H", "Accept: application/octet-stream"):
+            return self.uploaded[int(args[1].rsplit("/", 1)[1])].decode("utf-8")
         elif args[-2:] == ("-F", "draft=true"):
-            self.assertTrue(self.recovery.exists())
+            self.assertIn(publish_release.RECOVERY_ASSET, self.remote)
             if self.fail_draft:
                 raise subprocess.CalledProcessError(1, args)
             self.draft_set = True
             self.release["draft"] = True
+            return json.dumps(self.release)
         elif args[:4] == ("api", "--method", "PATCH", "repos/{owner}/{repo}/releases/10"):
             self.assertEqual(json.loads(input_text),
                              {"draft": False, "name": "Latest", "body": "Release notes", "make_latest": "true"})
             if self.fail_republish_count > 0:
                 self.fail_republish_count -= 1
                 raise subprocess.CalledProcessError(1, args)
+            self.assertEqual(self.tag_sha, "head")
             self.republished = True
             self.release["draft"] = False
             if self.refreshes_timestamp:
@@ -83,6 +99,8 @@ class PublishReleaseTest(unittest.TestCase):
             self.fail(f"Unexpected command: {args}")
 
     def rename(self, asset, name):
+        self.assertTrue(self.release["draft"])
+        self.assertIn(publish_release.RECOVERY_ASSET, self.remote)
         old = next(key for key, value in self.remote.items() if value["id"] == asset["id"])
         self.assertNotIn(name, self.remote)
         self.remote[name] = self.remote.pop(old) | {"name": name}
@@ -96,7 +114,7 @@ class PublishReleaseTest(unittest.TestCase):
             self.publish()
         self.assertEqual(self.remote["app-release.apk"]["id"], 1)
         self.assertEqual(self.remote["release-version.json"]["id"], 2)
-        self.assertFalse(self.recovery.exists())
+        self.assertNotIn(publish_release.RECOVERY_ASSET, self.remote)
 
     def test_digest_mismatch_preserves_public_assets(self):
         self.bad_metadata_digest = True
@@ -119,13 +137,36 @@ class PublishReleaseTest(unittest.TestCase):
         self.assertTrue(self.draft_set)
         self.assertTrue(self.republished)
 
-    def test_draft_failure_still_republishes_successfully(self):
-        self.fail_draft = True
-        self.publish()
+    def test_interrupted_swap_can_resume_after_the_old_manifest_is_renamed(self):
+        rename = self.rename
+
+        def interrupt_after_rename(asset, name):
+            rename(asset, name)
+            if name == "previous-2-release-version.json":
+                raise KeyboardInterrupt
+
+        with patch.object(self, "rename", side_effect=interrupt_after_rename):
+            with self.assertRaises(KeyboardInterrupt):
+                self.publish()
+        self.assertEqual(self.remote["app-release.apk"]["id"], 3)
+        self.assertNotIn("release-version.json", self.remote)
+        self.assertTrue(self.release["draft"])
+        journal = self.remote[publish_release.RECOVERY_ASSET]
+        self.assertEqual(json.loads(self.uploaded[journal["id"]])["sha"], "head")
+
+        self.publish(recover=True)
         self.assertEqual({name: asset["id"] for name, asset in self.remote.items()},
                          {"app-release.apk": 3, "release-version.json": 4})
-        self.assertFalse(self.draft_set)
         self.assertTrue(self.republished)
+
+    def test_draft_failure_leaves_the_current_public_pair_in_place(self):
+        self.fail_draft = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.publish()
+        self.assertEqual(self.remote["app-release.apk"]["id"], 1)
+        self.assertEqual(self.remote["release-version.json"]["id"], 2)
+        self.assertFalse(self.draft_set)
+        self.assertFalse(self.republished)
 
     def test_republish_retry_on_transient_failure(self):
         self.fail_republish_count = 2
@@ -150,7 +191,7 @@ class PublishReleaseTest(unittest.TestCase):
             self.publish()
         self.assertTrue(self.draft_set)
         self.assertFalse(self.republished)
-        self.assertTrue(self.recovery.exists())
+        self.assertIn(publish_release.RECOVERY_ASSET, self.remote)
         self.publish(recover=True)
         self.assertFalse(self.release["draft"])
 
@@ -165,6 +206,5 @@ class PublishReleaseTest(unittest.TestCase):
         self.assertFalse(self.republished)
 
     def test_recovery_without_a_record_cannot_publish(self):
-        with self.assertRaises(FileNotFoundError):
-            self.publish(recover=True)
+        self.assertFalse(self.publish(recover=True))
         self.assertFalse(self.republished)

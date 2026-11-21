@@ -149,12 +149,12 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
                     )
                     viewModel.checkLiveDownloadStatus(channelLogin)
                 }
-            } else if (isConvertedDownload(it)) {
-                viewLifecycleOwner.lifecycleScope.launch {
-                    if (isSavedVideoAvailable(it)) resumeDownloadAction(it) else showVideoMissingDialog(it)
-                }
             } else {
-                resumeDownloadAction(it)
+                viewLifecycleOwner.lifecycleScope.launch {
+                    if (!isConvertedDownload(it) || isSavedVideoAvailable(it)) {
+                        resumeDownloadAction(it)
+                    } else showVideoMissingDialog(it)
+                }
             }
         }, {
             // convertVideo
@@ -474,13 +474,17 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
         return withContext(Dispatchers.IO) { DownloadStorage.isOutputIntact(appContext, video.url) }
     }
 
-    private fun isConvertedDownload(video: OfflineVideo): Boolean =
-        !video.playlistToFile && video.url?.endsWith(".m3u8") == false &&
-            video.sourceUrl?.let { runCatching { PlaylistUtils.isHlsUrl(it) }.getOrDefault(false) } == true
+    private suspend fun isConvertedDownload(video: OfflineVideo): Boolean {
+        val url = video.url ?: return false
+        val hlsSource = video.sourceUrl?.let { runCatching { PlaylistUtils.isHlsUrl(it) }.getOrDefault(false) } == true
+        if (video.playlistToFile || !hlsSource) return false
+        val appContext = requireContext().applicationContext
+        return withContext(Dispatchers.IO) { !DownloadStorage.isPlaylist(appContext, url) }
+    }
 
     /** Redownload-chat/resume on a row whose output file is gone: explain why the
      * action is refused and offer the repair that actually works for the row. */
-    private fun showVideoMissingDialog(video: OfflineVideo) {
+    private suspend fun showVideoMissingDialog(video: OfflineVideo) {
         val converted = isConvertedDownload(video)
         requireActivity().getAlertDialogBuilder()
             .setTitle(getString(R.string.saved_video_missing))

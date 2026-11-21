@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
@@ -29,6 +30,17 @@ import okio.Buffer
 @Config(application = Application::class)
 @RunWith(RobolectricTestRunner::class)
 class FcmSyncManagerTest {
+    @Test fun onlyNewBackendCompletionIsCacheable() {
+        fun response(code: Int, body: String) = Response.Builder()
+            .request(Request.Builder().url("https://example.invalid").build())
+            .protocol(Protocol.HTTP_1_1).code(code).message("fixture").body(body.toResponseBody()).build()
+
+        assertFalse(response(200, """{"ok":true}""").use(::isCompleteRegistration))
+        assertFalse(response(200, """{"complete":"true"}""").use(::isCompleteRegistration))
+        assertFalse(response(503, """{"complete":true}""").use(::isCompleteRegistration))
+        assertTrue(response(200, """{"complete":true}""").use(::isCompleteRegistration))
+    }
+
     @Test fun transportPreservesTheSignedBodyAndHeadersAndReportsHttpFailures() = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()

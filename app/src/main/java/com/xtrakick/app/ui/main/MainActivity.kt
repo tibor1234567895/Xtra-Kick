@@ -9,8 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
@@ -96,11 +94,10 @@ import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.KickLink
 import com.xtrakick.app.util.KickLinkRouter
 import com.xtrakick.app.util.NotificationPermissionHelper
-import com.xtrakick.app.util.activeUpdateSessionId
-import com.xtrakick.app.util.pendingInstallConfirmationSessionId
 import com.xtrakick.app.util.applyTheme
 import com.xtrakick.app.util.cancelLiveNotificationsPollingWork
 import com.xtrakick.app.util.enqueueLiveNotificationsPollingWork
+import com.xtrakick.app.util.observeAppUpdateResults
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.color.MaterialColors
@@ -124,7 +121,6 @@ class MainActivity : BaseStateActivity() {
         const val KEY_AUDIO_ONLY = "key_audio_only"
         const val KEY_OPEN_CHAT = "key_open_chat"
 
-        const val INTENT_INSTALL_UPDATE = "com.xtrakick.app.INSTALL_UPDATE"
         const val INTENT_LIVE_NOTIFICATION = "com.xtrakick.app.LIVE_NOTIFICATION"
         const val INTENT_OPEN_DOWNLOADS_TAB = "com.xtrakick.app.OPEN_DOWNLOADS_TAB"
         const val INTENT_OPEN_DOWNLOADED_VIDEO = "com.xtrakick.app.OPEN_DOWNLOADED_VIDEO"
@@ -237,6 +233,7 @@ class MainActivity : BaseStateActivity() {
             finish()
             return
         }
+        observeAppUpdateResults()
         migrateSettings()
         // Release timestamps also handle reinstalling the same APK without showing it again.
         val lastInstallTime = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -841,7 +838,6 @@ class MainActivity : BaseStateActivity() {
         }
         when (intent.action) {
             Intent.ACTION_VIEW,
-            INTENT_INSTALL_UPDATE,
             INTENT_LIVE_NOTIFICATION,
             INTENT_OPEN_DOWNLOADS_TAB,
             INTENT_OPEN_DOWNLOADED_VIDEO,
@@ -914,44 +910,6 @@ class MainActivity : BaseStateActivity() {
                         }
                         null -> {
                             // Unsupported or unroutable Kick URL
-                        }
-                    }
-                }
-            }
-            INTENT_INSTALL_UPDATE -> {
-                val extras = intent.extras
-                val sessionId = extras?.getInt(PackageInstaller.EXTRA_SESSION_ID, -1) ?: -1
-                if (sessionId != -1 && sessionId == activeUpdateSessionId.get()) {
-                    val status = extras?.getInt(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
-                        ?: PackageInstaller.STATUS_FAILURE
-                    if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-                        val rawIntent = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)
-                        val verifiedIntent = rawIntent?.takeIf(::isSystemInstallerIntent)
-                        if (verifiedIntent != null && pendingInstallConfirmationSessionId.compareAndSet(sessionId, -1)) {
-                            tokenPrefs().edit {
-                                putLong(AppConstants.UPDATE_LAST_CHECKED, System.currentTimeMillis())
-                            }
-                            try {
-                                startActivity(verifiedIntent)
-                            } catch (e: Exception) {
-                                DiagnosticLogger.e(TAG, "install confirmation activity launch failed", e)
-                                // Debug builds target a different applicationId than release;
-                                // PackageInstaller cannot hand off the confirmation dialog.
-                                // Open the release page in the browser so the user can install manually.
-                                runCatching {
-                                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/tibor1234567895/Xtra-Kick/releases/latest")))
-                                }
-                            }
-                        }
-                    } else {
-                        activeUpdateSessionId.compareAndSet(sessionId, -1)
-                        pendingInstallConfirmationSessionId.compareAndSet(sessionId, -1)
-                        if (status != PackageInstaller.STATUS_SUCCESS && status != PackageInstaller.STATUS_FAILURE_ABORTED) {
-                            DiagnosticLogger.e(
-                                TAG,
-                                "Update install failed: status=$status msg=${extras?.getString(PackageInstaller.EXTRA_STATUS_MESSAGE)}",
-                            )
-                            Toast.makeText(this, R.string.update_download_failed, Toast.LENGTH_LONG).show()
                         }
                     }
                 }
@@ -1070,43 +1028,6 @@ class MainActivity : BaseStateActivity() {
                 }
             }
         }
-    }
-
-    /**
-     * MainActivity is exported (it is the launcher), so any app can send it an
-     * [INTENT_INSTALL_UPDATE] intent carrying an arbitrary [Intent.EXTRA_INTENT] and have us
-     * start it with our own identity — an intent-redirection hole that can reach our own
-     * non-exported components or abuse system choosers to grant FileProvider URI permissions.
-     *
-     * The legitimate value is written by PackageInstaller into the FLAG_MUTABLE PendingIntent
-     * committed in AppUpdateInstaller, and always resolves to the platform's install-confirmation
-     * activity without data URIs, ClipData, or URI permission grant flags.
-     */
-    internal fun isSystemInstallerIntent(candidate: Intent): Boolean {
-        if (candidate.data != null || candidate.clipData != null) return false
-        val uriGrantFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
-            Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
-            Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
-        if ((candidate.flags and uriGrantFlags) != 0) return false
-        val action = candidate.action
-        if (action == Intent.ACTION_CHOOSER ||
-            action == Intent.ACTION_SEND ||
-            action == Intent.ACTION_SEND_MULTIPLE ||
-            action == Intent.ACTION_VIEW
-        ) {
-            return false
-        }
-        if (action != "android.content.pm.action.CONFIRM_INSTALL" &&
-            action != "android.content.pm.action.CONFIRM_PERMISSIONS" &&
-            candidate.component == null
-        ) {
-            return false
-        }
-        val resolved = packageManager.resolveActivity(candidate, PackageManager.MATCH_DEFAULT_ONLY)
-        val appInfo = resolved?.activityInfo?.applicationInfo ?: return false
-        val systemFlags = ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP
-        return appInfo.flags and systemFlags != 0
     }
 
 //Navigation listeners

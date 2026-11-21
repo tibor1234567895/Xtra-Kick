@@ -546,8 +546,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val fileUri = url.toUri()
-                val preferences = File("${applicationContext.applicationInfo.dataDir}/shared_prefs/${applicationContext.packageName}_preferences.xml")
-                if (!preferences.exists() || preferences.length() == 0L) {
+                val preferences = applicationContext.prefs().all
+                if (preferences.isEmpty()) {
                     throw IllegalStateException("preferences file missing")
                 }
                 appDatabase.query(SimpleSQLiteQuery("PRAGMA wal_checkpoint(FULL)")).use {
@@ -560,7 +560,7 @@ class SettingsViewModel @Inject constructor(
                 applicationContext.contentResolver.openOutputStream(fileUri, "wt")!!.use { rawOut ->
                     java.util.zip.ZipOutputStream(java.io.BufferedOutputStream(rawOut)).use { zipOut ->
                         zipOut.putNextEntry(java.util.zip.ZipEntry("preferences.xml"))
-                        preferences.inputStream().use { it.copyTo(zipOut) }
+                        SettingsBackupRestore.writePreferences(preferences, zipOut)
                         zipOut.closeEntry()
 
                         zipOut.putNextEntry(java.util.zip.ZipEntry("database"))

@@ -4677,7 +4677,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             if (videoType == STREAM && chatFragment?.emoteMenuIsVisible() == true) {
                 chatFragment?.toggleBackPressedCallback(false)
             }
-            backPressedCallback.remove()
+            backPressedCallback.isEnabled = false
             useController = false
             hideController(true)
             videoStatsOverlay.visibility = View.GONE

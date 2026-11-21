@@ -176,7 +176,7 @@ class DownloadsViewModel @Inject internal constructor(
                     when {
                         work == null || work.state.isFinished -> {
                             repository.getVideoById(videoId)?.let { video ->
-                                if (video.status == OfflineVideo.STATUS_DOWNLOADING || video.status == OfflineVideo.STATUS_BLOCKED || video.status == OfflineVideo.STATUS_QUEUED || video.status == OfflineVideo.STATUS_QUEUED_WIFI || video.status == OfflineVideo.STATUS_CONVERTING || video.status == OfflineVideo.STATUS_MOVING || video.status == OfflineVideo.STATUS_DELETING) {
+                                if (video.status == OfflineVideo.STATUS_DOWNLOADING || video.status == OfflineVideo.STATUS_BLOCKED || video.status == OfflineVideo.STATUS_QUEUED || video.status == OfflineVideo.STATUS_QUEUED_WIFI || video.status == OfflineVideo.STATUS_CONVERTING || video.status == OfflineVideo.STATUS_MOVING) {
                                     repository.updateStatus(video.apply {
                                         status = if (video.status == OfflineVideo.STATUS_DOWNLOADING &&
                                             work?.state == WorkInfo.State.SUCCEEDED && video.progress == video.maxProgress) {
@@ -872,7 +872,9 @@ class DownloadsViewModel @Inject internal constructor(
                         repository.updateOperationProgress(video.apply {
                             progress = 0
                             maxProgress = 100
-                            status = OfflineVideo.STATUS_DELETING
+                            status = if (originalStatus == OfflineVideo.STATUS_DOWNLOADED) {
+                                OfflineVideo.STATUS_DELETING_COMPLETED
+                            } else OfflineVideo.STATUS_DELETING
                         })
                         if (video.live) {
                             if (activeRecording) video.channelLogin?.let { WorkManager.getInstance(applicationContext).cancelUniqueWork(it) }
@@ -881,8 +883,13 @@ class DownloadsViewModel @Inject internal constructor(
                         }
                         if (videoUrl != null && !keepFiles) {
                             if (videoUrl.toUri().scheme == ContentResolver.SCHEME_CONTENT) {
-                                if (videoUrl.endsWith(".m3u8")) {
+                                val isPlaylist = safCallWithTimeout { DownloadStorage.isPlaylist(applicationContext, videoUrl) }
+                                    ?: throw IOException("Cannot identify shared download")
+                                if (isPlaylist) {
                                     val videoDirectoryUri = videoUrl.substringBeforeLast("%2F")
+                                    check(videoDirectoryUri != videoUrl && '/' in DocumentsContract.getDocumentId(videoUrl.toUri())) {
+                                        "Cannot verify the playlist's shared storage container"
+                                    }
                                     val playlist = safCallWithTimeout {
                                         applicationContext.contentResolver.openInputStream(videoUrl.toUri())!!.use {
                                             PlaylistUtils.parseMediaPlaylist(it)
@@ -1030,10 +1037,12 @@ class DownloadsViewModel @Inject internal constructor(
                         withContext(NonCancellable) { repository.deleteVideo(video, keepFiles) }
                     } catch (error: Exception) {
                         withContext(NonCancellable) {
+                            val incomplete = !keepFiles && originalStatus == OfflineVideo.STATUS_DOWNLOADED &&
+                                safCallWithTimeout { DownloadStorage.isOutputIntact(applicationContext, videoUrl) } != true
                             repository.updateOperationProgress(video.apply {
                                 progress = originalProgress
                                 maxProgress = originalMaxProgress
-                                status = if (activeRecording) OfflineVideo.STATUS_PENDING else originalStatus
+                                status = if (activeRecording || incomplete) OfflineVideo.STATUS_PENDING else originalStatus
                             })
                         }
                         if (error is CancellationException) throw error
@@ -1076,10 +1085,8 @@ class DownloadsViewModel @Inject internal constructor(
 
     /**
      * Deletion marks rows STATUS_DELETING before touching files, so process death
-     * mid-delete leaves them stuck with no retry path. Reset to DOWNLOADED so the
-     * entry stays actionable; only drop the row when a plain file path is reliably
-     * proven gone — DownloadStorage.exists() also returns false on provider
-     * errors, so dropping content:// rows here could destroy intact entries.
+     * mid-delete leaves them stuck with no retry path. Only discard rows with a
+     * missing local file. A remaining playlist can reference deleted segments.
      */
     private suspend fun recoverInterruptedDeletions() {
         val stuckVideos = try {
@@ -1092,15 +1099,30 @@ class DownloadsViewModel @Inject internal constructor(
         stuckVideos.forEach { video ->
             try {
                 repository.withVideoDeletion(video) { fresh ->
-                    if (fresh.status != OfflineVideo.STATUS_DELETING) {
+                    if (fresh.status != OfflineVideo.STATUS_DELETING && fresh.status != OfflineVideo.STATUS_DELETING_COMPLETED) {
                         return@withVideoDeletion
                     }
-                    val fileState = safCallWithTimeout { DownloadStorage.exists(applicationContext, fresh.url) }
-                    val fileProvenGone = fileState == false && fresh.url?.toUri()?.scheme != ContentResolver.SCHEME_CONTENT
+                    val url = fresh.url
+                    val fileProvenGone = url == null || (url.toUri().scheme != ContentResolver.SCHEME_CONTENT && !File(url).exists())
                     if (fileProvenGone) {
                         repository.deleteVideo(fresh, keepFiles = false)
                     } else {
-                        repository.updateStatus(fresh.apply { status = OfflineVideo.STATUS_DOWNLOADED })
+                        val intact = safCallWithTimeout {
+                            (fresh.status == OfflineVideo.STATUS_DELETING_COMPLETED ||
+                                DownloadStorage.isPlaylist(applicationContext, url)) &&
+                                DownloadStorage.isOutputIntact(applicationContext, url)
+                        } == true
+                        val hlsSource = fresh.sourceUrl?.let { runCatching { PlaylistUtils.isHlsUrl(it) }.getOrDefault(false) }
+                        if (!intact && !fresh.live && hlsSource != null && (fresh.playlistToFile || !hlsSource)) {
+                            repository.updateVideoProgress(fresh.apply {
+                                progress = 0
+                                bytes = 0L
+                            })
+                        }
+                        repository.updateOperationProgress(fresh.apply {
+                            progress = if (intact) maxProgress else 0
+                            status = if (intact) OfflineVideo.STATUS_DOWNLOADED else OfflineVideo.STATUS_PENDING
+                        })
                     }
                 }
             } catch (error: Exception) {

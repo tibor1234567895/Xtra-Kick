@@ -23,6 +23,16 @@ object PlaylistUtils {
 
     internal fun localAssetName(uri: String): String = Uri.decode(uri).substringAfterLast('/').substringAfterLast('\\')
 
+    internal fun requiredAssetSizes(segments: List<Segment>): Map<String, Long> = buildMap {
+        for (segment in segments) {
+            val length = segment.byteRangeLength ?: continue
+            val start = requireNotNull(segment.byteRangeStart)
+            require(length > 0 && start >= 0)
+            val end = Math.addExact(start, length)
+            put(segment.uri, maxOf(get(segment.uri) ?: 1L, end))
+        }
+    }
+
     internal fun unsharedAssetUris(playlist: MediaPlaylist, siblings: List<MediaPlaylist?>): List<String> {
         val seenNames = HashSet<String>()
         for (sibling in siblings) {

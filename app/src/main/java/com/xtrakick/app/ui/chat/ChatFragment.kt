@@ -2502,6 +2502,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         toggleBackPressedCallback(emoteMenuIsVisible())
     }
 
+    fun dismissInputOverlays() {
+        hideAutoComplete()
+        if (emoteMenuIsVisible()) {
+            toggleEmoteMenu(false)
+        }
+    }
+
     private fun updateAutoComplete(text: CharSequence?) {
         val binding = _binding ?: return
         if (text.isNullOrEmpty() || !binding.editText.hasFocus()) {
@@ -2765,6 +2772,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
 
     override fun onDestroyView() {
         super.onDestroyView()
+        backPressedCallback.isEnabled = false
         requireContext().prefs().unregisterOnSharedPreferenceChangeListener(chatPreferenceChangeListener)
         raidCountdownTimer?.cancel()
         raidCountdownTimer = null

@@ -4,9 +4,11 @@ import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.pm.ProviderInfo
 import android.database.Cursor
+import android.database.MatrixCursor
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.os.Bundle
+import android.provider.DocumentsContract
 import androidx.room.Room
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
@@ -16,6 +18,7 @@ import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.repository.OfflineRepository
 import com.xtrakick.app.repository.DownloadFileCoordinator
+import com.xtrakick.app.util.DownloadStorage
 import com.xtrakick.app.util.m3u8.PlaylistUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
@@ -202,8 +205,9 @@ class DownloadsViewModelTest {
         val playlistUri = "content://download.chat.test/document/primary%3AVOD%2Fvideo.m3u8"
         val assetUri = Uri.parse("content://download.chat.test/document/primary%3AVOD%2Fasset.ts")
         chatFile.writeText("#EXTM3U\n#EXTINF:1,\nasset.ts\n#EXT-X-ENDLIST\n")
+        val assetFile = File(context.cacheDir, "retained-segment.ts").apply { writeText("video data") }
         val provider = ChatProvider().apply {
-            files = mapOf(playlistUri to chatFile)
+            files = mapOf(playlistUri to chatFile, assetUri.toString() to assetFile)
             beforeDelete = { if (it == assetUri) throw SecurityException("Provider denied deletion") }
             attachInfo(this@DownloadsViewModelTest.context, ProviderInfo().apply { authority = "download.chat.test" })
         }
@@ -222,6 +226,110 @@ class DownloadsViewModelTest {
         viewModel.delete(video, keepFiles = false)
         withTimeout(5000) { while (repository.getVideoById(video.id) != null) delay(10) }
         assertTrue(Uri.parse(playlistUri) in provider.deletedUris)
+    }
+
+    @Test fun interruptedDeletionKeepsAnIncompletePlaylistAvailableForRepair() = runBlocking {
+        val directory = File(context.cacheDir, "interrupted-deletion").apply { mkdirs() }
+        File(directory, "first.ts").writeText("first segment")
+        val manifest = File(directory, "video.m3u8").apply {
+            writeText("#EXTM3U\n#EXTINF:1,\nfirst.ts\n#EXTINF:1,\nmissing.ts\n#EXT-X-ENDLIST\n")
+        }
+        val video = OfflineVideo(url = manifest.path, status = OfflineVideo.STATUS_DELETING, progress = 1, maxProgress = 2)
+        withTimeout(5000) { scope.coroutineContext[Job]!!.children.toList().joinAll() }
+        video.id = repository.saveVideo(video).toInt()
+        DownloadsViewModel(context, repository, scope)
+        withTimeout(5000) { scope.coroutineContext[Job]!!.children.toList().joinAll() }
+
+        val recovered = repository.getVideoById(video.id)!!
+        assertEquals(OfflineVideo.STATUS_PENDING, recovered.status)
+        assertEquals(0, recovered.progress)
+        assertTrue(manifest.isFile)
+    }
+
+    @Test fun interruptedSingleFileDeletionOnlyRestoresCompletionWhenItWasRecorded() = runBlocking {
+        withTimeout(5000) { scope.coroutineContext[Job]!!.children.toList().joinAll() }
+        val pendingFile = File(context.cacheDir, "partial-deletion.mp4").apply { writeText("partial") }
+        val completedFile = File(context.cacheDir, "complete-deletion.mp4").apply { writeText("complete") }
+        val source = "https://example.invalid/video.mp4"
+        val pending = OfflineVideo(url = pendingFile.path, sourceUrl = source, progress = 50, bytes = 7L, status = OfflineVideo.STATUS_DELETING)
+        val completed = OfflineVideo(url = completedFile.path, sourceUrl = source, status = OfflineVideo.STATUS_DELETING_COMPLETED)
+        pending.id = repository.saveVideo(pending).toInt()
+        completed.id = repository.saveVideo(completed).toInt()
+        DownloadsViewModel(context, repository, scope)
+        withTimeout(5000) { scope.coroutineContext[Job]!!.children.toList().joinAll() }
+
+        val recovered = repository.getVideoById(pending.id)!!
+        assertEquals(OfflineVideo.STATUS_PENDING, recovered.status)
+        assertEquals(0, recovered.progress)
+        assertEquals(0L, recovered.bytes)
+        assertEquals("partial", pendingFile.readText())
+        assertEquals(OfflineVideo.STATUS_DOWNLOADED, repository.getVideoById(completed.id)!!.status)
+        assertEquals("complete", completedFile.readText())
+    }
+
+    @Test fun safPlaylistIntactCheckUsesBatchedDirectorySizesWithoutOpeningEverySegment() {
+        val playlistUri = "content://download.chat.test/document/primary%3AVOD%2Fvideo.m3u8"
+        val firstUri = "content://download.chat.test/document/primary%3AVOD%2Ffirst.ts"
+        val middleUri = "content://download.chat.test/document/primary%3AVOD%2Fmiddle.ts"
+        val lastUri = "content://download.chat.test/document/primary%3AVOD%2Flast.ts"
+        chatFile.writeText("#EXTM3U\n#EXTINF:1,\nfirst.ts\n#EXTINF:1,\nmiddle.ts\n#EXTINF:1,\nlast.ts\n#EXT-X-ENDLIST\n")
+        val firstFile = File(context.cacheDir, "batched-first.ts").apply { writeText("first") }
+        val openedUris = CopyOnWriteArrayList<String>()
+        val provider = ChatProvider().apply {
+            files = mapOf(playlistUri to chatFile, firstUri to firstFile)
+            childRows = listOf(
+                "primary:VOD/first.ts" to 5L,
+                "primary:VOD/middle.ts" to 6L,
+                "primary:VOD/last.ts" to 4L,
+            )
+            beforeOpenUri = { openedUris.add(it.toString()) }
+            attachInfo(this@DownloadsViewModelTest.context, ProviderInfo().apply { authority = "download.chat.test" })
+        }
+        ShadowContentResolver.registerProviderInternal("download.chat.test", provider)
+
+        assertTrue(DownloadStorage.isOutputIntact(context, playlistUri))
+        assertEquals(listOf(playlistUri, firstUri), openedUris)
+        assertFalse(middleUri in openedUris)
+        assertFalse(lastUri in openedUris)
+
+        provider.childRows = listOf(
+            "primary:VOD/first.ts" to 5L,
+            "primary:VOD/middle.ts" to 0L,
+            "primary:VOD/last.ts" to 4L,
+        )
+        assertFalse(DownloadStorage.isOutputIntact(context, playlistUri))
+
+        // MediaStore-backed authorities / msd: document IDs can keep stale non-zero sizes after raw deletion.
+        assertTrue(DownloadStorage.childDocumentSizes(context, Uri.parse("content://com.android.providers.downloads.documents/document/msd%3A123")).isEmpty())
+        assertTrue(DownloadStorage.childDocumentSizes(context, Uri.parse("content://download.chat.test/document/msd%3A123")).isEmpty())
+        assertTrue(DownloadStorage.childDocumentSizes(context, Uri.parse("content://download.chat.test/tree/primary%3AVOD")).isEmpty())
+    }
+
+    @Test fun opaqueSharedPlaylistChecksAllReferencedAssetsAndRefusesUnverifiedDeletion() = runBlocking {
+        val playlist = "content://download.chat.test/document/playlist-token"
+        val first = "content://download.chat.test/document/first-token"
+        val second = "content://download.chat.test/document/second-token"
+        chatFile.writeText("#EXTM3U\n#EXTINF:1,\n$first\n#EXTINF:1,\n$second\n#EXT-X-ENDLIST\n")
+        val firstFile = File(context.cacheDir, "opaque-first.ts").apply { writeText("first") }
+        val secondFile = File(context.cacheDir, "opaque-second.ts")
+        val provider = ChatProvider().apply {
+            files = mapOf(playlist to chatFile, first to firstFile, second to secondFile)
+            mimeTypes = mapOf(playlist to "application/vnd.apple.mpegurl")
+            attachInfo(this@DownloadsViewModelTest.context, ProviderInfo().apply { authority = "download.chat.test" })
+        }
+        ShadowContentResolver.registerProviderInternal("download.chat.test", provider)
+        assertTrue(DownloadStorage.isPlaylist(context, playlist))
+        assertFalse(DownloadStorage.isOutputIntact(context, playlist))
+        secondFile.writeText("second")
+        assertTrue(DownloadStorage.isOutputIntact(context, playlist))
+
+        initializeWorkManager()
+        val video = OfflineVideo(url = playlist, status = OfflineVideo.STATUS_DOWNLOADED)
+        video.id = repository.saveVideo(video).toInt()
+        viewModel.delete(video, keepFiles = false)
+        withTimeout(5000) { scope.coroutineContext[Job]!!.children.toList().joinAll() }
+        assertEquals(OfflineVideo.STATUS_DOWNLOADED, repository.getVideoById(video.id)!!.status)
+        assertTrue(provider.deletedUris.isEmpty())
     }
 
     @Test fun cancellingAMoveRestoresItsStatusAndKeepsTheSourceReference() = runBlocking {
@@ -521,6 +629,8 @@ class DownloadsViewModelTest {
     class ChatProvider : ContentProvider() {
         lateinit var file: File
         var files: Map<String, File>? = null
+        var mimeTypes: Map<String, String> = emptyMap()
+        var childRows: List<Pair<String, Long>>? = null
         var beforeOpen: ((String) -> Unit)? = null
         var beforeOpenUri: ((Uri) -> Unit)? = null
         var beforeDelete: ((Uri) -> Unit)? = null
@@ -532,7 +642,7 @@ class DownloadsViewModelTest {
             val target = files?.let { it[uri.toString()] ?: throw java.io.FileNotFoundException(uri.toString()) } ?: file
             return ParcelFileDescriptor.open(target, ParcelFileDescriptor.parseMode(mode))
         }
-        override fun getType(uri: Uri) = "application/json"
+        override fun getType(uri: Uri) = mimeTypes[uri.toString()] ?: "application/json"
         @Suppress("DEPRECATION")
         override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
             check(method == "android:deleteDocument")
@@ -542,7 +652,13 @@ class DownloadsViewModelTest {
             }
             return Bundle()
         }
-        override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
+        override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? {
+            val rows = childRows ?: return null
+            if (!uri.path.orEmpty().endsWith("/children")) return null
+            return MatrixCursor(arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_SIZE)).apply {
+                rows.forEach { (id, size) -> addRow(arrayOf<Any>(id, size)) }
+            }
+        }
         override fun insert(uri: Uri, values: ContentValues?): Uri? = null
         override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
         override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0

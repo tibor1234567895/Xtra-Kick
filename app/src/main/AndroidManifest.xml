@@ -28,6 +28,15 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <queries>
+        <intent>
+            <action android:name="android.content.pm.action.CONFIRM_INSTALL" />
+        </intent>
+        <intent>
+            <action android:name="android.content.pm.action.CONFIRM_PERMISSIONS" />
+        </intent>
+    </queries>
+
     <application
         android:name=".KickApp"
         android:allowBackup="true"
@@ -87,6 +96,9 @@
         <activity
             android:name=".ui.settings.SettingsActivity"
             android:persistableMode="persistNever" />
+        <receiver
+            android:name=".util.AppUpdateResultReceiver"
+            android:exported="false" />
         <activity
             android:name=".ui.login.LoginActivity"
             android:configChanges="orientation|screenSize"

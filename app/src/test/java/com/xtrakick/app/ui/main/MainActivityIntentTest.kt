@@ -9,9 +9,11 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.os.Bundle
+import android.os.Looper
 import android.os.Parcel
 import android.os.Parcelable
 import android.view.KeyEvent
+import androidx.activity.ComponentActivity
 import androidx.core.content.IntentCompat
 import androidx.fragment.app.DialogFragment
 import androidx.preference.PreferenceManager
@@ -22,11 +24,14 @@ import com.xtrakick.app.ui.common.BaseStateActivity
 import com.xtrakick.app.ui.player.IvsPlayerService
 import com.xtrakick.app.ui.player.MediaButtonReceiver
 import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.activeUpdateSessionId
-import com.xtrakick.app.util.pendingInstallConfirmationSessionId
+import com.xtrakick.app.util.AppUpdateResultReceiver
 import com.xtrakick.app.util.getAlertDialogBuilder
+import com.xtrakick.app.util.isSystemInstallerIntent
+import com.xtrakick.app.util.observeAppUpdateResults
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -56,12 +61,12 @@ class MainActivityIntentTest {
     }
 
     @Test fun installerWithoutConfirmationIntentDoesNotCrash() {
-        handleIntent(Intent(MainActivity.INTENT_INSTALL_UPDATE).apply {
-            putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_PENDING_USER_ACTION)
-        })
+        installerResult(PackageInstaller.STATUS_PENDING_USER_ACTION)
+        val activity = Robolectric.buildActivity(InstallerObserverActivity::class.java).setup().get()
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
     }
 
-    @Test fun installerFailureForActiveSessionClearsSessionId() {
+    @Test fun installerConfirmationCanStartInAFreshProcess() {
         val component = ComponentName("com.android.packageinstaller", "com.android.packageinstaller.InstallStart")
         val confirmIntent = Intent("android.content.pm.action.CONFIRM_INSTALL").apply {
             this.component = component
@@ -84,31 +89,29 @@ class MainActivityIntentTest {
             installPackage(packageInfo)
             addOrUpdateActivity(activityInfo)
         }
-        activeUpdateSessionId.set(42)
-        pendingInstallConfirmationSessionId.set(42)
-        try {
-            handleIntent(Intent(MainActivity.INTENT_INSTALL_UPDATE).apply {
-                putExtra(PackageInstaller.EXTRA_SESSION_ID, 42)
-                putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_PENDING_USER_ACTION)
-                putExtra(Intent.EXTRA_INTENT, confirmIntent)
-            })
-            assertEquals(-1, pendingInstallConfirmationSessionId.get())
-            assertEquals(42, activeUpdateSessionId.get())
+        val installer = RuntimeEnvironment.getApplication().packageManager.packageInstaller
+        val sessionId = installer.createSession(PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL))
+        installerResult(PackageInstaller.STATUS_PENDING_USER_ACTION, confirmIntent, sessionId)
+        val activity = Robolectric.buildActivity(InstallerObserverActivity::class.java).setup().get()
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(component, Shadows.shadowOf(activity).nextStartedActivity?.component)
+        assertFalse(activity.packageManager.getReceiverInfo(ComponentName(activity, AppUpdateResultReceiver::class.java), 0).exported)
 
-            handleIntent(Intent(MainActivity.INTENT_INSTALL_UPDATE).apply {
-                putExtra(PackageInstaller.EXTRA_SESSION_ID, 42)
-                putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
-                putExtra(PackageInstaller.EXTRA_STATUS_MESSAGE, "Install rejected")
-            })
-            assertEquals(-1, activeUpdateSessionId.get())
-        } finally {
-            activeUpdateSessionId.set(-1)
-            pendingInstallConfirmationSessionId.set(-1)
-        }
+        installerResult(PackageInstaller.STATUS_PENDING_USER_ACTION, confirmIntent, sessionId)
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(component, Shadows.shadowOf(activity).nextStartedActivity?.component)
+
+        installer.abandonSession(sessionId)
+        installerResult(PackageInstaller.STATUS_PENDING_USER_ACTION, confirmIntent, sessionId)
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+
+        installerResult(PackageInstaller.STATUS_FAILURE, sessionId = sessionId)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
     }
 
     @Test fun isSystemInstallerIntentRejectsUriGrantsAndChooserPayloads() {
-        val activity = Robolectric.buildActivity(MainActivity::class.java).get()
+        val activity = Robolectric.buildActivity(InstallerObserverActivity::class.java).get()
         val chooserIntent = Intent(Intent.ACTION_CHOOSER).apply { `package` = "android" }
         val dataIntent = Intent("android.content.pm.action.CONFIRM_INSTALL").apply {
             `package` = "android"
@@ -127,10 +130,9 @@ class MainActivityIntentTest {
     @Test fun unexpectedParcelableTypesAreIgnored() {
         handleIntent(Intent(MainActivity.INTENT_LIVE_NOTIFICATION).putExtra(MainActivity.KEY_VIDEO, OfflineVideo()))
         handleIntent(Intent(MainActivity.INTENT_OPEN_DOWNLOADED_VIDEO).putExtra(MainActivity.KEY_VIDEO, Stream()))
-        handleIntent(Intent(MainActivity.INTENT_INSTALL_UPDATE).apply {
-            putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_PENDING_USER_ACTION)
-            putExtra(Intent.EXTRA_INTENT, Stream())
-        })
+        installerResult(PackageInstaller.STATUS_PENDING_USER_ACTION, Stream())
+        val activity = Robolectric.buildActivity(InstallerObserverActivity::class.java).setup().get()
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
     }
 
     @Test fun notificationPayloadSurvivesIntentParcelRoundTrip() {
@@ -230,11 +232,27 @@ class MainActivityIntentTest {
 
     class TestBaseStateActivity : BaseStateActivity()
 
+    class InstallerObserverActivity : ComponentActivity() {
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            observeAppUpdateResults()
+        }
+    }
+
     private fun handleIntent(intent: Intent) {
         val activity = Robolectric.buildActivity(MainActivity::class.java).get()
         MainActivity::class.java.getDeclaredMethod("handleIntent", Intent::class.java).apply {
             isAccessible = true
         }.invoke(activity, intent)
+    }
+
+    private fun installerResult(status: Int, confirmation: Parcelable? = null, sessionId: Int = 42) {
+        val result = Intent(AppUpdateResultReceiver.ACTION_INSTALL_RESULT).apply {
+            putExtra(PackageInstaller.EXTRA_SESSION_ID, sessionId)
+            putExtra(PackageInstaller.EXTRA_STATUS, status)
+            putExtra(Intent.EXTRA_INTENT, confirmation)
+        }
+        AppUpdateResultReceiver().onReceive(RuntimeEnvironment.getApplication(), result)
     }
 
     private fun roundTrip(intent: Intent): Intent {

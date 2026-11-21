@@ -75,24 +75,14 @@
             android:visibility="gone" />
     </LinearLayout>
 
-    <WebView
-        android:id="@+id/webView"
+    <FrameLayout
+        android:id="@+id/webViewContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
         android:visibility="gone"
         app:layout_constraintBottom_toTopOf="@id/havingTrouble"
         app:layout_constraintTop_toBottomOf="@id/webProgressBar"
         tools:visibility="visible" />
-
-    <WebView
-        android:id="@+id/secondaryWebView"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@id/havingTrouble"
-        app:layout_constraintTop_toBottomOf="@id/webProgressBar" />
 
     <ImageButton
         android:id="@+id/textZoom"

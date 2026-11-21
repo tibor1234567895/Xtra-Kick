@@ -74,5 +74,6 @@ class OfflineVideo(
         const val STATUS_QUEUED = 7
         const val STATUS_QUEUED_WIFI = 8
         const val STATUS_WAITING_FOR_STREAM = 9
+        const val STATUS_DELETING_COMPLETED = 10
     }
 }

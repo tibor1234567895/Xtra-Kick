@@ -10,6 +10,9 @@ import tempfile
 import time
 
 
+RECOVERY_ASSET = "xtra-release-recovery.pending.json"
+
+
 def gh(*args, input_text=None):
     result = subprocess.run(["gh", *args], input=input_text, capture_output=True, text=True, check=True)
     return result.stdout
@@ -40,55 +43,84 @@ def verify(asset, path):
         raise ValueError(f"GitHub asset verification failed for {path.name}")
 
 
-def promote(release_id, current, staged):
-    backups = []
-    promoted = []
+def promote(release_id, current, planned):
+    for name, plan in planned.items():
+        asset_id, digest = plan["next"]
+        asset = current.get(name, {})
+        if asset.get("id") != asset_id:
+            asset = current.get(plan["staging"], {})
+        if (asset.get("id"), asset.get("digest"), asset.get("state")) != (asset_id, digest, "uploaded"):
+            raise ValueError(f"Prepared asset {name} is missing or has changed")
+        live_id = current.get(name, {}).get("id")
+        if live_id not in (None, asset_id, plan["previous"]):
+            raise ValueError(f"Live asset {name} has changed")
+
     try:
-        for path, staging_name in staged:
-            name = path.name
-            if previous := current.get(name):
-                backup_name = f"previous-{previous['id']}-{name}"
-                backups.append((previous, name, backup_name))
-                rename(previous, backup_name)
-            asset = current[staging_name]
-            promoted.append((asset, staging_name, name))
-            rename(asset, name)
+        for name, plan in planned.items():
+            live = current.get(name)
+            if live and live["id"] == plan["next"][0]:
+                continue
+            if live:
+                rename(live, f"previous-{live['id']}-{name}")
+            rename(current[plan["staging"]], name)
     except subprocess.CalledProcessError:
         # Check remote names because a lost response can follow a successful rename.
         live = assets(release_id)
-        for asset, staging_name, name in reversed(promoted):
-            if live.get(name, {}).get("id") == asset["id"]:
-                rename(asset, staging_name)
-        for previous, name, backup_name in reversed(backups):
-            if live.get(backup_name, {}).get("id") == previous["id"]:
-                rename(previous, name)
+        for name, plan in reversed(planned.items()):
+            promoted = live.get(name)
+            if promoted and promoted["id"] == plan["next"][0]:
+                rename(promoted, plan["staging"])
+            if plan["previous"] is not None:
+                backup = live.get(f"previous-{plan['previous']}-{name}")
+                if backup and backup["id"] == plan["previous"]:
+                    rename(backup, name)
         raise
-
-    for previous, _, _ in backups:
-        try:
-            gh("api", "--method", "DELETE", asset_api(previous))
-        except subprocess.CalledProcessError:
-            print(f"Previous asset {previous['name']} could not be removed", file=sys.stderr)
 
 
 def release_api(release_id):
     return f"repos/{{owner}}/{{repo}}/releases/{release_id}"
 
 
-def finish_publication(recovery_path):
-    state = json.loads(recovery_path.read_text(encoding="utf-8"))
+def update_latest_tag(sha):
+    endpoint = "repos/{owner}/{repo}/git/ref/tags/latest"
+    try:
+        ref = json.loads(gh("api", endpoint))
+    except subprocess.CalledProcessError as error:
+        if "HTTP 404" not in (error.stderr or ""):
+            raise
+        gh("api", "--method", "POST", "repos/{owner}/{repo}/git/refs", "--input", "-",
+           input_text=json.dumps({"ref": "refs/tags/latest", "sha": sha}))
+    else:
+        if ref["object"]["sha"] != sha:
+            gh("api", "--method", "PATCH", "repos/{owner}/{repo}/git/refs/tags/latest", "--input", "-",
+               input_text=json.dumps({"sha": sha, "force": True}))
+    if json.loads(gh("api", endpoint))["object"]["sha"] != sha:
+        raise ValueError("GitHub did not confirm the expected latest tag")
+
+
+def finish_publication(state, journal):
     endpoint = release_api(state["release_id"])
     payload = {"draft": False, "name": "Latest", "body": state["notes"], "make_latest": "true"}
+    release = json.loads(gh("api", endpoint))
+    if release.get("tag_name") != "latest":
+        raise ValueError("Prepared release no longer has the latest tag")
+    current = assets(state["release_id"])
+    canonical_pair_ready = all(current.get(name, {}).get("id") == plan["next"][0]
+                               for name, plan in state["assets"].items())
+    if not release["draft"] and not canonical_pair_ready:
+        drafted = json.loads(gh("api", "--method", "PATCH", endpoint, "-F", "draft=true"))
+        if drafted.get("draft") is not True:
+            raise ValueError("GitHub did not confirm the release is hidden during promotion")
+    promote(state["release_id"], current, state["assets"])
+    update_latest_tag(state["sha"])
+
     for attempt in range(1, 4):
         try:
             current = assets(state["release_id"])
-            for name, expected in state["assets"].items():
+            for name, plan in state["assets"].items():
                 asset = current.get(name, {})
-                if (asset.get("id"), asset.get("digest"), asset.get("state")) != (*expected, "uploaded"):
+                if (asset.get("id"), asset.get("digest"), asset.get("state")) != (*plan["next"], "uploaded"):
                     raise ValueError(f"Prepared asset {name} is missing or has changed")
-            release = json.loads(gh("api", endpoint))
-            if release.get("tag_name") != "latest":
-                raise ValueError("Prepared release no longer has the latest tag")
             release = json.loads(gh("api", "--method", "PATCH", endpoint, "--input", "-",
                                     input_text=json.dumps(payload)))
             if release.get("tag_name") != "latest" or release.get("draft") is not False:
@@ -101,13 +133,49 @@ def finish_publication(recovery_path):
                   file=sys.stderr)
             time.sleep(attempt * 2)
 
+    for name, plan in state["assets"].items():
+        backup = current.get(f"previous-{plan['previous']}-{name}")
+        if backup and backup["id"] == plan["previous"]:
+            try:
+                gh("api", "--method", "DELETE", asset_api(backup))
+            except subprocess.CalledProcessError:
+                print(f"Previous asset {backup['name']} could not be removed", file=sys.stderr)
+
     before = state["published_at"]
     after = release.get("published_at")
     if before and (not after or after <= before):
         print(f"::warning::GitHub kept the previous release publication date ({before}).")
+    try:
+        gh("api", "--method", "DELETE", asset_api(journal))
+    except subprocess.CalledProcessError:
+        if RECOVERY_ASSET in assets(state["release_id"]):
+            raise
 
 
-def publish(code, sha, notes, paths, recovery_path):
+def recover_publication():
+    release = latest_release()
+    if release is None:
+        return False
+    journal = assets(release["id"]).get(RECOVERY_ASSET)
+    if journal is None:
+        return False
+    if journal["state"] != "uploaded":
+        # Promotion requires a verified upload, so a failed upload cannot have started it.
+        gh("api", "--method", "DELETE", asset_api(journal))
+        return False
+    content = gh("api", asset_api(journal), "-H", "Accept: application/octet-stream")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    if journal.get("digest") != f"sha256:{digest}":
+        raise ValueError("GitHub release recovery record failed verification")
+    state = json.loads(content)
+    if state["release_id"] != release["id"]:
+        raise ValueError("Recovery record belongs to a different release")
+    finish_publication(state, journal)
+    return True
+
+
+def publish(code, sha, notes, paths):
+    recover_publication()
     release_notes = Path(notes).read_text(encoding="utf-8")
     latest = latest_release()
     if latest is None:
@@ -124,34 +192,37 @@ def publish(code, sha, notes, paths, recovery_path):
         current = assets(release_id)
         for path, staging_name in staged:
             verify(current[staging_name], path)
-        promote(release_id, current, staged)
         state = {
             "release_id": release_id,
+            "sha": sha,
             "published_at": latest.get("published_at"),
             "notes": release_notes,
-            "assets": {path.name: [current[name]["id"], current[name]["digest"]] for path, name in staged},
+            "assets": {
+                path.name: {
+                    "staging": name,
+                    "next": [current[name]["id"], current[name]["digest"]],
+                    "previous": current.get(path.name, {}).get("id"),
+                }
+                for path, name in staged
+            },
         }
-
-    # Record the exact release and assets before a request can hide them from public clients.
-    pending = recovery_path.with_suffix(".tmp")
-    pending.write_text(json.dumps(state), encoding="utf-8")
-    pending.replace(recovery_path)
-    try:
-        if not latest["draft"]:
-            gh("api", "--method", "PATCH", release_api(release_id), "-F", "draft=true")
-    except subprocess.CalledProcessError as error:
-        print(f"Warning: Could not set draft mode to refresh timestamp: {error.stderr or error}", file=sys.stderr)
-    finally:
-        finish_publication(recovery_path)
+        # A later runner can finish the swap even if this one is forcibly stopped.
+        recovery_path = Path(directory) / RECOVERY_ASSET
+        recovery_path.write_text(json.dumps(state), encoding="utf-8")
+        gh("release", "upload", "latest", str(recovery_path))
+        journal = assets(release_id)[RECOVERY_ASSET]
+        verify(journal, recovery_path)
+    finish_publication(state, journal)
 
 
 if __name__ == "__main__":
     try:
         if sys.argv[1] == "--recover":
-            finish_publication(Path(sys.argv[2]))
+            if not recover_publication() and "--required" in sys.argv[2:]:
+                raise ValueError("No pending release publication to recover")
         else:
-            code, sha, notes, recovery, *files = sys.argv[1:]
-            publish(code, sha, notes, [Path(file) for file in files], Path(recovery))
+            code, sha, notes, *files = sys.argv[1:]
+            publish(code, sha, notes, [Path(file) for file in files])
     except subprocess.CalledProcessError as error:
         raise SystemExit(error.stderr or str(error)) from error
     except (OSError, ValueError) as error:

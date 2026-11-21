@@ -1,22 +1,33 @@
 package com.xtrakick.app.util
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.content.pm.Signature
 import android.os.Build
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.core.content.IntentCompat
 import androidx.core.content.pm.PackageInfoCompat
+import androidx.core.content.edit
+import androidx.core.net.toUri
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.xtrakick.app.R
-import com.xtrakick.app.ui.main.MainActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,11 +39,7 @@ import okhttp3.OkHttpClient
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
-
-internal val activeUpdateSessionId = AtomicInteger(-1)
-internal val pendingInstallConfirmationSessionId = AtomicInteger(-1)
 
 internal class AppUpdateDownloader(
     private val applicationContext: Context,
@@ -129,23 +136,102 @@ internal suspend fun installAppUpdate(context: Context, url: String, download: s
                     session.fsync(output)
                 }
                 currentCoroutineContext().ensureActive()
-                val callback = Intent(context, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                    action = MainActivity.INTENT_INSTALL_UPDATE
+                val callback = Intent(context, AppUpdateResultReceiver::class.java).apply {
+                    action = AppUpdateResultReceiver.ACTION_INSTALL_RESULT
+                    setPackage(context.packageName)
                 }
-                activeUpdateSessionId.set(sessionId)
-                pendingInstallConfirmationSessionId.set(sessionId)
-                session.commit(PendingIntent.getActivity(context, sessionId, callback, PendingIntent.FLAG_MUTABLE).intentSender)
+                session.commit(PendingIntent.getBroadcast(context, sessionId, callback, PendingIntent.FLAG_MUTABLE).intentSender)
             }
         } catch (error: Exception) {
-            activeUpdateSessionId.compareAndSet(sessionId, -1)
-            pendingInstallConfirmationSessionId.compareAndSet(sessionId, -1)
             runCatching { installer.abandonSession(sessionId) }
             throw error
         }
     } finally {
         apk.delete()
     }
+}
+
+class AppUpdateResultReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val sessionId = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
+        if (intent.action != ACTION_INSTALL_RESULT || sessionId <= 0) return
+        val prefs = context.tokenPrefs()
+        val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            val confirmation = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)
+            if (confirmation != null && context.isSystemInstallerIntent(confirmation) &&
+                prefs.edit().putString(PENDING_INSTALL_CONFIRMATION, "$sessionId|${confirmation.toUri(Intent.URI_INTENT_SCHEME)}").commit()) {
+                return
+            }
+        } else {
+            if (prefs.getString(PENDING_INSTALL_CONFIRMATION, null)?.substringBefore('|') == sessionId.toString()) {
+                prefs.edit { remove(PENDING_INSTALL_CONFIRMATION) }
+            }
+            if (status == PackageInstaller.STATUS_SUCCESS || status == PackageInstaller.STATUS_FAILURE_ABORTED) return
+        }
+        val statusMessage = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+        DiagnosticLogger.e("AppUpdate", "Update install failed: status=$status msg=$statusMessage")
+        Toast.makeText(context, R.string.update_download_failed, Toast.LENGTH_LONG).show()
+    }
+
+    companion object {
+        internal const val ACTION_INSTALL_RESULT = "com.xtrakick.app.INSTALL_UPDATE_RESULT"
+    }
+}
+
+private const val PENDING_INSTALL_CONFIRMATION = "pending_install_confirmation"
+
+internal fun ComponentActivity.observeAppUpdateResults() {
+    lifecycleScope.launch {
+        repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            val prefs = tokenPrefs()
+            val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                if (key == PENDING_INSTALL_CONFIRMATION) showPendingAppUpdateConfirmation()
+            }
+            prefs.registerOnSharedPreferenceChangeListener(listener)
+            try {
+                showPendingAppUpdateConfirmation()
+                awaitCancellation()
+            } finally {
+                prefs.unregisterOnSharedPreferenceChangeListener(listener)
+            }
+        }
+    }
+}
+
+private fun Activity.showPendingAppUpdateConfirmation() {
+    val prefs = tokenPrefs()
+    val pending = prefs.getString(PENDING_INSTALL_CONFIRMATION, null) ?: return
+    try {
+        val sessionId = pending.substringBefore('|').toIntOrNull() ?: return
+        if (packageManager.packageInstaller.getSessionInfo(sessionId) == null) return
+        val confirmation = Intent.parseUri(pending.substringAfter('|'), Intent.URI_INTENT_SCHEME)
+        check(isSystemInstallerIntent(confirmation))
+        startActivity(confirmation)
+        prefs.edit { putLong(AppConstants.UPDATE_LAST_CHECKED, System.currentTimeMillis()) }
+    } catch (error: Exception) {
+        DiagnosticLogger.e("AppUpdate", "Could not launch update confirmation", error)
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, "https://github.com/tibor1234567895/Xtra-Kick/releases/latest".toUri()))
+        }.onFailure { Toast.makeText(this, R.string.update_download_failed, Toast.LENGTH_LONG).show() }
+    } finally {
+        prefs.edit { remove(PENDING_INSTALL_CONFIRMATION) }
+    }
+}
+
+internal fun Context.isSystemInstallerIntent(candidate: Intent): Boolean {
+    if (candidate.data != null || candidate.clipData != null || candidate.selector != null) return false
+    val uriGrantFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+    if ((candidate.flags and uriGrantFlags) != 0) return false
+    when (candidate.action) {
+        Intent.ACTION_CHOOSER, Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE, Intent.ACTION_VIEW -> return false
+        "android.content.pm.action.CONFIRM_INSTALL", "android.content.pm.action.CONFIRM_PERMISSIONS" -> Unit
+        else -> if (candidate.component == null) return false
+    }
+    val appInfo = packageManager.resolveActivity(candidate, PackageManager.MATCH_DEFAULT_ONLY)
+        ?.activityInfo?.applicationInfo ?: return false
+    return appInfo.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
 }
 
 @Suppress("DEPRECATION")

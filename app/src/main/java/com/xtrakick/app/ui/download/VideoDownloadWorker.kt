@@ -96,9 +96,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 
-internal fun canReuseDownloadedTrack(name: String, downloadedTracks: Set<String>, isReadable: () -> Boolean): Boolean =
-    name in downloadedTracks && isReadable()
-
 internal suspend fun downloadSegments(
     segments: List<Segment>,
     concurrency: Int,
@@ -331,12 +328,10 @@ class VideoDownloadWorker @AssistedInject constructor(
             }
             val resolvedCount = toIndex - fromIndex + 1
             var resetSingleFile = false
-            // Resume-state classification. Only rows with an existing single output
-            // file are classified: playlist rows resync maxProgress on every run
-            // (updateVideoRange) and never write bytes, so their counters cannot go
-            // stale the way single-file counters do.
+            // Single-file resumes use byte offsets. Playlist resumes verify the
+            // saved segment files below before trusting any progress.
             val resumeUrl = offlineVideo.url.takeUnless { videoPhaseSkipped }
-            if (!resumeUrl.isNullOrBlank() && !resumeUrl.endsWith(".m3u8")) {
+            if (!resumeUrl.isNullOrBlank() && !DownloadStorage.isPlaylist(context, resumeUrl)) {
                 if (offlineVideo.playlistToFile) {
                     // Finalized rows (completed download, conversion, move, or import)
                     // carry counters that no longer describe the file, so the output
@@ -396,19 +391,15 @@ class VideoDownloadWorker @AssistedInject constructor(
                 }
             }
             val urlPath = playlistUrl
-            val remainingSegments = ArrayList<Segment>()
-            if (offlineVideo.progress < offlineVideo.maxProgress) {
-                for (i in fromIndex + offlineVideo.progress..toIndex) {
-                    val segment = playlist.segments[i]
-                    remainingSegments.add(segment.copy(uri = segment.uri.replace("-unmuted", "-muted")))
-                }
-            }
+            val selectedSegments = playlist.segments.subList(fromIndex, toIndex + 1)
+                .map { it.copy(uri = it.uri.replace("-unmuted", "-muted")) }
             val concurrency = context.prefs().getInt(AppConstants.DOWNLOAD_CONCURRENT_LIMIT, 10).coerceIn(1, 32)
             val count = MutableStateFlow(0)
             videoOutputTouched = !videoPhaseSkipped
             val jobs = if (videoPhaseSkipped) {
                 emptyList<Job>()
             } else if (offlineVideo.playlistToFile) {
+                val remainingSegments = selectedSegments.drop(offlineVideo.progress.coerceAtLeast(0))
                 val videoFileUri = if (!offlineVideo.url.isNullOrBlank()) {
                     var fileUri = offlineVideo.url!!
                     if (resetSingleFile) {
@@ -576,8 +567,6 @@ class VideoDownloadWorker @AssistedInject constructor(
                     }
                 }
             } else {
-                val selectedSegments = playlist.segments.subList(fromIndex, toIndex + 1)
-                    .map { it.copy(uri = it.uri.replace("-unmuted", "-muted")) }
                 val assetNames = (selectedSegments.map { it.uri } + listOfNotNull(playlist.initSegmentUri))
                     .distinct().associateWith(PlaylistUtils::assetFileName)
                 val dirDoc = if (isShared) DownloadStorage.containerDoc(context, path.toUri(), offlineVideo) else null
@@ -590,7 +579,11 @@ class VideoDownloadWorker @AssistedInject constructor(
                             ?: throw IOException("Cannot create download asset $name")).uri.toString()
                     } else File(directory!!, name).path
                 }
-                val playlistFileUri = offlineVideo.url ?: if (dirDoc != null) {
+                val savedPlaylist = offlineVideo.url
+                val playlistFileUri = if (savedPlaylist != null &&
+                    (dirDoc == null || existingDocuments.values.any { it.uri.toString() == savedPlaylist })) {
+                    savedPlaylist
+                } else if (dirDoc != null) {
                     SafStorageUtils.getOrCreateFileInDir(dirDoc, "${offlineVideo.downloadDate}.m3u8", "application/x-mpegURL").toString()
                 } else File(directory!!, "${offlineVideo.downloadDate}.m3u8").path
                 fun localReference(uri: String): String = if (isShared) assetTargets.getValue(uri) else assetNames.getValue(uri)
@@ -599,7 +592,19 @@ class VideoDownloadWorker @AssistedInject constructor(
                     segments = selectedSegments.map { it.copy(uri = localReference(it.uri)) },
                 )
                 openDownloadOutput(playlistFileUri, isShared).use { PlaylistUtils.writeMediaPlaylist(localPlaylist, it) }
-                val completedNames = selectedSegments.take(offlineVideo.progress).mapTo(mutableSetOf()) { assetNames.getValue(it.uri) }
+                val savedSegments = selectedSegments.take(offlineVideo.progress.coerceAtLeast(0))
+                val requiredSizes = PlaylistUtils.requiredAssetSizes(selectedSegments)
+                val childSizes = if (dirDoc != null && savedSegments.isNotEmpty()) {
+                    DownloadStorage.childDocumentSizes(context, dirDoc.uri)
+                } else emptyMap()
+                val verifiedAssets = savedSegments.asSequence().map { it.uri }.distinct().filterIndexed { index, uri ->
+                    val sizes = if (index == 0) emptyMap() else childSizes
+                    DownloadStorage.isAssetReadable(context, assetTargets.getValue(uri), requiredSizes[uri] ?: 1L, sizes)
+                }.toSet()
+                val resumeProgress = savedSegments.takeWhile { it.uri in verifiedAssets }.size
+                if (offlineVideo.progress != resumeProgress) {
+                    offlineRepository.updateProgress(offlineVideo.apply { progress = resumeProgress })
+                }
                 val startPosition = relativeStartTimes[fromIndex]
                 offlineRepository.updateVideoRange(offlineVideo.apply {
                     url = playlistFileUri
@@ -607,7 +612,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                     sourceStartPosition = startPosition
                     maxProgress = toIndex - fromIndex + 1
                 })
-                val downloadedAssets = ConcurrentHashMap.newKeySet<String>()
+                val downloadedAssets = ConcurrentHashMap.newKeySet<String>().apply { addAll(verifiedAssets) }
                 playlist.initSegmentUri?.let { uri ->
                     openDownloadOutput(assetTargets.getValue(uri), isShared).use { output ->
                         downloadAsset(networkLibrary, resolveSegmentUrl(urlPath, uri), output)
@@ -615,20 +620,12 @@ class VideoDownloadWorker @AssistedInject constructor(
                     downloadedAssets.add(uri)
                 }
                 val assetLocks = assetNames.keys.associateWith { Mutex() }
-                downloadSegments(remainingSegments, concurrency) { id, segment ->
+                downloadSegments(selectedSegments.drop(resumeProgress), concurrency) { id, segment ->
                     assetLocks.getValue(segment.uri).withLock {
                         if (segment.uri !in downloadedAssets) {
                             val target = assetTargets.getValue(segment.uri)
-                            val reusable = canReuseDownloadedTrack(assetNames.getValue(segment.uri), completedNames) {
-                                runCatching {
-                                    if (isShared) context.contentResolver.openInputStream(target.toUri())?.use { it.read() != -1 } == true
-                                    else File(target).length() > 0
-                                }.getOrDefault(false)
-                            }
-                            if (!reusable) {
-                                openDownloadOutput(target, isShared).use { output ->
-                                    downloadAsset(networkLibrary, resolveSegmentUrl(urlPath, segment.uri), output)
-                                }
+                            openDownloadOutput(target, isShared).use { output ->
+                                downloadAsset(networkLibrary, resolveSegmentUrl(urlPath, segment.uri), output)
                             }
                             downloadedAssets.add(segment.uri)
                         }
@@ -710,10 +707,9 @@ class VideoDownloadWorker @AssistedInject constructor(
         // on chat progress here would stick the item at "DOWNLOADING: 100%" forever.
         // A skipped video phase is a finalized row (converted/imported/complete) whose
         // counters may not match the freshly resolved playlist — still complete.
-        // Every non-skipped completion verifies the output file itself: a run whose
-        // writes landed on a vanished document must end PENDING, not DOWNLOADED.
-        val outputReady = videoPhaseSkipped ||
-            DownloadStorage.isOutputIntact(context, offlineVideo.url)
+        // Verify the saved output after the chat phase too, since a file or
+        // segment could disappear while chat was being downloaded.
+        val outputReady = DownloadStorage.isOutputIntact(context, offlineVideo.url)
         if ((offlineVideo.progress == offlineVideo.maxProgress || videoPhaseSkipped) && outputReady) {
             offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_DOWNLOADED })
             runCatching {

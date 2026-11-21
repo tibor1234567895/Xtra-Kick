@@ -99,6 +99,7 @@ import com.xtrakick.app.util.applyTheme
 import com.xtrakick.app.util.chat.ChatBackgroundUtils
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.getProxyPassword
+import com.xtrakick.app.util.observeAppUpdateResults
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.setProxyPassword
 import com.xtrakick.app.util.tokenPrefs
@@ -124,6 +125,7 @@ class SettingsActivity : BaseStateActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        observeAppUpdateResults()
         supportFragmentManager.constrainSheets()
         if (savedInstanceState?.getBoolean(KEY_CHANGED) == true) {
             setResult()

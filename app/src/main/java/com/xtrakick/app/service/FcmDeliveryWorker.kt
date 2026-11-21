@@ -3,8 +3,14 @@ package com.xtrakick.app.service
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
+import androidx.work.Constraints
 import androidx.work.Data
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.xtrakick.app.model.kick.KickLiveNotificationEvent
 import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.widget.LiveChannelsWidgetProvider
@@ -25,7 +31,7 @@ class FcmDeliveryWorker @AssistedInject constructor(
             // Fetch the current Firebase token when work runs. WorkManager need not store it.
             return when {
                 fcmSyncManager.syncSubscriptions() -> Result.success()
-                runAttemptCount < 3 -> Result.retry()
+                runAttemptCount < 5 -> Result.retry()
                 else -> Result.failure()
             }
         }
@@ -40,6 +46,16 @@ class FcmDeliveryWorker @AssistedInject constructor(
     companion object {
         internal const val TOKEN_SYNC = "token_sync"
         private val CHANNEL_SLUG = Regex("[A-Za-z0-9_-]{1,64}")
+
+        internal fun enqueueTokenSync(context: Context, policy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP) {
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "fcm-token-sync", policy,
+                OneTimeWorkRequestBuilder<FcmDeliveryWorker>()
+                    .setInputData(workDataOf(TOKEN_SYNC to true))
+                    .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                    .build(),
+            )
+        }
 
         internal fun liveEvent(data: Data): KickLiveNotificationEvent? {
             val userId = data.getString("user_id")?.toLongOrNull() ?: return null

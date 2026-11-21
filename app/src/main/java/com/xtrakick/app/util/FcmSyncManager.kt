@@ -6,6 +6,7 @@ import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.db.NotificationUsersDao
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.repository.NotificationUsersRepository
+import com.xtrakick.app.service.FcmDeliveryWorker
 import com.xtrakick.app.util.NetworkUtils.useCancellable
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,7 @@ import org.json.JSONObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -76,7 +78,7 @@ class FcmSyncManager @Inject constructor(
                 allChannelIds.addAll(NotificationUsersRepository.getKnownAliases(row))
             }
 
-            val currentSignature = "$token:$kickUserId:${allChannelIds.sorted().joinToString(",")}"
+            val currentSignature = "v2:$token:$kickUserId:${allChannelIds.sorted().joinToString(",")}"
             val lastSyncedSignature = context.prefs().getString(FCM_LAST_SYNCED_SIGNATURE, null)
             if (tokenOverride == null && currentSignature == lastSyncedSignature) {
                 return@withContext true
@@ -99,8 +101,15 @@ class FcmSyncManager @Inject constructor(
                 body = bodyBytes,
             )
 
-            val ok = postSubscriptionRequest(url, bodyBytes, headers)
-            if (ok) context.prefs().edit().putString(FCM_LAST_SYNCED_SIGNATURE, currentSignature).apply()
+            var retry = true
+            val ok = postSubscriptionRequest(url, bodyBytes, headers) { response ->
+                retry = response.code == 429 || response.code in 500..599
+                if (isCompleteRegistration(response)) {
+                    context.prefs().edit().putString(FCM_LAST_SYNCED_SIGNATURE, currentSignature).apply()
+                }
+                response.isSuccessful
+            }
+            if (retry) FcmDeliveryWorker.enqueueTokenSync(context)
             ok
         }
     }
@@ -135,17 +144,26 @@ class FcmSyncManager @Inject constructor(
         }
     }
 
-    internal suspend fun postSubscriptionRequest(url: String, body: ByteArray, headers: Map<String, String>): Boolean {
+    internal suspend fun postSubscriptionRequest(
+        url: String,
+        body: ByteArray,
+        headers: Map<String, String>,
+        handleResponse: (Response) -> Boolean = { it.isSuccessful },
+    ): Boolean {
         return try {
             val request = Request.Builder().url(url)
                 .header("Content-Type", "application/json")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .apply { headers.forEach { (name, value) -> header(name, value) } }
                 .build()
-            subscriptionClient.newCall(request).useCancellable { it.isSuccessful }
+            subscriptionClient.newCall(request).useCancellable { handleResponse(it) }
         } catch (_: Exception) {
             currentCoroutineContext().ensureActive()
             false
         }
     }
 }
+
+internal fun isCompleteRegistration(response: Response): Boolean = response.isSuccessful && runCatching {
+    JSONObject(response.peekBody(4096).string()).opt("complete") == true
+}.getOrDefault(false)

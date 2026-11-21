@@ -5,14 +5,18 @@ import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import com.xtrakick.app.model.ui.OfflineVideo
+import com.xtrakick.app.util.m3u8.MediaPlaylist
+import com.xtrakick.app.util.m3u8.PlaylistUtils
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 
 object DownloadStorage {
 
@@ -151,37 +155,153 @@ object DownloadStorage {
         }
     }
 
-    /** True when the downloadable output file still exists and is non-empty. */
-    fun isOutputIntact(context: Context, urlStr: String?): Boolean = when {
-        urlStr.isNullOrBlank() -> false
-        isContentUri(urlStr) || urlStr.endsWith(".m3u8") -> exists(context, urlStr)
-        else -> File(urlStr).let { it.isFile && it.length() > 0L }
+    internal fun isPlaylist(context: Context, url: String): Boolean {
+        if (url.endsWith(".m3u8", ignoreCase = true)) return true
+        if (!isContentUri(url)) return false
+        val uri = url.toUri()
+        val type = runCatching { context.contentResolver.getType(uri)?.lowercase() }.getOrNull()
+        if (type == "application/x-mpegurl" || type == "application/vnd.apple.mpegurl" ||
+            type == "audio/mpegurl" || type == "audio/x-mpegurl") return true
+        return runCatching {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { it.moveToFirst() && it.getString(0)?.endsWith(".m3u8", ignoreCase = true) == true } == true
+        }.getOrDefault(false)
     }
 
-    private fun existsPlaylistFile(playlistFile: File): Boolean {
+    fun isOutputIntact(context: Context, urlStr: String?): Boolean {
+        if (urlStr.isNullOrBlank()) return false
+        if (!isPlaylist(context, urlStr)) return isAssetReadable(context, urlStr)
+        return if (isContentUri(urlStr)) {
+            runCatching { existsPlaylistSAF(context, urlStr.toUri(), complete = true) }.getOrDefault(false)
+        } else existsPlaylistFile(File(urlStr), complete = true)
+    }
+
+    internal fun isAssetReadable(
+        context: Context,
+        url: String,
+        minimumBytes: Long = 1L,
+        knownSizes: Map<String, Long> = emptyMap(),
+    ): Boolean {
+        if (!isContentUri(url)) return File(url).let { it.isFile && it.length() >= minimumBytes }
+        val uri = url.toUri()
+        if (knownSizes.isNotEmpty()) {
+            val listedSize = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()?.let(knownSizes::get)
+            if (listedSize != null) return listedSize >= minimumBytes
+        }
         return runCatching {
-            val playlist = playlistFile.inputStream().use {
-                com.xtrakick.app.util.m3u8.PlaylistUtils.parseMediaPlaylist(it)
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { afd ->
+                val length = afd.length
+                if (length >= 0L) return@use length >= minimumBytes
+                afd.createInputStream().use { hasAtLeastBytes(it, minimumBytes) }
+            } == true
+        }.getOrDefault(false)
+    }
+
+    private fun hasAtLeastBytes(input: InputStream, minimumBytes: Long): Boolean {
+        var remaining = minimumBytes
+        val buffer = ByteArray(8 * 1024)
+        while (remaining > 0L) {
+            val skipped = if (remaining > buffer.size) input.skip(remaining - 1L) else 0L
+            if (skipped > 0L) {
+                remaining -= skipped
+            } else {
+                val read = input.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+                if (read == -1) return false
+                remaining -= read
             }
+        }
+        return true
+    }
+
+    private val STALE_METADATA_AUTHORITIES = setOf(
+        "com.android.providers.downloads.documents",
+        "com.android.providers.media.documents",
+    )
+
+    private fun isMediaStoreDocId(docId: String): Boolean =
+        docId.startsWith("msd:", ignoreCase = true) || docId.startsWith("msf:", ignoreCase = true)
+
+    internal fun childDocumentSizes(
+        context: Context,
+        anchorUri: Uri,
+        parentDocId: String? = null,
+    ): Map<String, Long> = runCatching {
+        if (anchorUri.authority in STALE_METADATA_AUTHORITIES) return@runCatching emptyMap()
+        val docId = parentDocId ?: DocumentsContract.getDocumentId(anchorUri)
+        if (isMediaStoreDocId(docId)) return@runCatching emptyMap()
+        val childrenUri = if (DocumentsContract.isTreeUri(anchorUri)) {
+            DocumentsContract.buildChildDocumentsUriUsingTree(anchorUri, docId)
+        } else {
+            DocumentsContract.buildChildDocumentsUri(requireNotNull(anchorUri.authority), docId)
+        }
+        buildMap {
+            context.contentResolver.query(
+                childrenUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_SIZE),
+                null, null, null,
+            )?.use { cursor ->
+                val idIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val sizeIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+                if (idIdx < 0 || sizeIdx < 0) return@use
+                while (cursor.moveToNext()) {
+                    val childId = cursor.getString(idIdx) ?: continue
+                    if (isMediaStoreDocId(childId)) continue
+                    if (!cursor.isNull(sizeIdx)) {
+                        val size = cursor.getLong(sizeIdx)
+                        if (size >= 0L) put(childId, size)
+                    }
+                }
+            }
+        }
+    }.getOrDefault(emptyMap())
+
+    private fun existsPlaylistFile(playlistFile: File, complete: Boolean = false): Boolean {
+        return runCatching {
+            val playlist = playlistFile.inputStream().use(PlaylistUtils::parseMediaPlaylist)
             val dir = playlistFile.parentFile ?: return@runCatching false
-            val first = playlist.segments.firstOrNull()?.uri ?: return@runCatching false
-            listOfNotNull(playlist.initSegmentUri, first).all { uri ->
-                File(dir, android.net.Uri.decode(uri.substringAfterLast("%2F").substringAfterLast("/")))
-                    .let { it.isFile && it.length() > 0 }
+            playlistAssetsExist(playlist, complete) { uri, minimumBytes ->
+                PlaylistUtils.localAssetFile(dir, PlaylistUtils.localAssetName(uri))
+                    ?.let { it.isFile && it.length() >= minimumBytes } == true
             }
         }.getOrDefault(false)
     }
 
-    private fun existsPlaylistSAF(context: Context, playlistUri: android.net.Uri): Boolean {
-        val playlist = context.contentResolver.openInputStream(playlistUri)?.use {
-            com.xtrakick.app.util.m3u8.PlaylistUtils.parseMediaPlaylist(it)
-        } ?: return false
-        val first = playlist.segments.firstOrNull()?.uri ?: return false
-        return listOfNotNull(playlist.initSegmentUri, first).all { segUri ->
+    private fun existsPlaylistSAF(context: Context, playlistUri: Uri, complete: Boolean = false): Boolean {
+        val playlist = context.contentResolver.openInputStream(playlistUri)
+            ?.use(PlaylistUtils::parseMediaPlaylist) ?: return false
+        val parent = runCatching { DocumentsContract.getDocumentId(playlistUri).substringBeforeLast('/', "") }
+            .getOrDefault("")
+        val childSizes = if (complete && parent.isNotEmpty()) {
+            childDocumentSizes(context, playlistUri, parent)
+        } else emptyMap()
+        val firstSegment = playlist.segments.firstOrNull()?.uri
+        return playlistAssetsExist(playlist, complete) { uri, minimumBytes ->
             runCatching {
-                context.contentResolver.openInputStream(segUri.toUri())?.use { it.read() != -1 } == true
+                val asset = uri.toUri()
+                val target = if (asset.scheme == null) {
+                    check(parent.isNotEmpty())
+                    val assetId = "$parent/${PlaylistUtils.localAssetName(uri)}"
+                    if (DocumentsContract.isTreeUri(playlistUri)) {
+                        DocumentsContract.buildDocumentUriUsingTree(playlistUri, assetId)
+                    } else {
+                        DocumentsContract.buildDocumentUri(requireNotNull(playlistUri.authority), assetId)
+                    }
+                } else asset
+                val sizes = if (uri == playlist.initSegmentUri || uri == firstSegment) emptyMap() else childSizes
+                isAssetReadable(context, target.toString(), minimumBytes, sizes)
             }.getOrDefault(false)
         }
+    }
+
+    private inline fun playlistAssetsExist(
+        playlist: MediaPlaylist, complete: Boolean, exists: (String, Long) -> Boolean,
+    ): Boolean {
+        val first = playlist.segments.firstOrNull()?.uri ?: return false
+        val sizes = if (complete) PlaylistUtils.requiredAssetSizes(playlist.segments) else emptyMap()
+        if (playlist.initSegmentUri?.let { !exists(it, sizes[it] ?: 1L) } == true) return false
+        if (!complete) return exists(first, 1L)
+        val checked = hashSetOf(playlist.initSegmentUri)
+        return playlist.segments.all { !checked.add(it.uri) || exists(it.uri, sizes[it.uri] ?: 1L) }
     }
 
     /** Deletes [dir] only when it is an empty per-VOD container, never a storage root. */

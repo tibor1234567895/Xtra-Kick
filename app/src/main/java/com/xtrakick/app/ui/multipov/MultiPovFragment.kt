@@ -1727,7 +1727,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         cancelHideControls()
         resetVideoZoom()
         val binding = _binding ?: return
-        binding.chatFragmentContainer.isVisible = false
+        setChatContainerVisible(false)
         updateFocusedControlsVisibility(show = false)
         binding.minimizeBadge.isVisible = true
         binding.minimizeBadge.text = getString(R.string.multipov_badge, viewModel.uiState.value.slots.size)
@@ -1752,7 +1752,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         binding.multiPovRoot.scaleY = 1f
         binding.multiPovRoot.translationX = 0f
         binding.multiPovRoot.translationY = 0f
-        binding.chatFragmentContainer.isVisible = isChatOpen
+        setChatContainerVisible(isChatOpen)
         binding.minimizeBadge.isVisible = false
         if (isPortrait) {
             showStatusBar()
@@ -1790,7 +1790,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
 
     private fun enterPipUi() {
         val binding = _binding ?: return
-        binding.chatFragmentContainer.isVisible = false
+        setChatContainerVisible(false)
         updateFocusedControlsVisibility(show = false)
         binding.minimizeBadge.isVisible = false
         playbackController?.pauseSecondaries()
@@ -2624,7 +2624,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 if (isChatOpen) chatH else 0,
                 Gravity.BOTTOM,
             )
-            binding.chatFragmentContainer.isVisible = isChatOpen
+            setChatContainerVisible(isChatOpen)
         }
         // Immediate pass + post so we have a real height after rotation.
         applyHeights()
@@ -2715,7 +2715,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         binding.controlsOverlay.translationX = 0f
         if (p <= 0f && finalize) {
             binding.chatFragmentContainer.translationX = 0f
-            binding.chatFragmentContainer.isVisible = false
+            setChatContainerVisible(false)
             binding.videoSection.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2731,7 +2731,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
 
         prepareLandscapeChatLayout()
         binding.chatFragmentContainer.translationX = chatTranslation
-        binding.chatFragmentContainer.isVisible = true
+        setChatContainerVisible(true)
         val videoLp = binding.videoSection.layoutParams as? FrameLayout.LayoutParams
         if (videoLp == null ||
             videoLp.width != ViewGroup.LayoutParams.MATCH_PARENT ||
@@ -2770,7 +2770,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             )
         }
         if (!binding.chatFragmentContainer.isVisible) {
-            binding.chatFragmentContainer.isVisible = true
+            setChatContainerVisible(true)
         }
     }
 
@@ -2912,6 +2912,15 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         settleChatOpen(shouldOpen, animate = true)
         chatDragActive = false
         chatDragCandidate = false
+    }
+
+    private fun setChatContainerVisible(visible: Boolean) {
+        val container = _binding?.chatFragmentContainer ?: return
+        if (container.isVisible && !visible) {
+            (childFragmentManager.findFragmentById(R.id.chatFragmentContainer) as? ChatFragment)
+                ?.dismissInputOverlays()
+        }
+        container.isVisible = visible
     }
 
     private fun toggleChat() {

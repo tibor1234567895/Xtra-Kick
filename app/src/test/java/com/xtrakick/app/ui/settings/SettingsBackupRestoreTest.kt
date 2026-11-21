@@ -3,7 +3,9 @@ package com.xtrakick.app.ui.settings
 import android.app.Application
 import android.database.sqlite.SQLiteDatabase
 import com.xtrakick.app.di.DatabaseModule
+import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
+import java.io.ByteArrayOutputStream
 import java.io.File
 import org.junit.After
 import org.junit.Assert.*
@@ -109,6 +111,20 @@ class SettingsBackupRestoreTest {
             assertThrows(Exception::class.java) { SettingsBackupRestore.readPreferences(xml.byteInputStream()) }
             assertEquals("hello", context.prefs().getString("text", null))
         }
+    }
+
+    @Test fun exportOmitsTheLegacyProxyPasswordBeforeMigration() {
+        val prefs = context.prefs()
+        prefs.edit().putString(AppConstants.PROXY_PASSWORD, "old-proxy-password")
+            .putString("name", "<&>\" name").putStringSet("tags", setOf("a", "b"))
+            .putBoolean("flag", true).putInt("count", 4).putLong("time", 5L).putFloat("speed", 1.5f).commit()
+        val output = ByteArrayOutputStream()
+        SettingsBackupRestore.writePreferences(prefs.all, output)
+
+        assertFalse(output.toString(Charsets.UTF_8.name()).contains("old-proxy-password"))
+        assertEquals(prefs.all - AppConstants.PROXY_PASSWORD,
+            SettingsBackupRestore.readPreferences(output.toByteArray().inputStream()))
+        assertEquals("old-proxy-password", prefs.getString(AppConstants.PROXY_PASSWORD, null))
     }
 
     @Test fun failedAtomicCopyPreservesTheOriginalFile() {

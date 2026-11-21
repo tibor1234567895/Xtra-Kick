@@ -333,7 +333,8 @@ class DownloadsAdapter(
                                 }
                             }
                             OfflineVideo.STATUS_MOVING -> context.getString(R.string.download_moving, videoPercent)
-                            OfflineVideo.STATUS_DELETING -> context.getString(R.string.download_deleting, videoPercent)
+                            OfflineVideo.STATUS_DELETING, OfflineVideo.STATUS_DELETING_COMPLETED ->
+                                context.getString(R.string.download_deleting, videoPercent)
                             OfflineVideo.STATUS_CONVERTING -> context.getString(R.string.download_converting, videoPercent)
                             OfflineVideo.STATUS_BLOCKED -> context.getString(R.string.download_queued)
                             OfflineVideo.STATUS_QUEUED -> context.getString(R.string.download_blocked)
