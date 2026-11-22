@@ -32,7 +32,6 @@ import com.xtrakick.app.R
 import com.xtrakick.app.databinding.FragmentAboutBinding
 import com.xtrakick.app.ui.channel.ChannelPagerFragmentArgs
 import com.xtrakick.app.ui.common.BaseNetworkFragment
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.prefs
 import dagger.hilt.android.AndroidEntryPoint
@@ -40,7 +39,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
-class ChannelAboutFragment : BaseNetworkFragment(), IntegrityDialog.CallbackListener {
+class ChannelAboutFragment : BaseNetworkFragment() {
 
     private var _binding: FragmentAboutBinding? = null
     private val binding get() = _binding!!
@@ -164,13 +163,6 @@ class ChannelAboutFragment : BaseNetworkFragment(), IntegrityDialog.CallbackList
 
     override fun onNetworkRestored() {
         loadAbout()
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
-        (parentFragment as? IntegrityDialog.CallbackListener)?.onIntegrityDialogCallback("refresh")
-        if (callback == "refresh") {
-            loadAbout()
-        }
     }
 
     override fun onDestroyView() {

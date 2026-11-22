@@ -6,7 +6,11 @@ import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.bumptech.glide.Glide
+import coil3.load
+import coil3.request.error
+import coil3.request.placeholder
+import coil3.request.transformations
+import coil3.transform.CircleCropTransformation
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.ItemDropParticipatingChannelBinding
 import com.xtrakick.app.model.kick.KickDropParticipatingChannel
@@ -37,12 +41,11 @@ class DropsParticipatingChannelsAdapter(
             binding.channelSlug.text = "@${channel.slug}"
             binding.liveBadge.isVisible = channel.isLive
 
-            Glide.with(binding.channelAvatar)
-                .load(channel.profilePicture)
-                .circleCrop()
-                .placeholder(R.drawable.baseline_person_black_24)
-                .error(R.drawable.baseline_person_black_24)
-                .into(binding.channelAvatar)
+            binding.channelAvatar.load(channel.profilePicture) {
+                transformations(CircleCropTransformation())
+                placeholder(R.drawable.baseline_person_black_24)
+                error(R.drawable.baseline_person_black_24)
+            }
 
             binding.root.setOnClickListener { onChannelClick(channel) }
             binding.watchButton.setOnClickListener { onChannelClick(channel) }

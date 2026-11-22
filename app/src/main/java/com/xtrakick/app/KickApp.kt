@@ -25,8 +25,10 @@ import coil3.network.NetworkResponse
 import coil3.network.NetworkResponseBody
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.svg.SvgDecoder
+import coil3.video.VideoFrameDecoder
 import coil3.disk.directory
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.LegacyAnimatedWebpDecoder
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.DiagnosticCoilLogger
 import com.xtrakick.app.util.DiagnosticLogger
@@ -158,7 +160,7 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
             runCatching { notificationUsersRepository.get().migrateLegacyKeys() }
                 .onFailure { android.util.Log.w("KickApp", "notification key migration failed", it) }
         }
-        UsagePing.maybeSend(this, delayMillis = 15_000L)
+        CrashReports.maybeSend(this, delayMillis = 15_000L)
         var startedActivities = 0
         var userAgentWarmedUp = false
         registerActivityLifecycleCallbacks(
@@ -176,6 +178,7 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                     }
                     if (startedActivities == 1) {
                         UsagePing.noteSessionStarted(activity)
+                        CrashReports.maybeSend(activity.applicationContext, delayMillis = 3_000L)
                         UsagePing.maybeSend(activity.applicationContext, delayMillis = 3_000L)
                     }
                 }
@@ -299,9 +302,11 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
             }
             components {
                 add(SvgDecoder.Factory())
+                add(VideoFrameDecoder.Factory())
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     add(AnimatedImageDecoder.Factory())
                 } else {
+                    add(LegacyAnimatedWebpDecoder())
                     add(GifDecoder.Factory())
                 }
                 val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")

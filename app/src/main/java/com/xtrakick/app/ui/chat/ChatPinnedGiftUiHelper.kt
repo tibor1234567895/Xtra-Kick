@@ -421,7 +421,6 @@ class ChatPinnedGiftUiHelper(
                 pinnedGiftMessageResult.userName,
                 pinnedGiftMessageResult.userNameStartIndex,
                 binding.pinnedGiftTitle.currentTextColor,
-                context.prefs().getString(AppConstants.CHAT_IMAGE_LIBRARY, "0"),
                 pinnedGiftMessageResult.builder,
                 TypedValue.applyDimension(
                     TypedValue.COMPLEX_UNIT_DIP,

@@ -24,7 +24,7 @@ interface VideosDao {
     fun getByUrl(url: String): OfflineVideo?
 
     @Query("SELECT * FROM videos WHERE channel_login = :login AND live = 1 AND status != ${OfflineVideo.STATUS_DOWNLOADED}")
-    fun getLiveDownload(login: String): OfflineVideo?
+    fun getLiveDownloads(login: String): List<OfflineVideo>
 
     @Query("SELECT * FROM videos WHERE videoId = :id")
     fun getByVideoId(id: String): List<OfflineVideo>
@@ -58,6 +58,9 @@ interface VideosDao {
 
     @Query("UPDATE videos SET status = :status WHERE id = :id")
     fun updateStatus(id: Int, status: Int)
+
+    @Query("UPDATE videos SET status = :status WHERE id = :id AND status = :previousStatus")
+    fun updateStatusIfCurrent(id: Int, previousStatus: Int, status: Int)
 
     @Query("UPDATE videos SET max_progress = :maxProgress, progress = :progress, status = :status WHERE id = :id")
     fun updateOperationProgress(id: Int, maxProgress: Int, progress: Int, status: Int)

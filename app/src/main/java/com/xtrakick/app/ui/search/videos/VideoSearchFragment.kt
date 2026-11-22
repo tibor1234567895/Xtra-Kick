@@ -19,7 +19,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.CommonRecyclerViewLayoutBinding
 import com.xtrakick.app.model.ui.Video
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.PagedListFragment
 import com.xtrakick.app.ui.common.VideosAdapter
 import com.xtrakick.app.ui.download.DownloadDialog
@@ -123,14 +122,6 @@ class VideoSearchFragment : PagedListFragment(), Searchable, Scrollable {
                                 recyclerView.adapter = concatAdapter ?: pagingAdapter
                             }
                         }
-                        if ((loadState.refresh as? LoadState.Error ?:
-                            loadState.append as? LoadState.Error ?:
-                            loadState.prepend as? LoadState.Error)?.error?.message == "failed integrity check" &&
-                            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                            requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
-                        ) {
-                            IntegrityDialog.show(childFragmentManager, "refresh")
-                        }
                     }
                 }
             }
@@ -143,12 +134,6 @@ class VideoSearchFragment : PagedListFragment(), Searchable, Scrollable {
                     }
                 }
             }
-        }
-        if (requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-            requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true) &&
-            KickApiHelper.isIntegrityTokenExpired(requireContext())
-        ) {
-            IntegrityDialog.show(childFragmentManager, "refresh")
         }
         if (requireContext().prefs().getBoolean(AppConstants.PLAYER_USE_VIDEOPOSITIONS, true)) {
             viewLifecycleOwner.lifecycleScope.launch {
@@ -177,12 +162,6 @@ class VideoSearchFragment : PagedListFragment(), Searchable, Scrollable {
 
     override fun onNetworkRestored() {
         pagingAdapter.retry()
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
-        if (callback == "refresh") {
-            pagingAdapter.refresh()
-        }
     }
 
     override fun onDestroyView() {

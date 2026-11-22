@@ -2,6 +2,7 @@ package com.xtrakick.app.ui.player
 
 import com.amazonaws.ivs.player.Quality
 import com.xtrakick.app.util.AppConstants
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
@@ -40,14 +41,31 @@ object KickLivePlayback {
 
     data class AudioSaverCandidate(val key: String, val height: Int, val bitrate: Int)
 
+    const val AUDIO_SAVER_HEIGHT_480P = 480
+    const val AUDIO_SAVER_HEIGHT_360P = 360
+    const val AUDIO_SAVER_HEIGHT_160P = 160
+
+    fun parseAudioSaverHeight(prefValue: String?): Int {
+        return when (prefValue?.trim()?.lowercase(Locale.ROOT)?.removeSuffix("p")) {
+            "160" -> AUDIO_SAVER_HEIGHT_160P
+            "360" -> AUDIO_SAVER_HEIGHT_360P
+            else -> AUDIO_SAVER_HEIGHT_480P
+        }
+    }
+
     /**
-     * Audio-saver ceiling: 480p keeps source audio on STANDARD ladders (360p drops
-     * to 64 kbps, 160p to 48 kbps). Falls back to highest below 480p, else lowest.
+     * Audio-saver ceiling: defaults to 480p (keeps source audio on STANDARD ladders;
+     * 360p drops to 64 kbps, 160p to 48 kbps). Prefers exact [preferredHeight], falls
+     * back to highest below [preferredHeight], else lowest available rung.
      */
-    fun selectAudioSaverKey(candidates: List<AudioSaverCandidate>): String? {
+    fun selectAudioSaverKey(
+        candidates: List<AudioSaverCandidate>,
+        preferredHeight: Int = AUDIO_SAVER_HEIGHT_480P,
+    ): String? {
         if (candidates.isEmpty()) return null
-        candidates.filter { it.height == 480 }.maxByOrNull { it.bitrate }?.let { return it.key }
-        candidates.filter { it.height in 1..479 }
+        val targetHeight = preferredHeight.coerceAtLeast(1)
+        candidates.filter { it.height == targetHeight }.maxByOrNull { it.bitrate }?.let { return it.key }
+        candidates.filter { it.height in 1 until targetHeight }
             .sortedWith(compareByDescending<AudioSaverCandidate> { it.height }.thenByDescending { it.bitrate })
             .firstOrNull()?.let { return it.key }
         return candidates.sortedWith(compareBy<AudioSaverCandidate> { it.height }.thenBy { it.bitrate }).first().key

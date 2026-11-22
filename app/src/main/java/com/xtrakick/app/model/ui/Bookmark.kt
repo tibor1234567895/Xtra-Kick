@@ -1,9 +1,16 @@
 package com.xtrakick.app.model.ui
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "bookmarks")
+@Entity(
+    tableName = "bookmarks",
+    indices = [
+        Index(value = ["videoId"]),
+        Index(value = ["userId"]),
+    ],
+)
 class Bookmark(
     val videoId: String? = null,
     val userId: String? = null,

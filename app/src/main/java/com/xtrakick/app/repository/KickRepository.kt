@@ -3123,14 +3123,25 @@ class KickRepository @Inject constructor(
         limit: Int = 30,
         cursor: String? = null,
     ): KickVideoPage? {
-        val cacheKey = "${channelSlug.trim().lowercase(Locale.ROOT)}:$channelId:$limit:${cursor.orEmpty()}"
+        val normalizedSlug = channelSlug.trim().lowercase(Locale.ROOT)
+        fun cachedChannel(): KickChannelResponse? =
+            channelCache[normalizedSlug]?.second
+                ?: channelId?.trim()?.takeIf { it.isNotBlank() }?.let { channelCache[it]?.second }
+
+        val cacheKey = "$normalizedSlug:$channelId:$limit:${cursor.orEmpty()}"
         videoPagesCache[cacheKey]?.let { (cachedAt, page) ->
-            if (System.currentTimeMillis() - cachedAt <= livestreamCacheTtlMs) return page
+            if (System.currentTimeMillis() - cachedAt <= livestreamCacheTtlMs) {
+                val cachedLogo = cachedChannel()?.user?.profileImage?.takeIf { it.isNotBlank() }
+                if (cachedLogo != null) {
+                    page.videos.forEach { video ->
+                        if (video.profileImageUrl.isNullOrBlank()) {
+                            video.profileImageUrl = cachedLogo
+                        }
+                    }
+                }
+                return page
+            }
         }
-        val cached = channelCache[channelSlug.trim().lowercase(Locale.ROOT)]?.second
-        val login = cached?.slug ?: channelSlug
-        val channelName = cached?.user?.username ?: cached?.slug ?: channelSlug
-        val channelLogo = cached?.user?.profileImage
         val pageSize = limit.coerceIn(20, 100)
 
         val targetUrl = buildKickUrl(
@@ -3155,6 +3166,10 @@ class KickRepository @Inject constructor(
         if (raw != null) {
             val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
             if (root != null && extractVideoArrays(root).isNotEmpty()) {
+                val cached = cachedChannel()
+                val login = cached?.slug ?: channelSlug
+                val channelName = cached?.user?.username ?: cached?.slug ?: channelSlug
+                val channelLogo = cached?.user?.profileImage
                 val parsed = parseVideos(
                     roots = listOf(root),
                     channelId = channelId,
@@ -3196,7 +3211,8 @@ class KickRepository @Inject constructor(
         time: String? = null,
         cursor: String? = null,
     ): KickClipPage? {
-        val cached = channelCache[channelSlug.trim().lowercase(Locale.ROOT)]?.second
+        val cached = getCachedChannel(channelSlug)
+            ?: channelId?.takeIf { it.isNotBlank() }?.let(::getCachedChannel)
         val login = cached?.slug ?: channelSlug
         val channelName = cached?.user?.username ?: cached?.slug ?: channelSlug
         val channelLogo = cached?.user?.profileImage

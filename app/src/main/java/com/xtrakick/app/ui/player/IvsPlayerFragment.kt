@@ -35,6 +35,7 @@ import com.xtrakick.app.util.getAlertDialogBuilder
 import java.util.Locale
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.NetworkMonitor
+import com.xtrakick.app.util.prefs
 
 @OptIn(UnstableApi::class)
 class IvsPlayerFragment : PlayerFragment() {
@@ -211,7 +212,6 @@ class IvsPlayerFragment : PlayerFragment() {
                     binding.playerSurface.visibility = View.GONE
                 } else if (viewModel.quality == AUDIO_ONLY_QUALITY) {
                     binding.playerSurface.visibility = View.GONE
-                    applyAudioSaverCeiling()
                 } else {
                     binding.playerSurface.visibility = View.VISIBLE
                 }
@@ -1222,14 +1222,21 @@ class IvsPlayerFragment : PlayerFragment() {
         }
     }
 
-    /** Caps IVS ABR at the 480p saver rung: same source, so no reload or rebuffer. */
+    /** Caps IVS ABR at the configured audio-saver rung (480p default): same source, no reload. */
     private fun applyAudioSaverCeiling(deferred: Boolean = false): Boolean {
+        val preferredHeight = KickLivePlayback.parseAudioSaverHeight(
+            context?.prefs()?.getString(
+                AppConstants.PLAYER_AUDIO_SAVER_RUNG,
+                AppConstants.PLAYER_AUDIO_SAVER_RUNG_DEFAULT
+            )
+        )
         val saver = KickLivePlayback.selectAudioSaverKey(
             qualitiesByKey.map { (key, quality) ->
                 KickLivePlayback.AudioSaverCandidate(key, quality.height, quality.bitrate)
-            }
+            },
+            preferredHeight = preferredHeight
         )?.let { qualitiesByKey[it] } ?: return false
-        playerDebugLog("applyAudioSaverCeiling target saver=${saver.name} (${saver.bitrate} bps) deferred=$deferred")
+        playerDebugLog("applyAudioSaverCeiling target saver=${saver.name} (${saver.bitrate} bps) pref=${preferredHeight}p deferred=$deferred")
         if (viewModel.quality == AUDIO_ONLY_QUALITY && !audioTransitionWatchdog.isArmed()) {
             audioTransitionWatchdog.arm(SystemClock.uptimeMillis())
         }
@@ -1238,6 +1245,7 @@ class IvsPlayerFragment : PlayerFragment() {
             if (deferred) {
                 service.scheduleBackgroundAudioSaver(saver)
             } else {
+                service.clearBackgroundAudioSaver()
                 service.runPlayerOp("audio-saver-ceiling") {
                     if (!it.isAutoQualityMode) {
                         it.setAutoQualityMode(true)
@@ -1255,13 +1263,14 @@ class IvsPlayerFragment : PlayerFragment() {
         val service = playbackService ?: return
         playerDebugLog("restoreForegroundCeiling restoring to viewModel.quality=${viewModel.quality}")
         if (viewModel.quality == AUDIO_ONLY_QUALITY) {
+            service.clearBackgroundAudioSaver()
             applyAudioSaverCeiling()
             return
         }
         val target = if (viewModel.quality == AUTO_QUALITY) null else qualitiesByKey[viewModel.quality]
         val wasDownshifted = service.restoreForegroundQuality(target, isQualityLockEnabled())
         if (wasDownshifted && target != null && !isQualityLockEnabled()) {
-            // Player was actively downscaled to saver quality (480p) while in background.
+            // Player was actively downscaled to the configured audio-saver quality while in background.
             // Reset recovery timer and pre-seed recovery ticks so watchdog restores target immediately
             // upon confirming healthy buffer and bandwidth.
             lastQualityNudgeTimeMs = 0L

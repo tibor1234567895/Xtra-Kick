@@ -6,7 +6,9 @@ import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.bumptech.glide.Glide
+import coil3.load
+import coil3.request.error
+import coil3.request.placeholder
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.ItemCollectibleCardBinding
 import com.xtrakick.app.databinding.ItemCollectibleOverviewHeaderBinding
@@ -141,11 +143,10 @@ class CollectiblesAdapter(
         private val binding: ItemCollectibleCardBinding,
     ) : RecyclerView.ViewHolder(binding.root) {
         fun bind(collectible: KickCollectible) {
-            Glide.with(itemView)
-                .load(collectible.resolvedCardUrl)
-                .placeholder(R.drawable.ic_kick_gem)
-                .error(R.drawable.ic_kick_gem)
-                .into(binding.cardImage)
+            binding.cardImage.load(collectible.resolvedCardUrl) {
+                placeholder(R.drawable.ic_kick_gem)
+                error(R.drawable.ic_kick_gem)
+            }
 
             val isLocked = !collectible.owned
             binding.lockedScrim.isVisible = isLocked

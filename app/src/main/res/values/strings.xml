@@ -144,7 +144,6 @@
     <string name="player_doubletap">Double tap to toggle chat</string>
     <string name="player_channel">Show channel name</string>
     <string name="player_pause">Show pause button on livestreams</string>
-    <string name="token_random_deviceid">Random device ID</string>
     <string name="playback_speed">Playback speed</string>
     <string name="hold_to_speed">Hold-to-play speed</string>
     <string name="quality">Quality</string>
@@ -494,10 +493,6 @@
     <string name="remove_bookmark">Remove bookmark</string>
     <string name="saved">Saved</string>
     <string name="refresh">Refresh</string>
-    <string name="image_library">Image library</string>
-    <string name="imageLibraryEntries1">Coil</string>
-    <string name="imageLibraryEntries2">Coil + Glide WebP</string>
-    <string name="imageLibraryEntries3">Glide</string>
     <string name="disabled">Disabled</string>
     <string name="live_target_offset">Live target offset</string>
     <string name="buffer_for_playback">Buffer for playback</string>
@@ -522,7 +517,6 @@
     <string name="restart_player">Restart player</string>
     <string name="replay">Replay</string>
     <string name="retry_ivs">Retry low latency player</string>
-    <string name="sub_only_summary">For sub-only content</string>
     <string name="follow_button">Follow button</string>
     <string name="follow_kick_account">Follow on Kick</string>
     <string name="follow_local">Follow locally</string>
@@ -588,11 +582,6 @@
     <string name="debug_api_commands">Use API chat commands</string>
     <string name="debug_delete_all_followed_channels">Delete all followed channels</string>
     <string name="debug_delete_all_followed_channels_summary">Debug action. Permanently removes every followed channel imported or added locally, and clears follow notifications for them.</string>
-    <string name="skip_video_access_token">Skip video access token</string>
-    <string name="skipVideoTokenEntries1">Always skip</string>
-    <string name="skipVideoTokenEntries2">Skip by default, don\'t skip if playback fails</string>
-    <string name="skipVideoTokenEntries3">Don\'t skip by default, skip if playback fails</string>
-    <string name="skipVideoTokenEntries4">Never skip</string>
     <string name="keep_screen_on_when_paused">Keep screen on when video is paused</string>
     <string name="stream_proxy_url">Custom proxy URL</string>
     <string name="stream_proxy_url_desc">\"$channel\" will be replaced with channel login</string>
@@ -606,7 +595,6 @@
     <string name="show_multivariant_playlist_tags">Show multivariant playlist tags</string>
     <string name="use_gamepager">Use tabs for \"Games\" page</string>
     <string name="disable_background_video">Disable video rendering in the background</string>
-    <string name="get_webview_integrity">Get integrity token using WebView</string>
     <string name="show_title">Show title</string>
     <string name="show_category">Show category</string>
     <string name="get_all_headers">Get all headers</string>
@@ -630,8 +618,6 @@
     <string name="playback_speeds">Playback speeds</string>
     <string name="use_custom_proxy">Use custom proxy</string>
     <string name="use_custom_proxy_desc">Requires a URL that returns a playlist</string>
-    <string name="stream_headers">Stream request headers</string>
-    <string name="stream_headers_desc">Uses JSON format</string>
     <string name="follow">Follow</string>
     <string name="unfollow">Unfollow</string>
     <string name="mute">Mute</string>
@@ -767,7 +753,7 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="usage_stats_title">Anonymous usage statistics</string>
     <string name="crash_reports_title">Send crash reports</string>
     <string name="crash_reports_summary">Enabled by default. Sends crash stack frames and basic app, Android, CPU and player settings to help fix bugs. No account/device IDs, exception messages or diagnostic logs.</string>
-    <string name="usage_stats_summary">Sends one anonymous daily ping. No account or activity data is included.</string>
+    <string name="usage_stats_summary">Sends an anonymous daily report with activity counts and Kick OAuth sign-in status.</string>
     <string name="live_notifications">Live notifications</string>
     <string name="live_notifications_summary">Instant push alerts when followed channels go live. This is all most people need.</string>
     <string name="live_notifications_polling_backup">Background polling backup</string>
@@ -887,7 +873,6 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="downloading_update_progress">Downloading update. %1$s / %2$s</string>
     <string name="downloading_update">Downloading update.</string>
     <string name="update_download_failed">Update download failed.</string>
-    <string name="playback_settings">Playback</string>
     <string name="chat_settings">Chat</string>
     <string name="debug_settings">Debug</string>
     <string name="download_threads">Download threads</string>
@@ -903,12 +888,6 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="chat_input_toggle">Chat input toggle</string>
     <string name="chat_toggle">Chat toggle</string>
     <string name="fullscreen">Fullscreen</string>
-    <string name="stream_device_id">Stream device ID</string>
-    <string name="stream_player_type">Stream player type</string>
-    <string name="video_player_type">Video player type</string>
-    <string name="supported_codecs">Supported codecs</string>
-    <string name="include_gql_token_stream">Include Kick web token in stream requests</string>
-    <string name="include_gql_token_video">Include Kick web token in video requests</string>
     <string name="min_buffer">Minimum buffer</string>
     <string name="min_buffer_summary">Minimum buffer in milliseconds</string>
     <string name="player_latency_profile">Live latency profile</string>
@@ -1176,15 +1155,11 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="login_to_import_follows">Log in to import followed channels</string>
     <string name="developer_tokens">Developer &amp; API Tokens</string>
     <string name="developer_tokens_summary">OAuth tokens, session validation, and EventSub webhooks</string>
-    <string name="stream_parameters">Stream Parameters</string>
-    <string name="stream_parameters_summary">Codecs, device ID, and stream header overrides</string>
     <string name="proxy_settings_summary">HTTP, HTTPS, and SOCKS5 proxy configuration</string>
     <string name="advanced_image_rendering">Advanced &amp; Performance</string>
     <string name="storage_and_cleanup">Storage &amp; Cleanup</string>
     <string name="connection_timings">Connection Timings</string>
     <string name="session_and_security">Session &amp; Security</string>
-    <string name="codecs_and_device_id">Codecs &amp; Device Identification</string>
-    <string name="gql_token_headers">GQL Token &amp; Headers</string>
     <string name="proxy_routing_options">Proxy Routing Options</string>
     <string name="proxy_server_credentials">Proxy Server Credentials</string>
     <string name="theme_and_colors">Theme &amp; Colors</string>
@@ -1337,4 +1312,19 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="drops_live_badge">LIVE</string>
     <string name="drops_channel_event_single">%1$s • @%2$s</string>
     <string name="drops_channel_event_multiple">%1$s • %2$d channels</string>
+    <string name="player_audio_saver_rung_title">Audio-only data saver quality (Amazon IVS)</string>
+    <string name="player_audio_saver_rung_480p">480p (default)</string>
+    <string name="player_audio_saver_rung_360p">360p</string>
+    <string name="player_audio_saver_rung_160p">160p</string>
+
+    <string name="stream_parameters">Stream Parameters</string>
+    <string name="stream_parameters_summary">Codecs, stream request headers, and VOD access</string>
+    <string name="supported_codecs">Supported codecs</string>
+    <string name="stream_headers">Stream request headers</string>
+    <string name="stream_headers_desc">Uses JSON format</string>
+    <string name="skip_video_access_token">Skip video access token</string>
+    <string name="skipVideoTokenEntries1">Always skip</string>
+    <string name="skipVideoTokenEntries2">Skip by default, don\'t skip if playback fails</string>
+    <string name="skipVideoTokenEntries3">Don\'t skip by default, skip if playback fails</string>
+    <string name="skipVideoTokenEntries4">Never skip</string>
 </resources>

@@ -38,6 +38,7 @@ abstract class BaseNetworkFragment : Fragment() {
     abstract fun initialize()
     abstract fun onNetworkRestored()
     open fun onNetworkLost() {}
+    open fun refreshContent() {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

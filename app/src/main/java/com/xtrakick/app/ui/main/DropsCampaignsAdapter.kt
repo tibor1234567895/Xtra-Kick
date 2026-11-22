@@ -7,7 +7,9 @@ import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.bumptech.glide.Glide
+import coil3.load
+import coil3.request.error
+import coil3.request.placeholder
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.ItemDropCampaignBinding
 import com.xtrakick.app.model.kick.KickDropCampaignFull
@@ -61,11 +63,10 @@ class DropsCampaignsAdapter(
             val bannerUrl = campaign.category?.bannerImageUrl?.takeIf { it.isNotBlank() }
                 ?: campaign.category?.imageUrl?.takeIf { it.isNotBlank() }
 
-            Glide.with(itemView)
-                .load(bannerUrl)
-                .placeholder(R.drawable.bg_bottom_sheet_surface)
-                .error(R.drawable.bg_bottom_sheet_surface)
-                .into(binding.campaignBanner)
+            binding.campaignBanner.load(bannerUrl) {
+                placeholder(R.drawable.bg_bottom_sheet_surface)
+                error(R.drawable.bg_bottom_sheet_surface)
+            }
 
             binding.campaignTitle.text = campaign.category?.name?.takeIf { it.isNotBlank() } ?: campaign.name
 

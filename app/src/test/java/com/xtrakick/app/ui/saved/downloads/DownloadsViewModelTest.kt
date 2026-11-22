@@ -13,11 +13,14 @@ import androidx.room.Room
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
 import androidx.work.Configuration
+import androidx.work.Data
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.repository.OfflineRepository
 import com.xtrakick.app.repository.DownloadFileCoordinator
+import com.xtrakick.app.ui.download.StreamDownloadWorker
 import com.xtrakick.app.util.DownloadStorage
 import com.xtrakick.app.util.m3u8.PlaylistUtils
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +58,25 @@ import java.util.concurrent.CopyOnWriteArrayList
 @Config(application = android.app.Application::class)
 @RunWith(RobolectricTestRunner::class)
 class DownloadsViewModelTest {
+    @Test fun workTracksTheCurrentRecordingEvenWhenAnotherRowSharesTheChannel() = runBlocking {
+        val waiting = OfflineVideo(live = true, channelLogin = "same", status = OfflineVideo.STATUS_WAITING_FOR_STREAM)
+        waiting.id = repository.saveVideo(waiting).toInt()
+        val older = OfflineVideo(live = true, channelLogin = "same", status = OfflineVideo.STATUS_PENDING)
+        older.id = repository.saveVideo(older).toInt()
+        val tags = setOf(StreamDownloadWorker.VIDEO_TAG_PREFIX + older.id)
+        val progress = workDataOf(StreamDownloadWorker.KEY_VIDEO_ID to waiting.id)
+
+        assertEquals(older.id, DownloadsViewModel.liveRecordingVideoId(Data.EMPTY, tags))
+        val currentId = checkNotNull(DownloadsViewModel.liveRecordingVideoId(progress, tags))
+        assertEquals(waiting.id, currentId)
+        val current = checkNotNull(repository.getVideoById(currentId))
+        repository.updateStatusIfCurrent(current, OfflineVideo.STATUS_QUEUED)
+        repository.updateStatusIfCurrent(current, OfflineVideo.STATUS_PENDING)
+
+        assertEquals(OfflineVideo.STATUS_QUEUED, repository.getVideoById(waiting.id)?.status)
+        assertEquals(OfflineVideo.STATUS_PENDING, repository.getVideoById(older.id)?.status)
+    }
+
     @Test fun completedRecordingsHaveIndependentFileOwnershipFromTheCurrentRecording() = runBlocking {
         val old = OfflineVideo(live = true, channelLogin = "same", status = OfflineVideo.STATUS_DOWNLOADED)
         old.id = repository.saveVideo(old).toInt()

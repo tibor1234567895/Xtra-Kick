@@ -38,7 +38,6 @@ class FollowedStreamsViewModel @Inject constructor(
         val isInitialLoading: Boolean = false,
         val isRefreshing: Boolean = false,
         val showEmpty: Boolean = false,
-        val integrityAction: String? = null,
         val hasLoadedOnce: Boolean = false,
     )
 
@@ -210,7 +209,6 @@ class FollowedStreamsViewModel @Inject constructor(
             isInitialLoading = isInitial,
             isRefreshing = isRefreshing,
             showEmpty = currentItems.isEmpty() && currentState.hasLoadedOnce,
-            integrityAction = null,
             hasLoadedOnce = currentState.hasLoadedOnce || currentItems.isNotEmpty(),
         )
 
@@ -240,9 +238,6 @@ class FollowedStreamsViewModel @Inject constructor(
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 lastRefreshedAt = System.currentTimeMillis()
-                val isIntegrityFailure = e.message == "failed integrity check" &&
-                    applicationContext.prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                    applicationContext.prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
                 val fallbackItems = _uiState.value.items
                 updateStateForGeneration(
                     generation = generation,
@@ -250,7 +245,6 @@ class FollowedStreamsViewModel @Inject constructor(
                     isInitialLoading = false,
                     isRefreshing = false,
                     showEmpty = fallbackItems.isEmpty(),
-                    integrityAction = if (isIntegrityFailure) "refresh" else null,
                     hasLoadedOnce = true,
                 )
             } finally {
@@ -271,17 +265,12 @@ class FollowedStreamsViewModel @Inject constructor(
         }
     }
 
-    fun clearIntegrityAction() {
-        _uiState.value = _uiState.value.copy(integrityAction = null)
-    }
-
     private fun updateStateForGeneration(
         generation: Long,
         items: List<Stream>,
         isInitialLoading: Boolean,
         isRefreshing: Boolean,
         showEmpty: Boolean,
-        integrityAction: String? = _uiState.value.integrityAction,
         hasLoadedOnce: Boolean,
     ) {
         if (refreshGeneration != generation) return
@@ -292,7 +281,6 @@ class FollowedStreamsViewModel @Inject constructor(
             isInitialLoading = isInitialLoading,
             isRefreshing = isRefreshing,
             showEmpty = deduped.isEmpty() && hasLoadedOnce,
-            integrityAction = integrityAction,
             hasLoadedOnce = hasLoadedOnce,
         )
     }

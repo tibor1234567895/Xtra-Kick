@@ -17,12 +17,8 @@ import coil3.asDrawable
 import coil3.imageLoader
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
+import coil3.request.Disposable
 import coil3.request.ImageRequest
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.engine.DiskCacheStrategy
-import com.bumptech.glide.load.model.GlideUrl
-import com.bumptech.glide.request.target.CustomTarget
-import com.bumptech.glide.request.transition.Transition
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.DialogChatImageClickBinding
@@ -64,6 +60,7 @@ class ImageClickedDialog : BottomSheetDialogFragment() {
 
     private var _binding: DialogChatImageClickBinding? = null
     private val binding get() = _binding!!
+    private var imageDisposable: Disposable? = null
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = DialogChatImageClickBinding.inflate(inflater, container, false)
@@ -77,7 +74,6 @@ class ImageClickedDialog : BottomSheetDialogFragment() {
         behavior.state = BottomSheetBehavior.STATE_EXPANDED
         with(binding) {
             val args = requireArguments()
-            val imageLibrary = requireContext().prefs().getString(AppConstants.CHAT_IMAGE_LIBRARY, "0")
             val revealImage = { drawable: Drawable ->
                 image.setImageDrawable(drawable)
                 image.alpha = 0f
@@ -91,45 +87,28 @@ class ImageClickedDialog : BottomSheetDialogFragment() {
                     .setInterpolator(DecelerateInterpolator())
                     .start()
             }
-            if (imageLibrary == "0" || (imageLibrary == "1" && !args.getString(IMAGE_FORMAT).equals("webp", true))) {
-                requireContext().imageLoader.enqueue(
-                    ImageRequest.Builder(requireContext()).apply {
-                        data(args.getString(IMAGE_URL))
-                        if (args.getBoolean(IMAGE_THIRD_PARTY)) {
-                            httpHeaders(NetworkHeaders.Builder().apply {
-                                add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                            }.build())
-                        }
-                        target(
-                            onSuccess = {
-                                val result = it.asDrawable(resources)
-                                if (result is Animatable && args.getBoolean(IMAGE_ANIMATED) && requireContext().prefs().getBoolean(AppConstants.ANIMATED_EMOTES, true)) {
-                                    (result as Animatable).start()
-                                }
-                                revealImage(result)
+            imageDisposable?.dispose()
+            imageDisposable = requireContext().imageLoader.enqueue(
+                ImageRequest.Builder(requireContext()).apply {
+                    data(args.getString(IMAGE_URL))
+                    if (args.getBoolean(IMAGE_THIRD_PARTY)) {
+                        httpHeaders(NetworkHeaders.Builder().apply {
+                            add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                        }.build())
+                    }
+                    target(
+                        onSuccess = onSuccess@{
+                            val ctx = context ?: return@onSuccess
+                            if (!isAdded || _binding == null) return@onSuccess
+                            val result = it.asDrawable(ctx.resources)
+                            if (result is Animatable && args.getBoolean(IMAGE_ANIMATED) && ctx.prefs().getBoolean(AppConstants.ANIMATED_EMOTES, true)) {
+                                (result as Animatable).start()
                             }
-                        )
-                    }.build()
-                )
-            } else {
-                Glide.with(this@ImageClickedDialog)
-                    .load(args.getString(IMAGE_URL).let {
-                        if (args.getBoolean(IMAGE_THIRD_PARTY)) {
-                            GlideUrl(it) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) }
-                        } else it
-                    })
-                    .diskCacheStrategy(DiskCacheStrategy.DATA)
-                    .into(object : CustomTarget<Drawable>() {
-                        override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
-                            if (resource is Animatable && args.getBoolean(IMAGE_ANIMATED) && requireContext().prefs().getBoolean(AppConstants.ANIMATED_EMOTES, true)) {
-                                (resource as Animatable).start()
-                            }
-                            revealImage(resource)
+                            revealImage(result)
                         }
-
-                        override fun onLoadCleared(placeholder: Drawable?) {}
-                    })
-            }
+                    )
+                }.build()
+            )
             val emoteName = args.getString(IMAGE_NAME)?.takeIf { it.isNotBlank() }
             val emoteUrl = args.getString(IMAGE_URL)?.takeIf { it.isNotBlank() }
 
@@ -168,6 +147,10 @@ class ImageClickedDialog : BottomSheetDialogFragment() {
     }
 
     override fun onDestroyView() {
+        imageDisposable?.dispose()
+        imageDisposable = null
+        (_binding?.image?.drawable as? Animatable)?.stop()
+        _binding?.image?.animate()?.cancel()
         super.onDestroyView()
         _binding = null
     }

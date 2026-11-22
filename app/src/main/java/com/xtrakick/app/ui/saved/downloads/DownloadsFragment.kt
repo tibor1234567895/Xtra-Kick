@@ -134,6 +134,7 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
                         ExistingWorkPolicy.REPLACE,
                         OneTimeWorkRequestBuilder<StreamDownloadWorker>()
                             .setInputData(workDataOf(StreamDownloadWorker.KEY_VIDEO_ID to it.id))
+                            .addTag(StreamDownloadWorker.VIDEO_TAG_PREFIX + it.id)
                             .setConstraints(
                                 Constraints.Builder()
                                     .setRequiredNetworkType(
@@ -501,9 +502,6 @@ class DownloadsFragment : PagedListFragment(), Scrollable {
     }
 
     override fun onNetworkRestored() {
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
     }
 
     override fun onDestroyView() {

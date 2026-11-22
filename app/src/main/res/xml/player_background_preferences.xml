@@ -68,6 +68,16 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
+    <ListPreference
+        android:defaultValue="480"
+        android:entries="@array/playerAudioSaverRungEntries"
+        android:entryValues="@array/playerAudioSaverRungValues"
+        android:key="player_audio_saver_rung"
+        android:title="@string/player_audio_saver_rung_title"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false"
+        app:useSimpleSummaryProvider="true" />
+
     <SwitchPreferenceCompat
         android:defaultValue="false"
         android:key="player_background_audio_pip_closed"

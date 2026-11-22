@@ -34,7 +34,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.DialogVideoDownloadBinding
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
@@ -48,7 +47,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 @AndroidEntryPoint
-class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
+class DownloadDialog : DialogFragment() {
 
     companion object {
         private const val STREAM = "stream"
@@ -167,20 +166,6 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
         _binding = DialogVideoDownloadBinding.inflate(layoutInflater)
         val builder = requireContext().getAlertDialogBuilder()
             .setView(binding.root)
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.integrity.collectLatest {
-                    if (it != null &&
-                        it != "done" &&
-                        requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                        requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
-                    ) {
-                        IntegrityDialog.show(childFragmentManager, it)
-                        viewModel.integrity.value = "done"
-                    }
-                }
-            }
-        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.errorMessage.collectLatest {
@@ -748,69 +733,6 @@ class DownloadDialog : DialogFragment(), IntegrityDialog.CallbackListener {
                 }
             }
         })
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
-        if (callback == "refresh") {
-            when (requireArguments().getString(KEY_TYPE)) {
-                STREAM -> {
-                    viewModel.setStream(
-                        networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), requireContext().prefs().getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_STREAM, true)),
-                        channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
-                        qualities = requireArguments().getStringArray(KEY_QUALITY_KEYS)?.let { keys ->
-                            requireArguments().getStringArray(KEY_QUALITY_NAMES)?.let { names ->
-                                requireArguments().getStringArray(KEY_QUALITY_URLS)?.let { urls ->
-                                    keys.zip(names.zip(urls)).toMap(mutableMapOf())
-                                }
-                            }
-                        },
-                        randomDeviceId = requireContext().prefs().getBoolean(AppConstants.TOKEN_RANDOM_DEVICEID, true),
-                        xDeviceId = requireContext().prefs().getString(AppConstants.TOKEN_XDEVICEID, "kick-web-player"),
-                        playerType = requireContext().prefs().getString(AppConstants.TOKEN_PLAYERTYPE, "site"),
-                        supportedCodecs = requireContext().prefs().getString(AppConstants.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
-                        enableIntegrity = requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                    )
-                }
-                VIDEO -> {
-                    viewModel.setVideo(
-                        networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), requireContext().prefs().getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
-                        videoId = requireArguments().getString(KEY_VIDEO_ID),
-                        animatedPreviewUrl = requireArguments().getString(KEY_VIDEO_ANIMATED_PREVIEW),
-                        videoType = requireArguments().getString(KEY_VIDEO_TYPE),
-                        qualities = requireArguments().getStringArray(KEY_QUALITY_KEYS)?.let { keys ->
-                            requireArguments().getStringArray(KEY_QUALITY_NAMES)?.let { names ->
-                                requireArguments().getStringArray(KEY_QUALITY_URLS)?.let { urls ->
-                                    keys.zip(names.zip(urls)).toMap(mutableMapOf())
-                                }
-                            }
-                        },
-                        channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
-                        channelId = requireArguments().getString(KEY_CHANNEL_ID),
-                        playerType = requireContext().prefs().getString(AppConstants.TOKEN_PLAYERTYPE_VIDEO, "channel_home_live"),
-                        supportedCodecs = requireContext().prefs().getString(AppConstants.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
-                        skipAccessToken = requireContext().prefs().getString(AppConstants.TOKEN_SKIP_VIDEO_ACCESS_TOKEN, "2")?.toIntOrNull() ?: 2,
-                        enableIntegrity = requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                    )
-                }
-                CLIP -> {
-                    viewModel.setClip(
-                        networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                        kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
-                        clipId = requireArguments().getString(KEY_CLIP_ID),
-                        qualities = requireArguments().getStringArray(KEY_QUALITY_KEYS)?.let { keys ->
-                            requireArguments().getStringArray(KEY_QUALITY_NAMES)?.let { names ->
-                                requireArguments().getStringArray(KEY_QUALITY_URLS)?.let { urls ->
-                                    keys.zip(names.zip(urls)).toMap(mutableMapOf())
-                                }
-                            }
-                        },
-                        enableIntegrity = requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                    )
-                }
-            }
-        }
     }
 
     override fun onDestroyView() {

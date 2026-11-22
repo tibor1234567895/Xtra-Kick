@@ -278,6 +278,8 @@ dependencies {
     implementation(libs.serialization.json)
     implementation(libs.ivs.player)
 
+    implementation(libs.media3.datasource.cronet)
+    implementation(libs.media3.datasource.okhttp)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)
@@ -287,10 +289,8 @@ dependencies {
     implementation(libs.coil.gif)
     implementation(libs.coil.okhttp)
     implementation(libs.coil.svg)
-
+    implementation(libs.coil.video)
     implementation(libs.glide)
-    ksp(libs.glide.ksp)
-    implementation(libs.glide.okhttp)
     implementation(libs.glide.webpdecoder)
 
     implementation(libs.hilt)
@@ -328,5 +328,6 @@ ksp {
 
 detekt {
     buildUponDefaultConfig = true
+    config.setFrom(file("$rootDir/config/detekt/detekt.yml"))
     baseline = file("$projectDir/detekt-baseline.xml")
 }

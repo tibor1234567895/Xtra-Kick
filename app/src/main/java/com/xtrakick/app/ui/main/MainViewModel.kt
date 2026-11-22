@@ -430,6 +430,7 @@ class MainViewModel @Inject constructor(
                     ExistingWorkPolicy.REPLACE,
                     OneTimeWorkRequestBuilder<StreamDownloadWorker>()
                         .setInputData(workDataOf(StreamDownloadWorker.KEY_VIDEO_ID to videoId))
+                        .addTag(StreamDownloadWorker.VIDEO_TAG_PREFIX + videoId)
                         .setConstraints(
                             Constraints.Builder()
                                 .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)

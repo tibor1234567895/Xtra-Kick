@@ -11,6 +11,7 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.lifecycle.Lifecycle
 import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.UsagePing
 import com.xtrakick.app.util.callKeyEventGuardListener
 import com.xtrakick.app.util.restoreOversizedInstanceState
 import com.xtrakick.app.util.saveOversizedInstanceState
@@ -41,6 +42,11 @@ abstract class BaseStateActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         saveOversizedInstanceState(this, outState)
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        UsagePing.noteUserInteraction(this)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

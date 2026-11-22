@@ -45,10 +45,11 @@ import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.model.VideoPosition
-import com.xtrakick.app.player.lowlatency.CronetDataSource
+import androidx.media3.datasource.HttpEngineDataSource
+import androidx.media3.datasource.cronet.CronetDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import com.xtrakick.app.player.lowlatency.HlsPlaylistParser
-import com.xtrakick.app.player.lowlatency.HttpEngineDataSource
-import com.xtrakick.app.player.lowlatency.OkHttpDataSource
+import com.xtrakick.app.player.lowlatency.ProxyRoutingHttpDataSource
 import com.xtrakick.app.repository.OfflineRepository
 import com.xtrakick.app.repository.PlayerRepository
 import com.xtrakick.app.repository.KickRepository
@@ -57,6 +58,7 @@ import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.UsagePing
 import com.xtrakick.app.util.getProxyPassword
 import com.xtrakick.app.util.prefs
@@ -561,9 +563,7 @@ class PlaybackService : MediaSessionService() {
                                     okHttpClient.newBuilder().apply {
                                         proxySelector(
                                             object : ProxySelector() {
-                                                override fun select(u: URI): List<Proxy> {
-                                                    return PlaybackProxyUtils.selectProxy(u, proxy, "multivariant")
-                                                }
+                                                override fun select(u: URI): List<Proxy> = listOf(proxy, Proxy.NO_PROXY)
 
                                                 override fun connectFailed(u: URI, sa: SocketAddress, e: IOException) {}
                                             }
@@ -577,26 +577,11 @@ class PlaybackService : MediaSessionService() {
                                         }
                                     }.build()
                                 } else null
-                                val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-                                val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
-                                val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
                                 player.setMediaSource(
                                     HlsMediaSource.Factory(
                                         DefaultDataSource.Factory(
                                             this@PlaybackService,
-                                            when {
-                                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                                                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                                    http is HttpEngine -> {
-                                                    HttpEngineDataSource.Factory(http, cronetExecutor, multivariantPlaylistProxyClient, null) { false }
-                                                }
-                                                cronet != null -> {
-                                                    CronetDataSource.Factory(cronet, cronetExecutor, multivariantPlaylistProxyClient, null) { false }
-                                                }
-                                                else -> {
-                                                    OkHttpDataSource.Factory(multivariantPlaylistProxyClient ?: okHttpClient, null) { false }
-                                                }
-                                            }.apply {
+                                            buildHttpDataSourceFactory(multivariantPlaylistProxyClient).apply {
                                                 prefs().getString(AppConstants.PLAYER_STREAM_HEADERS, null)?.let {
                                                     try {
                                                         val json = JSONObject(it)
@@ -676,26 +661,11 @@ class PlaybackService : MediaSessionService() {
                                 offlineVideoId = null
                                 // A new item gets its own full retry budget.
                                 if (backgroundPrepareRetryCount > 0) backgroundPrepareRetryCount = 0
-                                val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-                                val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
-                                val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
                                 player.setMediaSource(
                                     HlsMediaSource.Factory(
                                         DefaultDataSource.Factory(
                                             this@PlaybackService,
-                                            when {
-                                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                                                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                                    http is HttpEngine -> {
-                                                    HttpEngineDataSource.Factory(http, cronetExecutor, null, null) { false }
-                                                }
-                                                cronet != null -> {
-                                                    CronetDataSource.Factory(cronet, cronetExecutor, null, null) { false }
-                                                }
-                                                else -> {
-                                                    OkHttpDataSource.Factory(okHttpClient, null) { false }
-                                                }
-                                            }
+                                            buildHttpDataSourceFactory()
                                         )
                                     ).apply {
                                         setPlaylistParserFactory(CustomHlsPlaylistParserFactory())
@@ -735,24 +705,9 @@ class PlaybackService : MediaSessionService() {
                                 stopIdleTimer()
                                 // A new item gets its own full retry budget.
                                 if (backgroundPrepareRetryCount > 0) backgroundPrepareRetryCount = 0
-                                val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
-                                val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
-                                val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
                                 val dataSourceFactory = DefaultDataSource.Factory(
                                     this@PlaybackService,
-                                    when {
-                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                                            SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                            http is HttpEngine -> {
-                                            HttpEngineDataSource.Factory(http, cronetExecutor, null, null) { false }
-                                        }
-                                        cronet != null -> {
-                                            CronetDataSource.Factory(cronet, cronetExecutor, null, null) { false }
-                                        }
-                                        else -> {
-                                            OkHttpDataSource.Factory(okHttpClient, null) { false }
-                                        }
-                                    }
+                                    buildHttpDataSourceFactory()
                                 )
                                 val mediaItem = MediaItem.Builder().apply {
                                     setMediaId(uri.orEmpty())
@@ -830,9 +785,10 @@ class PlaybackService : MediaSessionService() {
                             }
                             UPDATE_CHANNEL_LOGO -> {
                                 val logo = customCommand.customExtras.getString(CHANNEL_LOGO)
-                                if (!logo.isNullOrBlank()) {
+                                if (!logo.isNullOrBlank() && !KickApiHelper.isDefaultProfilePicture(logo)) {
                                     val currentItem = session.player.currentMediaItem
-                                    if (currentItem != null && currentItem.mediaMetadata.artworkUri == null) {
+                                    val currentArtwork = currentItem?.mediaMetadata?.artworkUri?.toString()
+                                    if (currentItem != null && currentArtwork != logo) {
                                         val updatedMetadata = currentItem.mediaMetadata.buildUpon()
                                             .setArtworkUri(logo.toUri())
                                             .build()
@@ -1148,6 +1104,31 @@ class PlaybackService : MediaSessionService() {
 
         override fun createPlaylistParser(multivariantPlaylist: HlsMultivariantPlaylist, previousMediaPlaylist: HlsMediaPlaylist?): ParsingLoadable.Parser<HlsPlaylist> {
             return HlsPlaylistParser(multivariantPlaylist, previousMediaPlaylist)
+        }
+    }
+
+    private fun buildHttpDataSourceFactory(proxyClient: OkHttpClient? = null): HttpDataSource.Factory {
+        val networkLibrary = prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp")
+        val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
+        val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
+        val primary: HttpDataSource.Factory = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
+                http is HttpEngine -> HttpEngineDataSource.Factory(http, cronetExecutor)
+            cronet != null -> CronetDataSource.Factory(cronet, cronetExecutor)
+            else -> {
+                if (proxyClient == null) return OkHttpDataSource.Factory(okHttpClient)
+                val direct = okHttpClient.newBuilder().followRedirects(false).build()
+                val proxy = proxyClient.newBuilder().followRedirects(false).build()
+                return ProxyRoutingHttpDataSource.Factory(
+                    OkHttpDataSource.Factory(direct), OkHttpDataSource.Factory(proxy), followPlaylistRedirects = true,
+                )
+            }
+        }
+        return if (proxyClient != null) {
+            ProxyRoutingHttpDataSource.Factory(primary, OkHttpDataSource.Factory(proxyClient))
+        } else {
+            primary
         }
     }
 

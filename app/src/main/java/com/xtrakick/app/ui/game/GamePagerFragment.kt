@@ -40,7 +40,6 @@ import com.xtrakick.app.databinding.FragmentGamePagerBinding
 import com.xtrakick.app.model.ui.Game
 import com.xtrakick.app.ui.common.BaseNetworkFragment
 import com.xtrakick.app.ui.common.FragmentHost
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.common.Sortable
 import com.xtrakick.app.ui.games.GamesFragmentDirections
@@ -62,7 +61,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
-class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, IntegrityDialog.CallbackListener {
+class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost {
 
     private var _binding: FragmentGamePagerBinding? = null
     private val binding get() = _binding!!
@@ -463,55 +462,6 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, Integ
             KickApiHelper.getKickPublicApiHeaders(requireContext()),
             requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
         )
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
-        if (callback != null) {
-            viewLifecycleOwner.lifecycleScope.launch {
-                repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    when (callback) {
-                        "refresh" -> {
-                            viewModel.loadGame(
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext()),
-                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
-                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                            )
-                            val setting = requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0
-                            if (setting < 2) {
-                                viewModel.isFollowingGame(
-                                    args.gameId,
-                                    args.gameSlug,
-                                    args.gameName,
-                                    setting,
-                                    requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                )
-                            }
-                        }
-                        "follow" -> viewModel.saveFollowGame(
-                            args.gameId,
-                            args.gameSlug,
-                            args.gameName,
-                            args.boxArt,
-                            requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                            requireContext().filesDir.path,
-                            requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getKickWebHeaders(requireContext(), true),
-                            KickApiHelper.getKickPublicApiHeaders(requireContext()),
-                            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                        )
-                        "unfollow" -> viewModel.deleteFollowGame(
-                            args.gameId,
-                            requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                            requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getKickWebHeaders(requireContext(), true),
-                            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                        )
-                    }
-                }
-            }
-        }
     }
 
     override fun onDestroyView() {

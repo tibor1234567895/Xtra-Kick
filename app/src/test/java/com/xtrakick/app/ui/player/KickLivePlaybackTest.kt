@@ -130,6 +130,40 @@ class KickLivePlaybackTest {
     }
 
     @Test
+    fun selectAudioSaverHonorsPreferredHeightAndFallback() {
+        val ladder = listOf(
+            KickLivePlayback.AudioSaverCandidate("1080p60", 1080, 8_000_000),
+            KickLivePlayback.AudioSaverCandidate("480p30", 480, 1_500_000),
+            KickLivePlayback.AudioSaverCandidate("360p30", 360, 800_000),
+            KickLivePlayback.AudioSaverCandidate("160p30", 160, 350_000),
+        )
+        assertEquals("360p30", KickLivePlayback.selectAudioSaverKey(ladder, preferredHeight = 360))
+        assertEquals("160p30", KickLivePlayback.selectAudioSaverKey(ladder, preferredHeight = 160))
+        assertEquals(
+            "160p30",
+            KickLivePlayback.selectAudioSaverKey(
+                listOf(
+                    KickLivePlayback.AudioSaverCandidate("480p30", 480, 1_500_000),
+                    KickLivePlayback.AudioSaverCandidate("160p30", 160, 350_000),
+                ),
+                preferredHeight = 360
+            )
+        )
+    }
+
+    @Test
+    fun parseAudioSaverHeightNormalizesValidAndUnknownValues() {
+        assertEquals(480, KickLivePlayback.parseAudioSaverHeight(null))
+        assertEquals(480, KickLivePlayback.parseAudioSaverHeight("480"))
+        assertEquals(480, KickLivePlayback.parseAudioSaverHeight("480p"))
+        assertEquals(360, KickLivePlayback.parseAudioSaverHeight("360"))
+        assertEquals(360, KickLivePlayback.parseAudioSaverHeight("360p"))
+        assertEquals(160, KickLivePlayback.parseAudioSaverHeight("160"))
+        assertEquals(160, KickLivePlayback.parseAudioSaverHeight("160P"))
+        assertEquals(480, KickLivePlayback.parseAudioSaverHeight("invalid"))
+    }
+
+    @Test
     fun estimateSegmentDownloadTimeMsCalculatesAccurately() {
         // 9 Mbps segment with 2000ms duration on 130 Mbps Wi-Fi: (9M * 2000) / 130M = ~138ms
         val timeMs = KickLivePlayback.estimateSegmentDownloadTimeMs(

@@ -69,7 +69,6 @@ import com.xtrakick.app.ui.channel.ChannelPagerFragmentDirections
 import com.xtrakick.app.ui.login.LoginActivity
 import com.xtrakick.app.ui.common.BaseStateActivity
 import com.xtrakick.app.ui.common.safeSetPictureInPictureParams
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.CompactDialogs.constrainSheets
 import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.game.GameMediaFragmentDirections
@@ -246,20 +245,6 @@ class MainActivity : BaseStateActivity() {
             tokenPrefs().edit {
                 putLong(AppConstants.UPDATE_LAST_INSTALL_TIME, lastInstallTime)
                 putLong(AppConstants.UPDATE_LAST_CHECKED, lastInstallTime)
-            }
-        }
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.integrity.collectLatest {
-                    if (it != null &&
-                        it != "done" &&
-                        prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                        prefs.getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
-                    ) {
-                        IntegrityDialog.show(supportFragmentManager, it)
-                        viewModel.integrity.value = "done"
-                    }
-                }
             }
         }
         lifecycleScope.launch {
@@ -1501,7 +1486,6 @@ class MainActivity : BaseStateActivity() {
             prefs.edit {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
                     putBoolean(AppConstants.CHAT_USE_WEBP, false)
-                    putString(AppConstants.CHAT_IMAGE_LIBRARY, "1")
                 }
             }
         }

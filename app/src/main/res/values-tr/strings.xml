@@ -140,7 +140,6 @@
     <string name="player_doubletap">Sohbeti açıp kapatmak için çift dokunun</string>
     <string name="player_channel">Kanal adını göster</string>
     <string name="player_pause">Canlı yayınlarda duraklat düğmesini göster</string>
-    <string name="token_random_deviceid">Rastgele cihaz kimliği</string>
     <string name="playback_speed">Oynatma hızı</string>
     <string name="hold_to_speed">Basılı tutarak hızlandırma</string>
     <string name="quality">Kalite</string>
@@ -489,10 +488,6 @@
     <string name="remove_bookmark">Yer işaretini kaldır</string>
     <string name="saved">Kaydedilenler</string>
     <string name="refresh">Yenile</string>
-    <string name="image_library">Görsel kütüphanesi</string>
-    <string name="imageLibraryEntries1">Coil</string>
-    <string name="imageLibraryEntries2">Coil + Glide WebP</string>
-    <string name="imageLibraryEntries3">Glide</string>
     <string name="disabled">Devre dışı</string>
     <string name="live_target_offset">Canlı hedef farkı</string>
     <string name="buffer_for_playback">Oynatma için arabelleğe alma</string>
@@ -517,7 +512,6 @@
     <string name="restart_player">Oynatıcıyı yeniden başlat</string>
     <string name="replay">Tekrar oynat</string>
     <string name="retry_ivs">Düşük gecikmeli oynatıcıyı yeniden dene</string>
-    <string name="sub_only_summary">Yalnızca abonelere özel içerik için</string>
     <string name="follow_button">Takip et düğmesi</string>
     <string name="follow_kick_account">Kick üzerinden takip et</string>
     <string name="follow_local">Yerel olarak takip et</string>
@@ -583,11 +577,6 @@
     <string name="debug_api_commands">API sohbet komutlarını kullan</string>
     <string name="debug_delete_all_followed_channels">Takip edilen tüm kanalları sil</string>
     <string name="debug_delete_all_followed_channels_summary">Hata ayıklama işlemi. İçe aktarılan veya yerel olarak eklenen tüm takip edilen kanalları kalıcı olarak kaldırır ve bunların takip bildirimlerini temizler.</string>
-    <string name="skip_video_access_token">Video erişim belirtecini atla</string>
-    <string name="skipVideoTokenEntries1">Her zaman atla</string>
-    <string name="skipVideoTokenEntries2">Varsayılan olarak atla, oynatma başarısız olursa atlama</string>
-    <string name="skipVideoTokenEntries3">Varsayılan olarak atlama, oynatma başarısız olursa atla</string>
-    <string name="skipVideoTokenEntries4">Asla atlama</string>
     <string name="keep_screen_on_when_paused">Video duraklatıldığında ekranı açık tut</string>
     <string name="stream_proxy_url">Özel vekil sunucu URL\'si</string>
     <string name="stream_proxy_url_desc">\"$channel\" kanal kullanıcı adı ile değiştirilecektir</string>
@@ -601,7 +590,6 @@
     <string name="show_multivariant_playlist_tags">Çok varyantlı oynatma listesi etiketlerini göster</string>
     <string name="use_gamepager">\"Oyunlar\" sayfası için sekmeleri kullan</string>
     <string name="disable_background_video">Arka planda video işlemeyi devre dışı bırak</string>
-    <string name="get_webview_integrity">WebView kullanarak bütünlük belirteci al</string>
     <string name="show_title">Başlığı göster</string>
     <string name="show_category">Kategoriyi göster</string>
     <string name="get_all_headers">Tüm başlıkları al</string>
@@ -625,8 +613,6 @@
     <string name="playback_speeds">Oynatma hızları</string>
     <string name="use_custom_proxy">Özel vekil sunucu kullan</string>
     <string name="use_custom_proxy_desc">Oynatma listesi döndüren bir URL gerektirir</string>
-    <string name="stream_headers">Yayın istek başlıkları</string>
-    <string name="stream_headers_desc">JSON biçimini kullanır</string>
     <string name="follow">Takip Et</string>
     <string name="unfollow">Takibi Bırak</string>
     <string name="mute">Sesi kapat</string>
@@ -760,7 +746,7 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="live_notification_category">%1$s %2$s yayını yapıyor</string>
     <string name="privacy">Gizlilik</string>
     <string name="usage_stats_title">Anonim kullanım istatistikleri</string>
-    <string name="usage_stats_summary">Günde bir kez anonim bağlantı sinyali gönderir. Hiçbir hesap veya etkinlik verisi dahil edilmez.</string>
+    <string name="usage_stats_summary">Etkinlik sayılarını ve Kick OAuth oturum açma durumunu içeren günlük anonim bir rapor gönderir.</string>
     <string name="live_notifications">Canlı yayın bildirimleri</string>
     <string name="live_notifications_summary">Takip edilen kanallar canlı yayına geçtiğinde anlık bildirimler gönderir. Çoğu kullanıcının ihtiyaç duyduğu tek şey budur.</string>
     <string name="live_notifications_polling_backup">Arka plan yoklama yedeği</string>
@@ -874,7 +860,6 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="downloading_update_progress">Güncelleme indiriliyor. %1$s / %2$s</string>
     <string name="downloading_update">Güncelleme indiriliyor.</string>
     <string name="update_download_failed">Güncelleme indirilemedi.</string>
-    <string name="playback_settings">Oynatma</string>
     <string name="chat_settings">Sohbet</string>
     <string name="debug_settings">Hata ayıklama</string>
     <string name="download_threads">İndirme iş parçacıkları</string>
@@ -890,12 +875,6 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="chat_input_toggle">Sohbet girişini aç/kapat</string>
     <string name="chat_toggle">Sohbeti aç/kapat</string>
     <string name="fullscreen">Tam ekran</string>
-    <string name="stream_device_id">Yayın cihaz kimliği</string>
-    <string name="stream_player_type">Yayın oynatıcı türü</string>
-    <string name="video_player_type">Video oynatıcı türü</string>
-    <string name="supported_codecs">Desteklenen kodekler</string>
-    <string name="include_gql_token_stream">Yayın isteklerine Kick web belirtecini dahil et</string>
-    <string name="include_gql_token_video">Video isteklerine Kick web belirtecini dahil et</string>
     <string name="min_buffer">Minimum arabellek</string>
     <string name="min_buffer_summary">Milisaniye cinsinden minimum arabellek</string>
     <string name="player_latency_profile">Canlı gecikme profili</string>
@@ -1162,15 +1141,11 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="login_to_import_follows">Takip edilen kanalları içe aktarmak için giriş yapın</string>
     <string name="developer_tokens">Geliştirici ve API Belirteçleri</string>
     <string name="developer_tokens_summary">OAuth belirteçleri, oturum doğrulama ve EventSub webhook\'ları</string>
-    <string name="stream_parameters">Yayın Parametreleri</string>
-    <string name="stream_parameters_summary">Kodekler, cihaz kimliği ve yayın başlığı geçersiz kılmaları</string>
     <string name="proxy_settings_summary">HTTP, HTTPS ve SOCKS5 vekil sunucu yapılandırması</string>
     <string name="advanced_image_rendering">Gelişmiş ve Performans</string>
     <string name="storage_and_cleanup">Depolama ve Temizlik</string>
     <string name="connection_timings">Bağlantı Zamanlamaları</string>
     <string name="session_and_security">Oturum ve Güvenlik</string>
-    <string name="codecs_and_device_id">Kodekler ve Cihaz Tanımlama</string>
-    <string name="gql_token_headers">GQL Belirteci ve Başlıklar</string>
     <string name="proxy_routing_options">Vekil Sunucu Yönlendirme Seçenekleri</string>
     <string name="proxy_server_credentials">Vekil Sunucu Kimlik Bilgileri</string>
     <string name="theme_and_colors">Tema ve Renkler</string>
@@ -1319,4 +1294,19 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="drops_live_badge">CANLI</string>
     <string name="drops_channel_event_single">%1$s • @%2$s</string>
     <string name="drops_channel_event_multiple">%1$s • %2$d kanal</string>
+    <string name="player_audio_saver_rung_title">Sadece ses modunda veri tasarrufu kalitesi (Amazon IVS)</string>
+    <string name="player_audio_saver_rung_480p">480p (varsayılan)</string>
+    <string name="player_audio_saver_rung_360p">360p</string>
+    <string name="player_audio_saver_rung_160p">160p</string>
+
+    <string name="stream_parameters">Yayın Parametreleri</string>
+    <string name="stream_parameters_summary">Kodekler, yayın isteği başlıkları ve VOD erişimi</string>
+    <string name="supported_codecs">Desteklenen kodekler</string>
+    <string name="stream_headers">Yayın istek başlıkları</string>
+    <string name="stream_headers_desc">JSON biçimini kullanır</string>
+    <string name="skip_video_access_token">Video erişim belirtecini atla</string>
+    <string name="skipVideoTokenEntries1">Her zaman atla</string>
+    <string name="skipVideoTokenEntries2">Varsayılan olarak atla, oynatma başarısız olursa atlama</string>
+    <string name="skipVideoTokenEntries3">Varsayılan olarak atlama, oynatma başarısız olursa atla</string>
+    <string name="skipVideoTokenEntries4">Asla atlama</string>
 </resources>

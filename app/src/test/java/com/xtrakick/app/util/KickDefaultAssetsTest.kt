@@ -2,6 +2,7 @@ package com.xtrakick.app.util
 
 import com.xtrakick.app.model.ui.User
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -75,5 +76,14 @@ class KickDefaultAssetsTest {
         val avatarUrl = "https://files.kick.com/images/profile_image/default2.jpeg"
         val resolved = KickApiHelper.getTemplateUrl(avatarUrl, "profileimage")
         assertEquals(avatarUrl, resolved)
+    }
+
+    @Test
+    fun testIsDefaultProfilePictureDistinguishesGenericAndCustomAvatars() {
+        assertTrue(KickApiHelper.isDefaultProfilePicture("https://files.kick.com/images/profile_image/default4.jpeg"))
+        assertTrue(KickApiHelper.isDefaultProfilePicture(KickApiHelper.getDefaultProfilePicture("984675", "saab")))
+        assertFalse(KickApiHelper.isDefaultProfilePicture("https://files.kick.com/images/user/1028087/profile_image/conversion/64110a86-82e6-48f3-bb2c-df77d4c54572-fullsize.webp"))
+        assertFalse(KickApiHelper.isDefaultProfilePicture(null))
+        assertFalse(KickApiHelper.isDefaultProfilePicture(""))
     }
 }

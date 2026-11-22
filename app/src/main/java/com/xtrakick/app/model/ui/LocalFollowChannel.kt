@@ -1,10 +1,17 @@
 package com.xtrakick.app.model.ui
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.xtrakick.app.util.AppConstants
 
-@Entity(tableName = "local_follows")
+@Entity(
+    tableName = "local_follows",
+    indices = [
+        Index(value = ["userId"]),
+        Index(value = ["userLogin"]),
+    ],
+)
 class LocalFollowChannel(
     var userId: String? = null,
     var userLogin: String? = null,

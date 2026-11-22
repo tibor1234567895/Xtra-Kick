@@ -764,7 +764,8 @@ class SettingsActivity : BaseStateActivity() {
             listOf(
                 AppConstants.PLAYER_BACKGROUND_AUDIO,
                 AppConstants.PLAYER_BACKGROUND_AUDIO_LOCKED,
-                AppConstants.PLAYER_DISABLE_BACKGROUND_VIDEO
+                AppConstants.PLAYER_DISABLE_BACKGROUND_VIDEO,
+                AppConstants.PLAYER_AUDIO_SAVER_RUNG
             ).forEach { key ->
                 findPreference<Preference>(key)?.onPreferenceChangeListener = changeListener
             }
@@ -1018,12 +1019,6 @@ class SettingsActivity : BaseStateActivity() {
     class ChatSettingsFragment : MaterialPreferenceFragment() {
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.chat_preferences, rootKey)
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-                findPreference<ListPreference>(AppConstants.CHAT_IMAGE_LIBRARY)?.apply {
-                    setEntries(R.array.imageLibraryEntriesNoWebp)
-                    setEntryValues(R.array.imageLibraryValuesNoWebp)
-                }
-            }
             findPreference<SeekBarPreference>("chatWidth")?.apply {
                 isPersistent = false
                 val stored = requireContext().prefs().getInt(AppConstants.LANDSCAPE_CHAT_WIDTH, 30)

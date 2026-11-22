@@ -2,6 +2,8 @@ package com.xtrakick.app.util
 
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.ui.player.KickLivePlayback
@@ -29,18 +31,78 @@ object UsagePing {
 
     private val dayFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC)
     private val inFlight = AtomicBoolean(false)
+    private val hasUserInteracted = AtomicBoolean(false)
     private val random = SecureRandom()
     private val lastPlaybackIds = mutableMapOf<String, String>()
     @Volatile
     private var watchStartElapsedRealtime: Long? = null
+    @Volatile
+    private var retryAfterElapsedRealtime = 0L
+    private val isEmulatorDevice: Boolean by lazy { isLikelyEmulator() }
+
+    fun noteUserInteraction(context: Context) {
+        if (!hasUserInteracted.compareAndSet(false, true)) return
+        maybeSend(context.applicationContext, delayMillis = 1_500L)
+    }
+
+    internal fun resetInteractionForTests() {
+        hasUserInteracted.set(false)
+        retryAfterElapsedRealtime = 0L
+    }
+
+    internal fun isLikelyEmulator(
+        product: String = Build.PRODUCT,
+        fingerprint: String = Build.FINGERPRINT,
+        hardware: String = Build.HARDWARE,
+        model: String = Build.MODEL,
+    ): Boolean {
+        val p = product.lowercase(java.util.Locale.ROOT)
+        val f = fingerprint.lowercase(java.util.Locale.ROOT)
+        val h = hardware.lowercase(java.util.Locale.ROOT)
+        val m = model.lowercase(java.util.Locale.ROOT)
+        return p.contains("sdk_gphone") ||
+            p.contains("emulator") ||
+            p.contains("simulator") ||
+            p.contains("vbox86p") ||
+            p.contains("vsoc_x86") ||
+            p.contains("cf_x86") ||
+            p == "sdk" ||
+            p == "google_sdk" ||
+            p == "sdk_x86" ||
+            h.contains("goldfish") ||
+            h.contains("ranchu") ||
+            h.contains("cutf_cvm") ||
+            h.contains("vbox86") ||
+            f.startsWith("generic") ||
+            f.startsWith("unknown") ||
+            f.contains("emulator") ||
+            m.contains("google_sdk") ||
+            m.contains("emulator") ||
+            m.contains("cuttlefish") ||
+            m.contains("android sdk built for")
+    }
+
+    internal fun shouldSendPing(
+        context: Context,
+        today: String = dayFormat.format(Instant.ofEpochMilli(System.currentTimeMillis())),
+        isDebug: Boolean = BuildConfig.DEBUG,
+        emulatorCheck: () -> Boolean = { isEmulatorDevice },
+    ): Boolean {
+        if (isDebug || emulatorCheck() || SystemClock.elapsedRealtime() < retryAfterElapsedRealtime) return false
+        val prefs = context.applicationContext.prefs()
+        if (!prefs.getBoolean(AppConstants.USAGE_STATS_ENABLED, true)) return false
+        if (prefs.getString(AppConstants.USAGE_PING_LAST_DAY, null) == today) return false
+        val hasExistingSeed = !prefs.getString(AppConstants.USAGE_PING_SEED, null).isNullOrBlank()
+        // Defer brand-new install pings until a real user interaction so headless
+        // APK scanners / cloud sandboxes that cold-boot the app without touching it
+        // never mint a seed or inflate install counts. Returning installs still ping
+        // normally on foreground start so quick DAU visits remain accurate.
+        return hasExistingSeed || hasUserInteracted.get()
+    }
 
     fun maybeSend(context: Context, delayMillis: Long = 0L) {
-        CrashReports.maybeSend(context, delayMillis)
-        if (BuildConfig.DEBUG) return
         val appContext = context.applicationContext
-        val prefs = appContext.prefs()
-        if (!prefs.getBoolean(AppConstants.USAGE_STATS_ENABLED, true)) return
-        if (prefs.getString(AppConstants.USAGE_PING_LAST_DAY, null) == dayFormat.format(Instant.ofEpochMilli(System.currentTimeMillis()))) return
+        if (!shouldSendPing(appContext)) return
         Thread(
             {
                 if (delayMillis > 0L) {
@@ -64,11 +126,12 @@ object UsagePing {
         if (!inFlight.compareAndSet(false, true)) return
         try {
             val prefs = context.prefs()
+            if (SystemClock.elapsedRealtime() < retryAfterElapsedRealtime) return
             if (!prefs.getBoolean(AppConstants.USAGE_STATS_ENABLED, true)) return
             if (prefs.getString(AppConstants.USAGE_PING_LAST_DAY, null) == today) return
             val baseUrl = BuildConfig.KICK_OAUTH_BACKEND_BASE_URL.trim().trimEnd('/')
             if (baseUrl.isEmpty() || !baseUrl.startsWith("https://")) return
-            val seed = prefs.getString(AppConstants.USAGE_PING_SEED, null) ?: run {
+            val seed = prefs.getString(AppConstants.USAGE_PING_SEED, null)?.takeIf { it.isNotBlank() } ?: run {
                 val generated = randomHex(16)
                 runCatching { prefs.edit().putString(AppConstants.USAGE_PING_SEED, generated).apply() }
                 generated
@@ -96,6 +159,9 @@ object UsagePing {
 
             val pid = sha256Hex(seed)
             val country = runCatching { java.util.Locale.getDefault().country }.getOrNull().orEmpty()
+            val isOAuthSignedIn = runCatching {
+                AuthStateHelper.isKickLoggedIn(context) && !AuthStateHelper.isKickGoogleSession(context)
+            }.getOrDefault(false)
             val body = buildString {
                 append("{\"pid\":\"").append(pid).append("\",\"v\":\"").append(escapeJson(BuildConfig.VERSION_NAME)).append("\"")
                 append(",\"b\":").append(BuildConfig.VERSION_CODE)
@@ -107,6 +173,7 @@ object UsagePing {
                 if (playbackStartsExo > 0) append(",\"se\":").append(playbackStartsExo)
                 if (crashes > 0) append(",\"c\":").append(crashes)
                 append(",\"wt\":\"").append(watchTimeBucket).append('"')
+                if (isOAuthSignedIn) append(",\"li\":true")
                 append("}")
             }
             val url = "$baseUrl/v1/metrics/ping"
@@ -126,6 +193,14 @@ object UsagePing {
                 headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
                 connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                 val code = connection.responseCode
+                if (code == 429) {
+                    connection.getHeaderField("Retry-After")?.toLongOrNull()?.takeIf { it in 1..3600 }?.let { seconds ->
+                        val delay = seconds * 1000L
+                        retryAfterElapsedRealtime = SystemClock.elapsedRealtime() + delay
+                        Handler(Looper.getMainLooper()).postDelayed({ maybeSend(context) }, delay)
+                    }
+                    return
+                }
                 if (code in 200..299) {
                     prefs.edit().putString(AppConstants.USAGE_PING_LAST_DAY, today).apply()
                     // Keep sessions/crashes/watch time accumulated while the ping was in flight;
@@ -176,6 +251,7 @@ object UsagePing {
 
     fun notePlaybackStarted(context: Context, engine: String, playbackId: String?) {
         if (playbackId.isNullOrBlank()) return
+        noteUserInteraction(context)
         runCatching {
             val prefs = context.applicationContext.prefs()
             synchronized(this) {

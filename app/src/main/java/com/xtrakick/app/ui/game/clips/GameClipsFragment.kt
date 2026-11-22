@@ -23,7 +23,6 @@ import com.xtrakick.app.model.ui.Clip
 import com.xtrakick.app.model.ui.SortGame
 import com.xtrakick.app.ui.common.ClipsAdapter
 import com.xtrakick.app.ui.common.FragmentHost
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.PagedListFragment
 import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.common.Sortable
@@ -200,13 +199,6 @@ class GameClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSortD
 
     override fun onNetworkRestored() {
         pagingAdapter.retry()
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
-        (parentFragment as? IntegrityDialog.CallbackListener)?.onIntegrityDialogCallback("refresh")
-        if (callback == "refresh") {
-            pagingAdapter.refresh()
-        }
     }
 
     override fun onDestroyView() {

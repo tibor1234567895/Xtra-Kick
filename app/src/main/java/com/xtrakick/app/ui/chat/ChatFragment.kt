@@ -81,7 +81,6 @@ import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.ui.channel.ChannelPagerFragmentDirections
 import com.xtrakick.app.ui.common.BaseNetworkFragment
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.login.LoginActivity
 import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.ui.multipov.MultiPovFragment
@@ -385,7 +384,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 onToggle = ::toggleEmoteSection,
                 onEmoteClick = ::appendEmote,
                 emoteQuality = requireContext().prefs().getString(AppConstants.CHAT_IMAGE_QUALITY, "4") ?: "4",
-                imageLibrary = requireContext().prefs().getString(AppConstants.CHAT_IMAGE_LIBRARY, "0"),
             )
         }
         binding.emoteSections.itemAnimator = null
@@ -1390,20 +1388,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         requireContext().prefs().registerOnSharedPreferenceChangeListener(chatPreferenceChangeListener)
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.integrity.collectLatest {
-                    if (it != null &&
-                        it != "done" &&
-                        requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                        requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
-                    ) {
-                        IntegrityDialog.show(childFragmentManager, it)
-                        viewModel.integrity.value = "done"
-                    }
-                }
-            }
-        }
         with(binding) {
             if (!requireContext().prefs().getBoolean(AppConstants.CHAT_DISABLE, false)) {
                 val args = requireArguments()
@@ -1463,7 +1447,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                 com.google.android.material.R.attr.colorSurface
                             }
                         ),
-                        imageLibrary = liveSettings.imageLibrary,
                         messageTextSize = liveSettings.messageTextSize,
                         emoteSize = liveSettings.emoteSize,
                         badgeSize = liveSettings.badgeSize,
@@ -2823,7 +2806,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 ChatBackgroundUtils.DEFAULT_ALTERNATING_LINE_SHADOW_STRENGTH
             ),
             showSystemMessageEmotes = prefs.getBoolean(AppConstants.CHAT_SYSTEM_MESSAGE_EMOTES, true),
-            imageLibrary = prefs.getString(AppConstants.CHAT_IMAGE_LIBRARY, "0"),
             messageTextSize = (prefs.getString(AppConstants.CHAT_TEXT_SIZE, "14")?.toFloatOrNull() ?: 14f) * sizeModifier,
             emoteSize = TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP,
@@ -2915,7 +2897,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             AppConstants.CHAT_ALTERNATING_LINE_SHADOW,
             AppConstants.CHAT_ALTERNATING_LINE_SHADOW_STRENGTH,
             AppConstants.CHAT_SYSTEM_MESSAGE_EMOTES,
-            AppConstants.CHAT_IMAGE_LIBRARY,
             AppConstants.CHAT_IMAGE_QUALITY,
             AppConstants.CHAT_SIZE_MODIFIER,
             AppConstants.CHAT_TEXT_SIZE,

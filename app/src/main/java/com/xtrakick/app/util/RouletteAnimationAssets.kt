@@ -58,7 +58,7 @@ object RouletteAnimationAssets {
     /**
      * Resolves the unbox video source. The claim API's `animations.unbox_url` is read by the
      * web player as a video, but our model normalizes it to an image URL (`.gif` suffix) for
-     * Glide, so only URLs that actually point at a video are served server-first; anything
+     * Coil, so only URLs that actually point at a video are served server-first; anything
      * else falls back to kick.com's own default unbox.webm (cached file preferred, then the
      * direct CDN URL — mirrors the web's `animations?.unbox_url || DEFAULT_UNBOX_URL`).
      */

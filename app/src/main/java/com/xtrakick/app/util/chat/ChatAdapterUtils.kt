@@ -36,11 +36,6 @@ import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
 import coil3.request.crossfade
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.engine.DiskCacheStrategy
-import com.bumptech.glide.load.model.GlideUrl
-import com.bumptech.glide.request.target.CustomTarget
-import com.bumptech.glide.request.transition.Transition
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.util.DiagnosticLogger
@@ -1446,109 +1441,61 @@ object ChatAdapterUtils {
         itemView.setTag(R.id.chat_image_binding, null)
     }
 
-    fun loadImages(fragment: Fragment, itemView: View, bind: (SpannableStringBuilder) -> Unit, images: List<Image>, imagePaint: NamePaint?, userName: String?, userNameStartIndex: Int?, backgroundColor: Int, imageLibrary: String?, builder: SpannableStringBuilder, emoteSize: Int, badgeSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int = DEFAULT_ANIMATED_EMOTE_FPS) {
+    fun loadImages(fragment: Fragment, itemView: View, bind: (SpannableStringBuilder) -> Unit, images: List<Image>, imagePaint: NamePaint?, userName: String?, userNameStartIndex: Int?, backgroundColor: Int, builder: SpannableStringBuilder, emoteSize: Int, badgeSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int = DEFAULT_ANIMATED_EMOTE_FPS) {
         val bindingToken = itemView.getTag(R.id.chat_image_binding)
         val isCurrentBinding = { fragment.isAdded && itemView.getTag(R.id.chat_image_binding) === bindingToken }
         if (imagePaint != null) {
             val paintUrl = imagePaint.imageUrl
             val paintTargetSize = ((itemView as? android.widget.TextView)?.lineHeight?.takeIf { it > 0 } ?: badgeSize).coerceAtLeast(1)
-            if (imageLibrary == "0") {
-                try {
-                    fragment.requireContext().imageLoader.enqueue(
-                        ImageRequest.Builder(fragment.requireContext()).apply {
-                            data(paintUrl)
-                            size(paintTargetSize, paintTargetSize)
-                            crossfade(false)
-                            httpHeaders(NetworkHeaders.Builder().apply {
-                                add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                            }.build())
-                            target(
-                                onSuccess = onSuccess@{
-                                    if (!isCurrentBinding()) return@onSuccess
-                                    (it.asDrawable(fragment.resources)).let { loaded ->
-                                        val result = if (loaded is Animatable && animateGifs && MasterEmoteManager.isSyncEnabled) {
-                                            if (paintUrl != null) {
-                                                val key = ChatImageKey(paintUrl, paintTargetSize, isEmote = false, isAnimated = true)
-                                                val master = MasterEmoteManager.getOrCreateMaster(key, loaded, paintTargetSize, animatedEmoteFps)
-                                                ProxyEmoteDrawable(master, itemView).also { proxy ->
-                                                    startAnimationIfOnScreen(proxy, itemView)
-                                                }
-                                            } else {
-                                                throttleAnimatedDrawable(loaded, itemView, animatedEmoteFps).also { anim ->
-                                                    startAnimationIfOnScreen(anim, itemView)
-                                                }
+            try {
+                fragment.requireContext().imageLoader.enqueue(
+                    ImageRequest.Builder(fragment.requireContext()).apply {
+                        data(paintUrl)
+                        size(paintTargetSize, paintTargetSize)
+                        crossfade(false)
+                        httpHeaders(NetworkHeaders.Builder().apply {
+                            add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                        }.build())
+                        target(
+                            onSuccess = onSuccess@{
+                                if (!isCurrentBinding()) return@onSuccess
+                                (it.asDrawable(fragment.resources)).let { loaded ->
+                                    val result = if (loaded is Animatable && animateGifs && MasterEmoteManager.isSyncEnabled) {
+                                        if (paintUrl != null) {
+                                            val key = ChatImageKey(paintUrl, paintTargetSize, isEmote = false, isAnimated = true)
+                                            val master = MasterEmoteManager.getOrCreateMaster(key, loaded, paintTargetSize, animatedEmoteFps)
+                                            ProxyEmoteDrawable(master, itemView).also { proxy ->
+                                                startAnimationIfOnScreen(proxy, itemView)
                                             }
-                                        } else loaded
-                                        try {
-                                            builder.setSpan(
-                                                NamePaintImageSpan(
-                                                    userName!!,
-                                                    imagePaint.shadows,
-                                                    (itemView.background as? ColorDrawable)?.color,
-                                                    backgroundColor,
-                                                    result
-                                                ),
-                                                userNameStartIndex!!,
-                                                userNameStartIndex + userName.length,
-                                                SPAN_EXCLUSIVE_EXCLUSIVE
-                                            )
-                                        } catch (e: IndexOutOfBoundsException) {
+                                        } else {
+                                            throttleAnimatedDrawable(loaded, itemView, animatedEmoteFps).also { anim ->
+                                                startAnimationIfOnScreen(anim, itemView)
+                                            }
                                         }
-                                        bind(builder)
+                                    } else loaded
+                                    try {
+                                        builder.setSpan(
+                                            NamePaintImageSpan(
+                                                userName!!,
+                                                imagePaint.shadows,
+                                                (itemView.background as? ColorDrawable)?.color,
+                                                backgroundColor,
+                                                result
+                                            ),
+                                            userNameStartIndex!!,
+                                            userNameStartIndex + userName.length,
+                                            SPAN_EXCLUSIVE_EXCLUSIVE
+                                        )
+                                    } catch (e: IndexOutOfBoundsException) {
                                     }
-                                },
-                            )
-                        }.build()
-                    )
-                } catch (t: Throwable) {
-                    DiagnosticLogger.w("ChatAdapterUtils", "Failed to enqueue paint ImageRequest", t)
-                }
-            } else {
-                try {
-                    if (!fragment.isAdded || fragment.context == null) return
-                    Glide.with(fragment)
-                        .load(GlideUrl(paintUrl) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) })
-                        .diskCacheStrategy(DiskCacheStrategy.DATA)
-                        .into(object : CustomTarget<Drawable>() {
-                            override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
-                                if (!isCurrentBinding()) return
-                                val result = if (resource is Animatable && animateGifs && MasterEmoteManager.isSyncEnabled) {
-                                    if (paintUrl != null) {
-                                        val key = ChatImageKey(paintUrl, paintTargetSize, isEmote = false, isAnimated = true)
-                                        val master = MasterEmoteManager.getOrCreateMaster(key, resource, paintTargetSize, animatedEmoteFps)
-                                        ProxyEmoteDrawable(master, itemView).also { proxy ->
-                                            startAnimationIfOnScreen(proxy, itemView)
-                                        }
-                                    } else {
-                                        throttleAnimatedDrawable(resource, itemView, animatedEmoteFps).also { anim ->
-                                            startAnimationIfOnScreen(anim, itemView)
-                                        }
-                                    }
-                                } else resource
-                                try {
-                                    builder.setSpan(
-                                        NamePaintImageSpan(
-                                            userName!!,
-                                            imagePaint.shadows,
-                                            (itemView.background as? ColorDrawable)?.color,
-                                            backgroundColor,
-                                            result
-                                        ),
-                                        userNameStartIndex!!,
-                                        userNameStartIndex + userName.length,
-                                        SPAN_EXCLUSIVE_EXCLUSIVE
-                                    )
-                                } catch (e: IndexOutOfBoundsException) {
+                                    bind(builder)
                                 }
-                                bind(builder)
-                            }
-
-                            override fun onLoadCleared(placeholder: Drawable?) {
-                            }
-                        })
-                } catch (t: Throwable) {
-                    DiagnosticLogger.w("ChatAdapterUtils", "Failed to enqueue paint Glide request", t)
-                }
+                            },
+                        )
+                    }.build()
+                )
+            } catch (t: Throwable) {
+                DiagnosticLogger.w("ChatAdapterUtils", "Failed to enqueue paint ImageRequest", t)
             }
         }
         images.forEach { image ->
@@ -1557,13 +1504,13 @@ object ChatAdapterUtils {
             } else {
                 badgeSize
             }
-            loadImage(imageLibrary, fragment, image, emoteQuality, imageSize, itemView, animatedEmoteFps, animateGifs, isCurrentBinding) { loaded ->
+            loadImage(fragment, image, emoteQuality, imageSize, itemView, animatedEmoteFps, animateGifs, isCurrentBinding) { loaded ->
                 if (!isCurrentBinding()) return@loadImage
                 if (loaded != null) {
                     val result = prepareDrawableForChat(fragment, loaded, imageSize, itemView, animateGifs, animatedEmoteFps)
                     if (image.overlayEmote != null) {
                         val drawables = arrayOf(result)
-                        nextOverlayEmote(imageLibrary, fragment, drawables, image.overlayEmote!!, image, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps, isCurrentBinding)
+                        nextOverlayEmote(fragment, drawables, image.overlayEmote!!, image, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps, isCurrentBinding)
                     } else {
                         replaceImageSpan(builder, image.start, image.end, CenteredImageSpan(result))
                         bind(builder)
@@ -1576,8 +1523,8 @@ object ChatAdapterUtils {
         }
     }
 
-    private fun nextOverlayEmote(imageLibrary: String?, fragment: Fragment, drawables: Array<Drawable>, image: Image, bottomImage: Image, itemView: View, bind: (SpannableStringBuilder) -> Unit, builder: SpannableStringBuilder, emoteSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int, isCurrentBinding: () -> Boolean) {
-        loadImage(imageLibrary, fragment, image, emoteQuality, emoteSize, itemView, animatedEmoteFps, animateGifs, isCurrentBinding) { loaded ->
+    private fun nextOverlayEmote(fragment: Fragment, drawables: Array<Drawable>, image: Image, bottomImage: Image, itemView: View, bind: (SpannableStringBuilder) -> Unit, builder: SpannableStringBuilder, emoteSize: Int, emoteQuality: String, animateGifs: Boolean, enableOverlayEmotes: Boolean, animatedEmoteFps: Int, isCurrentBinding: () -> Boolean) {
+        loadImage(fragment, image, emoteQuality, emoteSize, itemView, animatedEmoteFps, animateGifs, isCurrentBinding) { loaded ->
             if (!isCurrentBinding()) return@loadImage
             val array = if (loaded != null) {
                 val result = prepareDrawableForChat(fragment, loaded, emoteSize, itemView, animateGifs, animatedEmoteFps)
@@ -1586,7 +1533,7 @@ object ChatAdapterUtils {
                 drawables
             }
             if (image.overlayEmote != null) {
-                nextOverlayEmote(imageLibrary, fragment, array, image.overlayEmote!!, bottomImage, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps, isCurrentBinding)
+                nextOverlayEmote(fragment, array, image.overlayEmote!!, bottomImage, itemView, bind, builder, emoteSize, emoteQuality, animateGifs, enableOverlayEmotes, animatedEmoteFps, isCurrentBinding)
             } else if (array.isNotEmpty()) {
                 val layer = LayerDrawable(array)
                 val width = array.maxOf { it.bounds.right }
@@ -1602,7 +1549,6 @@ object ChatAdapterUtils {
     }
 
     private fun loadImage(
-        imageLibrary: String?,
         fragment: Fragment,
         image: Image,
         emoteQuality: String,
@@ -1631,7 +1577,7 @@ object ChatAdapterUtils {
                     onLoaded(null)
                     return@launch
                 }
-                loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { onLoaded(it) }
+                loadImageUncached(fragment, image, source, targetHeight) { onLoaded(it) }
             }
             return
         }
@@ -1652,7 +1598,7 @@ object ChatAdapterUtils {
                 chatImageCoordinator.load(
                     key = key,
                     startLoad = { complete ->
-                        loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { result ->
+                        loadImageUncached(fragment, image, source, targetHeight) { result ->
                             complete(result)
                         }
                     },
@@ -1676,7 +1622,7 @@ object ChatAdapterUtils {
             chatImageCoordinator.load(
                 key = key,
                 startLoad = { complete ->
-                    loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { result ->
+                    loadImageUncached(fragment, image, source, targetHeight) { result ->
                         complete(result)
                     }
                 },
@@ -1690,22 +1636,18 @@ object ChatAdapterUtils {
                 },
             )
         } else {
-            loadImageUncached(imageLibrary, fragment, image, source, targetHeight) { result ->
+            loadImageUncached(fragment, image, source, targetHeight) { result ->
                 onLoaded(result)
             }
         }
     }
 
-    private fun loadImageUncached(imageLibrary: String?, fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable?) -> Unit) {
+    private fun loadImageUncached(fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable?) -> Unit) {
         if (targetHeight <= 0 || !fragment.isAdded || fragment.context == null) {
             onLoaded(null)
             return
         }
-        if (imageLibrary == "0" || (imageLibrary == "1" && !image.format.equals("webp", true))) {
-            loadCoil(fragment, image, source, targetHeight, onLoaded)
-        } else {
-            loadGlide(fragment, image, source, onLoaded)
-        }
+        loadCoil(fragment, image, source, targetHeight, onLoaded)
     }
 
     private fun loadCoil(fragment: Fragment, image: Image, source: Any, targetHeight: Int, onLoaded: (Drawable?) -> Unit) {
@@ -1747,43 +1689,6 @@ object ChatAdapterUtils {
             )
         } catch (t: Throwable) {
             DiagnosticLogger.w("ChatAdapterUtils", "Failed to enqueue Coil request", t)
-            onLoaded(null)
-        }
-    }
-
-    private fun loadGlide(fragment: Fragment, image: Image, source: Any, onLoaded: (Drawable?) -> Unit) {
-        if (!fragment.isAdded || fragment.context == null) {
-            onLoaded(null)
-            return
-        }
-        try {
-            Glide.with(fragment)
-                .load(source.let {
-                    if (it is String && it.startsWith("http", ignoreCase = true)) {
-                        val headers = if (it.contains(".kick.com", ignoreCase = true)) {
-                            KICK_CHAT_IMAGE_HEADERS
-                        } else {
-                            BASE_CHAT_IMAGE_HEADERS
-                        }
-                        GlideUrl(it) { headers }
-                    } else it
-                })
-                .diskCacheStrategy(DiskCacheStrategy.DATA)
-                .into(object : CustomTarget<Drawable>() {
-                    override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
-                        onLoaded(resource)
-                    }
-
-                    override fun onLoadCleared(placeholder: Drawable?) {
-                        onLoaded(null)
-                    }
-
-                    override fun onLoadFailed(errorDrawable: Drawable?) {
-                        onLoaded(null)
-                    }
-                })
-        } catch (t: Throwable) {
-            DiagnosticLogger.w("ChatAdapterUtils", "Failed to enqueue Glide request", t)
             onLoaded(null)
         }
     }

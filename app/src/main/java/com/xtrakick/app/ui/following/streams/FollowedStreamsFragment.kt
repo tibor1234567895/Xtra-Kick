@@ -25,7 +25,6 @@ import com.xtrakick.app.databinding.SortBarBinding
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.ui.common.ActiveTagsAdapter
 import com.xtrakick.app.ui.common.BaseNetworkFragment
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.common.Sortable
 import com.xtrakick.app.ui.common.StreamsCompactListAdapter
@@ -40,7 +39,7 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, IntegrityDialog.CallbackListener, FollowedStreamsSortDialog.OnFilter {
+class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, FollowedStreamsSortDialog.OnFilter {
 
     @Inject lateinit var kickFollowSync: KickFollowSync
 
@@ -150,13 +149,6 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
                     binding.progressBar.isVisible = state.isInitialLoading && state.items.isEmpty()
                     binding.swipeRefresh.isRefreshing = state.isRefreshing
                     binding.nothingHere.isVisible = state.showEmpty
-                    if (state.integrityAction == "refresh" &&
-                        requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                        requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
-                    ) {
-                        viewModel.clearIntegrityAction()
-                        IntegrityDialog.show(childFragmentManager, "refresh")
-                    }
                     wasRefreshing = state.isRefreshing
                 }
             }
@@ -186,12 +178,6 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
                     }
                 }
             }
-        }
-        if (requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-            requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true) &&
-            KickApiHelper.isIntegrityTokenExpired(requireContext())
-        ) {
-            IntegrityDialog.show(childFragmentManager, "refresh")
         }
     }
 
@@ -244,11 +230,8 @@ class FollowedStreamsFragment : BaseNetworkFragment(), Scrollable, Sortable, Int
         viewModel.refresh()
     }
 
-    override fun onIntegrityDialogCallback(callback: String?) {
-        viewModel.clearIntegrityAction()
-        if (callback == "refresh") {
-            viewModel.refresh()
-        }
+    override fun refreshContent() {
+        viewModel.refresh()
     }
 
     private fun preloadThumbnails(items: List<Stream>) {

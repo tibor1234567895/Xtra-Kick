@@ -266,8 +266,7 @@ class FollowMediaFragment : Fragment(), Scrollable, FragmentHost, KickFollowImpo
 
     override fun onKickFollowImportFinished(importedCount: Int) {
         childFragmentManager.fragments.forEach { fragment ->
-            (fragment as? com.xtrakick.app.ui.common.IntegrityDialog.CallbackListener)
-                ?.onIntegrityDialogCallback("refresh")
+            (fragment as? com.xtrakick.app.ui.common.BaseNetworkFragment)?.refreshContent()
         }
     }
 

@@ -3,12 +3,22 @@ package com.xtrakick.app.model.ui
 import android.os.Parcelable
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import kotlinx.parcelize.IgnoredOnParcel
 import kotlinx.parcelize.Parcelize
 
 @Parcelize
-@Entity(tableName = "videos")
+@Entity(
+    tableName = "videos",
+    indices = [
+        Index(value = ["url"]),
+        Index(value = ["videoId"]),
+        Index(value = ["channel_id"]),
+        Index(value = ["channel_login", "live", "status"]),
+        Index(value = ["status"]),
+    ],
+)
 class OfflineVideo(
     var url: String? = null,
     @ColumnInfo(name = "source_url")

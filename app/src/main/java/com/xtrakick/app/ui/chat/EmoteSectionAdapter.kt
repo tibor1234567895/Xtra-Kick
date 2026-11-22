@@ -17,7 +17,6 @@ class EmoteSectionAdapter(
     private val onToggle: (EmotePickerSection) -> Unit,
     private val onEmoteClick: (Emote) -> Unit,
     private val emoteQuality: String,
-    private val imageLibrary: String?,
 ) : ListAdapter<EmotePickerListItem, RecyclerView.ViewHolder>(
     object : DiffUtil.ItemCallback<EmotePickerListItem>() {
         override fun areItemsTheSame(oldItem: EmotePickerListItem, newItem: EmotePickerListItem): Boolean {
@@ -148,7 +147,6 @@ class EmoteSectionAdapter(
                 fragment = fragment,
                 item = item,
                 emoteQuality = emoteQuality,
-                imageLibrary = imageLibrary,
                 clickListener = onEmoteClick,
             )
         }

@@ -90,7 +90,6 @@ import com.xtrakick.app.ui.channel.ChannelPagerFragmentDirections
 import com.xtrakick.app.ui.channel.FollowChannelBottomSheet
 import com.xtrakick.app.ui.chat.ChatFragment
 import com.xtrakick.app.ui.common.BaseNetworkFragment
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.RadioButtonDialogFragment
 import com.xtrakick.app.ui.download.DownloadDialog
 import com.xtrakick.app.ui.game.GameMediaFragmentDirections
@@ -142,7 +141,7 @@ internal fun formatHoldToSpeedLabel(factor: Float): String {
 
 @OptIn(UnstableApi::class)
 @AndroidEntryPoint
-abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment.OnSortOptionChanged, IntegrityDialog.CallbackListener {
+abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment.OnSortOptionChanged {
 
     @Inject
     lateinit var networkMonitor: NetworkMonitor
@@ -667,20 +666,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         super.onViewCreated(view, savedInstanceState)
         eagerLoadStream()
         with(binding) {
-            viewLifecycleOwner.lifecycleScope.launch {
-                repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    viewModel.integrity.collectLatest {
-                        if (it != null &&
-                            it != "done" &&
-                            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                            requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
-                        ) {
-                            IntegrityDialog.show(childFragmentManager, it)
-                            viewModel.integrity.value = "done"
-                        }
-                    }
-                }
-            }
             val ignoreCutouts = prefs.getBoolean(AppConstants.UI_DRAW_BEHIND_CUTOUTS, false)
             val cornerPadding = prefs.getBoolean(AppConstants.PLAYER_ROUNDED_CORNER_PADDING, false)
             ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
@@ -1773,7 +1758,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 if (stream != null) {
                                     stream.id?.let { chatFragment?.updateStreamId(it) }
                                     val logo = stream.channelLogo
-                                    if (!logo.isNullOrBlank() && requireArguments().getString(KEY_CHANNEL_LOGO) != logo) {
+                                    if (!logo.isNullOrBlank() &&
+                                        !KickApiHelper.isDefaultProfilePicture(logo) &&
+                                        requireArguments().getString(KEY_CHANNEL_LOGO) != logo
+                                    ) {
                                         requireArguments().putString(KEY_CHANNEL_LOGO, logo)
                                         updateChannelLogo(logo)
                                     }
@@ -1881,6 +1869,21 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     showController(force = true)
                     showSpeedDialog()
                 }
+                    }
+                }
+                if (videoType == VIDEO || videoType == CLIP) {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.resolvedChannelLogo.collectLatest { logo ->
+                                if (!logo.isNullOrBlank() &&
+                                    !KickApiHelper.isDefaultProfilePicture(logo) &&
+                                    requireArguments().getString(KEY_CHANNEL_LOGO) != logo
+                                ) {
+                                    requireArguments().putString(KEY_CHANNEL_LOGO, logo)
+                                    updateChannelLogo(logo)
+                                }
+                            }
+                        }
                     }
                 }
                 if (videoType == VIDEO) {
@@ -4005,6 +4008,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     override fun initialize() {
         if (requireArguments().getString(KEY_TYPE) != OFFLINE_VIDEO) {
             refreshFollowStatus()
+            if (videoType == VIDEO || videoType == CLIP) {
+                val currentLogo = requireArguments().getString(KEY_CHANNEL_LOGO)
+                if (currentLogo.isNullOrBlank() || KickApiHelper.isDefaultProfilePicture(currentLogo)) {
+                    viewModel.resolveChannelLogo(
+                        channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
+                        channelId = requireArguments().getString(KEY_CHANNEL_ID),
+                    )
+                }
+            }
             if (videoType == VIDEO) {
                 val videoId = requireArguments().getString(KEY_VIDEO_ID)
                 if (!videoId.isNullOrBlank() &&
@@ -5011,137 +5023,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         setPlaybackSpeed(speed)
                         prefs.edit { putFloat(AppConstants.PLAYER_SPEED, speed) }
                         (childFragmentManager.findFragmentByTag("closeOnPip") as? PlayerSettingsDialog?)?.setSpeed(speed.toString())
-                    }
-                }
-            }
-        }
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
-        if (callback != null) {
-            viewLifecycleOwner.lifecycleScope.launch {
-                repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    when (callback) {
-                        "refreshStream" -> {
-                            requireArguments().getString(KEY_CHANNEL_LOGIN)?.let { channelLogin ->
-                                viewModel.loadStreamResult(
-                                    networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_STREAM, true)),
-                                    channelLogin = channelLogin,
-                                    randomDeviceId = prefs.getBoolean(AppConstants.TOKEN_RANDOM_DEVICEID, true),
-                                    xDeviceId = prefs.getString(AppConstants.TOKEN_XDEVICEID, "kick-web-player"),
-                                    playerType = prefs.getString(AppConstants.TOKEN_PLAYERTYPE, "site"),
-                                    supportedCodecs = prefs.getString(AppConstants.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
-                                    proxyPlaybackAccessToken = prefs.getBoolean(AppConstants.PROXY_PLAYBACK_ACCESS_TOKEN, false),
-                                    proxyHost = prefs.getString(AppConstants.PROXY_HOST, null),
-                                    proxyPort = prefs.getString(AppConstants.PROXY_PORT, null)?.toIntOrNull(),
-                                    proxyUser = prefs.getString(AppConstants.PROXY_USER, null),
-                                    proxyPassword = requireContext().getProxyPassword(),
-                                    enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                                    forceRefresh = true
-                                )
-                            }
-                            viewModel.isFollowingChannel(
-                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                requireArguments().getString(KEY_CHANNEL_ID),
-                                requireArguments().getString(KEY_CHANNEL_LOGIN),
-                                prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
-                            )
-                        }
-                        "refreshVideo" -> {
-                            val videoId = requireArguments().getString(KEY_VIDEO_ID)
-                            viewModel.loadVideo(
-                                networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
-                                videoId = videoId,
-                                videoSource = requireArguments().getString(KEY_VIDEO_SOURCE),
-                                channelId = requireArguments().getString(KEY_CHANNEL_ID),
-                                channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
-                                playerType = prefs.getString(AppConstants.TOKEN_PLAYERTYPE_VIDEO, "channel_home_live"),
-                                supportedCodecs = prefs.getString(AppConstants.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
-                                enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                            )
-                            viewModel.isFollowingChannel(
-                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                requireArguments().getString(KEY_CHANNEL_ID),
-                                requireArguments().getString(KEY_CHANNEL_LOGIN),
-                                prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
-                            )
-                            if (!videoId.isNullOrBlank() &&
-                                !requireArguments().getString(KEY_VIDEO_SOURCE).equals(AppConstants.KICK, true) &&
-                                (prefs.getBoolean(AppConstants.PLAYER_GAMESBUTTON, true) || prefs.getBoolean(AppConstants.PLAYER_MENU_GAMES, false))
-                            ) {
-                                viewModel.loadGamesList(
-                                    videoId,
-                                    prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                    KickApiHelper.getKickWebHeaders(requireContext()),
-                                    prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                                )
-                            }
-                        }
-                        "refreshClip" -> {
-                            val clipUrl = requireArguments().getString(KEY_URL)
-                            if (!clipUrl.isNullOrBlank()) {
-                                viewModel.qualities = mapOf(
-                                    "source" to Pair(getString(R.string.source), clipUrl),
-                                    AUDIO_ONLY_QUALITY to Pair(getString(R.string.audio_only), null)
-                                )
-                                setDefaultQuality()
-                                changePlayerMode()
-                                startClip(clipUrl)
-                            }
-                            viewModel.loadClip(
-                                networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
-                                id = requireArguments().getString(KEY_CLIP_ID),
-                                enableIntegrity = requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                            )
-                            viewModel.isFollowingChannel(
-                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                requireArguments().getString(KEY_CHANNEL_ID),
-                                requireArguments().getString(KEY_CHANNEL_LOGIN),
-                                prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
-                            )
-                        }
-                        "follow" -> {
-                            val kickFollow = (prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0) == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
-                            viewModel.saveFollowChannel(
-                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                requireArguments().getString(KEY_CHANNEL_ID),
-                                requireArguments().getString(KEY_CHANNEL_LOGIN),
-                                requireArguments().getString(KEY_CHANNEL_NAME),
-                                prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                                false,
-                                requireArguments().getString(KEY_STARTED_AT),
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                                kickFollow = kickFollow,
-                                channelLogo = requireArguments().getString(KEY_CHANNEL_LOGO),
-                            )
-                        }
-                        "unfollow" -> {
-                            val kickFollow = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
-                            viewModel.deleteFollowChannel(
-                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                requireArguments().getString(KEY_CHANNEL_ID),
-                                requireArguments().getString(KEY_CHANNEL_LOGIN),
-                                prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                                kickFollow = kickFollow,
-                            )
-                        }
                     }
                 }
             }

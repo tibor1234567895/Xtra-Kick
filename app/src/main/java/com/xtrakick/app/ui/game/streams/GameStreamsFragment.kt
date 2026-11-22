@@ -25,7 +25,6 @@ import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.ui.common.ActiveTagsAdapter
 import com.xtrakick.app.ui.common.FragmentHost
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.PagedListFragment
 import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.common.Sortable
@@ -252,13 +251,6 @@ class GameStreamsFragment : PagedListFragment(), Scrollable, Sortable, StreamsSo
 
     override fun onNetworkRestored() {
         pagingAdapter.retry()
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
-        (parentFragment as? IntegrityDialog.CallbackListener)?.onIntegrityDialogCallback("refresh")
-        if (callback == "refresh") {
-            pagingAdapter.refresh()
-        }
     }
 
     override fun onDestroyView() {

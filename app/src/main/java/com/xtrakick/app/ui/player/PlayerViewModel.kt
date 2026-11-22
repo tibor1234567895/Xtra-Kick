@@ -23,6 +23,7 @@ import com.xtrakick.app.ui.common.cacheMediaImage
 import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.KickClipApi
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.IOException
@@ -77,6 +78,29 @@ class PlayerViewModel @Inject constructor(
     val clipUrls = MutableStateFlow<Map<Pair<String, String?>, String>?>(null)
 
     val savedOfflineVideoPosition = MutableStateFlow<Long?>(null)
+    val resolvedChannelLogo = MutableStateFlow<String?>(null)
+
+    fun resolveChannelLogo(channelLogin: String?, channelId: String?) {
+        val slug = channelLogin?.trim()?.takeIf { it.isNotBlank() }
+        val id = channelId?.trim()?.takeIf { it.isNotBlank() }
+        val lookupKey = slug ?: id ?: return
+        val cachedLogo = (slug?.let(kickRepository::getCachedChannel) ?: id?.let(kickRepository::getCachedChannel))
+            ?.user?.profileImage
+            ?.takeIf { it.isNotBlank() && !KickApiHelper.isDefaultProfilePicture(it) }
+        if (cachedLogo != null) {
+            resolvedChannelLogo.value = KickApiHelper.getTemplateUrl(cachedLogo, "profileimage")
+            return
+        }
+        viewModelScope.launch {
+            val fetchedLogo = runCatching {
+                kickRepository.getChannel(lookupKey, prefetchBadgeCatalog = false).user?.profileImage
+            }.getOrElse { if (it is CancellationException) throw it else null }
+                ?.takeIf { it.isNotBlank() && !KickApiHelper.isDefaultProfilePicture(it) }
+            if (fetchedLogo != null) {
+                resolvedChannelLogo.value = KickApiHelper.getTemplateUrl(fetchedLogo, "profileimage")
+            }
+        }
+    }
 
     fun shouldRetryKickStreamWithFreshUrl(): Boolean {
         val now = SystemClock.elapsedRealtime()

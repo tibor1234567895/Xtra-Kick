@@ -100,6 +100,11 @@ object KickApiHelper {
         return getDefaultProfilePicture(userId?.toString(), null)
     }
 
+    fun isDefaultProfilePicture(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        return url.trim().startsWith("https://files.kick.com/images/profile_image/default")
+    }
+
     fun getDefaultBanner(channelIdOrUserId: String?, userLogin: String? = null): String {
         val numericId = channelIdOrUserId?.toLongOrNull()
             ?: userLogin?.hashCode()?.toLong()?.let { kotlin.math.abs(it) }
@@ -468,10 +473,6 @@ object KickApiHelper {
                 }
             }
         }
-    }
-
-    fun isIntegrityTokenExpired(context: Context): Boolean {
-        return System.currentTimeMillis() >= context.tokenPrefs().getLong(AppConstants.INTEGRITY_EXPIRATION, 0)
     }
 
     fun getVideoUrlMapFromPreview(url: String, type: String?, list: List<String>?): Map<String, String> {

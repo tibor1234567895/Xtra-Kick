@@ -8,20 +8,56 @@ import android.text.SpannableStringBuilder
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
+import coil3.ImageLoader
+import coil3.decode.DataSource
+import coil3.decode.ImageSource
+import coil3.fetch.SourceFetchResult
+import coil3.request.Options
 import com.xtrakick.app.model.chat.Image
 import com.xtrakick.app.ui.view.CenteredImageSpan
+import com.xtrakick.app.util.LegacyAnimatedWebpDecoder
 import com.xtrakick.app.util.chat.ChatAdapterUtils
+import okio.Buffer
+import okio.FileSystem
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @Config(application = Application::class)
 @RunWith(RobolectricTestRunner::class)
 class ChatImageBindingTest {
+    @Test
+    @Config(sdk = [27])
+    fun legacyDecoderClaimsAnimatedWebpAndLeavesOtherFormatsUntouched() {
+        val context = RuntimeEnvironment.getApplication()
+        val loader = ImageLoader.Builder(context).build()
+        val factory = LegacyAnimatedWebpDecoder()
+        val options = Options(context)
+        fun probe(flags: Int, animationExpected: Boolean) {
+            val header = Buffer().writeUtf8("RIFF").writeIntLe(22).writeUtf8("WEBPVP8X")
+                .writeIntLe(10).writeByte(flags).write(ByteArray(9))
+            val size = header.size
+            ImageSource(header, FileSystem.SYSTEM).use { source ->
+                val decoder = factory.create(SourceFetchResult(source, "image/webp", DataSource.DISK), options, loader)
+                if (animationExpected) assertNotNull(decoder) else assertNull(decoder)
+                assertEquals(size, header.size)
+            }
+        }
+        try {
+            probe(2, animationExpected = true)
+            probe(0, animationExpected = false)
+        } finally {
+            loader.shutdown()
+        }
+    }
+
     @Test
     fun lateImagesCannotReplaceReboundTextIncludingRowsWithoutImages() {
         checkLateImage { _, textView ->
@@ -81,36 +117,6 @@ class ChatImageBindingTest {
             userName = null,
             userNameStartIndex = null,
             backgroundColor = Color.BLACK,
-            imageLibrary = "0", // Coil
-            builder = SpannableStringBuilder("."),
-            emoteSize = 0,
-            badgeSize = -5,
-            emoteQuality = "1",
-            animateGifs = false,
-            enableOverlayEmotes = false,
-        )
-        activityController.pause().stop().destroy()
-    }
-
-    @Test
-    fun loadImagesWithZeroOrNegativeSizesGlideDoesNotCrash() {
-        val activityController = Robolectric.buildActivity(FragmentActivity::class.java).setup()
-        val activity = activityController.get()
-        val fragment = Fragment()
-        activity.supportFragmentManager.beginTransaction().add(fragment, "chat").commitNow()
-        val textView = TextView(activity).apply { text = "original" }
-        val image = Image(url1x = "https://example.invalid/emote", isEmote = true, start = 0, end = 1)
-        ChatAdapterUtils.beginImageBinding(textView)
-        ChatAdapterUtils.loadImages(
-            fragment = fragment,
-            itemView = textView,
-            bind = { textView.text = it },
-            images = listOf(image),
-            imagePaint = null,
-            userName = null,
-            userNameStartIndex = null,
-            backgroundColor = Color.BLACK,
-            imageLibrary = "2", // Glide
             builder = SpannableStringBuilder("."),
             emoteSize = 0,
             badgeSize = -5,
@@ -140,24 +146,6 @@ class ChatImageBindingTest {
             userName = null,
             userNameStartIndex = null,
             backgroundColor = Color.BLACK,
-            imageLibrary = "0", // Coil
-            builder = SpannableStringBuilder("."),
-            emoteSize = 28,
-            badgeSize = 18,
-            emoteQuality = "1",
-            animateGifs = false,
-            enableOverlayEmotes = false,
-        )
-        ChatAdapterUtils.loadImages(
-            fragment = fragment,
-            itemView = textView,
-            bind = { textView.text = it },
-            images = listOf(image),
-            imagePaint = null,
-            userName = null,
-            userNameStartIndex = null,
-            backgroundColor = Color.BLACK,
-            imageLibrary = "2", // Glide
             builder = SpannableStringBuilder("."),
             emoteSize = 28,
             badgeSize = 18,
@@ -232,7 +220,6 @@ class ChatImageBindingTest {
                 userName = null,
                 userNameStartIndex = null,
                 backgroundColor = Color.BLACK,
-                imageLibrary = null,
                 builder = SpannableStringBuilder("."),
                 emoteSize = 28,
                 badgeSize = 18,

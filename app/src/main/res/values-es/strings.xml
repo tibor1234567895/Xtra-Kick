@@ -140,7 +140,6 @@
     <string name="player_doubletap">Doble toque para mostrar u ocultar el chat</string>
     <string name="player_channel">Mostrar nombre del canal</string>
     <string name="player_pause">Mostrar botón de pausa en transmisiones en vivo</string>
-    <string name="token_random_deviceid">ID de dispositivo aleatorio</string>
     <string name="playback_speed">Velocidad de reproducción</string>
     <string name="hold_to_speed">Velocidad al mantener presionado</string>
     <string name="quality">Calidad</string>
@@ -489,10 +488,6 @@
     <string name="remove_bookmark">Quitar marcador</string>
     <string name="saved">Guardados</string>
     <string name="refresh">Actualizar</string>
-    <string name="image_library">Biblioteca de imágenes</string>
-    <string name="imageLibraryEntries1">Coil</string>
-    <string name="imageLibraryEntries2">Coil + Glide WebP</string>
-    <string name="imageLibraryEntries3">Glide</string>
     <string name="disabled">Desactivado</string>
     <string name="live_target_offset">Desfase respecto al directo</string>
     <string name="buffer_for_playback">Búfer para reproducción</string>
@@ -517,7 +512,6 @@
     <string name="restart_player">Reiniciar reproductor</string>
     <string name="replay">Repetición</string>
     <string name="retry_ivs">Reintentar reproductor de baja latencia</string>
-    <string name="sub_only_summary">Para contenido exclusivo de subs</string>
     <string name="follow_button">Botón de seguir</string>
     <string name="follow_kick_account">Seguir en Kick</string>
     <string name="follow_local">Seguir localmente</string>
@@ -583,11 +577,6 @@
     <string name="debug_api_commands">Usar comandos de chat por API</string>
     <string name="debug_delete_all_followed_channels">Eliminar todos los canales seguidos</string>
     <string name="debug_delete_all_followed_channels_summary">Acción de depuración. Elimina permanentemente cada canal seguido importado o agregado localmente, y limpia sus notificaciones de seguimiento.</string>
-    <string name="skip_video_access_token">Omitir token de acceso del video</string>
-    <string name="skipVideoTokenEntries1">Omitir siempre</string>
-    <string name="skipVideoTokenEntries2">Omitir de forma predeterminada; no omitir si la reproducción falla</string>
-    <string name="skipVideoTokenEntries3">No omitir de forma predeterminada; omitir si la reproducción falla</string>
-    <string name="skipVideoTokenEntries4">Nunca omitir</string>
     <string name="keep_screen_on_when_paused">Mantener pantalla encendida con el video en pausa</string>
     <string name="stream_proxy_url">URL de proxy personalizado</string>
     <string name="stream_proxy_url_desc">\"$channel\" se reemplazará por el usuario del canal</string>
@@ -601,7 +590,6 @@
     <string name="show_multivariant_playlist_tags">Mostrar etiquetas de playlist multivariante</string>
     <string name="use_gamepager">Usar pestañas en la página \"Juegos\"</string>
     <string name="disable_background_video">Desactivar renderizado de video en segundo plano</string>
-    <string name="get_webview_integrity">Obtener token de integridad con WebView</string>
     <string name="show_title">Mostrar título</string>
     <string name="show_category">Mostrar categoría</string>
     <string name="get_all_headers">Obtener todos los encabezados</string>
@@ -625,8 +613,6 @@
     <string name="playback_speeds">Velocidades de reproducción</string>
     <string name="use_custom_proxy">Usar proxy personalizado</string>
     <string name="use_custom_proxy_desc">Requiere una URL que devuelva una playlist</string>
-    <string name="stream_headers">Encabezados de solicitudes de transmisión</string>
-    <string name="stream_headers_desc">Usa formato JSON</string>
     <string name="follow">Seguir</string>
     <string name="unfollow">Dejar de seguir</string>
     <string name="mute">Silenciar</string>
@@ -760,7 +746,7 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="live_notification_category">%1$s está transmitiendo %2$s</string>
     <string name="privacy">Privacidad</string>
     <string name="usage_stats_title">Estadísticas de uso anónimas</string>
-    <string name="usage_stats_summary">Envía un ping diario anónimo. No se incluyen datos de cuenta ni de actividad.</string>
+    <string name="usage_stats_summary">Envía un informe anónimo diario con recuentos de actividad y el estado de inicio de sesión mediante OAuth de Kick.</string>
     <string name="live_notifications">Notificaciones de transmisiones en vivo</string>
     <string name="live_notifications_summary">Alertas push instantáneas cuando los canales que sigues están en vivo. Esto es todo lo que la mayoría necesita.</string>
     <string name="live_notifications_polling_backup">Sondeo de respaldo en segundo plano</string>
@@ -879,7 +865,6 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="downloading_update_progress">Descargando actualización. %1$s / %2$s</string>
     <string name="downloading_update">Descargando actualización.</string>
     <string name="update_download_failed">Error al descargar la actualización.</string>
-    <string name="playback_settings">Reproducción</string>
     <string name="chat_settings">Chat</string>
     <string name="debug_settings">Depuración</string>
     <string name="download_threads">Subprocesos de descarga</string>
@@ -895,12 +880,6 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="chat_input_toggle">Mostrar campo del chat</string>
     <string name="chat_toggle">Mostrar chat</string>
     <string name="fullscreen">Pantalla completa</string>
-    <string name="stream_device_id">ID de dispositivo de la transmisión</string>
-    <string name="stream_player_type">Tipo de reproductor de transmisiones</string>
-    <string name="video_player_type">Tipo de reproductor de videos</string>
-    <string name="supported_codecs">Códecs compatibles</string>
-    <string name="include_gql_token_stream">Incluir token web de Kick en solicitudes de transmisión</string>
-    <string name="include_gql_token_video">Incluir token web de Kick en solicitudes de video</string>
     <string name="min_buffer">Búfer mínimo</string>
     <string name="min_buffer_summary">Búfer mínimo en milisegundos</string>
     <string name="player_latency_profile">Perfil de latencia en vivo</string>
@@ -1167,15 +1146,11 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="login_to_import_follows">Inicia sesión para importar los canales seguidos</string>
     <string name="developer_tokens">Tokens de desarrollador y API</string>
     <string name="developer_tokens_summary">Tokens OAuth, validación de sesión y webhooks de EventSub</string>
-    <string name="stream_parameters">Parámetros de transmisión</string>
-    <string name="stream_parameters_summary">Códecs, ID de dispositivo y encabezados personalizados</string>
     <string name="proxy_settings_summary">Configuración de proxy HTTP, HTTPS y SOCKS5</string>
     <string name="advanced_image_rendering">Avanzado y rendimiento</string>
     <string name="storage_and_cleanup">Almacenamiento y limpieza</string>
     <string name="connection_timings">Tiempos de conexión</string>
     <string name="session_and_security">Sesión y seguridad</string>
-    <string name="codecs_and_device_id">Códecs e identificación del dispositivo</string>
-    <string name="gql_token_headers">Token GQL y encabezados</string>
     <string name="proxy_routing_options">Opciones de enrutamiento por proxy</string>
     <string name="proxy_server_credentials">Credenciales del servidor proxy</string>
     <string name="theme_and_colors">Tema y colores</string>
@@ -1324,4 +1299,19 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="drops_live_badge">EN VIVO</string>
     <string name="drops_channel_event_single">%1$s • @%2$s</string>
     <string name="drops_channel_event_multiple">%1$s • %2$d canales</string>
+    <string name="player_audio_saver_rung_title">Calidad de ahorro de datos en modo solo audio (Amazon IVS)</string>
+    <string name="player_audio_saver_rung_480p">480p (predeterminado)</string>
+    <string name="player_audio_saver_rung_360p">360p</string>
+    <string name="player_audio_saver_rung_160p">160p</string>
+
+    <string name="stream_parameters">Parámetros de transmisión</string>
+    <string name="stream_parameters_summary">Códecs, cabeceras de las solicitudes de emisión y acceso a VOD</string>
+    <string name="supported_codecs">Códecs compatibles</string>
+    <string name="stream_headers">Encabezados de solicitudes de transmisión</string>
+    <string name="stream_headers_desc">Usa formato JSON</string>
+    <string name="skip_video_access_token">Omitir token de acceso del video</string>
+    <string name="skipVideoTokenEntries1">Omitir siempre</string>
+    <string name="skipVideoTokenEntries2">Omitir de forma predeterminada; no omitir si la reproducción falla</string>
+    <string name="skipVideoTokenEntries3">No omitir de forma predeterminada; omitir si la reproducción falla</string>
+    <string name="skipVideoTokenEntries4">Nunca omitir</string>
 </resources>

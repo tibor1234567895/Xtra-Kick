@@ -10,7 +10,9 @@ import android.view.ViewGroup
 import androidx.core.os.BundleCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.FragmentManager
-import com.bumptech.glide.Glide
+import coil3.load
+import coil3.request.error
+import coil3.request.placeholder
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.xtrakick.app.R
@@ -85,11 +87,10 @@ class CollectiblesPreviewBottomSheet : BottomSheetDialogFragment() {
 
         // Card styling & stroke
         binding.previewCard.strokeColor = color
-        Glide.with(this)
-            .load(cardUrl)
-            .placeholder(R.drawable.ic_kick_gem)
-            .error(R.drawable.ic_kick_gem)
-            .into(binding.previewCardImage)
+        binding.previewCardImage.load(cardUrl) {
+            placeholder(R.drawable.ic_kick_gem)
+            error(R.drawable.ic_kick_gem)
+        }
 
         binding.previewLockedScrim.isVisible = !owned
         binding.previewLockIcon.isVisible = !owned

@@ -83,7 +83,6 @@ class ChatAdapter(
     private val fragment: Fragment,
     private val backgroundColor: Int,
     private val dialogBackgroundColor: Int,
-    private var imageLibrary: String?,
     private var messageTextSize: Float,
     private var emoteSize: Int,
     private var badgeSize: Int,
@@ -142,7 +141,6 @@ class ChatAdapter(
         val enableAlternatingLineShadows: Boolean,
         val alternatingLineShadowStrength: Int,
         val showSystemMessageEmotes: Boolean,
-        val imageLibrary: String?,
         val messageTextSize: Float,
         val emoteSize: Int,
         val badgeSize: Int,
@@ -174,7 +172,6 @@ class ChatAdapter(
         result = 31L * result + (if (showSystemMessageEmotes) 1 else 0)
         result = 31L * result + (chatUrl?.hashCode() ?: 0)
         result = 31L * result + (loggedInUser?.hashCode() ?: 0)
-        result = 31L * result + (imageLibrary?.hashCode() ?: 0)
         result = 31L * result + java.lang.Float.floatToIntBits(messageTextSize)
         result = 31L * result + emoteSize
         result = 31L * result + badgeSize
@@ -208,30 +205,31 @@ class ChatAdapter(
         messages.forEach(ChatAdapterUtils::invalidatePreparedMessage)
     }
 
+    private fun currentLiveSettings() = LiveSettings(
+        enableTimestamps = enableTimestamps,
+        timestampFormat = timestampFormat,
+        firstMsgVisibility = firstMsgVisibility,
+        useRandomColors = useRandomColors,
+        useReadableColors = useReadableColors,
+        useBoldNames = useBoldNames,
+        showNamePaints = showNamePaints,
+        showStvBadges = showStvBadges,
+        showKickBadges = showKickBadges,
+        showPersonalEmotes = showPersonalEmotes,
+        enableAlternatingLineShadows = enableAlternatingLineShadows,
+        alternatingLineShadowStrength = alternatingLineShadowStrength,
+        showSystemMessageEmotes = showSystemMessageEmotes,
+        messageTextSize = messageTextSize,
+        emoteSize = emoteSize,
+        badgeSize = badgeSize,
+        emoteQuality = emoteQuality,
+        animateGifs = animateGifs,
+        animatedEmoteFps = animatedEmoteFps,
+        enableOverlayEmotes = enableOverlayEmotes,
+    )
+
     fun updateLiveSettings(settings: LiveSettings): Boolean {
-        if (
-            enableTimestamps == settings.enableTimestamps &&
-            timestampFormat == settings.timestampFormat &&
-            firstMsgVisibility == settings.firstMsgVisibility &&
-            useRandomColors == settings.useRandomColors &&
-            useReadableColors == settings.useReadableColors &&
-            useBoldNames == settings.useBoldNames &&
-            showNamePaints == settings.showNamePaints &&
-            showStvBadges == settings.showStvBadges &&
-            showKickBadges == settings.showKickBadges &&
-            showPersonalEmotes == settings.showPersonalEmotes &&
-            enableAlternatingLineShadows == settings.enableAlternatingLineShadows &&
-            alternatingLineShadowStrength == settings.alternatingLineShadowStrength &&
-            showSystemMessageEmotes == settings.showSystemMessageEmotes &&
-            imageLibrary == settings.imageLibrary &&
-            messageTextSize == settings.messageTextSize &&
-            emoteSize == settings.emoteSize &&
-            badgeSize == settings.badgeSize &&
-            emoteQuality == settings.emoteQuality &&
-            animateGifs == settings.animateGifs &&
-            animatedEmoteFps == settings.animatedEmoteFps &&
-            enableOverlayEmotes == settings.enableOverlayEmotes
-        ) {
+        if (currentLiveSettings() == settings) {
             return false
         }
         enableTimestamps = settings.enableTimestamps
@@ -247,7 +245,6 @@ class ChatAdapter(
         enableAlternatingLineShadows = settings.enableAlternatingLineShadows
         alternatingLineShadowStrength = settings.alternatingLineShadowStrength
         showSystemMessageEmotes = settings.showSystemMessageEmotes
-        imageLibrary = settings.imageLibrary
         messageTextSize = settings.messageTextSize
         emoteSize = settings.emoteSize
         badgeSize = settings.badgeSize
@@ -344,7 +341,7 @@ class ChatAdapter(
                         holder.updateFormattedText(updatedBuilder)
                     }
                 }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
-                backgroundColor, imageLibrary, result.builder, effectiveEmoteSize, effectiveBadgeSize, emoteQuality, animateGifs, enableOverlayEmotes,
+                backgroundColor, result.builder, effectiveEmoteSize, effectiveBadgeSize, emoteQuality, animateGifs, enableOverlayEmotes,
                 animatedEmoteFps
             )
         }
@@ -357,7 +354,7 @@ class ChatAdapter(
             { chatMessage -> selectedMessage = chatMessage; replyClickListener?.invoke() },
             { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClickListener?.invoke(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, showStvBadges, showKickBadges, showPersonalEmotes,
-            enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize.coerceAtLeast(1), badgeSize.coerceAtLeast(1),
+            enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, messageTextSize, emoteSize.coerceAtLeast(1), badgeSize.coerceAtLeast(1),
             emoteQuality, animateGifs, enableOverlayEmotes, random, userColors,
             savedColors, savedLocalChatEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessageOverride
         )
@@ -369,7 +366,7 @@ class ChatAdapter(
             stvUsers, enableTimestamps, timestampFormat, firstMsgVisibility, firstChatMsg, redeemedChatMsg, redeemedNoMsg, rewardChatMsg, replyMessage,
             { url, name, format, isAnimated, source, thirdParty, emoteId -> imageClickListener?.invoke(url, name, format, isAnimated, source, thirdParty, emoteId) },
             useRandomColors, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, showStvBadges, showKickBadges, showPersonalEmotes,
-            enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, imageLibrary, messageTextSize, emoteSize.coerceAtLeast(1), badgeSize.coerceAtLeast(1),
+            enableAlternatingLineShadows, alternatingLineShadowStrength, showSystemMessageEmotes, chatUrl, getEmoteBytes, fragment, dialogBackgroundColor, messageTextSize, emoteSize.coerceAtLeast(1), badgeSize.coerceAtLeast(1),
             emoteQuality, animateGifs, enableOverlayEmotes, random, userColors,
             savedColors, savedLocalChatEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, loggedInUser, selectedMessage
         )

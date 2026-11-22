@@ -8,8 +8,13 @@ import android.util.LruCache
 import android.view.View
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.resource.bitmap.CircleCrop
+import coil3.imageLoader
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.request.allowHardware
+import coil3.request.transformations
+import coil3.toBitmap
+import coil3.transform.CircleCropTransformation
 import com.xtrakick.app.R
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.repository.FollowedLiveStreamsRepository
@@ -31,6 +36,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -139,23 +145,32 @@ class LiveChannelsRemoteViewsFactory(
         if (!avatarScope.isActive || (avatarRetryAfter.get(url) ?: 0L) > SystemClock.elapsedRealtime() || !pendingAvatars.add(url)) return
         avatarScope.launch {
             try {
-                avatarSemaphore.withPermit {
-                    val manager = Glide.with(context)
-                    val target = manager.asBitmap().load(url).transform(CircleCrop()).submit(96, 96)
-                    try {
-                        val bitmap = target.get(2, TimeUnit.SECONDS).copy(Bitmap.Config.ARGB_8888, false)
-                        if (isActive && bitmap != null) avatars.put(url, bitmap)
-                    } finally {
-                        manager.clear(target)
+                val loadedBitmap = avatarSemaphore.withPermit {
+                    val result = withTimeoutOrNull(2_000L) {
+                        context.imageLoader.execute(
+                            ImageRequest.Builder(context)
+                                .data(url)
+                                .size(96, 96)
+                                .allowHardware(false)
+                                .transformations(CircleCropTransformation())
+                                .build()
+                        )
                     }
+                    (result as? SuccessResult)?.image?.toBitmap()
+                        ?.copy(Bitmap.Config.ARGB_8888, false)
                 }
-                synchronized(refreshLock) {
-                    if (avatarRefreshJob?.isActive != true) {
-                        avatarRefreshJob = avatarScope.launch {
-                            delay(250L)
-                            LiveChannelsWidgetProvider.notifyDataChanged(context)
+                if (isActive && loadedBitmap != null) {
+                    avatars.put(url, loadedBitmap)
+                    synchronized(refreshLock) {
+                        if (avatarRefreshJob?.isActive != true) {
+                            avatarRefreshJob = avatarScope.launch {
+                                delay(250L)
+                                LiveChannelsWidgetProvider.notifyDataChanged(context)
+                            }
                         }
                     }
+                } else if (isActive) {
+                    avatarRetryAfter.put(url, SystemClock.elapsedRealtime() + 60_000L)
                 }
             } catch (error: CancellationException) {
                 throw error

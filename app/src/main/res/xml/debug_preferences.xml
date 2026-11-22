@@ -52,13 +52,6 @@
             app:singleLineTitle="false" />
 
         <SwitchPreferenceCompat
-            android:defaultValue="true"
-            android:key="use_webview_integrity"
-            android:title="@string/get_webview_integrity"
-            app:iconSpaceReserved="false"
-            app:singleLineTitle="false" />
-
-        <SwitchPreferenceCompat
             android:defaultValue="false"
             android:key="get_all_gql_headers"
             android:title="@string/get_all_headers"

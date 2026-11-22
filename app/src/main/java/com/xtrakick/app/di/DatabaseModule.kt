@@ -303,8 +303,27 @@ class DatabaseModule {
                         db.execSQL("CREATE TABLE IF NOT EXISTS muted_chat_users (userId TEXT, userLogin TEXT, userName TEXT, id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL)")
                     }
                 },
+                object : Migration(36, 37) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_videos_url` ON `videos` (`url`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_videos_videoId` ON `videos` (`videoId`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_videos_channel_id` ON `videos` (`channel_id`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_videos_channel_login_live_status` ON `videos` (`channel_login`, `live`, `status`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_videos_status` ON `videos` (`status`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_bookmarks_videoId` ON `bookmarks` (`videoId`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_bookmarks_userId` ON `bookmarks` (`userId`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_local_follows_userId` ON `local_follows` (`userId`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_local_follows_userLogin` ON `local_follows` (`userLogin`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_local_follows_games_gameId` ON `local_follows_games` (`gameId`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_local_follows_games_gameSlug` ON `local_follows_games` (`gameSlug`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_muted_chat_users_userId` ON `muted_chat_users` (`userId`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_muted_chat_users_userLogin` ON `muted_chat_users` (`userLogin`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_recent_search_type_lastSearched` ON `recent_search` (`type`, `lastSearched`)")
+                        db.execSQL("CREATE INDEX IF NOT EXISTS `index_recent_emotes_used_at` ON `recent_emotes` (`used_at`)")
+                    }
+                },
             )
-            // Migrations only cover 9->36, and schemas/ still holds snapshots for 1, 2 and 8.
+            // Migrations only cover 9->37, and schemas/ still holds snapshots for 1, 2 and 8.
             // A database at any of those versions would throw on first open. No installed base
             // can actually be there (the applicationId has never matched upstream), so wipe
             // rather than crash.

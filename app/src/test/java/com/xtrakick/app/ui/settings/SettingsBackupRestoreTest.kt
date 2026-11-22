@@ -46,30 +46,33 @@ class SettingsBackupRestoreTest {
     }
 
     @Test fun validSqliteWithoutTheRoomSchemaIsRejected() {
+        val currentVersion = database.openHelper.readableDatabase.version
         val file = File.createTempFile("wrong-schema", ".db", context.cacheDir)
         SQLiteDatabase.openOrCreateDatabase(file, null).use {
             it.execSQL("CREATE TABLE wrong_table (id INTEGER)")
-            it.version = 36
+            it.version = currentVersion
         }
-        assertThrows(Exception::class.java) { SettingsBackupRestore.validateDatabase(context, file, 36) }
+        assertThrows(Exception::class.java) { SettingsBackupRestore.validateDatabase(context, file, currentVersion) }
     }
 
     @Test fun newerBackupIsRejectedBeforeReplacement() {
+        val currentVersion = database.openHelper.readableDatabase.version
         val file = stagedDatabase("future")
-        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use { it.version = 37 }
-        assertThrows(IllegalArgumentException::class.java) { SettingsBackupRestore.validateDatabase(context, file, 36) }
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use { it.version = currentVersion + 1 }
+        assertThrows(IllegalArgumentException::class.java) { SettingsBackupRestore.validateDatabase(context, file, currentVersion) }
     }
 
     @Test fun stagedBackupUsesTheLiveMigrationsAndKeepsItsData() {
+        val currentVersion = database.openHelper.readableDatabase.version
         val file = stagedDatabase("kept")
         SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use {
             it.execSQL("DROP TABLE muted_chat_users")
             it.execSQL("DELETE FROM room_master_table")
             it.version = 35
         }
-        SettingsBackupRestore.validateDatabase(context, file, 36)
+        SettingsBackupRestore.validateDatabase(context, file, currentVersion)
         SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use {
-            assertEquals(36, it.version)
+            assertEquals(currentVersion, it.version)
             it.rawQuery("SELECT value FROM marker", null).use { row ->
                 assertTrue(row.moveToFirst())
                 assertEquals("kept", row.getString(0))

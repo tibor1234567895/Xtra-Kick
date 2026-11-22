@@ -18,20 +18,12 @@ import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.request.crossfade
 import coil3.request.target
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.DataSource as GlideDataSource
-import com.bumptech.glide.load.engine.DiskCacheStrategy
-import com.bumptech.glide.load.engine.GlideException
-import com.bumptech.glide.load.model.GlideUrl
-import com.bumptech.glide.request.RequestListener
-import com.bumptech.glide.request.target.Target
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.util.chat.ChatAdapterUtils
 import com.xtrakick.app.util.chat.StvCdnHealth
 import com.xtrakick.app.util.chat.stvPrefetchUrl
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
@@ -41,7 +33,7 @@ import java.util.WeakHashMap
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 object EmoteImageLoader {
-    private data class EmoteRequest(val url: String, val thirdParty: Boolean, val glide: Boolean)
+    private data class EmoteRequest(val url: String, val thirdParty: Boolean)
 
     private class ViewLoad(
         val primary: EmoteRequest,
@@ -77,13 +69,12 @@ object EmoteImageLoader {
         fragment: Fragment,
         item: Emote?,
         emoteQuality: String,
-        imageLibrary: String?,
         clickListener: (Emote) -> Unit,
     ) {
         val urls = item?.let { pickerUrls(it, emoteQuality) }.orEmpty()
         val url = urls.firstOrNull()
         if (item == null || url == null) {
-            clear(imageView, fragment)
+            clear(imageView)
             boundStates.remove(imageView)
             imageView.background = if (item == null) {
                 fragment.requireContext().getDrawable(R.drawable.bg_emote_placeholder)
@@ -94,8 +85,7 @@ object EmoteImageLoader {
             return
         }
 
-        val glide = imageLibrary != "0" && (imageLibrary != "1" || item.format.equals("webp", true))
-        val primary = EmoteRequest(url, item.thirdParty, glide)
+        val primary = EmoteRequest(url, item.thirdParty)
         val fallback = urls.getOrNull(1)?.let { primary.copy(url = it) }
         val previous = boundStates[imageView]
         imageView.setOnClickListener { clickListener(item) }
@@ -103,7 +93,7 @@ object EmoteImageLoader {
             (!previous.failed || previous.generation == cacheGeneration || primary in pendingWarming)
         ) return
 
-        clear(imageView, fragment)
+        clear(imageView)
         imageView.background = null
         val load = ViewLoad(primary, fallback, cacheGeneration)
         boundStates[imageView] = load
@@ -112,7 +102,6 @@ object EmoteImageLoader {
         fun failed() {
             if (boundStates[imageView] !== load || !primary.isStvCdn) return
             load.failed = true
-            // Dispatch away from Glide's request callback before starting or clearing a preload.
             viewScope.launch(Dispatchers.Main) {
                 if (!pendingWarming.add(primary)) return@launch
                 try {
@@ -125,45 +114,29 @@ object EmoteImageLoader {
             }
         }
 
-        if (glide) {
-            val manager = Glide.with(fragment)
-            val request = manager.load(primary.glideModel())
-                .diskCacheStrategy(DiskCacheStrategy.DATA)
-                .addListener(primary.glideListener { if (!it && fallback == null) failed() })
-            if (fallback != null) {
-                request.error(
-                    manager.load(fallback.glideModel())
-                        .diskCacheStrategy(DiskCacheStrategy.DATA)
-                        .addListener(fallback.glideListener { if (!it) failed() }),
-                )
-            }
-            request.into(imageView)
-        } else {
-            val context = fragment.requireContext()
-            fun enqueue(request: EmoteRequest, onFailure: () -> Unit) {
-                context.imageLoader.enqueue(
-                    request.coilRequest(context)
-                        .target(imageView)
-                        .listener(
-                            onSuccess = { _, result ->
-                                if (result.dataSource == DataSource.NETWORK) request.recordHealth(true)
-                            },
-                            onError = { _, _ ->
-                                request.recordHealth(false)
-                                if (boundStates[imageView] === load) onFailure()
-                            },
-                        ).build(),
-                )
-            }
-            enqueue(primary) {
-                if (fallback == null) failed() else enqueue(fallback, ::failed)
-            }
+        val context = fragment.requireContext()
+        fun enqueue(request: EmoteRequest, onFailure: () -> Unit) {
+            context.imageLoader.enqueue(
+                request.coilRequest(context)
+                    .target(imageView)
+                    .listener(
+                        onSuccess = { _, result ->
+                            if (result.dataSource == DataSource.NETWORK) request.recordHealth(true)
+                        },
+                        onError = { _, _ ->
+                            request.recordHealth(false)
+                            if (boundStates[imageView] === load) onFailure()
+                        },
+                    ).build(),
+            )
+        }
+        enqueue(primary) {
+            if (fallback == null) failed() else enqueue(fallback, ::failed)
         }
     }
 
-    private fun clear(imageView: ImageView, fragment: Fragment) {
+    private fun clear(imageView: ImageView) {
         imageView.dispose()
-        Glide.with(fragment).clear(imageView)
         imageView.setImageDrawable(null)
     }
 
@@ -172,26 +145,11 @@ object EmoteImageLoader {
         var retry = 0
         while (true) {
             delay(warmRetryDelaysMs[retry])
-            val succeeded = if (request.glide) {
-                val completion = CompletableDeferred<Boolean>()
-                val manager = Glide.with(fragment)
-                val target = manager.load(request.glideModel())
-                    .diskCacheStrategy(DiskCacheStrategy.DATA)
-                    .addListener(request.glideListener { completion.complete(it) })
-                    .preload()
-                try {
-                    completion.await()
-                } finally {
-                    manager.clear(target)
-                }
-            } else {
-                val result = context.imageLoader.execute(request.coilRequest(context).build())
-                if (result !is SuccessResult || result.dataSource == DataSource.NETWORK) {
-                    request.recordHealth(result is SuccessResult)
-                }
-                result is SuccessResult
+            val result = context.imageLoader.execute(request.coilRequest(context).build())
+            if (result !is SuccessResult || result.dataSource == DataSource.NETWORK) {
+                request.recordHealth(result is SuccessResult)
             }
-            if (succeeded) return
+            if (result is SuccessResult) return
             retry = (retry + 1).coerceAtMost(warmRetryDelaysMs.lastIndex)
         }
     }
@@ -211,30 +169,10 @@ object EmoteImageLoader {
         crossfade(false)
     }
 
-    private fun EmoteRequest.glideModel(): Any = if (thirdParty) {
-        GlideUrl(url) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) }
-    } else {
-        url
-    }
-
-    private fun EmoteRequest.glideListener(onResult: (Boolean) -> Unit) = object : RequestListener<Drawable> {
-        override fun onLoadFailed(e: GlideException?, model: Any, target: Target<Drawable>, isFirstResource: Boolean): Boolean {
-            recordHealth(false)
-            onResult(false)
-            return false
-        }
-
-        override fun onResourceReady(resource: Drawable, model: Any, target: Target<Drawable>, dataSource: GlideDataSource, isFirstResource: Boolean): Boolean {
-            if (dataSource == GlideDataSource.REMOTE) recordHealth(true)
-            onResult(true)
-            return false
-        }
-    }
-
     /**
-     * Stops animated emote drawables under [root] (Glide GifDrawable and Coil
-     * AnimatedImageDrawable both implement Animatable). Used when the chat panel
-     * is hidden: the decode loop keeps running against invisible views otherwise.
+     * Stops animated emote drawables under [root] (Coil AnimatedImageDrawable / GifDrawable
+     * implement Animatable). Used when the chat panel is hidden: the decode loop keeps
+     * running against invisible views otherwise.
      */
     fun freezeAll(root: View) {
         forEachAnimatedView(root) { view ->

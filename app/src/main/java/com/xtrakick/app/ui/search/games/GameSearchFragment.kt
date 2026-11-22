@@ -21,7 +21,6 @@ import com.xtrakick.app.R
 import com.xtrakick.app.databinding.CommonRecyclerViewLayoutBinding
 import com.xtrakick.app.model.ui.Game
 import com.xtrakick.app.ui.common.GamesAdapter
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.PagedListFragment
 import com.xtrakick.app.ui.games.GamesFragmentDirections
 import com.xtrakick.app.ui.search.RecentSearchAdapter
@@ -105,14 +104,6 @@ class GameSearchFragment : PagedListFragment(), Searchable, Scrollable {
                                 recyclerView.adapter = concatAdapter ?: pagingAdapter
                             }
                         }
-                        if ((loadState.refresh as? LoadState.Error ?:
-                            loadState.append as? LoadState.Error ?:
-                            loadState.prepend as? LoadState.Error)?.error?.message == "failed integrity check" &&
-                            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                            requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
-                        ) {
-                            IntegrityDialog.show(childFragmentManager, "refresh")
-                        }
                     }
                 }
             }
@@ -126,12 +117,6 @@ class GameSearchFragment : PagedListFragment(), Searchable, Scrollable {
                 }
             }
         }
-        if (requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-            requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true) &&
-            KickApiHelper.isIntegrityTokenExpired(requireContext())
-        ) {
-            IntegrityDialog.show(childFragmentManager, "refresh")
-        }
     }
 
     override fun search(query: String, saveToHistory: Boolean) {
@@ -143,12 +128,6 @@ class GameSearchFragment : PagedListFragment(), Searchable, Scrollable {
 
     override fun onNetworkRestored() {
         pagingAdapter.retry()
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
-        if (callback == "refresh") {
-            pagingAdapter.refresh()
-        }
     }
 
     override fun onDestroyView() {

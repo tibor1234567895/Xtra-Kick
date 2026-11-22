@@ -5,7 +5,9 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.bumptech.glide.Glide
+import coil3.load
+import coil3.request.error
+import coil3.request.placeholder
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.ItemDropClaimedRewardBinding
 import com.xtrakick.app.model.kick.KickDropCampaignFull
@@ -54,11 +56,10 @@ class DropsClaimedAdapter(
                 }
             }
 
-            Glide.with(itemView)
-                .load(entry.reward.resolvedImageUrl)
-                .placeholder(R.drawable.ic_kick_gem)
-                .error(R.drawable.ic_kick_gem)
-                .into(binding.claimedImage)
+            binding.claimedImage.load(entry.reward.resolvedImageUrl) {
+                placeholder(R.drawable.ic_kick_gem)
+                error(R.drawable.ic_kick_gem)
+            }
         }
     }
 }

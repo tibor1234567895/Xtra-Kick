@@ -65,7 +65,6 @@ class ReplyClickedChatAdapter(
     private val getEmoteBytes: ((String, Pair<Long, Int>) -> ByteArray?)?,
     private val fragment: Fragment,
     private val backgroundColor: Int,
-    private val imageLibrary: String?,
     private val messageTextSize: Float,
     private val emoteSize: Int,
     private val badgeSize: Int,
@@ -169,7 +168,7 @@ class ReplyClickedChatAdapter(
                         holder.textView.setBackgroundColor(resolveSelectedBackgroundColor(holder.textView.context))
                     }
                 }, result.images, result.imagePaint, result.userName, result.userNameStartIndex,
-                backgroundColor, imageLibrary, result.builder, emoteSize.coerceAtLeast(1), badgeSize.coerceAtLeast(1), emoteQuality, animateGifs, enableOverlayEmotes
+                backgroundColor, result.builder, emoteSize.coerceAtLeast(1), badgeSize.coerceAtLeast(1), emoteQuality, animateGifs, enableOverlayEmotes
             )
         }
         if (chatMessage == selectedMessage) {

@@ -9,7 +9,9 @@ import androidx.core.view.updateLayoutParams
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.bumptech.glide.Glide
+import coil3.load
+import coil3.request.error
+import coil3.request.placeholder
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.ItemDropRewardBinding
 import com.xtrakick.app.model.kick.KickDropRewardItem
@@ -88,11 +90,10 @@ class DropsRewardsAdapter(
 
             binding.rewardName.text = reward.name
 
-            Glide.with(itemView)
-                .load(reward.resolvedImageUrl)
-                .placeholder(R.drawable.ic_kick_gem)
-                .error(R.drawable.ic_kick_gem)
-                .into(binding.rewardImage)
+            binding.rewardImage.load(reward.resolvedImageUrl) {
+                placeholder(R.drawable.ic_kick_gem)
+                error(R.drawable.ic_kick_gem)
+            }
 
             val progressPct = (reward.progressFraction * 100).toInt()
             binding.progressBar.progress = progressPct

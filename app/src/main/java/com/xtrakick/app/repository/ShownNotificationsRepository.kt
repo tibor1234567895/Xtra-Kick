@@ -14,8 +14,13 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.text.HtmlCompat
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.resource.bitmap.CircleCrop
+import coil3.imageLoader
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.request.allowHardware
+import coil3.request.transformations
+import coil3.toBitmap
+import coil3.transform.CircleCropTransformation
 import com.xtrakick.app.db.ShownNotificationsDao
 import com.xtrakick.app.model.ShownNotification
 import com.xtrakick.app.model.kick.api.livestream.Livestream
@@ -34,8 +39,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -377,10 +382,22 @@ class ShownNotificationsRepository @Inject constructor(
                     if (avatarUrl.isNullOrBlank()) return@async
                     val notificationId = notificationIdFor(stream)
                     artworkSlots.withPermit {
-                        val request = Glide.with(context).asBitmap().load(avatarUrl)
-                            .transform(CircleCrop()).timeout(10_000).submit(iconSize, iconSize)
                         try {
-                            val bitmap: Bitmap = request.get(15, TimeUnit.SECONDS)
+                            val result = withTimeoutOrNull(15_000L) {
+                                context.imageLoader.execute(
+                                    ImageRequest.Builder(context)
+                                        .data(avatarUrl)
+                                        .size(iconSize, iconSize)
+                                        .allowHardware(false)
+                                        .transformations(CircleCropTransformation())
+                                        .build()
+                                )
+                            }
+                            if (result == null) {
+                                Log.w(TAG, "Live notification avatar timed out for ${stream.channelLogin}")
+                                return@withPermit
+                            }
+                            val bitmap: Bitmap = (result as? SuccessResult)?.image?.toBitmap() ?: return@withPermit
                             ensureActive()
                             synchronized(liveNotificationLock) {
                                 val active = notificationManager.activeNotifications.firstOrNull {
@@ -395,8 +412,6 @@ class ShownNotificationsRepository @Inject constructor(
                         } catch (error: Exception) {
                             if (error is CancellationException) throw error
                             Log.w(TAG, "Live notification avatar failed for ${stream.channelLogin}", error)
-                        } finally {
-                            Glide.with(context).clear(request)
                         }
                     }
                 }

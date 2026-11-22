@@ -50,8 +50,8 @@ class OfflineRepository @Inject constructor(
         videosDao.getByUrl(url)
     }
 
-    suspend fun getLiveDownload(login: String) = withContext(Dispatchers.IO) {
-        videosDao.getLiveDownload(login)
+    suspend fun getLiveDownloads(login: String) = withContext(Dispatchers.IO) {
+        videosDao.getLiveDownloads(login)
     }
 
     suspend fun getVideosByUserId(id: String) = withContext(Dispatchers.IO) {
@@ -102,6 +102,10 @@ class OfflineRepository @Inject constructor(
 
     suspend fun updateStatus(video: OfflineVideo) = withContext(Dispatchers.IO) {
         videosDao.updateStatus(video.id, video.status)
+    }
+
+    suspend fun updateStatusIfCurrent(video: OfflineVideo, status: Int) = withContext(Dispatchers.IO) {
+        videosDao.updateStatusIfCurrent(video.id, video.status, status)
     }
 
     suspend fun updateOperationProgress(video: OfflineVideo) = withContext(Dispatchers.IO) {

@@ -77,7 +77,7 @@
     <fragment
         android:id="@+id/playbackSettingsFragment"
         android:name="com.xtrakick.app.ui.settings.SettingsActivity$PlaybackSettingsFragment"
-        android:label="@string/playback_settings" />
+        android:label="@string/stream_parameters" />
     <action
         android:id="@+id/action_global_playbackSettingsFragment"
         app:destination="@id/playbackSettingsFragment" />

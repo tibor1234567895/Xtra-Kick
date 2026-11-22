@@ -40,9 +40,17 @@ import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.MarginPageTransformer
 import androidx.viewpager2.widget.ViewPager2
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.model.GlideUrl
-import com.bumptech.glide.request.target.Target
+import coil3.asDrawable
+import coil3.dispose
+import coil3.imageLoader
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.request.error
+import coil3.request.fallback
+import coil3.request.target
+import coil3.size.Size
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.chip.Chip
@@ -691,16 +699,16 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         urls.map { url ->
             async {
                 val isWinnerCard = (url == winnerUrl)
-                val targetW = if (isWinnerCard) Target.SIZE_ORIGINAL else tileWidth
-                val targetH = if (isWinnerCard) Target.SIZE_ORIGINAL else tileHeight
                 runCatching {
-                    val drawable = Glide.with(appContext)
-                        .asDrawable()
-                        .load(buildKickGlideUrl(url))
-                        .dontTransform()
-                        .submit(targetW, targetH)
-                        .get()
-                    if (drawable != null) {
+                    val request = buildKickImageRequest(appContext, url).apply {
+                        if (isWinnerCard) size(Size.ORIGINAL) else size(tileWidth, tileHeight)
+                    }.build()
+                    val result = appContext.imageLoader.execute(request) as? SuccessResult
+                    val drawable = result?.image?.asDrawable(appContext.resources)
+                    // Only cache drawables that support ConstantState cloning; Android's
+                    // AnimatedImageDrawable returns constantState == null and would freeze
+                    // duplicate roulette tiles if shared across ImageViews.
+                    if (drawable != null && drawable.constantState != null) {
                         preloadedDrawables[url] = drawable
                     }
                 }
@@ -893,19 +901,22 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
             }
             val itemImageUrl = safeRewardImageUrl(item.itemUrl)
             val cached = itemImageUrl?.let { preloadedDrawables[it] }
-            if (cached != null) {
-                val drawable = cached.constantState?.newDrawable(resources) ?: cached
-                slotBinding.slotImage.setImageDrawable(drawable)
-                if (drawable is Animatable) {
-                    drawable.start()
+            val cloned = cached?.constantState?.newDrawable(resources)
+            if (cloned != null) {
+                slotBinding.slotImage.dispose()
+                slotBinding.slotImage.setImageDrawable(cloned)
+                if (cloned is Animatable) {
+                    cloned.start()
                 }
             } else if (itemImageUrl != null) {
-                Glide.with(this@KickDailyRewardDialog)
-                    .load(buildKickGlideUrl(itemImageUrl))
-                    .fallback(R.drawable.ic_kick_gem)
-                    .error(R.drawable.ic_kick_gem)
-                    .dontTransform()
-                    .into(slotBinding.slotImage)
+                val ctx = slotBinding.slotImage.context
+                ctx.imageLoader.enqueue(
+                    buildKickImageRequest(ctx, itemImageUrl)
+                        .fallback(R.drawable.ic_kick_gem)
+                        .error(R.drawable.ic_kick_gem)
+                        .target(slotBinding.slotImage)
+                        .build()
+                )
             } else {
                 slotBinding.slotImage.setImageResource(R.drawable.ic_kick_gem)
             }
@@ -1009,12 +1020,12 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         val container = itemBinding.rouletteContainer
         val imageView = itemBinding.rewardImage
 
-        val cachedWinner = preloadedDrawables[winnerUrl]
+        val cachedWinner = preloadedDrawables[winnerUrl]?.constantState?.newDrawable(resources)
         if (cachedWinner != null) {
-            val drawable = cachedWinner.constantState?.newDrawable(resources) ?: cachedWinner
-            imageView.setImageDrawable(drawable)
-            if (drawable is Animatable) {
-                drawable.start()
+            imageView.dispose()
+            imageView.setImageDrawable(cachedWinner)
+            if (cachedWinner is Animatable) {
+                cachedWinner.start()
             }
         } else {
             showRewardImage(imageView, winnerUrl)
@@ -1188,20 +1199,22 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         imageView.animate().cancel()
         imageView.rotationX = 0f
         imageView.rotationY = 0f
-        val cached = preloadedDrawables[url]
+        val cached = preloadedDrawables[url]?.constantState?.newDrawable(resources)
         if (cached != null) {
-            val drawable = cached.constantState?.newDrawable(resources) ?: cached
-            imageView.setImageDrawable(drawable)
-            if (drawable is Animatable) {
-                drawable.start()
+            imageView.dispose()
+            imageView.setImageDrawable(cached)
+            if (cached is Animatable) {
+                cached.start()
             }
         } else {
-            Glide.with(this)
-                .load(buildKickGlideUrl(url))
-                .fallback(R.drawable.ic_kick_gem)
-                .error(R.drawable.ic_kick_gem)
-                .dontTransform()
-                .into(imageView)
+            val ctx = imageView.context
+            ctx.imageLoader.enqueue(
+                buildKickImageRequest(ctx, url)
+                    .fallback(R.drawable.ic_kick_gem)
+                    .error(R.drawable.ic_kick_gem)
+                    .target(imageView)
+                    .build()
+            )
         }
     }
 
@@ -1314,14 +1327,18 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         }
     }
 
-    private fun buildKickGlideUrl(url: String): GlideUrl {
-        return GlideUrl(url) {
-            if (url.contains(".kick.com", ignoreCase = true)) {
-                KICK_IMAGE_HEADERS
-            } else {
-                BASE_IMAGE_HEADERS
-            }
+    private fun buildKickImageRequest(context: Context, url: String): ImageRequest.Builder {
+        val headersMap = if (url.contains(".kick.com", ignoreCase = true)) {
+            KICK_IMAGE_HEADERS
+        } else {
+            BASE_IMAGE_HEADERS
         }
+        val headers = NetworkHeaders.Builder().apply {
+            headersMap.forEach { (k, v) -> add(k, v) }
+        }.build()
+        return ImageRequest.Builder(context)
+            .data(url)
+            .httpHeaders(headers)
     }
 
     /** Loads the persisted JSON of the last real claim so the debug sim replays the exact data shape. */
@@ -1436,21 +1453,23 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
                 }
 
                 if (imageUrl != null) {
-                    val cached = preloadedDrawables[imageUrl]
+                    val cached = preloadedDrawables[imageUrl]?.constantState?.newDrawable(resources)
                     if (cached != null) {
-                        val drawable = cached.constantState?.newDrawable(resources) ?: cached
-                        itemBinding.rewardImage.setImageDrawable(drawable)
-                        if (drawable is Animatable) {
-                            drawable.start()
+                        itemBinding.rewardImage.dispose()
+                        itemBinding.rewardImage.setImageDrawable(cached)
+                        if (cached is Animatable) {
+                            cached.start()
                         }
                     } else {
-                        Glide.with(this@KickDailyRewardDialog)
-                            .load(buildKickGlideUrl(imageUrl))
-                            .dontTransform()
-                            .into(itemBinding.rewardImage)
+                        val ctx = itemBinding.rewardImage.context
+                        ctx.imageLoader.enqueue(
+                            buildKickImageRequest(ctx, imageUrl)
+                                .target(itemBinding.rewardImage)
+                                .build()
+                        )
                     }
                 } else {
-                    Glide.with(this@KickDailyRewardDialog).clear(itemBinding.rewardImage)
+                    itemBinding.rewardImage.dispose()
                     itemBinding.rewardImage.setImageDrawable(null)
                 }
 

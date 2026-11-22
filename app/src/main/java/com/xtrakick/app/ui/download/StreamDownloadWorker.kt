@@ -24,6 +24,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.xtrakick.app.R
 import com.xtrakick.app.model.chat.CheerEmote
 import com.xtrakick.app.model.chat.Emote
@@ -143,6 +144,7 @@ class StreamDownloadWorker @AssistedInject constructor(
         val firstVideo = offlineRepository.getVideoById(inputData.getInt(KEY_VIDEO_ID, 0)) ?: return Result.failure()
         offlineVideo = firstVideo
         try {
+            setProgress(workDataOf(KEY_VIDEO_ID to firstVideo.id))
             offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_WAITING_FOR_STREAM })
         notificationManager.notify(firstVideo.id, createForegroundInfo(false, firstVideo).notification)
         val path = offlineVideo.downloadPath!!
@@ -282,6 +284,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                             ))
                             val newVideo = offlineRepository.getVideoById(newId.toInt())!!
                             offlineVideo = newVideo
+                            setProgress(workDataOf(KEY_VIDEO_ID to newVideo.id))
                         }
                     } else {
                         offlineRepository.updateStatus(offlineVideo.apply { status = OfflineVideo.STATUS_WAITING_FOR_STREAM })
@@ -1203,5 +1206,6 @@ class StreamDownloadWorker @AssistedInject constructor(
         const val GROUP_KEY = "com.xtrakick.app.DOWNLOADS"
 
         const val KEY_VIDEO_ID = "KEY_VIDEO_ID"
+        const val VIDEO_TAG_PREFIX = "live-recording:"
     }
 }

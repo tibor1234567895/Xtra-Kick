@@ -7,22 +7,17 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import coil3.dispose
 import coil3.imageLoader
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.request.target
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.engine.DiskCacheStrategy
-import com.bumptech.glide.load.model.GlideUrl
-import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.model.chat.Chatter
 import com.xtrakick.app.model.chat.Emote
-import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.prefs
 import java.util.Locale
 import kotlin.math.abs
 
@@ -43,7 +38,6 @@ class AutoCompleteAdapter(
 ) : RecyclerView.Adapter<AutoCompleteAdapter.ViewHolder>() {
 
     private var items: List<Any> = emptyList()
-    private val imageLibrary = context.prefs().getString(AppConstants.CHAT_IMAGE_LIBRARY, "0")
 
     fun setItems(newItems: List<Any>) {
         items = newItems
@@ -84,33 +78,20 @@ class AutoCompleteAdapter(
                 imageView.visibility = View.VISIBLE
                 imageView.setImageDrawable(null)
                 val thumbnailUrl = item.url1x ?: item.url2x ?: item.url3x ?: item.url4x
-                if (imageLibrary == "0" || (imageLibrary == "1" && !item.format.equals("webp", true))) {
-                    context.imageLoader.enqueue(
-                        ImageRequest.Builder(context).apply {
-                            data(thumbnailUrl)
-                            if (item.thirdParty) {
-                                httpHeaders(NetworkHeaders.Builder().apply {
-                                    add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
-                                }.build())
-                            }
-                            crossfade(true)
-                            target(imageView)
-                        }.build()
-                    )
-                } else {
-                    Glide.with(context)
-                        .load(
-                            thumbnailUrl?.let { url ->
-                                if (item.thirdParty) {
-                                    GlideUrl(url) { mapOf("User-Agent" to "Xtra/" + BuildConfig.VERSION_NAME) }
-                                } else url
-                            }
-                        )
-                        .diskCacheStrategy(DiskCacheStrategy.DATA)
-                        .transition(DrawableTransitionOptions.withCrossFade())
-                        .into(imageView)
-                }
+                context.imageLoader.enqueue(
+                    ImageRequest.Builder(context).apply {
+                        data(thumbnailUrl)
+                        if (item.thirdParty) {
+                            httpHeaders(NetworkHeaders.Builder().apply {
+                                add("User-Agent", "Xtra/" + BuildConfig.VERSION_NAME)
+                            }.build())
+                        }
+                        crossfade(true)
+                        target(imageView)
+                    }.build()
+                )
             } else {
+                imageView.dispose()
                 imageView.setImageDrawable(null)
                 imageView.visibility = View.GONE
                 nameView.text = (item as? Chatter)?.name ?: item.toString()

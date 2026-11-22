@@ -12,11 +12,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
+import androidx.work.Data
 import androidx.work.NetworkType
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.repository.OfflineRepository
+import com.xtrakick.app.ui.download.StreamDownloadWorker
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.DownloadStorage
 import com.xtrakick.app.util.SafStorageUtils
@@ -62,6 +64,22 @@ class DownloadsViewModel @Inject internal constructor(
 
     companion object {
         private val finishMutex = Mutex()
+        private val activeLiveDownloadStatuses = setOf(
+            OfflineVideo.STATUS_DOWNLOADING,
+            OfflineVideo.STATUS_BLOCKED,
+            OfflineVideo.STATUS_QUEUED,
+            OfflineVideo.STATUS_QUEUED_WIFI,
+            OfflineVideo.STATUS_WAITING_FOR_STREAM,
+        )
+
+        internal fun liveRecordingVideoId(progress: Data, tags: Set<String>): Int? {
+            return progress.getInt(StreamDownloadWorker.KEY_VIDEO_ID, 0).takeIf { it > 0 }
+                ?: tags.firstNotNullOfOrNull { tag ->
+                    if (tag.startsWith(StreamDownloadWorker.VIDEO_TAG_PREFIX)) {
+                        tag.removePrefix(StreamDownloadWorker.VIDEO_TAG_PREFIX).toIntOrNull()?.takeIf { it > 0 }
+                    } else null
+                }
+        }
 
         // A normal SAF call takes milliseconds; anything still running at this
         // point is a hung provider call.
@@ -130,36 +148,33 @@ class DownloadsViewModel @Inject internal constructor(
         if (liveDownloads.add(channelLogin)) {
             viewModelScope.launch(Dispatchers.IO) {
                 WorkManager.getInstance(applicationContext).getWorkInfosForUniqueWorkFlow(channelLogin).collect { list ->
-                    val work = list.lastOrNull()
-                    when {
-                        work == null || work.state.isFinished -> {
-                            repository.getLiveDownload(channelLogin)?.let { video ->
-                                if (video.status == OfflineVideo.STATUS_DOWNLOADING || video.status == OfflineVideo.STATUS_BLOCKED || video.status == OfflineVideo.STATUS_QUEUED || video.status == OfflineVideo.STATUS_QUEUED_WIFI || video.status == OfflineVideo.STATUS_WAITING_FOR_STREAM) {
-                                    repository.updateStatus(video.apply {
-                                        status = OfflineVideo.STATUS_PENDING
-                                    })
-                                }
-                            }
-                            cancel()
-                        }
-                        work.state == WorkInfo.State.ENQUEUED -> {
-                            repository.getLiveDownload(channelLogin)?.let { video ->
-                                repository.updateStatus(video.apply {
-                                    status = if (work.constraints.requiredNetworkType == NetworkType.UNMETERED) {
-                                        OfflineVideo.STATUS_QUEUED_WIFI
-                                    } else {
-                                        OfflineVideo.STATUS_QUEUED
-                                    }
-                                })
+                    val work = list.firstOrNull { !it.state.isFinished }
+                    if (work == null) {
+                        for (video in repository.getLiveDownloads(channelLogin)) {
+                            if (video.status in activeLiveDownloadStatuses) {
+                                repository.updateStatusIfCurrent(video, OfflineVideo.STATUS_PENDING)
                             }
                         }
-                        work.state == WorkInfo.State.BLOCKED -> {
-                            repository.getLiveDownload(channelLogin)?.let { video ->
-                                repository.updateStatus(video.apply {
-                                    status = OfflineVideo.STATUS_BLOCKED
-                                })
-                            }
-                        }
+                        cancel()
+                        return@collect
+                    }
+                    val status = when (work.state) {
+                        WorkInfo.State.ENQUEUED -> if (work.constraints.requiredNetworkType == NetworkType.UNMETERED) {
+                            OfflineVideo.STATUS_QUEUED_WIFI
+                        } else OfflineVideo.STATUS_QUEUED
+                        WorkInfo.State.BLOCKED -> OfflineVideo.STATUS_BLOCKED
+                        else -> return@collect
+                    }
+                    val videoId = liveRecordingVideoId(work.progress, work.tags)
+                    val video = if (videoId != null) {
+                        repository.getVideoById(videoId)
+                    } else {
+                        // Queued work created by older versions has no video ID tag.
+                        repository.getLiveDownloads(channelLogin).singleOrNull()
+                    }
+                    if (video?.live != true || video.channelLogin != channelLogin) return@collect
+                    if (video.status == OfflineVideo.STATUS_PENDING || video.status in activeLiveDownloadStatuses) {
+                        repository.updateStatusIfCurrent(video, status)
                     }
                 }
             }.invokeOnCompletion {

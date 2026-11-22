@@ -3,7 +3,6 @@ package com.xtrakick.app.ui.player
 import android.net.Uri
 import android.util.Log
 import com.xtrakick.app.BuildConfig
-import java.net.Proxy
 import java.net.URI
 
 object PlaybackProxyUtils {
@@ -45,19 +44,6 @@ object PlaybackProxyUtils {
         }
         val path = uri.rawPath?.lowercase().orEmpty()
         return playlistExtensions.any { path.endsWith(it) }
-    }
-
-    @JvmStatic
-    fun selectProxy(uri: URI, proxy: Proxy, reason: String): List<Proxy> {
-        val shouldUseProxy = shouldProxyPlaylist(uri)
-        if (BuildConfig.DEBUG) {
-            Log.d(TAG, "route=${if (shouldUseProxy) "proxy" else "direct"} reason=$reason uri=$uri")
-        }
-        return if (shouldUseProxy) {
-            listOf(proxy, Proxy.NO_PROXY)
-        } else {
-            listOf(Proxy.NO_PROXY)
-        }
     }
 
     @JvmStatic

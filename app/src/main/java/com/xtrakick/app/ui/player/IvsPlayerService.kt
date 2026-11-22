@@ -955,6 +955,12 @@ class IvsPlayerService : Service() {
 
     fun updateChannelLogo(logo: String?) {
         val clean = logo?.takeIf { it.isNotBlank() } ?: return
+        if (!this.channelLogo.isNullOrBlank() &&
+            !KickApiHelper.isDefaultProfilePicture(this.channelLogo) &&
+            KickApiHelper.isDefaultProfilePicture(clean)
+        ) {
+            return
+        }
         if (this.channelLogo != clean) {
             this.channelLogo = clean
             if (loadedArtworkUrl != clean) {
@@ -1203,6 +1209,11 @@ class IvsPlayerService : Service() {
             playerDebugLog("cancelled pending background audio saver")
         }
         deferredAudioSaverRunnable = null
+    }
+
+    fun clearBackgroundAudioSaver() {
+        cancelBackgroundAudioSaver()
+        backgroundSaverQuality = null
     }
 
     fun restoreForegroundQuality(target: Quality?, shouldLock: Boolean): Boolean {

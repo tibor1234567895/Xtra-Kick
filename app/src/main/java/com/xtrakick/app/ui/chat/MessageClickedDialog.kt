@@ -39,7 +39,6 @@ import com.xtrakick.app.model.chat.Badge
 import com.xtrakick.app.model.chat.ChatMessage
 import com.xtrakick.app.model.ui.User
 import com.xtrakick.app.ui.common.CompactDialogs
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.channel.FollowChannelBottomSheet
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.AuthStateHelper
@@ -56,7 +55,7 @@ import java.util.Date
 import java.util.Locale
 
 @AndroidEntryPoint
-class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.CallbackListener {
+class MessageClickedDialog : BottomSheetDialogFragment() {
 
     private data class SubscriptionDetail(
         val text: String,
@@ -200,20 +199,6 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
     }
 
     private fun observeState() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.integrity.collectLatest {
-                    if (it != null &&
-                        it != "done" &&
-                        requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                        requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
-                    ) {
-                        IntegrityDialog.show(childFragmentManager, it)
-                        viewModel.integrity.value = "done"
-                    }
-                }
-            }
-        }
         viewLifecycleOwner.lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collectLatest(::renderState)
@@ -568,12 +553,6 @@ class MessageClickedDialog : BottomSheetDialogFragment(), IntegrityDialog.Callba
         val range = binding.recyclerView.computeVerticalScrollRange()
         val percentage = (100f * offset / (range - extent).toFloat())
         return percentage < 100f
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
-        if (callback == "refresh") {
-            adapter?.selectedMessage?.let(::bindSelectedMessage)
-        }
     }
 
     override fun onDestroyView() {

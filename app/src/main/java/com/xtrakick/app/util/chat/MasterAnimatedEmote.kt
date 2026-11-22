@@ -13,7 +13,7 @@ import java.util.WeakHashMap
 /**
  * Single master coordinator for an animated emote instance.
  *
- * Runs one underlying [Animatable] (Coil's AnimatedImageDrawable or Glide's GifDrawable),
+ * Runs one underlying [Animatable] (Coil's AnimatedImageDrawable or GifDrawable),
  * and fans out invalidation ticks to all active subscriber [View]s through
  * [ChatAdapterUtils.requestInvalidate].
  */

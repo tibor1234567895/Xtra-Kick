@@ -44,7 +44,6 @@ import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.model.ui.User
 import com.xtrakick.app.ui.common.BaseNetworkFragment
 import com.xtrakick.app.ui.common.FragmentHost
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.common.Sortable
 import com.xtrakick.app.ui.download.DownloadDialog
@@ -70,7 +69,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
-class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, IntegrityDialog.CallbackListener {
+class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost {
 
     private var _binding: FragmentChannelBinding? = null
     private var requestedAvatarUrl: String? = null
@@ -172,20 +171,6 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.integrity.collectLatest {
-                    if (it != null &&
-                        it != "done" &&
-                        requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                        requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
-                    ) {
-                        IntegrityDialog.show(childFragmentManager, it)
-                        viewModel.integrity.value = "done"
-                    }
-                }
-            }
-        }
         with(binding) {
             val activity = requireActivity() as MainActivity
             if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
@@ -885,85 +870,6 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost, In
             KickApiHelper.getKickPublicApiHeaders(requireContext()),
             requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
         )
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
-        if (callback != null) {
-            viewLifecycleOwner.lifecycleScope.launch {
-                repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    when (callback) {
-                        "refresh" -> {
-                            viewModel.retry(
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext()),
-                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
-                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                            )
-                            viewModel.isFollowingChannel(
-                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                args.channelId,
-                                args.channelLogin,
-                                requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                KickApiHelper.getKickPublicApiHeaders(requireContext()),
-                            )
-                        }
-                        "follow" -> {
-                            val kickFollow = (requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0) == 0 && com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
-                            viewModel.saveFollowChannel(
-                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                args.channelId,
-                                args.channelLogin,
-                                args.channelName,
-                                requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                                false,
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                                kickFollow = kickFollow,
-                            )
-                        }
-                        "unfollow" -> {
-                            val kickFollow = com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())
-                            viewModel.deleteFollowChannel(
-                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                args.channelId,
-                                args.channelLogin,
-                                requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                                kickFollow = kickFollow,
-                            )
-                        }
-                        "enableNotifications" -> {
-                            viewModel.enableNotifications(
-                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                args.channelId,
-                                args.channelLogin,
-                                requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                                requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false),
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                            )
-                        }
-                        "disableNotifications" -> {
-                            viewModel.disableNotifications(
-                                requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
-                                args.channelId,
-                                args.channelLogin,
-                                requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
-                                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                KickApiHelper.getKickWebHeaders(requireContext(), true),
-                                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                            )
-                        }
-                    }
-                }
-            }
-        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

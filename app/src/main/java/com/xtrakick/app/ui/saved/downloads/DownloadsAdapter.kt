@@ -22,9 +22,6 @@ import coil3.request.crossfade
 import coil3.request.target
 import coil3.request.transformations
 import coil3.transform.CircleCropTransformation
-import com.bumptech.glide.Glide
-import com.bumptech.glide.load.engine.DiskCacheStrategy
-import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.FragmentDownloadsListItemBinding
 import com.xtrakick.app.model.ui.OfflineVideo
@@ -121,22 +118,14 @@ class DownloadsAdapter(
                         (fragment.activity as MainActivity).startOfflineVideo(item)
                     }
                     root.setOnLongClickListener { deleteVideo(item); true }
-                    if (item.thumbnail?.toUri()?.scheme == ContentResolver.SCHEME_CONTENT) {
-                        Glide.with(fragment)
-                            .load(item.thumbnail)
-                            .diskCacheStrategy(DiskCacheStrategy.NONE)
-                            .transition(DrawableTransitionOptions.withCrossFade())
-                            .into(thumbnail)
-                    } else {
-                        fragment.requireContext().imageLoader.enqueue(
-                            ImageRequest.Builder(fragment.requireContext()).apply {
-                                data(item.thumbnail)
-                                diskCachePolicy(CachePolicy.DISABLED)
-                                crossfade(true)
-                                target(thumbnail)
-                            }.build()
-                        )
-                    }
+                    fragment.requireContext().imageLoader.enqueue(
+                        ImageRequest.Builder(fragment.requireContext()).apply {
+                            data(item.thumbnail)
+                            diskCachePolicy(CachePolicy.DISABLED)
+                            crossfade(true)
+                            target(thumbnail)
+                        }.build()
+                    )
                     item.uploadDate?.let {
                         date.visibility = View.VISIBLE
                         date.text = context.getString(R.string.uploaded_date, KickApiHelper.formatTime(context, it))

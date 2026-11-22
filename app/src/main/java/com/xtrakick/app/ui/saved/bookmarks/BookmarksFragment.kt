@@ -23,7 +23,6 @@ import com.xtrakick.app.model.ui.Bookmark
 import com.xtrakick.app.model.ui.SortChannel
 import com.xtrakick.app.ui.common.BaseNetworkFragment
 import com.xtrakick.app.ui.common.FragmentHost
-import com.xtrakick.app.ui.common.IntegrityDialog
 import com.xtrakick.app.ui.common.Scrollable
 import com.xtrakick.app.ui.common.Sortable
 import com.xtrakick.app.ui.download.DownloadDialog
@@ -40,7 +39,7 @@ import java.time.temporal.ChronoUnit
 import java.util.Calendar
 
 @AndroidEntryPoint
-class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, BookmarksSortDialog.OnFilter, IntegrityDialog.CallbackListener {
+class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, BookmarksSortDialog.OnFilter {
 
     private var _binding: CommonRecyclerViewLayoutBinding? = null
     private val binding get() = _binding!!
@@ -55,20 +54,6 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.integrity.collectLatest {
-                    if (it != null &&
-                        it != "done" &&
-                        requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                        requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
-                    ) {
-                        IntegrityDialog.show(childFragmentManager, it)
-                        viewModel.integrity.value = "done"
-                    }
-                }
-            }
-        }
         adapter = BookmarksAdapter(this, {
             viewModel.updateVideo(
                 requireContext().filesDir.path,
@@ -258,12 +243,6 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                 }
             }
         }
-        if (requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-            requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true) &&
-            KickApiHelper.isIntegrityTokenExpired(requireContext())
-        ) {
-            IntegrityDialog.show(childFragmentManager, "refresh")
-        }
         if (requireContext().prefs().getBoolean(AppConstants.PLAYER_USE_VIDEOPOSITIONS, true)) {
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -339,23 +318,6 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
     }
 
     override fun onNetworkRestored() {
-    }
-
-    override fun onIntegrityDialogCallback(callback: String?) {
-        if (callback != null) {
-            viewLifecycleOwner.lifecycleScope.launch {
-                repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    when (callback) {
-                        "users" -> viewModel.updateUsers(
-                            requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                            KickApiHelper.getKickWebHeaders(requireContext()),
-                            KickApiHelper.getKickPublicApiHeaders(requireContext()),
-                            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                        )
-                    }
-                }
-            }
-        }
     }
 
     override fun onDestroyView() {

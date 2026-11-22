@@ -21,7 +21,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-abstract class PagedListFragment : BaseNetworkFragment(), IntegrityDialog.CallbackListener {
+abstract class PagedListFragment : BaseNetworkFragment() {
 
     @Inject lateinit var eventRepository: KickRepository
 
@@ -118,14 +118,6 @@ abstract class PagedListFragment : BaseNetworkFragment(), IntegrityDialog.Callba
                             swipeRefresh.isRefreshing = loadState.refresh is LoadState.Loading && pagingAdapter.itemCount != 0
                         }
                         nothingHere.isVisible = loadState.refresh !is LoadState.Loading && loadState.append !is LoadState.Loading && pagingAdapter.itemCount == 0
-                        if ((loadState.refresh as? LoadState.Error ?:
-                            loadState.append as? LoadState.Error ?:
-                            loadState.prepend as? LoadState.Error)?.error?.message == "failed integrity check" &&
-                            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-                            requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)
-                        ) {
-                            IntegrityDialog.show(childFragmentManager, "refresh")
-                        }
                     }
                 }
             }
@@ -145,12 +137,6 @@ abstract class PagedListFragment : BaseNetworkFragment(), IntegrityDialog.Callba
                     it.visibility = View.GONE
                 }
             }
-        }
-        if (requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &&
-            requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true) &&
-            KickApiHelper.isIntegrityTokenExpired(requireContext())
-        ) {
-            IntegrityDialog.show(childFragmentManager, "refresh")
         }
     }
 }

@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -33,8 +34,10 @@ class UsagePingTest {
     @After
     fun reset() {
         prefs.edit().clear().commit()
+        context.tokenPrefs().edit().clear().commit()
         UsagePing.notePlaybackEnded(ivs)
         UsagePing.notePlaybackEnded(exo)
+        UsagePing.resetInteractionForTests()
     }
 
     @Test
@@ -105,9 +108,104 @@ class UsagePingTest {
         assertFalse(prefs.contains(AppConstants.USAGE_PING_LAST_DAY))
     }
 
+    @Test
+    fun rateLimitedPingKeepsCountersAndCanRetryAfterTheCooldown() {
+        val day = "2026-11-22"
+        prefs.edit().putInt(AppConstants.USAGE_SESSIONS_UNREPORTED, 2)
+            .putInt(AppConstants.USAGE_UNREPORTED_CRASHES, 1).commit()
+        UsagePing.sendOnce(context, day) { Connection(status = 429, retryAfter = "60") }
+        assertFalse(prefs.contains(AppConstants.USAGE_PING_LAST_DAY))
+        assertEquals(2, prefs.getInt(AppConstants.USAGE_SESSIONS_UNREPORTED, 0))
+        assertEquals(1, prefs.getInt(AppConstants.USAGE_UNREPORTED_CRASHES, 0))
+        assertFalse(UsagePing.shouldSendPing(context, day, isDebug = false, emulatorCheck = { false }))
+
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(60))
+        assertTrue(UsagePing.shouldSendPing(context, day, isDebug = false, emulatorCheck = { false }))
+        UsagePing.sendOnce(context, day) { Connection(acknowledged = true) }
+        assertEquals(day, prefs.getString(AppConstants.USAGE_PING_LAST_DAY, null))
+        assertEquals(0, prefs.getInt(AppConstants.USAGE_SESSIONS_UNREPORTED, 0))
+        assertEquals(0, prefs.getInt(AppConstants.USAGE_UNREPORTED_CRASHES, 0))
+    }
+
+    @Test
+    fun freshInstallDefersPingUntilUserInteractsWhileReturningInstallPingsImmediately() {
+        assertFalse(UsagePing.shouldSendPing(context, today = "2026-11-21", isDebug = false, emulatorCheck = { false }))
+        assertFalse(prefs.contains(AppConstants.USAGE_PING_SEED))
+
+        UsagePing.noteUserInteraction(context)
+        assertTrue(UsagePing.shouldSendPing(context, today = "2026-11-21", isDebug = false, emulatorCheck = { false }))
+        assertFalse(UsagePing.shouldSendPing(context, today = "2026-11-21", isDebug = true, emulatorCheck = { false }))
+
+        prefs.edit().putBoolean(AppConstants.USAGE_STATS_ENABLED, false).commit()
+        assertFalse(UsagePing.shouldSendPing(context, today = "2026-11-21", isDebug = false, emulatorCheck = { false }))
+        prefs.edit().putBoolean(AppConstants.USAGE_STATS_ENABLED, true).commit()
+
+        // Playback start also unlocks a deferred fresh-install ping (e.g. deep-link playback).
+        UsagePing.resetInteractionForTests()
+        assertFalse(UsagePing.shouldSendPing(context, today = "2026-11-21", isDebug = false, emulatorCheck = { false }))
+        UsagePing.notePlaybackStarted(context, exo, "stream-deeplink")
+        assertTrue(UsagePing.shouldSendPing(context, today = "2026-11-21", isDebug = false, emulatorCheck = { false }))
+
+        // Returning install (seed already persisted) does not wait for user interaction.
+        UsagePing.resetInteractionForTests()
+        prefs.edit().putString(AppConstants.USAGE_PING_SEED, "0123456789abcdef0123456789abcdef").commit()
+        assertTrue(UsagePing.shouldSendPing(context, today = "2026-11-21", isDebug = false, emulatorCheck = { false }))
+    }
+
+    @Test
+    fun emulatorDetectionMatchesSdkEmulatorsAndAllowsRealDevices() {
+        assertTrue(UsagePing.isLikelyEmulator(product = "SDK_GPHONE64_X86_64", fingerprint = "", hardware = "", model = ""))
+        assertTrue(UsagePing.isLikelyEmulator(product = "", fingerprint = "", hardware = "ranchu", model = ""))
+        assertTrue(UsagePing.isLikelyEmulator(product = "", fingerprint = "", hardware = "cutf_cvm", model = ""))
+        assertTrue(UsagePing.isLikelyEmulator(product = "", fingerprint = "", hardware = "vbox86", model = ""))
+        assertTrue(UsagePing.isLikelyEmulator(product = "", fingerprint = "generic/aosp/generic:14", hardware = "", model = ""))
+        assertTrue(UsagePing.isLikelyEmulator(product = "", fingerprint = "", hardware = "", model = "Android SDK built for x86"))
+        assertFalse(
+            UsagePing.isLikelyEmulator(
+                product = "CPH2449EEA",
+                fingerprint = "OnePlus/CPH2449EEA/OP594DL1:15/UKQ1.230924.001/T.1a2b3c:user/release-keys",
+                hardware = "qcom",
+                model = "CPH2449",
+            )
+        )
+        UsagePing.noteUserInteraction(context)
+        assertFalse(UsagePing.shouldSendPing(context, today = "2026-11-21", isDebug = false, emulatorCheck = { true }))
+    }
+
+    @Test
+    fun signedInFlagIncludedOnlyForKickOAuthSessions() {
+        val signedOutConn = Connection()
+        UsagePing.sendOnce(context, "2026-11-22") { signedOutConn }
+        val signedOutPayload = Json.parseToJsonElement(signedOutConn.body.toString(Charsets.UTF_8)).jsonObject
+        assertFalse(signedOutPayload.containsKey("li"))
+
+        context.tokenPrefs().edit()
+            .putString(AppConstants.KICK_USER_LOGIN, "tester")
+            .putString(AppConstants.KICK_ACCESS_TOKEN, "kat_google")
+            .putString(AppConstants.KICK_LOGIN_METHOD, AppConstants.KICK_LOGIN_METHOD_GOOGLE)
+            .commit()
+        val googleConn = Connection()
+        UsagePing.sendOnce(context, "2026-11-23") { googleConn }
+        val googlePayload = Json.parseToJsonElement(googleConn.body.toString(Charsets.UTF_8)).jsonObject
+        assertFalse(googlePayload.containsKey("li"))
+
+        context.tokenPrefs().edit()
+            .clear()
+            .putString(AppConstants.KICK_USER_LOGIN, "tester")
+            .putString(AppConstants.KICK_ACCESS_TOKEN, "oauth_access")
+            .putString(AppConstants.KICK_REFRESH_TOKEN, "oauth_refresh")
+            .commit()
+        val oauthConn = Connection()
+        UsagePing.sendOnce(context, "2026-11-24") { oauthConn }
+        val oauthPayload = Json.parseToJsonElement(oauthConn.body.toString(Charsets.UTF_8)).jsonObject
+        assertEquals("true", oauthPayload.getValue("li").jsonPrimitive.content)
+        assertFalse(oauthPayload.containsKey("ah"))
+    }
+
     private class Connection(
         private val status: Int = 204,
         private val acknowledged: Boolean = false,
+        private val retryAfter: String? = null,
         private val duringResponse: () -> Unit = {},
     ) : HttpURLConnection(URL("https://backend.invalid/v1/metrics/ping")) {
         val body = ByteArrayOutputStream()
@@ -119,7 +217,10 @@ class UsagePingTest {
             duringResponse()
             return status
         }
-        override fun getHeaderField(name: String?): String? =
-            if (name.equals("X-Playback-Starts-Accepted", true) && acknowledged) "1" else null
+        override fun getHeaderField(name: String?): String? = when {
+            name.equals("X-Playback-Starts-Accepted", true) && acknowledged -> "1"
+            name.equals("Retry-After", true) -> retryAfter
+            else -> null
+        }
     }
 }

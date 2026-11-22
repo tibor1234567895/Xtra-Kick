@@ -177,7 +177,7 @@ object AuthStateHelper {
      * person to open the follow-import dialog was silently signed in as the previous user —
      * and switching accounts was impossible without clearing app data.
      *
-     * Only the follow-import flow and [com.xtrakick.app.ui.common.IntegrityDialog]
+     * Only the follow-import flow
      * use the WebView cookie jar, so clearing all of it is safe here.
      */
     fun clearWebViewSession() {

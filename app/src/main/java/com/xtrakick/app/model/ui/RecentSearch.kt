@@ -1,9 +1,15 @@
 package com.xtrakick.app.model.ui
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "recent_search")
+@Entity(
+    tableName = "recent_search",
+    indices = [
+        Index(value = ["type", "lastSearched"]),
+    ],
+)
 class RecentSearch(
     val query: String,
     val type: String,
