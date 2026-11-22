@@ -10,6 +10,7 @@ import com.xtrakick.app.util.bundleOf
 import androidx.core.view.isVisible
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.DialogVideosSortBinding
+import com.xtrakick.app.repository.datasource.RECENT_CLIP_SORT_LIMIT
 import com.xtrakick.app.ui.channel.clips.ChannelClipsFragment
 import com.xtrakick.app.ui.channel.videos.ChannelVideosFragment
 import com.xtrakick.app.ui.game.clips.GameClipsFragment
@@ -31,6 +32,7 @@ class VideosSortDialog : BottomSheetDialogFragment(), SelectLanguagesDialog.OnSe
         const val PERIOD_ALL = "all"
         const val SORT_TIME = "time"
         const val SORT_VIEWS = "views"
+        const val SORT_DURATION = "duration"
         const val VIDEO_TYPE_ALL = "all"
         const val VIDEO_TYPE_ARCHIVE = "archive"
         const val VIDEO_TYPE_HIGHLIGHT = "highlight"
@@ -80,15 +82,12 @@ class VideosSortDialog : BottomSheetDialogFragment(), SelectLanguagesDialog.OnSe
             val args = requireArguments()
             when (parentFragment) {
                 is ChannelClipsFragment -> {
-                    sort.visibility = View.GONE
-                    sortType.visibility = View.GONE
-                    selectLanguages.visibility = View.GONE
+                    showClipSortOptions()
                     saveSort.text = getString(R.string.save_sort_channel)
                     saveSortLayout.isVisible = parentFragment?.arguments?.getString(AppConstants.CHANNEL_ID).isNullOrBlank() == false
                 }
                 is GameClipsFragment -> {
-                    sort.visibility = View.GONE
-                    sortType.visibility = View.GONE
+                    showClipSortOptions()
                     saveSort.text = getString(R.string.save_sort_game)
                     saveSortLayout.isVisible = parentFragment?.arguments?.getString(AppConstants.GAME_ID).isNullOrBlank() == false
                 }
@@ -102,6 +101,7 @@ class VideosSortDialog : BottomSheetDialogFragment(), SelectLanguagesDialog.OnSe
             val originalSortId = when (args.getString(SORT)) {
                 SORT_TIME -> R.id.time
                 SORT_VIEWS -> R.id.views
+                SORT_DURATION -> R.id.clipDuration
                 else -> R.id.time
             }
             val originalPeriodId = when (args.getString(PERIOD)) {
@@ -123,6 +123,12 @@ class VideosSortDialog : BottomSheetDialogFragment(), SelectLanguagesDialog.OnSe
                 deleteSavedSort.visibility = View.GONE
             }
             sort.check(originalSortId)
+            if (clipDuration.isVisible) {
+                clipSortLimit.isVisible = originalSortId != R.id.views
+                sort.setOnCheckedChangeListener { _, checkedId ->
+                    clipSortLimit.isVisible = checkedId != R.id.views
+                }
+            }
             period.check(originalPeriodId)
             sortType.check(originalTypeId)
             selectedLanguages = originalLanguages
@@ -148,6 +154,14 @@ class VideosSortDialog : BottomSheetDialogFragment(), SelectLanguagesDialog.OnSe
         }
     }
 
+    private fun DialogVideosSortBinding.showClipSortOptions() {
+        time.text = getString(R.string.clip_sort_date)
+        clipDuration.isVisible = true
+        clipSortLimit.text = getString(R.string.clip_sort_recent_limit, RECENT_CLIP_SORT_LIMIT)
+        sortType.isVisible = false
+        selectLanguages.isVisible = false
+    }
+
     private fun applyFilters(originalPeriodId: Int, originalSortId: Int, originalTypeId: Int, originalLanguages: Array<String>, saveSort: Boolean, saveDefault: Boolean) {
         with(binding) {
             val checkedPeriodId = period.checkedRadioButtonId
@@ -160,6 +174,7 @@ class VideosSortDialog : BottomSheetDialogFragment(), SelectLanguagesDialog.OnSe
                 when (checkedSortId) {
                     R.id.time -> SORT_TIME
                     R.id.views -> SORT_VIEWS
+                    R.id.clipDuration -> SORT_DURATION
                     else -> SORT_TIME
                 },
                 sortBtn.text,

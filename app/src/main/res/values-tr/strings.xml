@@ -409,7 +409,6 @@
     <string name="use_followpager">\"Takip Edilenler\" sayfası için sekmeleri kullan</string>
     <string name="disable_chat">Sohbeti devre dışı bırak</string>
     <string name="disconnected">Bağlantı kesildi</string>
-    <string name="other">Diğer</string>
     <string name="timestamp_format_0">h:mm</string>
     <string name="timestamp_format_1">hh:mm</string>
     <string name="timestamp_format_2">h:mm:ss</string>
@@ -1309,4 +1308,11 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="skipVideoTokenEntries2">Varsayılan olarak atla, oynatma başarısız olursa atlama</string>
     <string name="skipVideoTokenEntries3">Varsayılan olarak atlama, oynatma başarısız olursa atla</string>
     <string name="skipVideoTokenEntries4">Asla atlama</string>
+    <string name="clear">Temizle</string>
+    <string name="reset_filters">Filtreleri sıfırla</string>
+    <string name="open_supported_links">Kick bağlantılarını Xtra-Kick\'te aç</string>
+    <string name="open_supported_links_summary">Android ayarlarından hangi kick.com bağlantılarının bu uygulamada açılacağını seçin</string>
+    <string name="clip_sort_date">Oluşturulma tarihi</string>
+    <string name="clip_sort_duration">Süre</string>
+    <string name="clip_sort_recent_limit">Tarihe veya süreye göre sıralama, seçilen dönemdeki en yeni %d klibi kapsar.</string>
 </resources>

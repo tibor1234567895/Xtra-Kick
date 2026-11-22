@@ -19,7 +19,7 @@ import com.xtrakick.app.model.ui.VodBookmarkIgnoredUser
 
 @Database(
     entities = [OfflineVideo::class, RecentEmote::class, VideoPosition::class, LocalFollowChannel::class, LocalFollowGame::class, Bookmark::class, VodBookmarkIgnoredUser::class, SortChannel::class, SortGame::class, ShownNotification::class, NotificationUser::class, SavedFilter::class, RecentSearch::class, MutedChatUser::class],
-    version = 37
+    version = 38
 )
 abstract class AppDatabase : RoomDatabase() {
 

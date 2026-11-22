@@ -316,6 +316,24 @@ class SettingsActivity : BaseStateActivity() {
                 findNavController().navigate(SettingsNavGraphDirections.actionGlobalAdvancedSettingsFragment())
                 true
             }
+            findPreference<Preference>("action_open_supported_links")?.let { pref ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    pref.setOnPreferenceClickListener {
+                        val pkgUri = "package:${requireContext().packageName}".toUri()
+                        val openByDefault = Intent(Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS, pkgUri)
+                        try {
+                            startActivity(openByDefault)
+                        } catch (_: ActivityNotFoundException) {
+                            runCatching {
+                                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri))
+                            }
+                        }
+                        true
+                    }
+                } else {
+                    pref.isVisible = false
+                }
+            }
         }
 
         override fun onResume() {

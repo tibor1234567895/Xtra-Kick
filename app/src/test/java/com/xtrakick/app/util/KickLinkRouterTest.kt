@@ -276,4 +276,29 @@ class KickLinkRouterTest {
         assertNull(KickApiHelper.toCategorySlug(""))
         assertNull(KickApiHelper.toCategorySlug("   "))
     }
+
+    @Test
+    fun testParseClip_queryParamOnChannelAndRoot() {
+        val channelClip = KickLinkRouter.parse("https://kick.com/westcol?clip=clip_01M828V0NC6B96BT8W0WZC93NZ") as KickLink.Clip
+        assertEquals("clip_01M828V0NC6B96BT8W0WZC93NZ", channelClip.clipId)
+        assertEquals("westcol", channelClip.channelLogin)
+
+        val mobileClip = KickLinkRouter.parse("https://m.kick.com/westcol?clip=clip_01M828V0NC6B96BT8W0WZC93NZ") as KickLink.Clip
+        assertEquals("clip_01M828V0NC6B96BT8W0WZC93NZ", mobileClip.clipId)
+        assertEquals("westcol", mobileClip.channelLogin)
+
+        val rootClip = KickLinkRouter.parse("https://kick.com/?clip=clip_01M828V0NC6B96BT8W0WZC93NZ") as KickLink.Clip
+        assertEquals("clip_01M828V0NC6B96BT8W0WZC93NZ", rootClip.clipId)
+        assertNull(rootClip.channelLogin)
+
+        val mobileUser = KickLinkRouter.parse("https://m.kick.com/westcol") as KickLink.User
+        assertEquals("westcol", mobileUser.channelLogin)
+    }
+
+    @Test
+    fun testParseClip_cdnAssetAndExplicitRoute() {
+        val id = "clip_01M828V0NC6B96BT8W0WZC93NZ"
+        assertEquals(KickLink.Clip(id), KickLinkRouter.parse("https://clips.kick.com/clips/fc/$id/playlist.m3u8"))
+        assertEquals(KickLink.Video("vod-id"), KickLinkRouter.parse("https://kick.com/video/vod-id?clip=$id"))
+    }
 }

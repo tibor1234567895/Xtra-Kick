@@ -49,4 +49,11 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
+    <Preference
+        android:key="action_open_supported_links"
+        android:title="@string/open_supported_links"
+        android:summary="@string/open_supported_links_summary"
+        app:iconSpaceReserved="false"
+        app:singleLineTitle="false" />
+
 </androidx.preference.PreferenceScreen>

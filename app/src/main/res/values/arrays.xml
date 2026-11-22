@@ -245,79 +245,153 @@
     </string-array>
 
     <string-array name="gqlUserLanguageEntries">
+        <item>Afrikaans</item>
+        <item>አማርኛ</item>
+        <item>Aragonés</item>
         <item>العربية</item>
-        <item>American sign language</item>
+        <item>Asturianu</item>
+        <item>Azərbaycanca</item>
+        <item>Беларуская</item>
         <item>Български</item>
-        <item>Catalan</item>
-        <item>čeština</item>
+        <item>বাংলা</item>
+        <item>Bosanski</item>
+        <item>Català</item>
+        <item>Čeština</item>
         <item>Dansk</item>
         <item>Deutsch</item>
-        <item>Eλληνικά</item>
+        <item>Ελληνικά</item>
         <item>English</item>
+        <item>English (India)</item>
+        <item>Esperanto</item>
         <item>Español</item>
+        <item>Eesti</item>
+        <item>Euskara</item>
+        <item>فارسی</item>
         <item>Suomi</item>
+        <item>Tagalog / Filipino</item>
         <item>Français</item>
+        <item>עברית</item>
         <item>Hindi</item>
+        <item>Hrvatski</item>
         <item>Magyar</item>
+        <item>Հայերեն</item>
         <item>Indonesian</item>
         <item>Italiano</item>
         <item>日本語</item>
+        <item>ಕನ್ನಡ</item>
         <item>한국어</item>
-        <item>Malay</item>
+        <item>Latina</item>
+        <item>Lietuvių</item>
+        <item>Latviešu</item>
+        <item>Македонски</item>
+        <item>മലയാളം</item>
+        <item>Монгол</item>
+        <item>Moldovenească</item>
+        <item>Norsk bokmål</item>
+        <item>नेपाली</item>
         <item>Nederlands</item>
         <item>Norsk</item>
+        <item>ਪੰਜਾਬੀ</item>
         <item>Polski</item>
         <item>Português</item>
+        <item>Quechua</item>
         <item>Română</item>
-        <item>Pусский</item>
+        <item>Русский</item>
+        <item>සිංහල</item>
         <item>Slovenčina</item>
+        <item>Slovenščina</item>
+        <item>Shona</item>
+        <item>Soomaali</item>
+        <item>Shqip</item>
+        <item>Српски</item>
         <item>Svenska</item>
+        <item>தமிழ்</item>
+        <item>తెలుగు</item>
         <item>ภาษาไทย</item>
-        <item>Tagalog</item>
         <item>Türkçe</item>
-        <item>Ukrainian</item>
-        <item>Tiếng việt</item>
+        <item>Twi</item>
+        <item>Українська</item>
+        <item>اردو</item>
+        <item>Oʻzbek</item>
+        <item>Tiếng Việt</item>
+        <item>isiXhosa</item>
         <item>中文</item>
-        <item>Chinese (Hong Kong)</item>
-        <item>@string/other</item>
+        <item>isiZulu</item>
     </string-array>
 
     <string-array name="gqlUserLanguageValues">
+        <item>AF</item>
+        <item>AM</item>
+        <item>AN</item>
         <item>AR</item>
-        <item>ASL</item>
+        <item>AST</item>
+        <item>AZ</item>
+        <item>BE</item>
         <item>BG</item>
+        <item>BN</item>
+        <item>BS</item>
         <item>CA</item>
         <item>CS</item>
         <item>DA</item>
         <item>DE</item>
         <item>EL</item>
         <item>EN</item>
+        <item>EN_IN</item>
+        <item>EO</item>
         <item>ES</item>
+        <item>ET</item>
+        <item>EU</item>
+        <item>FA</item>
         <item>FI</item>
+        <item>TL</item>
         <item>FR</item>
+        <item>HE</item>
         <item>HI</item>
+        <item>HR</item>
         <item>HU</item>
+        <item>HY</item>
         <item>ID</item>
         <item>IT</item>
         <item>JA</item>
+        <item>KN</item>
         <item>KO</item>
-        <item>MS</item>
+        <item>LA</item>
+        <item>LT</item>
+        <item>LV</item>
+        <item>MK</item>
+        <item>ML</item>
+        <item>MN</item>
+        <item>MO</item>
+        <item>NB</item>
+        <item>NE</item>
         <item>NL</item>
         <item>NO</item>
+        <item>PA</item>
         <item>PL</item>
         <item>PT</item>
+        <item>QU</item>
         <item>RO</item>
         <item>RU</item>
+        <item>SI</item>
         <item>SK</item>
+        <item>SL</item>
+        <item>SN</item>
+        <item>SO</item>
+        <item>SQ</item>
+        <item>SR</item>
         <item>SV</item>
+        <item>TA</item>
+        <item>TE</item>
         <item>TH</item>
-        <item>TL</item>
         <item>TR</item>
+        <item>TW</item>
         <item>UK</item>
+        <item>UR</item>
+        <item>UZ</item>
         <item>VI</item>
+        <item>XH</item>
         <item>ZH</item>
-        <item>ZH_HK</item>
-        <item>OTHER</item>
+        <item>ZU</item>
     </string-array>
 
     <string-array name="compactStreamsEntries">

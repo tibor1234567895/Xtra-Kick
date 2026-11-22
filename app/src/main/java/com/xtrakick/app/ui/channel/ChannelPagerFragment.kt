@@ -671,14 +671,12 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost {
                 }
             }
             if (!stream?.title.isNullOrBlank()) {
-                streamLayout.visibility = View.VISIBLE
                 title.visibility = View.VISIBLE
                 title.text = stream.title?.trim()
             } else {
                 title.visibility = View.GONE
             }
             if (!stream?.gameName.isNullOrBlank()) {
-                streamLayout.visibility = View.VISIBLE
                 gameName.visibility = View.VISIBLE
                 gameName.text = stream.gameName
                 gameName.setOnClickListener {
@@ -703,31 +701,17 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost {
             } else {
                 gameName.visibility = View.GONE
             }
-            if (stream?.viewerCount != null) {
-                streamLayout.visibility = View.VISIBLE
-                viewers.visibility = View.VISIBLE
-                val count = stream.viewerCount ?: 0
-                viewers.text = resources.getQuantityString(
-                    R.plurals.viewers,
-                    count,
-                    KickApiHelper.formatCount(count, requireContext().prefs().getBoolean(AppConstants.UI_TRUNCATEVIEWCOUNT, true))
-                )
-            } else {
-                viewers.visibility = View.GONE
+            val preferences = requireContext().prefs()
+            val viewersText = stream?.viewerCount?.let { count ->
+                val formatted = KickApiHelper.formatCount(count, preferences.getBoolean(AppConstants.UI_TRUNCATEVIEWCOUNT, true))
+                resources.getQuantityString(R.plurals.viewers, count, formatted)
             }
-            if (requireContext().prefs().getBoolean(AppConstants.UI_UPTIME, true)) {
-                if (stream?.startedAt != null) {
-                    KickApiHelper.getUptime(stream.startedAt).let {
-                        if (it != null) {
-                            streamLayout.visibility = View.VISIBLE
-                            uptime.visibility = View.VISIBLE
-                            uptime.text = getString(R.string.uptime, it)
-                        } else {
-                            uptime.visibility = View.GONE
-                        }
-                    }
-                }
-            }
+            val uptimeText = if (preferences.getBoolean(AppConstants.UI_UPTIME, true)) {
+                KickApiHelper.getUptime(stream?.startedAt)?.let { getString(R.string.uptime, it) }
+            } else null
+            streamStats.text = listOfNotNull(viewersText, uptimeText).joinToString(" · ")
+            streamStats.isVisible = streamStats.text.isNotEmpty()
+            streamLayout.isVisible = title.isVisible || gameName.isVisible || streamStats.isVisible
         }
     }
 

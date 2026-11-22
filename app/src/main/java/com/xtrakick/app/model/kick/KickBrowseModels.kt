@@ -34,7 +34,7 @@ data class KickBrowseLivestream(
     val channel: KickBrowseChannel,
 ) {
     fun toLegacyLivestream(): KickLivestream = KickLivestream(
-        language = language?.let { Locale.forLanguageTag(it).getDisplayLanguage(Locale.ENGLISH).ifBlank { it } },
+        language = language?.let { Locale.forLanguageTag(it).getDisplayName(Locale.ENGLISH).ifBlank { it } },
         channelId = channel.id,
         title = title,
         viewerCount = viewerCount.takeIf { showViewCount },

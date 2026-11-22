@@ -34,7 +34,22 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/view_count" />
+
+            <RadioButton
+                android:id="@+id/clipDuration"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/clip_sort_duration"
+                android:visibility="gone" />
         </RadioGroup>
+
+        <TextView
+            android:id="@+id/clipSortLimit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="5dp"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:visibility="gone" />
 
         <RadioGroup
             android:id="@+id/sortType"

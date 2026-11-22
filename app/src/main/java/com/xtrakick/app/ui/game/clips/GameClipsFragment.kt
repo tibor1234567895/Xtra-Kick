@@ -81,16 +81,23 @@ class GameClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSortD
     override fun initialize() {
         viewLifecycleOwner.lifecycleScope.launch {
             if (viewModel.filter.value == null) {
-                val sortValues = args.gameId?.let { viewModel.getSortGame(it) } ?: viewModel.getSortGame("default")
+                val sortValues = args.gameId?.let { viewModel.getSortGame(it) }
+                val defaults = viewModel.getSortGame("default")
                 viewModel.setFilter(
-                    period = sortValues?.clipPeriod,
-                    languages = sortValues?.clipLanguages?.split(',')?.toTypedArray(),
+                    sort = sortValues?.clipSort ?: defaults?.clipSort,
+                    period = sortValues?.clipPeriod ?: defaults?.clipPeriod,
                 )
             }
             // Recompute every time so the sort bar follows app-locale changes
             viewModel.sortText.value = getString(
                 R.string.sort_and_period,
-                getString(R.string.view_count),
+                getString(
+                    when (viewModel.sort) {
+                        VideosSortDialog.SORT_TIME -> R.string.clip_sort_date
+                        VideosSortDialog.SORT_DURATION -> R.string.clip_sort_duration
+                        else -> R.string.view_count
+                    }
+                ),
                 getString(
                     when (viewModel.period) {
                         VideosSortDialog.PERIOD_DAY -> R.string.today
@@ -101,9 +108,6 @@ class GameClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSortD
                     }
                 )
             )
-            viewModel.filtersText.value = if (viewModel.languages.isNotEmpty()) {
-                resources.getQuantityString(R.plurals.languages, viewModel.languages.size, viewModel.languages.joinToString())
-            } else null
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.flow.collectLatest { pagingData ->
                     pagingAdapter.submitData(pagingData)
@@ -118,10 +122,10 @@ class GameClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSortD
         sortBar.root.setOnClickListener {
             viewLifecycleOwner.lifecycleScope.launch {
                 VideosSortDialog.newInstance(
-                    sort = VideosSortDialog.SORT_VIEWS,
+                    sort = viewModel.sort,
                     period = viewModel.period,
-                    languages = viewModel.languages,
-                    saved = args.gameId?.let { viewModel.getSortGame(it) } != null
+                    saved = args.gameId?.let { viewModel.getSortGame(it) }
+                        ?.let { it.clipSort != null || it.clipPeriod != null } == true
                 ).show(childFragmentManager, null)
             }
         }
@@ -132,18 +136,6 @@ class GameClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSortD
                 }
             }
         }
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.filtersText.collectLatest {
-                    if (it != null) {
-                        sortBar.filtersText.visibility = View.VISIBLE
-                        sortBar.filtersText.text = it
-                    } else {
-                        sortBar.filtersText.visibility = View.GONE
-                    }
-                }
-            }
-        }
     }
 
     override fun onChange(sort: String, sortText: CharSequence, period: String, periodText: CharSequence, type: String, typeText: CharSequence, languages: Array<String>, changed: Boolean, saveSort: Boolean, saveDefault: Boolean) {
@@ -151,33 +143,30 @@ class GameClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSortD
             viewLifecycleOwner.lifecycleScope.launch {
                 if (changed) {
                     binding.scrollTop.visibility = View.GONE
-                    viewModel.setFilter(period, languages)
+                    viewModel.setFilter(sort, period)
                     viewModel.sortText.value = getString(R.string.sort_and_period, sortText, periodText)
-                    viewModel.filtersText.value = if (languages.isNotEmpty()) {
-                        resources.getQuantityString(R.plurals.languages, languages.size, languages.joinToString())
-                    } else null
                 }
                 if (saveSort) {
                     args.gameId?.let { id ->
                         val item = viewModel.getSortGame(id)?.apply {
+                            clipSort = sort
                             clipPeriod = period
-                            clipLanguages = languages.takeIf { it.isNotEmpty() }?.joinToString(",")
                         } ?: SortGame(
                             id = id,
+                            clipSort = sort,
                             clipPeriod = period,
-                            clipLanguages = languages.takeIf { it.isNotEmpty() }?.joinToString(",")
                         )
                         viewModel.saveSortGame(item)
                     }
                 }
                 if (saveDefault) {
                     val item = viewModel.getSortGame("default")?.apply {
+                        clipSort = sort
                         clipPeriod = period
-                        clipLanguages = languages.takeIf { it.isNotEmpty() }?.joinToString(",")
                     } ?: SortGame(
                         id = "default",
+                        clipSort = sort,
                         clipPeriod = period,
-                        clipLanguages = languages.takeIf { it.isNotEmpty() }?.joinToString(",")
                     )
                     viewModel.saveSortGame(item)
                 }

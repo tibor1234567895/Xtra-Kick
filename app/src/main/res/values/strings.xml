@@ -414,7 +414,6 @@
     <string name="use_followpager">Use tabs for \"Following\" page</string>
     <string name="disable_chat">Disable chat</string>
     <string name="disconnected">Disconnected</string>
-    <string name="other">Other</string>
     <string name="timestamp_format_0">h:mm</string>
     <string name="timestamp_format_1">hh:mm</string>
     <string name="timestamp_format_2">h:mm:ss</string>
@@ -1327,4 +1326,11 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="skipVideoTokenEntries2">Skip by default, don\'t skip if playback fails</string>
     <string name="skipVideoTokenEntries3">Don\'t skip by default, skip if playback fails</string>
     <string name="skipVideoTokenEntries4">Never skip</string>
+    <string name="clear">Clear</string>
+    <string name="reset_filters">Reset filters</string>
+    <string name="open_supported_links">Open Kick links in Xtra-Kick</string>
+    <string name="open_supported_links_summary">Choose which kick.com links open in this app in Android settings</string>
+    <string name="clip_sort_date">Date created</string>
+    <string name="clip_sort_duration">Duration</string>
+    <string name="clip_sort_recent_limit">Date and duration sort up to %d recent clips in the selected period.</string>
 </resources>

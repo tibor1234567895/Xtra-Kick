@@ -409,7 +409,6 @@
     <string name="use_followpager">Usar pestañas en la página \"Siguiendo\"</string>
     <string name="disable_chat">Desactivar chat</string>
     <string name="disconnected">Desconectado</string>
-    <string name="other">Otro</string>
     <string name="timestamp_format_0">h:mm</string>
     <string name="timestamp_format_1">hh:mm</string>
     <string name="timestamp_format_2">h:mm:ss</string>
@@ -1314,4 +1313,11 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="skipVideoTokenEntries2">Omitir de forma predeterminada; no omitir si la reproducción falla</string>
     <string name="skipVideoTokenEntries3">No omitir de forma predeterminada; omitir si la reproducción falla</string>
     <string name="skipVideoTokenEntries4">Nunca omitir</string>
+    <string name="clear">Limpiar</string>
+    <string name="reset_filters">Restablecer filtros</string>
+    <string name="open_supported_links">Abrir enlaces de Kick en Xtra-Kick</string>
+    <string name="open_supported_links_summary">Elige qué enlaces de kick.com se abren en esta app desde los ajustes de Android</string>
+    <string name="clip_sort_date">Fecha de creación</string>
+    <string name="clip_sort_duration">Duración</string>
+    <string name="clip_sort_recent_limit">Por fecha o duración se ordenan hasta %d clips recientes del periodo seleccionado.</string>
 </resources>

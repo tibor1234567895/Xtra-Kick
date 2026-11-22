@@ -757,10 +757,13 @@ class IvsPlayerFragment : PlayerFragment() {
         runIvsOp("fragment-set-rate") { it.setPlaybackRate(speed) }
     }
 
-    override fun changeVolume(volume: Float) {
+    override fun changeVolume(volume: Float, fromUser: Boolean, persistPref: Boolean) {
+        super.changeVolume(volume, fromUser, persistPref)
         runIvsOp("fragment-set-volume") { it.setVolume(volume) }
-        prefs.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
-        super.changeVolume(volume)
+        playbackService?.onUserVolumeChanged(volume)
+        if (persistPref && (!isVolumeReduced || fromUser)) {
+            prefs.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
+        }
     }
 
     override fun updateProgress() {
@@ -1367,6 +1370,7 @@ class IvsPlayerFragment : PlayerFragment() {
     }
 
     override fun close() {
+        super.close()
         clearCaptions()
         clearFreezeFrame()
         cancelQualityNudge()

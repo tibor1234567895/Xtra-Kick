@@ -537,19 +537,23 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private fun getPipReducedVolume(): Float =
         prefs.getInt(AppConstants.PIP_REDUCED_VOLUME_LEVEL, 0).coerceIn(0, 50) / 100f
 
-    private fun isVolumeDuckedOrMuted(currentVol: Float, targetVol: Float): Boolean =
-        isVolumeReduced || currentVol <= 0f || (targetVol > 0f && currentVol <= targetVol)
+    private fun isVolumeDuckedOrMuted(currentVol: Float): Boolean =
+        isVolumeReduced || currentVol <= 0f
 
     open fun toggleMute() {
-        val targetVol = getPipReducedVolume()
         val currentVol = getCurrentVolume() ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
+        val targetVol = getPipReducedVolume().let { duck ->
+            if (duck > 0f && currentVol <= duck) 0f else duck
+        }
 
-        if (isVolumeDuckedOrMuted(currentVol, targetVol)) {
+        if (isVolumeDuckedOrMuted(currentVol)) {
             isVolumeReduced = false
-            val minRestore = if (targetVol > 0f) targetVol else 0f
-            val restore = preMuteVolume?.takeIf { it > minRestore }
-                ?: prefs.getFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, -1f).takeIf { it > minRestore }
-                ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100).takeIf { it > (minRestore * 100).toInt() }?.toFloat()?.div(100f) ?: 1f)
+            val savedVol = prefs.getInt(AppConstants.PLAYER_VOLUME, 100).toFloat() / 100f
+            val restore = preMuteVolume?.takeIf { it > 0f }
+                ?: prefs.getFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, -1f).takeIf { it > 0f }
+                ?: savedVol.takeIf { it > 0f }
+                ?: 1f
+            preMuteVolume = null
             changeVolume(restore)
         } else {
             isVolumeReduced = true
@@ -559,11 +563,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
     }
 
-    open fun changeVolume(volume: Float) {
-        if (volume > getPipReducedVolume()) {
-            preMuteVolume = volume
-            prefs.edit { putFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, volume) }
+    open fun changeVolume(volume: Float, fromUser: Boolean = false, persistPref: Boolean = true) {
+        if (fromUser) {
+            preMuteVolume = null
             isVolumeReduced = false
+        }
+        if (persistPref && !isVolumeReduced && volume > 0f) {
+            prefs.edit { putFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, volume) }
         }
         updateVolumeButtonVisual(volume)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity?.isInPictureInPictureMode == true) {
@@ -589,7 +595,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         clearPipDismissState()
     }
     open fun downloadVideo() {}
-    open fun close() {}
+    open fun close() {
+        isVolumeReduced = false
+        preMuteVolume = null
+    }
 
     open fun getVideoStats(): com.xtrakick.app.model.ui.VideoStatsInfo? = null
 
@@ -624,12 +633,22 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         showVideoStatsOverlay(!videoStatsActiveInSession)
     }
 
+    internal fun restoreVolumeReductionState(savedInstanceState: Bundle?) {
+        savedInstanceState?.let {
+            isVolumeReduced = it.getBoolean(KEY_IS_VOLUME_REDUCED, false)
+            if (it.containsKey(KEY_PRE_MUTE_VOLUME)) {
+                preMuteVolume = it.getFloat(KEY_PRE_MUTE_VOLUME)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         videoType = requireArguments().getString(KEY_TYPE)
         if (videoType == OFFLINE_VIDEO) {
             enableNetworkCheck = false
         }
         super.onCreate(savedInstanceState)
+        restoreVolumeReductionState(savedInstanceState)
         val activity = requireActivity()
         prefs = activity.prefs()
         isPortrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
@@ -3921,7 +3940,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     if (prefs.getBoolean(AppConstants.PIP_SHOW_MUTE, true)) {
                         val targetVol = getPipReducedVolume()
                         val currentVol = volumeOverride ?: getCurrentVolume() ?: (prefs.getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
-                        val isLowered = isVolumeDuckedOrMuted(currentVol, targetVol)
+                        val isLowered = isVolumeDuckedOrMuted(currentVol)
 
                         val iconRes = PlayerVolumeDialog.getVolumeIconRes(currentVol)
                         val actionTitle = when {
@@ -5184,7 +5203,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         _binding = null
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_IS_VOLUME_REDUCED, isVolumeReduced)
+        preMuteVolume?.let { outState.putFloat(KEY_PRE_MUTE_VOLUME, it) }
+    }
+
     companion object {
+        private const val KEY_IS_VOLUME_REDUCED = "is_volume_reduced"
+        private const val KEY_PRE_MUTE_VOLUME = "pre_mute_volume"
         internal fun liveRewindTargetPosition(
             rewindSeconds: Long,
             startedAtMs: Long?,

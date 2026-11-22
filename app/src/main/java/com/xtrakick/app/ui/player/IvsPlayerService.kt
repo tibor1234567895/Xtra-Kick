@@ -134,6 +134,7 @@ class IvsPlayerService : Service() {
     private var surfaceAttached = false
     private var attachedSurfaceRef: android.view.Surface? = null
     private var suspendedByFocusLoss = false
+    private var volumeBeforeDuck: Float? = null
     private var deadStreamWatchdog: Runnable? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
@@ -367,6 +368,18 @@ class IvsPlayerService : Service() {
             }
         }
     }
+    fun onUserVolumeChanged(volume: Float) {
+        if (volumeBeforeDuck != null) {
+            volumeBeforeDuck = if (volume <= 0f) null else volume
+        }
+    }
+
+    private fun restoreDuckedVolume() {
+        val volume = volumeBeforeDuck ?: return
+        volumeBeforeDuck = null
+        runPlayerOp("audiofocus-restore-volume") { it.setVolume(volume) }
+    }
+
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS -> {
@@ -381,8 +394,6 @@ class IvsPlayerService : Service() {
                 // volume first — CAN_DUCK may have ducked it, and a manual resume from
                 // the notification would otherwise play at 20%.
                 suspendedByFocusLoss = false
-                val restoreVolume = prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f
-                runPlayerOp("audiofocus-loss-volume") { it.setVolume(restoreVolume) }
                 pause(clearPlaybackRequest = true)
                 updatePlaybackState()
                 updateNotification()
@@ -400,13 +411,15 @@ class IvsPlayerService : Service() {
                 updateNotification()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                val duckedVolume = (prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f) * 0.2f
-                runPlayerOp("audiofocus-duck") { it.setVolume(duckedVolume) }
+                if (volumeBeforeDuck == null) {
+                    val volume = player?.volume ?: (prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
+                    volumeBeforeDuck = volume
+                    runPlayerOp("audiofocus-duck") { it.setVolume(volume * 0.2f) }
+                }
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
                 suspendedByFocusLoss = false
-                val restoreVolume = prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f
-                runPlayerOp("audiofocus-gain-volume") { it.setVolume(restoreVolume) }
+                restoreDuckedVolume()
                 if (playbackRequested) {
                     play()
                     updatePlaybackState()
@@ -436,6 +449,7 @@ class IvsPlayerService : Service() {
     }
 
     private fun abandonAudioFocus() {
+        restoreDuckedVolume()
         val am = audioManager ?: return
         audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
     }
@@ -934,6 +948,7 @@ class IvsPlayerService : Service() {
             ?: KickLivePlayback.resolveInitialBitrate(prefs().getString(AppConstants.PLAYER_QUALITY, null))
         // Don't acquire locks pre-emptively — wait for BUFFERING/PLAYING callback.
         runPlayerOp("playStream-load-play") {
+            volumeBeforeDuck = null
             it.setLiveLowLatencyEnabled(!isLiveRewound)
             it.setRebufferToLive(!isLiveRewound)
             it.setVolume(prefs().getInt(AppConstants.PLAYER_VOLUME, 100) / 100f)
@@ -1341,6 +1356,7 @@ class IvsPlayerService : Service() {
         currentUrl = null
         backgroundPlaybackEnabled = false
         playbackRequested = false
+        volumeBeforeDuck = null
         isPaused = false
         suspendedByFocusLoss = false
         disarmDeadStreamWatchdog()

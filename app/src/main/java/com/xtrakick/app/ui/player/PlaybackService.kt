@@ -15,7 +15,9 @@ import android.os.SystemClock
 import android.os.ext.SdkExtensions
 import com.xtrakick.app.util.NetworkUtils
 import android.util.Log
+import android.view.KeyEvent
 import androidx.annotation.OptIn
+import androidx.core.content.IntentCompat
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import com.xtrakick.app.util.bundleOf
@@ -38,12 +40,14 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.ParsingLoadable
+import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.xtrakick.app.BuildConfig
+import com.xtrakick.app.R
 import com.xtrakick.app.model.VideoPosition
 import androidx.media3.datasource.HttpEngineDataSource
 import androidx.media3.datasource.cronet.CronetDataSource
@@ -89,33 +93,150 @@ import kotlin.concurrent.schedule
 import kotlin.concurrent.scheduleAtFixedRate
 
 
+private val DISALLOWED_EXTERNAL_PLAYER_COMMANDS = intArrayOf(
+    Player.COMMAND_SEEK_TO_PREVIOUS,
+    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+    Player.COMMAND_SEEK_TO_NEXT,
+    Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+    Player.COMMAND_SET_REPEAT_MODE,
+    Player.COMMAND_SET_SHUFFLE_MODE,
+)
+
+private fun SharedPreferences.seekSeconds(key: String): Long =
+    (getString(key, "10")?.toLongOrNull() ?: 10L).coerceIn(1L, 300L)
+
+@OptIn(UnstableApi::class)
+internal fun notificationSeekButtons(
+    rewindSeconds: Long,
+    forwardSeconds: Long,
+    rewindLabel: String,
+    forwardLabel: String,
+    live: Boolean = false,
+): List<CommandButton> = buildList {
+    add(
+        CommandButton.Builder(rewindSeekIcon(rewindSeconds))
+            .setSessionCommand(SessionCommand(PlaybackService.NOTIFICATION_SEEK_BACK, Bundle.EMPTY))
+            .setDisplayName(rewindLabel)
+            .setSlots(CommandButton.SLOT_BACK)
+            .build()
+    )
+    if (!live) {
+        add(
+            CommandButton.Builder(forwardSeekIcon(forwardSeconds))
+                .setSessionCommand(SessionCommand(PlaybackService.NOTIFICATION_SEEK_FORWARD, Bundle.EMPTY))
+                .setDisplayName(forwardLabel)
+                .setSlots(CommandButton.SLOT_FORWARD)
+                .build()
+        )
+    }
+}
+
+private fun rewindSeekIcon(seconds: Long): Int = when (seconds) {
+    5L -> CommandButton.ICON_SKIP_BACK_5
+    10L -> CommandButton.ICON_SKIP_BACK_10
+    15L -> CommandButton.ICON_SKIP_BACK_15
+    30L -> CommandButton.ICON_SKIP_BACK_30
+    else -> CommandButton.ICON_REWIND
+}
+
+private fun forwardSeekIcon(seconds: Long): Int = when (seconds) {
+    5L -> CommandButton.ICON_SKIP_FORWARD_5
+    10L -> CommandButton.ICON_SKIP_FORWARD_10
+    15L -> CommandButton.ICON_SKIP_FORWARD_15
+    30L -> CommandButton.ICON_SKIP_FORWARD_30
+    else -> CommandButton.ICON_FAST_FORWARD
+}
+
+internal fun handleNotificationSeekCommand(player: Player, customAction: String): Boolean = when (customAction) {
+    PlaybackService.NOTIFICATION_SEEK_BACK -> {
+        player.seekBack()
+        true
+    }
+    PlaybackService.NOTIFICATION_SEEK_FORWARD -> {
+        if (!player.isCurrentMediaItemLive) player.seekForward()
+        true
+    }
+    else -> false
+}
+
 @OptIn(UnstableApi::class)
 internal fun playbackControllerConnection(
     connectionResult: MediaSession.ConnectionResult,
     controllerUid: Int,
     appUid: Int,
 ): MediaSession.ConnectionResult {
-    if (controllerUid != appUid) return connectionResult
+    if (!connectionResult.isAccepted) return connectionResult
+    val isOwnApp = controllerUid == appUid
+    val playerCommands = if (isOwnApp) {
+        Player.Commands.Builder().addAllCommands().build()
+    } else {
+        val original = connectionResult.availablePlayerCommands
+        if (!DISALLOWED_EXTERNAL_PLAYER_COMMANDS.any { original.contains(it) }) {
+            original
+        } else {
+            original.buildUpon().apply {
+                for (command in DISALLOWED_EXTERNAL_PLAYER_COMMANDS) {
+                    remove(command)
+                }
+            }.build()
+        }
+    }
     val sessionCommands = connectionResult.availableSessionCommands.buildUpon().apply {
-        add(SessionCommand(PlaybackService.START_STREAM, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.START_VIDEO, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.START_CLIP, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.START_OFFLINE_VIDEO, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.STOP_PLAYBACK, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.TOGGLE_DYNAMICS_PROCESSING, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.SET_SLEEP_TIMER, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.GET_QUALITIES, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.GET_DURATION, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.GET_ERROR_CODE, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.GET_MEDIA_PLAYLIST, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.GET_MULTIVARIANT_PLAYLIST, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.UPDATE_CHANNEL_LOGO, Bundle.EMPTY))
-        add(SessionCommand(PlaybackService.SET_PIP_DISMISSED_BACKGROUND_AUDIO, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.NOTIFICATION_SEEK_BACK, Bundle.EMPTY))
+        add(SessionCommand(PlaybackService.NOTIFICATION_SEEK_FORWARD, Bundle.EMPTY))
+        if (isOwnApp) {
+            add(SessionCommand(PlaybackService.START_STREAM, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.START_VIDEO, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.START_CLIP, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.START_OFFLINE_VIDEO, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.STOP_PLAYBACK, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.TOGGLE_DYNAMICS_PROCESSING, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.SET_SLEEP_TIMER, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.GET_QUALITIES, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.GET_DURATION, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.GET_ERROR_CODE, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.GET_MEDIA_PLAYLIST, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.GET_MULTIVARIANT_PLAYLIST, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.UPDATE_CHANNEL_LOGO, Bundle.EMPTY))
+            add(SessionCommand(PlaybackService.SET_PIP_DISMISSED_BACKGROUND_AUDIO, Bundle.EMPTY))
+        }
     }.build()
-    val playerCommands = Player.Commands.Builder()
-        .addAllCommands()
-        .build()
-    return MediaSession.ConnectionResult.accept(sessionCommands, playerCommands)
+    val builder = MediaSession.ConnectionResult.AcceptedResultBuilder()
+        .setAvailableSessionCommands(sessionCommands)
+        .setAvailablePlayerCommands(playerCommands)
+    connectionResult.mediaButtonPreferences?.let { builder.setMediaButtonPreferences(it) }
+    return builder.build()
+}
+
+@OptIn(UnstableApi::class)
+internal fun handleMediaButtonEvent(player: Player, intent: Intent): Boolean {
+    val keyEvent = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+        ?: return false
+    when (keyEvent.keyCode) {
+        KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+        KeyEvent.KEYCODE_MEDIA_REWIND,
+        KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD,
+        KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD -> {
+            if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0) {
+                if (!player.isCurrentMediaItemLive) {
+                    player.seekBack()
+                }
+            }
+            return true
+        }
+        KeyEvent.KEYCODE_MEDIA_NEXT,
+        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
+        KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD,
+        KeyEvent.KEYCODE_MEDIA_STEP_FORWARD -> {
+            if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0) {
+                if (!player.isCurrentMediaItemLive) {
+                    player.seekForward()
+                }
+            }
+            return true
+        }
+    }
+    return false
 }
 
 internal class PlaybackPositionWriter(private val scope: CoroutineScope) {
@@ -183,6 +304,7 @@ class PlaybackService : MediaSessionService() {
 
     private val positionWriter by lazy { PlaybackPositionWriter(applicationScope) }
     private var mediaSession: MediaSession? = null
+    private var notificationIsLive = false
     private var dynamicsProcessing: DynamicsProcessing? = null
     private var background = false
     @Volatile
@@ -296,15 +418,29 @@ class PlaybackService : MediaSessionService() {
             setLoadControl(LiveLatencySettings.toLoadControl(activeLatencyConfig))
             setAudioAttributes(AudioAttributes.DEFAULT, prefs().getBoolean(AppConstants.PLAYER_AUDIO_FOCUS, true))
             setHandleAudioBecomingNoisy(prefs().getBoolean(AppConstants.PLAYER_HANDLE_AUDIO_BECOMING_NOISY, true))
-            setSeekBackIncrementMs((prefs().getString(AppConstants.PLAYER_REWIND, "10")?.toLongOrNull() ?: 10L).coerceIn(1L, 300L) * 1000L)
-            setSeekForwardIncrementMs((prefs().getString(AppConstants.PLAYER_FORWARD, "10")?.toLongOrNull() ?: 10L).coerceIn(1L, 300L) * 1000L)
+            setSeekBackIncrementMs(prefs().seekSeconds(AppConstants.PLAYER_REWIND) * 1000L)
+            setSeekForwardIncrementMs(prefs().seekSeconds(AppConstants.PLAYER_FORWARD) * 1000L)
             setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
         }.build()
+        val rewindSeconds = prefs().seekSeconds(AppConstants.PLAYER_REWIND)
+        val forwardSeconds = prefs().seekSeconds(AppConstants.PLAYER_FORWARD)
+        val rewindLabel = "${getString(R.string.rewind)} ${getString(R.string.seconds_full, rewindSeconds.toString())}"
+        val forwardLabel = "${getString(R.string.forward)} ${getString(R.string.seconds_full, forwardSeconds.toString())}"
+        val recordedSeekButtons = notificationSeekButtons(rewindSeconds, forwardSeconds, rewindLabel, forwardLabel)
+        val liveSeekButtons = notificationSeekButtons(rewindSeconds, forwardSeconds, rewindLabel, forwardLabel, live = true)
         logBufferDebug(
             "PlaybackService created with latency=${LiveLatencySettings.describe(activeLatencyConfig)}"
         )
         player.addListener(
             object : Player.Listener {
+                override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+                    val live = player.isCurrentMediaItemLive
+                    if (notificationIsLive != live) {
+                        notificationIsLive = live
+                        mediaSession?.setMediaButtonPreferences(if (live) liveSeekButtons else recordedSeekButtons)
+                    }
+                }
+
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     logBufferDebug(
                         "playbackState=${playbackStateName(playbackState)} " +
@@ -483,6 +619,7 @@ class PlaybackService : MediaSessionService() {
                 prefs().getBoolean(AppConstants.PLAYER_SHOW_STREAM_NOTIFICATION_SEEKBAR, true)
             }
         ).apply {
+            setMediaButtonPreferences(recordedSeekButtons)
             setSessionActivity(
                 PendingIntent.getActivity(
                     this@PlaybackService,
@@ -501,7 +638,20 @@ class PlaybackService : MediaSessionService() {
                         return playbackControllerConnection(connectionResult, controller.uid, Process.myUid())
                     }
 
+                    override fun onMediaButtonEvent(session: MediaSession, controller: MediaSession.ControllerInfo, intent: Intent): Boolean {
+                        if (handleMediaButtonEvent(session.player, intent)) {
+                            return true
+                        }
+                        return super.onMediaButtonEvent(session, controller, intent)
+                    }
+
                     override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
+                        if (customCommand.customAction == NOTIFICATION_SEEK_FORWARD && session.player.isCurrentMediaItemLive) {
+                            return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+                        }
+                        if (handleNotificationSeekCommand(session.player, customCommand.customAction)) {
+                            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                        }
                         if (controller.uid != Process.myUid()) {
                             return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
                         }
@@ -1148,6 +1298,8 @@ class PlaybackService : MediaSessionService() {
         const val GET_MULTIVARIANT_PLAYLIST = "getMultivariantPlaylist"
         const val UPDATE_CHANNEL_LOGO = "updateChannelLogo"
         const val SET_PIP_DISMISSED_BACKGROUND_AUDIO = "setPipDismissedBackgroundAudio"
+        const val NOTIFICATION_SEEK_BACK = "notificationSeekBack"
+        const val NOTIFICATION_SEEK_FORWARD = "notificationSeekForward"
         const val ACTION_STOP_PLAYBACK = "com.xtrakick.app.ACTION_STOP_PLAYBACK"
         private const val EXTRA_STOP_TOKEN = "stop_token"
         private val STOP_TOKEN = java.util.UUID.randomUUID().toString()

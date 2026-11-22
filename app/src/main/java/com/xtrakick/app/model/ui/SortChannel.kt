@@ -9,5 +9,6 @@ class SortChannel(
     val id: String,
     var videoSort: String? = null,
     var videoType: String? = null,
+    var clipSort: String? = null,
     var clipPeriod: String? = null,
 )

@@ -30,14 +30,20 @@ class MediaPagingSourceTest {
     private var status = 200
     private var repeatCursor = false
     private var omitDates = false
+    private var lastSortQuery: String? = null
     private val client = OkHttpClient.Builder().addInterceptor { chain ->
+        if (chain.request().url.encodedPath.endsWith("/clips")) {
+            lastSortQuery = chain.request().url.queryParameter("sort")
+        }
         val cursor = chain.request().url.queryParameter("cursor")
         val id = when (cursor) { null -> "first"; "second" -> "second"; else -> "third" }
         val next = if (cursor == null || repeatCursor) "second" else "third"
         val field = if (chain.request().url.encodedPath.endsWith("/clips")) "clips" else "videos"
-        val date = if (omitDates) "" else ",\"created_at\":\"2026-11-02 10:00:00\""
+        val day = when (id) { "first" -> "02"; "second" -> "04"; else -> "03" }
+        val duration = when (id) { "first" -> 20; "second" -> 40; else -> 100 }
+        val date = if (omitDates) "" else ",\"created_at\":\"2026-11-$day 10:00:00\""
         val items = if (field == "videos") (0 until 30).joinToString(",") { """{"id":"$id-$it","title":"$id"$date}""" }
-            else """{"id":"$id","title":"$id"$date}"""
+            else """{"id":"$id","title":"$id","duration":$duration$date}"""
         Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(status).message("fixture")
             .body("""{"$field":[$items],"next_cursor":"$next"}""".toResponseBody("application/json".toMediaType())).build()
     }.build()
@@ -46,9 +52,9 @@ class MediaPagingSourceTest {
     private val repository = KickRepository(context, client, null, executor, json,
         AuthRepository(null, null, executor, client, json), KickOfficialApiClient(context, client, json))
 
-    private fun clipSources(): List<PagingSource<String, Clip>> = listOf(
-        ChannelClipsDataSource("1", "channel", null, null, null, null, repository),
-        GameClipsDataSource("1", "game", "Game", null, null, null, null, repository)
+    private fun clipSources(sort: String? = null): List<PagingSource<String, Clip>> = listOf(
+        ChannelClipsDataSource("1", "channel", sort, null, null, null, null, repository),
+        GameClipsDataSource("1", "game", "Game", sort, null, null, null, null, repository)
     )
 
     private fun videos() = ChannelVideosDataSource("1", "channel", "all", "all", "time", repository)
@@ -109,6 +115,31 @@ class MediaPagingSourceTest {
         for (source in clipSources()) {
             val page = source.load(PagingSource.LoadParams.Refresh(null, 20, false)) as PagingSource.LoadResult.Page
             assertEquals(listOf("first"), page.data.map { it.id })
+        }
+    }
+
+    @Test fun clipSortOptionMapsToKickApiSortParameter() = runBlocking {
+        for (source in clipSources(sort = "time")) {
+            source.load(PagingSource.LoadParams.Refresh(null, 20, false)) as PagingSource.LoadResult.Page
+            assertEquals("date", lastSortQuery)
+        }
+        for (source in clipSources(sort = "views")) {
+            source.load(PagingSource.LoadParams.Refresh(null, 20, false)) as PagingSource.LoadResult.Page
+            assertEquals("view", lastSortQuery)
+        }
+    }
+
+    @Test fun recentClipSortingOrdersResultsAcrossServerPages() = runBlocking {
+        for ((sort, expected) in listOf(
+            "time" to listOf("second", "third", "first"),
+            "duration" to listOf("third", "second", "first"),
+        )) {
+            for (source in clipSources(sort)) {
+                val page = source.load(PagingSource.LoadParams.Refresh(null, 20, false)) as PagingSource.LoadResult.Page
+                assertEquals(expected, page.data.map { it.id })
+                assertEquals("date", lastSortQuery)
+                assertNull(page.nextKey)
+            }
         }
     }
 }

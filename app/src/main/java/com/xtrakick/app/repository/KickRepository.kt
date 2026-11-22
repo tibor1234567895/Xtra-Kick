@@ -617,21 +617,24 @@ class KickRepository @Inject constructor(
         return response
     }
 
+    internal suspend fun getBrowseLanguageCodes(): List<String> =
+        browseLanguageCodes ?: get<KickBrowseLanguageCodes>(
+            "https://web.kick.com/api/v1/livestreams/language-codes"
+        ).data.also { if (it.isNotEmpty()) browseLanguageCodes = it }
+
     suspend fun getLanguageFilteredLivestreams(
         categoryId: String?, languages: Collection<String>, after: String?, limit: Int,
         awaitEventMetadata: Boolean = false,
     ): KickBrowsePage? {
-        val supported = browseLanguageCodes ?: get<KickBrowseLanguageCodes>(
-            "https://web.kick.com/api/v1/livestreams/language-codes"
-        ).data.also { browseLanguageCodes = it }
+        val supported = getBrowseLanguageCodes()
         val codes = languages.flatMap { language ->
             val code = when (language.uppercase(Locale.ROOT)) {
                 "TL" -> "fil"
                 else -> language.replace('_', '-').lowercase(Locale.ROOT)
             }
             supported.filter { it.equals(code, true) || it.startsWith("$code-", true) }
-                .ifEmpty { return null }
         }.distinct()
+        if (codes.isEmpty()) return null
         val url = "https://web.kick.com/api/v1/livestreams".toHttpUrlOrNull()!!.newBuilder()
             .addQueryParameter("limit", limit.coerceIn(1, 100).toString())
             .addQueryParameter("sort", "viewer_count_desc")
@@ -3208,6 +3211,7 @@ class KickRepository @Inject constructor(
         channelSlug: String,
         channelId: String? = null,
         limit: Int = 20,
+        sort: String? = null,
         time: String? = null,
         cursor: String? = null,
     ): KickClipPage? {
@@ -3217,6 +3221,7 @@ class KickRepository @Inject constructor(
         val channelName = cached?.user?.username ?: cached?.slug ?: channelSlug
         val channelLogo = cached?.user?.profileImage
         val pageSize = limit.coerceIn(20, 100)
+        val resolvedSort = resolveKickClipSort(sort)
         val resolvedTime = when (time?.trim()?.lowercase(Locale.ROOT)) {
             "day", "today" -> "day"
             "week" -> "week"
@@ -3228,7 +3233,7 @@ class KickRepository @Inject constructor(
         val targetUrl = buildKickUrl(
             baseUrl = "https://kick.com/api/v2/channels/${urlEncode(channelSlug)}/clips",
             extraQuery = buildMap {
-                put("sort", "view")
+                put("sort", resolvedSort)
                 resolvedTime?.let { put("time", it) }
                 if (cursor.isNullOrBlank()) {
                     put("page", "1")
@@ -3284,6 +3289,7 @@ class KickRepository @Inject constructor(
         gameId: String? = null,
         gameName: String? = null,
         limit: Int = 20,
+        sort: String? = null,
         time: String? = null,
         cursor: String? = null,
     ): KickClipPage? {
@@ -3291,6 +3297,7 @@ class KickRepository @Inject constructor(
         if (normalizedSlug.isBlank()) return null
 
         val pageSize = limit.coerceIn(20, 100)
+        val resolvedSort = resolveKickClipSort(sort)
         val resolvedTime = when (time?.trim()?.lowercase(Locale.ROOT)) {
             "day", "today" -> "day"
             "week" -> "week"
@@ -3303,7 +3310,7 @@ class KickRepository @Inject constructor(
             page = 1,
             limit = pageSize,
             extraQuery = buildMap {
-                put("sort", "view")
+                put("sort", resolvedSort)
                 resolvedTime?.let { put("time", it) }
                 cursor?.let { put("cursor", it) }
             },
@@ -3316,6 +3323,11 @@ class KickRepository @Inject constructor(
             gameSlug = normalizedSlug,
             gameName = gameName,
         )
+    }
+
+    private fun resolveKickClipSort(sort: String?): String = when (sort?.trim()?.lowercase(Locale.ROOT)) {
+        "time", "date" -> "date"
+        else -> "view"
     }
 
     private suspend fun collectClipPages(

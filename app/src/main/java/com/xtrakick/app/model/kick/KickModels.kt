@@ -116,14 +116,21 @@ class KickChannelLivestream(
     @SerialName("vod_id")
     val vodId: String? = null,
     val thumbnail: KickThumbnail? = null,
-    val category: KickCategory? = null,
+    var category: KickCategory? = null,
+    val categories: List<KickCategory>? = null,
     @JsonNames("custom_tags")
     val tags: List<String>? = null,
     @JsonNames("language_code")
     val language: String? = null,
     @SerialName("is_mature")
     val isMature: Boolean? = null,
-)
+) {
+    init {
+        if (category == null) {
+            category = categories?.firstOrNull()
+        }
+    }
+}
 
 @Serializable
 class KickChannelLivestreamResponse(

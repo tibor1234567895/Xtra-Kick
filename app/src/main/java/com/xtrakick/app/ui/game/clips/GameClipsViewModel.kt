@@ -1,6 +1,5 @@
 package com.xtrakick.app.ui.game.clips
 
-import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -16,7 +15,6 @@ import com.xtrakick.app.ui.common.VideosSortDialog
 import com.xtrakick.app.ui.game.GamePagerFragmentArgs
 import com.xtrakick.app.util.KickApiHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
@@ -24,7 +22,6 @@ import javax.inject.Inject
 
 @HiltViewModel
 class GameClipsViewModel @Inject constructor(
-    @param:ApplicationContext private val applicationContext: Context,
     private val sortGameRepository: SortGameRepository,
     private val kickRepository: KickRepository,
     savedStateHandle: SavedStateHandle,
@@ -33,17 +30,16 @@ class GameClipsViewModel @Inject constructor(
     private val args = GamePagerFragmentArgs.fromSavedStateHandle(savedStateHandle)
     val filter = MutableStateFlow<Filter?>(null)
     val sortText = MutableStateFlow<CharSequence?>(null)
-    val filtersText = MutableStateFlow<CharSequence?>(null)
 
+    val sort: String
+        get() = filter.value?.sort ?: VideosSortDialog.SORT_VIEWS
     val period: String
         get() = filter.value?.period ?: VideosSortDialog.PERIOD_WEEK
-    val languages: Array<String>
-        get() = filter.value?.languages ?: emptyArray()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val flow = filter.flatMapLatest { filter ->
+        val selectedSort = filter?.sort ?: VideosSortDialog.SORT_VIEWS
         val selectedPeriod = filter?.period ?: VideosSortDialog.PERIOD_WEEK
-        val selectedLanguages = filter?.languages ?: emptyArray()
         Pager(
             PagingConfig(pageSize = 20, prefetchDistance = 3, initialLoadSize = 20)
         ) {
@@ -80,6 +76,7 @@ class GameClipsViewModel @Inject constructor(
                 gameId = args.gameId,
                 gameSlug = args.gameSlug,
                 gameName = args.gameName,
+                sort = selectedSort,
                 gqlQueryPeriod = gqlQueryPeriod,
                 gqlPeriod = gqlPeriod,
                 startedAt = started,
@@ -98,15 +95,26 @@ class GameClipsViewModel @Inject constructor(
     }
 
     suspend fun deleteSortGame(item: SortGame) {
-        sortGameRepository.delete(item)
+        item.clipSort = null
+        item.clipPeriod = null
+        item.clipLanguages = null
+        val otherSettings = listOf(
+            item.streamSort, item.streamTags, item.streamLanguages,
+            item.videoSort, item.videoPeriod, item.videoType, item.videoLanguages,
+        )
+        if (otherSettings.all { it == null }) {
+            sortGameRepository.delete(item)
+        } else {
+            sortGameRepository.save(item)
+        }
     }
 
-    fun setFilter(period: String?, languages: Array<String>?) {
-        filter.value = Filter(period, languages)
+    fun setFilter(sort: String?, period: String?) {
+        filter.value = Filter(sort, period)
     }
 
     class Filter(
+        val sort: String?,
         val period: String?,
-        val languages: Array<String>?,
     )
 }

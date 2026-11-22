@@ -67,7 +67,7 @@ class ChannelClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSo
                 gameName = it.gameName,
             ).show(childFragmentManager, null)
         }
-        pagingAdapter = ClipsAdapter(this, showDialog, showChannel = true, showGame = false)
+        pagingAdapter = ClipsAdapter(this, showDialog, showChannel = false, showGame = true)
         setAdapter(binding.recyclerView, pagingAdapter)
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
             if (activity?.findViewById<LinearLayout>(R.id.navBarContainer)?.isVisible == false) {
@@ -81,15 +81,23 @@ class ChannelClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSo
     override fun initialize() {
         viewLifecycleOwner.lifecycleScope.launch {
             if (viewModel.filter.value == null) {
-                val sortValues = args.channelId?.let { viewModel.getSortChannel(it) } ?: viewModel.getSortChannel("default")
+                val sortValues = args.channelId?.let { viewModel.getSortChannel(it) }
+                val defaults = viewModel.getSortChannel("default")
                 viewModel.setFilter(
-                    period = sortValues?.clipPeriod,
+                    sort = sortValues?.clipSort ?: defaults?.clipSort,
+                    period = sortValues?.clipPeriod ?: defaults?.clipPeriod,
                 )
             }
             // Recompute every time so the sort bar follows app-locale changes
             viewModel.sortText.value = getString(
                 R.string.sort_and_period,
-                getString(R.string.view_count),
+                getString(
+                    when (viewModel.sort) {
+                        VideosSortDialog.SORT_TIME -> R.string.clip_sort_date
+                        VideosSortDialog.SORT_DURATION -> R.string.clip_sort_duration
+                        else -> R.string.view_count
+                    }
+                ),
                 getString(
                     when (viewModel.period) {
                         VideosSortDialog.PERIOD_DAY -> R.string.today
@@ -114,9 +122,10 @@ class ChannelClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSo
         sortBar.root.setOnClickListener {
             viewLifecycleOwner.lifecycleScope.launch {
                 VideosSortDialog.newInstance(
-                    sort = VideosSortDialog.SORT_VIEWS,
+                    sort = viewModel.sort,
                     period = viewModel.period,
-                    saved = args.channelId?.let { viewModel.getSortChannel(it) } != null
+                    saved = args.channelId?.let { viewModel.getSortChannel(it) }
+                        ?.let { it.clipSort != null || it.clipPeriod != null } == true
                 ).show(childFragmentManager, null)
             }
         }
@@ -134,15 +143,17 @@ class ChannelClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSo
             viewLifecycleOwner.lifecycleScope.launch {
                 if (changed) {
                     binding.scrollTop.visibility = View.GONE
-                    viewModel.setFilter(period)
+                    viewModel.setFilter(sort, period)
                     viewModel.sortText.value = getString(R.string.sort_and_period, sortText, periodText)
                 }
                 if (saveSort) {
                     args.channelId?.let { id ->
                         val item = viewModel.getSortChannel(id)?.apply {
+                            clipSort = sort
                             clipPeriod = period
                         } ?: SortChannel(
                             id = id,
+                            clipSort = sort,
                             clipPeriod = period
                         )
                         viewModel.saveSortChannel(item)
@@ -150,9 +161,11 @@ class ChannelClipsFragment : PagedListFragment(), Scrollable, Sortable, VideosSo
                 }
                 if (saveDefault) {
                     val item = viewModel.getSortChannel("default")?.apply {
+                        clipSort = sort
                         clipPeriod = period
                     } ?: SortChannel(
                         id = "default",
+                        clipSort = sort,
                         clipPeriod = period
                     )
                     viewModel.saveSortChannel(item)

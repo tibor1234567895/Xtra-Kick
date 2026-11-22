@@ -80,8 +80,8 @@
                 <category android:name="android.intent.category.APP_MUSIC" />
             </intent-filter>
             <!-- kick.com deep links. autoVerify is impossible (assetlinks.json would have to be
-                 served from kick.com), so Android shows the disambiguation dialog instead of
-                 opening us silently; the router in MainActivity.handleIntent parses the paths. -->
+                 served from kick.com), so on Android 12+ users must opt in via "Open by default"
+                 (exposed in Settings). MainActivity.handleIntent routes the paths. -->
             <intent-filter tools:ignore="AppLinkWarning">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -90,6 +90,7 @@
                 <data android:scheme="https" />
                 <data android:host="kick.com" />
                 <data android:host="www.kick.com" />
+                <data android:host="m.kick.com" />
                 <data android:host="clips.kick.com" />
             </intent-filter>
         </activity>

@@ -322,11 +322,29 @@ class DatabaseModule {
                         db.execSQL("CREATE INDEX IF NOT EXISTS `index_recent_emotes_used_at` ON `recent_emotes` (`used_at`)")
                     }
                 },
+                object : Migration(37, 38) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        addColumnIfMissing(db, "sort_channel", "clipSort", "TEXT DEFAULT NULL")
+                        addColumnIfMissing(db, "sort_game", "clipSort", "TEXT DEFAULT NULL")
+                    }
+                },
             )
-            // Migrations only cover 9->37, and schemas/ still holds snapshots for 1, 2 and 8.
+            // Migrations only cover 9->38, and schemas/ still holds snapshots for 1, 2 and 8.
             // A database at any of those versions would throw on first open. No installed base
             // can actually be there (the applicationId has never matched upstream), so wipe
             // rather than crash.
             .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3, 4, 5, 6, 7, 8)
             .build()
+
+    private fun addColumnIfMissing(db: SupportSQLiteDatabase, table: String, column: String, definition: String) {
+        db.query("PRAGMA table_info(`$table`)").use { cursor ->
+            val nameIdx = cursor.getColumnIndex("name")
+            if (nameIdx >= 0) {
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIdx) == column) return
+                }
+            }
+        }
+        db.execSQL("ALTER TABLE `$table` ADD COLUMN `$column` $definition")
+    }
 }

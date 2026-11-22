@@ -27,6 +27,7 @@ class GameStreamsDataSource(
     private val seenStreamKeys = Collections.synchronizedSet(mutableSetOf<String>())
     private val languageCursors = mutableMapOf<Int, String>()
     private var languageEndpointActive = false
+    private val activeLanguages = StreamsDataSource.supportedFilterSelections(gqlLanguages)
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Stream> {
         return if (!offset.isNullOrBlank()) {
@@ -73,16 +74,17 @@ class GameStreamsDataSource(
                 matchesCategory(stream, sanitizedTargetId, normalizedSlug, normalizedName, targetInferredSlug)
             }
             return LoadResult.Page(
-                data = StreamsDataSource.filterEventStreams(matched, gqlLanguages, gqlSort),
+                data = StreamsDataSource.filterEventStreams(matched, activeLanguages, gqlSort),
                 prevKey = null,
                 nextKey = null,
             )
         }
-        val languageCodes = StreamsDataSource.requestedLanguageCodes(gqlLanguages, tags)
+        val languageCodes = StreamsDataSource.requestedLanguageCodes(activeLanguages, tags)
         val resolvedGameId = sanitizedTargetId
             ?: kickRepository.getCachedCategoryId(slug, gameName)
-        if (languageCodes.isNotEmpty() && !resolvedGameId.isNullOrBlank() && gqlSort != "VIEWER_COUNT_ASC" && gqlSort != "RECENT") {
-            val page = params.key ?: 1
+        val page = params.key ?: 1
+        val canUseLanguageCursor = page == 1 || languageEndpointActive
+        if (canUseLanguageCursor && !resolvedGameId.isNullOrBlank() && StreamsDataSource.usesLanguageEndpoint(languageCodes, gqlSort)) {
             val cursor = if (page == 1) null else languageCursors[page] ?: error("Missing language page cursor")
             kickRepository.getLanguageFilteredLivestreams(resolvedGameId, languageCodes, cursor, params.loadSize,
                 awaitEventMetadata = kickRepository.hasCachedEventFilter(tags.orEmpty()))?.let { response ->
@@ -99,7 +101,7 @@ class GameStreamsDataSource(
                             (normalizedSlug != null && (catSlug == normalizedSlug || catInferred == normalizedSlug)) ||
                             (normalizedName != null && (catName == normalizedName || catInferred == targetInferred))
                     }
-                    .filter { StreamsDataSource.matchesFilters(it.toLegacyLivestream(), gqlLanguages, tags,
+                    .filter { StreamsDataSource.matchesFilters(it.toLegacyLivestream(), activeLanguages, tags,
                         kickRepository.getCachedChannelEventTitle(it.channel.id.toString())) }
                     .map { kickRepository.toStream(it) }
                     .filter { seenStreamKeys.add(it.channelId ?: it.channelLogin ?: it.id.orEmpty()) }
@@ -109,7 +111,7 @@ class GameStreamsDataSource(
             }
         }
         val targetSize = params.loadSize
-        val hasFilters = !gqlLanguages.isNullOrEmpty() || !tags.isNullOrEmpty()
+        val hasFilters = activeLanguages.isNotEmpty() || !tags.isNullOrEmpty()
         val minTargetSize = if (hasFilters) minOf(targetSize, 8) else targetSize
         val maxPagesToScan = if (hasFilters) 8 else 1
         var currentPage = params.key ?: 1
@@ -141,7 +143,7 @@ class GameStreamsDataSource(
                             (normalizedSlug != null && (catSlug == normalizedSlug || catInferred == normalizedSlug)) ||
                             (normalizedName != null && (catName == normalizedName || catInferred == targetInferred))
                         }
-                    matchesCategory && StreamsDataSource.matchesFilters(item, gqlLanguages, tags,
+                    matchesCategory && StreamsDataSource.matchesFilters(item, activeLanguages, tags,
                         kickRepository.getCachedChannelEventTitle((item.channel?.id ?: item.channelId)?.toString()))
                 }
                 .map {

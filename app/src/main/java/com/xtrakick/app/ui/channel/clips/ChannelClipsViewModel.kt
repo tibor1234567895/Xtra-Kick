@@ -34,11 +34,15 @@ class ChannelClipsViewModel @Inject constructor(
     val filter = MutableStateFlow<Filter?>(null)
     val sortText = MutableStateFlow<CharSequence?>(null)
 
+    val sort: String
+        get() = filter.value?.sort ?: VideosSortDialog.SORT_VIEWS
+
     val period: String
         get() = filter.value?.period ?: VideosSortDialog.PERIOD_WEEK
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val flow = filter.flatMapLatest { filter ->
+        val selectedSort = filter?.sort ?: VideosSortDialog.SORT_VIEWS
         val selectedPeriod = filter?.period ?: VideosSortDialog.PERIOD_WEEK
         Pager(
             PagingConfig(pageSize = 20, prefetchDistance = 3, initialLoadSize = 20)
@@ -75,6 +79,7 @@ class ChannelClipsViewModel @Inject constructor(
             ChannelClipsDataSource(
                 channelId = args.channelId,
                 channelLogin = args.channelLogin,
+                sort = selectedSort,
                 gqlQueryPeriod = gqlQueryPeriod,
                 gqlPeriod = gqlPeriod,
                 startedAt = started,
@@ -93,14 +98,21 @@ class ChannelClipsViewModel @Inject constructor(
     }
 
     suspend fun deleteSortChannel(item: SortChannel) {
-        sortChannelRepository.delete(item)
+        item.clipSort = null
+        item.clipPeriod = null
+        if (item.videoSort == null && item.videoType == null) {
+            sortChannelRepository.delete(item)
+        } else {
+            sortChannelRepository.save(item)
+        }
     }
 
-    fun setFilter(period: String?) {
-        filter.value = Filter(period)
+    fun setFilter(sort: String?, period: String?) {
+        filter.value = Filter(sort, period)
     }
 
     class Filter(
+        val sort: String?,
         val period: String?,
     )
 }

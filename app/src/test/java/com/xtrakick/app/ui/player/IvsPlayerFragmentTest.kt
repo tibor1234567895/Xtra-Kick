@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -533,5 +534,181 @@ class IvsPlayerFragmentTest {
         } finally {
             db.close()
         }
+    }
+
+    @Test
+    fun changeVolumeDoesNotOverwritePlayerVolumePrefWhenVolumeIsReduced() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).get()
+        val fragment = IvsPlayerFragment()
+        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(activity)
+        prefs.edit().putInt(AppConstants.PLAYER_VOLUME, 100).commit()
+
+        PlayerFragment::class.java.superclass!!.getDeclaredField("componentContext").apply {
+            isAccessible = true
+            set(fragment, ContextWrapper(activity))
+        }
+        PlayerFragment::class.java.getDeclaredField("prefs").apply {
+            isAccessible = true
+            set(fragment, prefs)
+        }
+        PlayerFragment::class.java.getDeclaredField("isVolumeReduced").apply {
+            isAccessible = true
+            setBoolean(fragment, true)
+        }
+
+        fragment.changeVolume(0f)
+
+        assertEquals(100, prefs.getInt(AppConstants.PLAYER_VOLUME, -1))
+    }
+
+    @Test
+    fun closeResetsVolumeReductionState() {
+        val fragment = IvsPlayerFragment()
+        val isReducedField = PlayerFragment::class.java.getDeclaredField("isVolumeReduced").apply {
+            isAccessible = true
+            setBoolean(fragment, true)
+        }
+        val preMuteField = PlayerFragment::class.java.getDeclaredField("preMuteVolume").apply {
+            isAccessible = true
+            set(fragment, 0.8f)
+        }
+
+        fragment.close()
+
+        assertFalse(isReducedField.getBoolean(fragment))
+        assertNull(preMuteField.get(fragment))
+    }
+
+    @Test
+    fun toggleMute_withLowInitialVolumeAndNonZeroDuck_doesNotBlastTo100Percent() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).get()
+        val fragment = IvsPlayerFragment()
+        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(activity)
+        prefs.edit()
+            .putInt(AppConstants.PLAYER_VOLUME, 15)
+            .putInt(AppConstants.PIP_REDUCED_VOLUME_LEVEL, 20)
+            .commit()
+
+        PlayerFragment::class.java.superclass!!.getDeclaredField("componentContext").apply {
+            isAccessible = true
+            set(fragment, ContextWrapper(activity))
+        }
+        PlayerFragment::class.java.getDeclaredField("prefs").apply {
+            isAccessible = true
+            set(fragment, prefs)
+        }
+
+        // Initially at 15% volume (< 20% duck target).
+        // First toggle: should duck/mute (NOT treat as already ducked).
+        fragment.toggleMute()
+
+        val isReducedField = PlayerFragment::class.java.getDeclaredField("isVolumeReduced").apply { isAccessible = true }
+        assertTrue(isReducedField.getBoolean(fragment))
+
+        // Second toggle: should restore to 15% (NOT blast to 100%).
+        fragment.toggleMute()
+
+        assertFalse(isReducedField.getBoolean(fragment))
+        val preMuteField = PlayerFragment::class.java.getDeclaredField("preMuteVolume").apply { isAccessible = true }
+        assertNull(preMuteField.get(fragment))
+    }
+
+    @Test
+    fun changeVolume_fromUserBelowDuckLevel_clearsVolumeReducedState() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).get()
+        val fragment = IvsPlayerFragment()
+        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(activity)
+        prefs.edit()
+            .putInt(AppConstants.PLAYER_VOLUME, 100)
+            .putInt(AppConstants.PIP_REDUCED_VOLUME_LEVEL, 20)
+            .commit()
+
+        PlayerFragment::class.java.superclass!!.getDeclaredField("componentContext").apply {
+            isAccessible = true
+            set(fragment, ContextWrapper(activity))
+        }
+        PlayerFragment::class.java.getDeclaredField("prefs").apply {
+            isAccessible = true
+            set(fragment, prefs)
+        }
+        val isReducedField = PlayerFragment::class.java.getDeclaredField("isVolumeReduced").apply {
+            isAccessible = true
+            setBoolean(fragment, true)
+        }
+
+        // User sets slider to 10% (< 20% duck target)
+        fragment.changeVolume(0.10f, fromUser = true)
+
+        assertFalse(isReducedField.getBoolean(fragment))
+        assertEquals(10, prefs.getInt(AppConstants.PLAYER_VOLUME, -1))
+    }
+
+    @Test
+    fun audioFocusGain_whenUserMutedWhileDucked_preservesMute() {
+        val (service, db) = createTestIvsPlayerService()
+        try {
+            val volumeField = IvsPlayerService::class.java.getDeclaredField("volumeBeforeDuck").apply { isAccessible = true }
+            volumeField.set(service, 1.0f)
+
+            // User mutes while focus is lost/ducked
+            service.onUserVolumeChanged(0f)
+
+            // volumeBeforeDuck must be invalidated so focus gain doesn't unmute
+            assertNull(volumeField.get(service))
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun repeatedDuckingIsRestoredWhenAudioFocusIsAbandoned() {
+        val service = Robolectric.buildService(IvsPlayerService::class.java).get()
+        val volumeChanges = mutableListOf<Float>()
+        var volume = 0.5f
+        val player = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, args ->
+            when (method.name) {
+                "getVolume" -> volume
+                "setVolume" -> {
+                    volume = args!![0] as Float
+                    volumeChanges += volume
+                    null
+                }
+                else -> null
+            }
+        } as Player
+        ReflectionHelpers.setField(service, "player", player)
+        val focus = ReflectionHelpers.getField<android.media.AudioManager.OnAudioFocusChangeListener>(service, "audioFocusChangeListener")
+        focus.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
+        focus.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        ReflectionHelpers.callInstanceMethod<Unit>(service, "abandonAudioFocus")
+        org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf(0.1f, 0.5f), volumeChanges)
+    }
+
+    @Test
+    fun savedInstanceState_retainsVolumeReductionState() {
+        val fragment = IvsPlayerFragment()
+        PlayerFragment::class.java.getDeclaredField("isVolumeReduced").apply {
+            isAccessible = true
+            setBoolean(fragment, true)
+        }
+        PlayerFragment::class.java.getDeclaredField("preMuteVolume").apply {
+            isAccessible = true
+            set(fragment, 0.45f)
+        }
+
+        val bundle = Bundle()
+        fragment.onSaveInstanceState(bundle)
+
+        val restoredFragment = IvsPlayerFragment()
+        val isReducedField = PlayerFragment::class.java.getDeclaredField("isVolumeReduced").apply { isAccessible = true }
+        val preMuteField = PlayerFragment::class.java.getDeclaredField("preMuteVolume").apply { isAccessible = true }
+
+        restoredFragment.restoreVolumeReductionState(bundle)
+
+        assertTrue(isReducedField.getBoolean(restoredFragment))
+        assertEquals(0.45f, preMuteField.get(restoredFragment))
     }
 }

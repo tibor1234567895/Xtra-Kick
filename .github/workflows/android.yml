@@ -11,7 +11,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  checks:
+    name: Android checks
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   build:
+    needs: checks
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -53,16 +60,8 @@ jobs:
     - name: Prepare release version
       id: version
       run: |
-        python3 -B -m unittest discover -s gradle
         code=$(python3 -B gradle/release_version.py ci --run-number "$GITHUB_RUN_NUMBER" --output build/release-version.json)
         echo "code=$code" >> "$GITHUB_OUTPUT"
-
-    - name: Run Android unit tests
-      timeout-minutes: 15
-      run: ./gradlew testDebugUnitTest --build-cache
-
-    - name: Run Android lint
-      run: ./gradlew lint --build-cache
 
     - name: Build Release with Gradle
       run: ./gradlew assembleRelease -PreleaseVersionCode=${{ steps.version.outputs.code }} --build-cache --parallel

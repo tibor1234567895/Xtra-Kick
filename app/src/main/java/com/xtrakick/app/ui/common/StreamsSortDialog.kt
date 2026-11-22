@@ -88,12 +88,19 @@ class StreamsSortDialog : BottomSheetDialogFragment(), SelectLanguagesDialog.OnS
             selectedLanguages = originalLanguages
             selectedTags = originalTags.toMutableList()
             updateTagGroup()
+            updateResetFiltersVisibility()
             selectTags.isVisible = true
             selectTags.setOnClickListener {
                 AddTagDialog.newInstance().show(childFragmentManager, "addTag")
             }
             selectLanguages.setOnClickListener {
                 SelectLanguagesDialog.newInstance(selectedLanguages).show(childFragmentManager, "closeOnPip")
+            }
+            resetFilters.setOnClickListener {
+                selectedTags.clear()
+                selectedLanguages = emptyArray()
+                applyFilters(originalSortId, originalTags, originalLanguages, saveFilters = false, saveSort = false, saveDefault = false)
+                dismiss()
             }
             saveFilters.setOnClickListener {
                 applyFilters(originalSortId, originalTags, originalLanguages, saveFilters = true, saveSort = false, saveDefault = false)
@@ -133,7 +140,12 @@ class StreamsSortDialog : BottomSheetDialogFragment(), SelectLanguagesDialog.OnS
                 }
                 tagGroup.addView(chip)
             }
+            updateResetFiltersVisibility()
         }
+    }
+
+    private fun updateResetFiltersVisibility() {
+        binding.resetFilters.isVisible = selectedTags.isNotEmpty() || selectedLanguages.isNotEmpty()
     }
 
     override fun onTagSelected(tag: String) {
@@ -168,6 +180,7 @@ class StreamsSortDialog : BottomSheetDialogFragment(), SelectLanguagesDialog.OnS
 
     override fun onChange(languages: Array<String>) {
         selectedLanguages = languages
+        updateResetFiltersVisibility()
     }
 
     override fun onDestroyView() {

@@ -82,7 +82,7 @@ class TopStreamsViewModel @Inject constructor(
     }
 
     fun setFilter(sort: String?, tags: Array<String>?, languages: Array<String>?) {
-        filter.value = Filter(sort, tags, languages)
+        filter.value = Filter(sort, tags, StreamsDataSource.supportedFilterSelections(languages?.asList()).toTypedArray())
     }
 
     class Filter(

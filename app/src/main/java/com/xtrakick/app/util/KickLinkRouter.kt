@@ -143,8 +143,17 @@ object KickLinkRouter {
 
     private fun route(host: String, segments: List<String>, params: Map<String, String>): KickLink? {
         if (host == "clips.kick.com") {
-            val clipId = segments.lastOrNull()?.takeIf { it.isNotBlank() && isValidIdentifier(it) }
+            val clipId = (segments.firstOrNull { it.startsWith("clip_", ignoreCase = true) }
+                ?: segments.singleOrNull())?.takeIf(::isValidIdentifier)
             return clipId?.let { KickLink.Clip(clipId = it) }
+        }
+
+        val queryClipId = params["clip"]?.takeIf { it.isNotBlank() && isValidIdentifier(it) }
+        val channel = segments.singleOrNull()?.takeUnless {
+            it.lowercase(Locale.ROOT) in RESERVED_SEGMENTS || !isValidIdentifier(it)
+        }
+        if (queryClipId != null && (segments.isEmpty() || channel != null)) {
+            return KickLink.Clip(clipId = queryClipId, channelLogin = channel)
         }
 
         if (segments.isEmpty()) return null

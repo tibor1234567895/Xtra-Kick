@@ -4,7 +4,6 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.content.edit
 import com.xtrakick.app.util.bundleOf
 import com.xtrakick.app.R
 import com.xtrakick.app.databinding.PlayerVolumeBinding
@@ -60,23 +59,27 @@ class PlayerVolumeDialog : BottomSheetDialogFragment() {
             val initialVolume = ((if (argVolume in 0f..1f) argVolume else prefVolume) * 100f).coerceIn(0f, 100f)
             setVolume(initialVolume)
             volumeBar.value = initialVolume
-            volumeBar.addOnChangeListener { _, value, _ ->
-                notifyVolumeChanged(value / 100f)
+            var trackingTouch = false
+            volumeBar.addOnChangeListener { _, value, fromUser ->
+                if (fromUser) notifyVolumeChanged(value / 100f, persistPref = !trackingTouch)
                 setVolume(value)
             }
             volumeBar.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) {}
+                override fun onStartTrackingTouch(slider: Slider) {
+                    trackingTouch = true
+                }
 
                 override fun onStopTrackingTouch(slider: Slider) {
-                    requireContext().prefs().edit { putInt(AppConstants.PLAYER_VOLUME, slider.value.toInt()) }
+                    trackingTouch = false
+                    notifyVolumeChanged(slider.value / 100f, persistPref = true)
                 }
             })
         }
     }
 
-    private fun notifyVolumeChanged(volumeFraction: Float) {
-        (parentFragment as? PlayerFragment)?.changeVolume(volumeFraction)
-        (parentFragment as? MultiPovFragment)?.changeVolume(volumeFraction)
+    private fun notifyVolumeChanged(volumeFraction: Float, persistPref: Boolean = true) {
+        (parentFragment as? PlayerFragment)?.changeVolume(volumeFraction, fromUser = true, persistPref = persistPref)
+        (parentFragment as? MultiPovFragment)?.changeVolume(volumeFraction, fromUser = true, persistPref = persistPref)
     }
 
     private fun setVolume(volume: Float) {
@@ -85,15 +88,19 @@ class PlayerVolumeDialog : BottomSheetDialogFragment() {
             volumeMute.setImageResource(getVolumeIconRes(volume.toInt()))
             if (volume == 0f) {
                 volumeMute.setOnClickListener {
-                    val restoredVolume = requireContext().prefs().getInt(AppConstants.PLAYER_VOLUME, 100).takeIf { it > 0 }?.toFloat() ?: 100f
+                    val prefs = requireContext().prefs()
+                    val restoredVolume = prefs.getFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, -1f)
+                        .takeIf { it > 0f }?.times(100f)
+                        ?: prefs.getInt(AppConstants.PLAYER_VOLUME, 100).takeIf { it > 0 }?.toFloat()
+                        ?: 100f
                     volumeBar.value = restoredVolume
-                    notifyVolumeChanged(restoredVolume / 100f)
+                    notifyVolumeChanged(restoredVolume / 100f, persistPref = true)
                     setVolume(restoredVolume)
                 }
             } else {
                 volumeMute.setOnClickListener {
                     volumeBar.value = 0f
-                    notifyVolumeChanged(0f)
+                    notifyVolumeChanged(0f, persistPref = true)
                     setVolume(0f)
                 }
             }

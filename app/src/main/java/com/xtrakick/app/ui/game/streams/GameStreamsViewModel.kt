@@ -14,6 +14,7 @@ import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.SavedFiltersRepository
 import com.xtrakick.app.repository.SortGameRepository
 import com.xtrakick.app.repository.datasource.GameStreamsDataSource
+import com.xtrakick.app.repository.datasource.StreamsDataSource
 import com.xtrakick.app.ui.common.StreamsSortDialog
 import com.xtrakick.app.ui.game.GamePagerFragmentArgs
 import com.xtrakick.app.util.AppConstants
@@ -101,7 +102,7 @@ class GameStreamsViewModel @Inject constructor(
     }
 
     fun setFilter(sort: String?, tags: Array<String>?, languages: Array<String>?) {
-        filter.value = Filter(sort, tags, languages)
+        filter.value = Filter(sort, tags, StreamsDataSource.supportedFilterSelections(languages?.asList()).toTypedArray())
     }
 
     class Filter(

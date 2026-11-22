@@ -465,4 +465,29 @@ class KickChannelMetadataTest {
             database.close()
         }
     }
+
+    @Test
+    fun channelLivestreamCategoriesArrayPopulatesStreamCategory() {
+        val decoded = json.decodeFromString<KickChannelResponse>(
+            """
+            {
+              "id": 668,
+              "user_id": 676,
+              "slug": "westcol",
+              "livestream": {
+                "id": 999,
+                "session_title": "Live IRL stream",
+                "viewer_count": 12345,
+                "categories": [
+                  {"id": 8549, "name": "IRL", "slug": "irl", "tags": ["Adventure"]}
+                ]
+              }
+            }
+            """.trimIndent()
+        )
+        val stream = repository.toStream(decoded)
+        assertEquals("8549", stream.gameId)
+        assertEquals("irl", stream.gameSlug)
+        assertEquals("IRL", stream.gameName)
+    }
 }

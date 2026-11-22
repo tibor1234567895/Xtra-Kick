@@ -999,10 +999,12 @@ class Media3Fragment : PlayerFragment() {
         player?.setPlaybackSpeed(speed)
     }
 
-    override fun changeVolume(volume: Float) {
+    override fun changeVolume(volume: Float, fromUser: Boolean, persistPref: Boolean) {
+        super.changeVolume(volume, fromUser, persistPref)
         player?.volume = volume
-        prefs.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
-        super.changeVolume(volume)
+        if (persistPref && (!isVolumeReduced || fromUser)) {
+            prefs.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
+        }
     }
 
     override fun updateProgress() {
@@ -1446,6 +1448,7 @@ class Media3Fragment : PlayerFragment() {
     }
 
     override fun close() {
+        super.close()
         clearFreezeFrame()
         savePosition()
         DiagnosticLogger.logPause(

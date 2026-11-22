@@ -124,78 +124,62 @@
                     android:id="@+id/streamLayout"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:paddingStart="12dp"
+                    android:paddingTop="10dp"
+                    android:paddingEnd="12dp"
+                    android:paddingBottom="4dp"
                     android:visibility="gone"
                     tools:visibility="visible">
 
-                    <LinearLayout
-                        android:id="@+id/streamLayout1"
+                    <TextView
+                        android:id="@+id/title"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="10dp"
-                        android:layout_marginTop="7dp"
-                        android:layout_marginEnd="5dp"
-                        android:layout_marginBottom="7dp"
-                        android:orientation="vertical"
-                        app:layout_constraintBottom_toBottomOf="parent"
-                        app:layout_constraintEnd_toStartOf="@id/streamLayout2"
+                        android:textAppearance="?attr/textAppearanceTitleMedium"
+                        android:visibility="gone"
+                        app:layout_constraintEnd_toEndOf="parent"
                         app:layout_constraintStart_toStartOf="parent"
-                        app:layout_constraintTop_toTopOf="parent">
+                        app:layout_constraintTop_toTopOf="parent"
+                        tools:text="@sample/streams.json/streams/channel/status"
+                        tools:visibility="visible" />
 
-                        <TextView
-                            android:id="@+id/title"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:maxLines="2"
-                            android:ellipsize="end"
-                            android:textAppearance="?attr/textAppearanceBodyMedium"
-                            android:visibility="gone"
-                            tools:text="@sample/streams.json/streams/channel/status"
-                            tools:visibility="visible" />
-
-                        <TextView
-                            android:id="@+id/gameName"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textAppearance="?attr/textAppearanceBodyMedium"
-                            android:textColor="?android:attr/textColorSecondary"
-                            android:visibility="gone"
-                            tools:text="@sample/games.json/top/game/name"
-                            tools:visibility="visible" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:id="@+id/streamLayout2"
+                    <TextView
+                        android:id="@+id/gameName"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="7dp"
-                        android:layout_marginEnd="5dp"
-                        android:gravity="end"
-                        android:orientation="vertical"
-                        app:layout_constraintBottom_toBottomOf="@id/streamLayout1"
+                        android:background="?attr/selectableItemBackground"
+                        android:textAppearance="?attr/textAppearanceBodyMedium"
+                        android:textColor="?android:attr/textColorSecondary"
+                        android:visibility="gone"
+                        tools:text="@sample/games.json/top/game/name"
+                        tools:visibility="visible" />
+
+                    <TextView
+                        android:id="@+id/streamStats"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="?android:attr/textColorSecondary"
+                        android:visibility="gone"
+                        tools:text="1.3M viewers · 8:21:33 uptime"
+                        tools:visibility="visible" />
+
+                    <androidx.constraintlayout.helper.widget.Flow
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="5dp"
+                        app:constraint_referenced_ids="gameName,streamStats"
+                        app:flow_horizontalBias="0"
+                        app:flow_horizontalGap="10dp"
+                        app:flow_horizontalStyle="packed"
+                        app:flow_verticalAlign="baseline"
+                        app:flow_verticalGap="4dp"
+                        app:flow_wrapMode="chain"
+                        app:layout_constraintBottom_toBottomOf="parent"
                         app:layout_constraintEnd_toEndOf="parent"
-                        app:layout_constraintStart_toEndOf="@id/streamLayout1"
-                        app:layout_constraintTop_toTopOf="parent"
-                        app:layout_constraintVertical_bias="1.0">
-
-                        <TextView
-                            android:id="@+id/viewers"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textAppearance="?attr/textAppearanceBodyMedium"
-                            android:visibility="gone"
-                            tools:text="1337499 viewers"
-                            tools:visibility="visible" />
-
-                        <TextView
-                            android:id="@+id/uptime"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textAppearance="?attr/textAppearanceBodyMedium"
-                            android:visibility="gone"
-                            tools:text="8:21:33 uptime"
-                            tools:visibility="visible" />
-                    </LinearLayout>
-
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintTop_toBottomOf="@id/title"
+                        app:layout_goneMarginTop="0dp" />
                 </androidx.constraintlayout.widget.ConstraintLayout>
 
                 <TextView

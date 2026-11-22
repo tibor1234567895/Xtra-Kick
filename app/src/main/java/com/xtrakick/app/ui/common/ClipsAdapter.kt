@@ -44,7 +44,13 @@ class ClipsAdapter(
                     oldItem.title == newItem.title &&
                     oldItem.channelName == newItem.channelName &&
                     oldItem.channelLogo == newItem.channelLogo &&
+                    oldItem.gameName == newItem.gameName &&
+                    oldItem.gameSlug == newItem.gameSlug &&
+                    oldItem.gameId == newItem.gameId &&
                     oldItem.creatorName == newItem.creatorName &&
+                    oldItem.creatorLogin == newItem.creatorLogin &&
+                    oldItem.creatorId == newItem.creatorId &&
+                    oldItem.creatorProfileImageUrl == newItem.creatorProfileImageUrl &&
                     oldItem.thumbnail == newItem.thumbnail &&
                     oldItem.uploadDate == newItem.uploadDate
     }) {
@@ -86,7 +92,15 @@ class ClipsAdapter(
                     } else {
                         thumbnail.setImageDrawable(null)
                     }
-                    date.visibility = View.GONE
+                    val relativeDate = item.uploadDate?.let {
+                        KickApiHelper.formatRelativeTimeString(it) ?: KickApiHelper.formatTimeString(context, it)
+                    }
+                    if (!relativeDate.isNullOrBlank()) {
+                        date.visibility = View.VISIBLE
+                        date.text = relativeDate
+                    } else {
+                        date.visibility = View.GONE
+                    }
                     if (item.viewCount != null) {
                         views.visibility = View.VISIBLE
                         val count = item.viewCount
@@ -192,34 +206,18 @@ class ClipsAdapter(
                         gameName.setOnClickListener(null)
                     }
                     val creatorDisplayName = item.creatorName ?: item.creatorLogin
-                    val relativeDate = item.uploadDate?.let {
-                        KickApiHelper.formatRelativeTimeString(it) ?: KickApiHelper.formatTimeString(context, it)
-                    }
-                    val clipperString = if (!creatorDisplayName.isNullOrBlank()) {
-                        context.getString(R.string.clipped_by, creatorDisplayName)
-                    } else null
-                    val combinedClipper = when {
-                        !relativeDate.isNullOrBlank() && clipperString != null -> "$relativeDate • $clipperString"
-                        clipperString != null -> clipperString
-                        !relativeDate.isNullOrBlank() -> relativeDate
-                        else -> null
-                    }
-                    if (combinedClipper != null) {
+                    if (!creatorDisplayName.isNullOrBlank()) {
                         clipper.visibility = View.VISIBLE
-                        clipper.text = combinedClipper
-                        if (!creatorDisplayName.isNullOrBlank()) {
-                            clipper.setOnClickListener {
-                                fragment.findNavController().navigate(
-                                    ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(
-                                        channelId = item.creatorId,
-                                        channelLogin = item.creatorLogin ?: creatorDisplayName,
-                                        channelName = creatorDisplayName,
-                                        channelLogo = item.creatorLogo,
-                                    )
+                        clipper.text = context.getString(R.string.clipped_by, creatorDisplayName)
+                        clipper.setOnClickListener {
+                            fragment.findNavController().navigate(
+                                ChannelPagerFragmentDirections.actionGlobalChannelPagerFragment(
+                                    channelId = item.creatorId,
+                                    channelLogin = item.creatorLogin ?: creatorDisplayName,
+                                    channelName = creatorDisplayName,
+                                    channelLogo = item.creatorLogo,
                                 )
-                            }
-                        } else {
-                            clipper.setOnClickListener(null)
+                            )
                         }
                     } else {
                         clipper.visibility = View.GONE

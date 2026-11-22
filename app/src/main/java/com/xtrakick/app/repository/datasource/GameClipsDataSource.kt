@@ -13,6 +13,7 @@ class GameClipsDataSource(
     private val gameId: String?,
     private val gameSlug: String?,
     private val gameName: String?,
+    private val sort: String?,
     private val gqlQueryPeriod: ClipsPeriod?,
     private val gqlPeriod: String?,
     private val startedAt: String?,
@@ -55,34 +56,17 @@ class GameClipsDataSource(
                 else -> null
             }
         }
-        val startMs = startedAt?.let { KickApiHelper.parseIso8601DateUTC(it) }
-        val endMs = endedAt?.let { KickApiHelper.parseIso8601DateUTC(it) }
-        val page = kickRepository.getCategoryClipsPage(
-            categorySlug = slug,
-            gameId = gameId,
-            gameName = gameName,
-            limit = maxOf(params.loadSize, 20),
-            time = kickTime,
-            cursor = params.key,
-        ) ?: throw IOException("Category clip request failed")
-        val list = page.clips.asSequence()
-            .filter { clip ->
-                if (startMs == null && endMs == null) return@filter true
-                val ts = clip.uploadDate?.let { KickApiHelper.parseIso8601DateUTC(it) } ?: return@filter false
-                val afterStart = startMs?.let { ts >= it } ?: true
-                val beforeEnd = endMs?.let { ts <= it } ?: true
-                afterStart && beforeEnd
-            }
-            .sortedWith(
-                compareByDescending<Clip> { it.viewCount ?: -1 }
-                    .thenByDescending { it.uploadDate?.let(KickApiHelper::parseIso8601DateUTC) ?: Long.MIN_VALUE }
-            )
-            .toList()
-        return LoadResult.Page(
-            data = list,
-            prevKey = null,
-            nextKey = page.nextCursor?.takeIf { it.isNotBlank() && it != params.key && page.clips.isNotEmpty() }
-        )
+        return loadSortedClipPage(params, sort, startedAt, endedAt) { cursor, limit, serverSort ->
+            kickRepository.getCategoryClipsPage(
+                categorySlug = slug,
+                gameId = gameId,
+                gameName = gameName,
+                limit = limit,
+                sort = serverSort,
+                time = kickTime,
+                cursor = cursor,
+            ) ?: throw IOException("Category clip request failed")
+        }
     }
 
     override fun getRefreshKey(state: PagingState<String, Clip>): String? = null

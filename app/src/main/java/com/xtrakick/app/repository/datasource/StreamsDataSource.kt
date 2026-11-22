@@ -22,6 +22,7 @@ class StreamsDataSource(
     private val seenStreamKeys = Collections.synchronizedSet(mutableSetOf<String>())
     private val languageCursors = mutableMapOf<Int, String>()
     private var languageEndpointActive = false
+    private val activeLanguages = supportedFilterSelections(languages.toList())
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, Stream> {
         return if (!offset.isNullOrBlank()) {
@@ -56,11 +57,12 @@ class StreamsDataSource(
 
     private suspend fun kickLoad(params: LoadParams<Int>): LoadResult<Int, Stream> {
         kickRepository.getEventFilterStreams(tags.toList())?.let { streams ->
-            return LoadResult.Page(data = filterEventStreams(streams, languages.toList(), gqlSort), prevKey = null, nextKey = null)
+            return LoadResult.Page(data = filterEventStreams(streams, activeLanguages, gqlSort), prevKey = null, nextKey = null)
         }
-        val languageCodes = requestedLanguageCodes(languages.toList(), tags.toList())
-        if (languageCodes.isNotEmpty() && gqlSort != "VIEWER_COUNT_ASC" && gqlSort != "RECENT") {
-            val page = params.key ?: 1
+        val languageCodes = requestedLanguageCodes(activeLanguages, tags.toList())
+        val page = params.key ?: 1
+        val canUseLanguageCursor = page == 1 || languageEndpointActive
+        if (canUseLanguageCursor && usesLanguageEndpoint(languageCodes, gqlSort)) {
             val cursor = if (page == 1) null else languageCursors[page] ?: error("Missing language page cursor")
             kickRepository.getLanguageFilteredLivestreams(null, languageCodes, cursor, params.loadSize,
                 awaitEventMetadata = kickRepository.hasCachedEventFilter(tags.toList()))?.let { response ->
@@ -75,7 +77,7 @@ class StreamsDataSource(
             }
         }
         val targetSize = params.loadSize
-        val hasFilters = languages.isNotEmpty() || tags.isNotEmpty()
+        val hasFilters = activeLanguages.isNotEmpty() || tags.isNotEmpty()
         val minTargetSize = if (hasFilters) minOf(targetSize, 8) else targetSize
         val maxPagesToScan = if (hasFilters) 8 else 1
         var currentPage = params.key ?: 1
@@ -126,7 +128,7 @@ class StreamsDataSource(
      * loadSize while a filter is active; Paging compensates by loading more pages.
      */
     private fun matchesFilters(item: KickLivestream): Boolean =
-        matchesFilters(item, languages.toList(), tags.toList(),
+        matchesFilters(item, activeLanguages, tags.toList(),
             kickRepository.getCachedChannelEventTitle((item.channel?.id ?: item.channelId)?.toString()))
 
     override fun getRefreshKey(state: PagingState<Int, Stream>): Int? {
@@ -138,6 +140,13 @@ class StreamsDataSource(
     }
 
     companion object {
+        internal fun supportedFilterSelections(languages: Collection<String>?): List<String> =
+            languages.orEmpty().map { it.trim().uppercase(Locale.ROOT).replace('-', '_') }
+                .filter { it.isNotEmpty() && it != "OTHER" }.distinct()
+
+        internal fun usesLanguageEndpoint(codes: Collection<String>, sort: String?): Boolean =
+            codes.isNotEmpty() && sort != "VIEWER_COUNT_ASC" && sort != "RECENT"
+
         internal fun requestedLanguageCodes(languages: Collection<String>?, tags: Collection<String>?): List<String> {
             if (!languages.isNullOrEmpty()) return languages.toList()
             return tags.orEmpty().map { tag ->
@@ -233,50 +242,98 @@ class StreamsDataSource(
         /**
          * Filter codes (values of R.array.gqlUserLanguageValues) to lowercase substrings of
          * the `language` display names Kick returns on its livestream payloads (e.g. the
-         * code DE matches "German"). OTHER has no reliable display name and matches nothing.
+         * code DE matches "German").
          */
         private val LANGUAGE_NAMES: Map<String, Set<String>> = mapOf(
+            "AF" to setOf("afrikaans"),
+            "AM" to setOf("amharic"),
+            "AN" to setOf("aragonese"),
             "AR" to setOf("arabic"),
             "ASL" to setOf("american sign language", "sign language", "asl"),
+            "AST" to setOf("asturian"),
+            "AZ" to setOf("azerbaijani"),
+            "BE" to setOf("belarusian"),
             "BG" to setOf("bulgarian"),
+            "BN" to setOf("bengali", "bangla"),
+            "BS" to setOf("bosnian"),
             "CA" to setOf("catalan"),
             "CS" to setOf("czech"),
             "DA" to setOf("danish"),
             "DE" to setOf("german"),
             "EL" to setOf("greek"),
             "EN" to setOf("english"),
+            "EN_IN" to setOf("english (india)", "indian english"),
+            "EO" to setOf("esperanto"),
             "ES" to setOf("spanish", "español", "espanol"),
+            "ET" to setOf("estonian"),
+            "EU" to setOf("basque"),
+            "FA" to setOf("persian", "farsi"),
             "FI" to setOf("finnish"),
+            "FIL" to setOf("filipino", "tagalog"),
             "FR" to setOf("french", "français", "francais"),
+            "HE" to setOf("hebrew"),
             "HI" to setOf("hindi"),
+            "HR" to setOf("croatian"),
             "HU" to setOf("hungarian"),
+            "HY" to setOf("armenian"),
             "ID" to setOf("indonesian"),
             "IT" to setOf("italian"),
             "JA" to setOf("japanese"),
+            "KN" to setOf("kannada"),
             "KO" to setOf("korean"),
+            "LA" to setOf("latin"),
+            "LT" to setOf("lithuanian"),
+            "LV" to setOf("latvian"),
+            "MK" to setOf("macedonian"),
+            "ML" to setOf("malayalam"),
+            "MN" to setOf("mongolian"),
+            "MO" to setOf("moldavian", "moldovan", "romanian"),
             "MS" to setOf("malay"),
+            "NB" to setOf("norwegian bokmål", "norwegian bokmal", "bokmål", "bokmal", "norwegian"),
+            "NE" to setOf("nepali"),
             "NL" to setOf("dutch", "flemish"),
             "NO" to setOf("norwegian"),
+            "PA" to setOf("punjabi"),
             "PL" to setOf("polish"),
             "PT" to setOf("portuguese"),
+            "QU" to setOf("quechua"),
             "RO" to setOf("romanian"),
             "RU" to setOf("russian"),
+            "SI" to setOf("sinhala", "sinhalese"),
             "SK" to setOf("slovak"),
+            "SL" to setOf("slovenian", "slovene"),
+            "SN" to setOf("shona"),
+            "SO" to setOf("somali"),
+            "SQ" to setOf("albanian"),
+            "SR" to setOf("serbian"),
             "SV" to setOf("swedish"),
+            "TA" to setOf("tamil"),
+            "TE" to setOf("telugu"),
             "TH" to setOf("thai"),
             "TL" to setOf("tagalog", "filipino"),
             "TR" to setOf("turkish"),
+            "TW" to setOf("twi", "akan"),
             "UK" to setOf("ukrainian"),
+            "UR" to setOf("urdu"),
+            "UZ" to setOf("uzbek"),
             "VI" to setOf("vietnamese"),
+            "XH" to setOf("xhosa"),
             "ZH" to setOf("chinese", "mandarin"),
             "ZH_HK" to setOf("chinese (hong kong)", "cantonese"),
-            "OTHER" to emptySet(),
+            "ZU" to setOf("zulu"),
         )
 
         private fun matchesLanguage(code: String, lowercaseApiLanguage: String): Boolean {
-            val names = LANGUAGE_NAMES[code.trim().uppercase(Locale.ROOT)] ?: return false
-            if (names.isEmpty()) return false
-            return names.any { lowercaseApiLanguage.contains(it) }
+            val upper = code.trim().uppercase(Locale.ROOT)
+            if (upper == "OTHER") return false
+            val tag = upper.replace('_', '-').lowercase(Locale.ROOT)
+            if (lowercaseApiLanguage == tag) return true
+            val names = LANGUAGE_NAMES[upper]
+            if (names != null) {
+                return names.isNotEmpty() && names.any { lowercaseApiLanguage.contains(it) }
+            }
+            val displayName = Locale.forLanguageTag(tag).getDisplayLanguage(Locale.ENGLISH).trim().lowercase(Locale.ROOT)
+            return displayName.isNotEmpty() && displayName != tag && lowercaseApiLanguage.contains(displayName)
         }
     }
 }

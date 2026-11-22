@@ -191,8 +191,15 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         }
     }
 
+    internal fun restoreVolumeReductionState(savedInstanceState: Bundle?) {
+        val state = savedInstanceState ?: return
+        val key = state.getString(KEY_REDUCED_VOLUME_KEY) ?: return
+        reducedVolume = ReducedVolume(key, state.getFloat(KEY_PRE_MUTE_VOLUME), state.getFloat(KEY_REDUCED_VOLUME))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        restoreVolumeReductionState(savedInstanceState)
         val streams = readStreamsArg()
         val keys = requireArguments().getStringArrayList(ARG_RESOLVED_KEYS).orEmpty()
         val values = requireArguments().getStringArrayList(ARG_RESOLVED_VALUES).orEmpty()
@@ -255,6 +262,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         ).also {
             it.setStreamQuality(viewModel.uiState.value.streamQuality)
             it.setBandwidthSaving(viewModel.uiState.value.bandwidthSaving)
+            reducedVolume?.let { volume -> it.setVolume(volume.key, volume.reduced) }
         }
         updateAdaptiveQuality()
         registerAdaptiveMonitors()
@@ -917,32 +925,36 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         )
     }
 
-    private var preMuteVolume: Float? = null
-    private var isVolumeReduced: Boolean = false
+    private data class ReducedVolume(val key: String, val original: Float, val reduced: Float)
+
+    private var reducedVolume: ReducedVolume? = null
 
     private fun getPipReducedVolume(): Float {
         val ctx = context ?: return 0f
         return ctx.prefs().getInt(AppConstants.PIP_REDUCED_VOLUME_LEVEL, 0).coerceIn(0, 50) / 100f
     }
 
-    private fun isVolumeDuckedOrMuted(currentVol: Float, targetVol: Float): Boolean =
-        isVolumeReduced || currentVol <= 0f || (targetVol > 0f && currentVol <= targetVol)
+    private fun isVolumeDuckedOrMuted(currentVol: Float): Boolean =
+        reducedVolume != null || currentVol <= 0f
 
     fun toggleMute() {
-        val targetVol = getPipReducedVolume()
+        val key = viewModel.uiState.value.focusedKey ?: return
         val currentVol = getCurrentVolume()
+        val targetVol = getPipReducedVolume().let { duck ->
+            if (duck > 0f && currentVol <= duck) 0f else duck
+        }
         val prefs = context?.prefs()
 
-        if (isVolumeDuckedOrMuted(currentVol, targetVol)) {
-            isVolumeReduced = false
-            val minRestore = if (targetVol > 0f) targetVol else 0f
-            val restore = preMuteVolume?.takeIf { it > minRestore }
-                ?: prefs?.getFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, -1f)?.takeIf { it > minRestore }
-                ?: (prefs?.getInt(AppConstants.PLAYER_VOLUME, 100)?.takeIf { it > (minRestore * 100).toInt() }?.toFloat()?.div(100f) ?: 1f)
+        if (isVolumeDuckedOrMuted(currentVol)) {
+            val savedVol = (prefs?.getInt(AppConstants.PLAYER_VOLUME, 100) ?: 100).toFloat() / 100f
+            val restore = reducedVolume?.original?.takeIf { it > 0f }
+                ?: prefs?.getFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, -1f)?.takeIf { it > 0f }
+                ?: savedVol.takeIf { it > 0f }
+                ?: 1f
+            reducedVolume = null
             changeVolume(restore)
         } else {
-            isVolumeReduced = true
-            preMuteVolume = currentVol
+            reducedVolume = ReducedVolume(key, currentVol, targetVol)
             prefs?.edit { putFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, currentVol) }
             changeVolume(targetVol)
         }
@@ -957,15 +969,16 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         return playing
     }
 
-    fun changeVolume(volume: Float) {
-        val targetVol = getPipReducedVolume()
-        if (volume > targetVol) {
-            preMuteVolume = volume
-            isVolumeReduced = false
+    fun changeVolume(volume: Float, fromUser: Boolean = false, persistPref: Boolean = true) {
+        if (fromUser) reducedVolume = null
+        if (persistPref && reducedVolume == null) {
+            context?.prefs()?.edit {
+                if (volume > 0f) putFloat(AppConstants.PLAYER_PRE_MUTE_VOLUME, volume)
+                putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt())
+            }
         }
         playbackController?.setVolume(viewModel.uiState.value.focusedKey, volume)
         updateVolumeButtonVisual(volume)
-        context?.prefs()?.edit { putInt(AppConstants.PLAYER_VOLUME, (volume * 100f).toInt()) }
         updatePictureInPictureParams()
     }
 
@@ -1555,6 +1568,9 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             enterPipUi()
         } else {
             exitPipUi()
+            if (context?.prefs()?.getBoolean(AppConstants.PIP_UNMUTE_ON_FULLSCREEN, false) == true && reducedVolume != null) {
+                toggleMute()
+            }
             updatePictureInPictureParams()
         }
     }
@@ -1693,7 +1709,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                 if (prefs.getBoolean(AppConstants.PIP_SHOW_MUTE, true)) {
                     val targetVol = getPipReducedVolume()
                     val currentVol = getCurrentVolume()
-                    val isLowered = isVolumeDuckedOrMuted(currentVol, targetVol)
+                    val isLowered = isVolumeDuckedOrMuted(currentVol)
                     val iconRes = PlayerVolumeDialog.getVolumeIconRes(currentVol)
                     val actionTitle = when {
                         isLowered -> if (targetVol == 0f) getString(R.string.unmute) else getString(R.string.restore_volume)
@@ -1838,6 +1854,10 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
     private fun render(state: MultiPovUiState, forceGridRebuild: Boolean = false) {
         val binding = _binding ?: return
         val controller = playbackController ?: return
+        reducedVolume?.takeIf { it.key != state.focusedKey }?.let {
+            controller.setVolume(it.key, it.original)
+            reducedVolume = null
+        }
         if (isInPipMode()) {
             // Keep focused stream only while system PiP is active.
             state.slots.forEach { slot ->
@@ -3174,7 +3194,19 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
         thermalStatusListener = null
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        reducedVolume?.let {
+            outState.putString(KEY_REDUCED_VOLUME_KEY, it.key)
+            outState.putFloat(KEY_PRE_MUTE_VOLUME, it.original)
+            outState.putFloat(KEY_REDUCED_VOLUME, it.reduced)
+        }
+    }
+
     companion object {
+        private const val KEY_REDUCED_VOLUME_KEY = "reduced_volume_key"
+        private const val KEY_PRE_MUTE_VOLUME = "pre_mute_volume"
+        private const val KEY_REDUCED_VOLUME = "reduced_volume"
         private const val REQUEST_CODE_PAUSE = 3
         private const val REQUEST_CODE_PLAY = 4
         private const val REQUEST_CODE_MUTE = 5
