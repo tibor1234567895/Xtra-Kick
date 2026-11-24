@@ -30,7 +30,8 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        app:tint="@android:color/white" />
+        app:tint="@android:color/white"
+        android:contentDescription="@string/pause" />
 
     <Button
         android:id="@+id/rewind"
@@ -131,7 +132,8 @@
             android:src="@drawable/baseline_expand_more_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/minimize" />
 
         <LinearLayout
             android:id="@+id/infoLayout"
@@ -199,7 +201,8 @@
                         android:src="@drawable/baseline_person_black_24"
                         android:visibility="gone"
                         app:tint="@android:color/white"
-                        tools:visibility="visible" />
+                        tools:visibility="visible"
+                        android:contentDescription="@null" />
 
                     <TextView
                         android:id="@+id/viewersText"
@@ -280,7 +283,8 @@
             android:src="@drawable/ic_file_download_black_24dp"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/download" />
 
         <LinearLayout
             android:id="@+id/latencyLayout"
@@ -317,7 +321,8 @@
             android:src="@drawable/baseline_favorite_border_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/follow" />
 
         <ImageButton
             android:id="@+id/sleepTimer"
@@ -327,7 +332,8 @@
             android:src="@drawable/baseline_alarm_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/sleep_timer" />
 
         <ImageButton
             android:id="@+id/aspectRatio"
@@ -337,7 +343,8 @@
             android:src="@drawable/baseline_aspect_ratio_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/aspect_ratio" />
 
         <ImageButton
             android:id="@+id/speed"
@@ -347,7 +354,8 @@
             android:src="@drawable/exo_ic_speed"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/playback_speed" />
 
         <ImageButton
             android:id="@+id/quality"
@@ -357,7 +365,8 @@
             android:src="@drawable/baseline_settings_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/quality" />
 
         <ImageButton
             android:id="@+id/menu"
@@ -367,7 +376,8 @@
             android:src="@drawable/baseline_more_vert_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/player_menu" />
 
     </LinearLayout>
 
@@ -392,7 +402,8 @@
             android:src="@drawable/baseline_replay_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/restart_player" />
 
         <ImageButton
             android:id="@+id/rewindLive"
@@ -402,7 +413,8 @@
             android:src="@drawable/baseline_history_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/rewind_live_stream" />
 
         <ImageButton
             android:id="@+id/seekLive"
@@ -412,17 +424,8 @@
             android:src="@drawable/exo_icon_fastforward"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
-
-        <ImageButton
-            android:id="@+id/vodGames"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:background="@android:color/transparent"
-            android:src="@drawable/baseline_format_list_bulleted_black_24"
-            android:visibility="gone"
-            app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/seek_to_live" />
 
         <ImageButton
             android:id="@+id/volume"
@@ -432,7 +435,8 @@
             android:src="@drawable/baseline_volume_up_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/volume" />
 
         <ImageButton
             android:id="@+id/audioCompressor"
@@ -442,7 +446,8 @@
             android:src="@drawable/baseline_audio_compressor_off_24dp"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/audio_compressor" />
 
         <ImageButton
             android:id="@+id/audioOnly"
@@ -452,7 +457,8 @@
             android:src="@drawable/baseline_audiotrack_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/audio_only" />
 
         <LinearLayout
             android:id="@+id/uptimeLayout"
@@ -472,7 +478,8 @@
                 android:src="@drawable/baseline_circle_24"
                 android:visibility="gone"
                 app:tint="@color/liveStreamRed"
-                tools:visibility="visible" />
+                tools:visibility="visible"
+                android:contentDescription="@null" />
 
             <Chronometer
                 android:id="@+id/uptimeTimer"
@@ -506,7 +513,8 @@
                 android:src="@drawable/baseline_person_black_24"
                 android:visibility="gone"
                 app:tint="@android:color/white"
-                tools:visibility="visible" />
+                tools:visibility="visible"
+                android:contentDescription="@null" />
 
             <TextView
                 android:id="@+id/viewersTextBottom"
@@ -552,7 +560,8 @@
             android:src="@drawable/exo_ic_subtitle_off"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/subtitles" />
 
         <ImageButton
             android:id="@+id/toggleChatInput"
@@ -573,7 +582,8 @@
             android:src="@drawable/baseline_speaker_notes_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/toggle_chat" />
 
         <ImageButton
             android:id="@+id/fullscreen"
@@ -583,7 +593,8 @@
             android:src="@drawable/baseline_fullscreen_black_24"
             android:visibility="gone"
             app:tint="@android:color/white"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@string/fullscreen" />
 
     </LinearLayout>
 

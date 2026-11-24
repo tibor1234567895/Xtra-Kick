@@ -161,7 +161,7 @@ class PlayerRepositoryCancellationTest {
         val auth = AuthRepository(null, null, executor, client, json)
         val kick = KickRepository(context, client, null, executor, json, auth, KickOfficialApiClient(context, client, json))
         val repository = PlayerRepository(context, httpEngine, null, executor, client, json, kick,
-            KickPublicApiRepository(httpEngine, null, executor, client, json), database.recentEmotes(), database.videoPositions())
+            database.recentEmotes(), database.videoPositions())
         try {
             return block(repository)
         } finally {

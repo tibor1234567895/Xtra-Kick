@@ -17,13 +17,6 @@ data class KickOAuthTokenResponse(
 )
 
 @Serializable
-data class KickOAuthErrorResponse(
-    val error: String? = null,
-    @SerialName("error_description")
-    val errorDescription: String? = null,
-)
-
-@Serializable
 data class KickUsersResponse(
     val data: List<KickUserData> = emptyList(),
 )
@@ -49,16 +42,6 @@ data class KickTokenIntrospectResponse(
     @SerialName("username")
     val userName: String? = null,
     val scope: String? = null,
-)
-
-@Serializable
-data class KickChatSendRequest(
-    @SerialName("broadcaster_user_id")
-    val broadcasterUserId: Long,
-    val content: String,
-    val type: String = "user",
-    @SerialName("reply_to_message_id")
-    val replyToMessageId: String? = null,
 )
 
 @Serializable

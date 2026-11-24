@@ -40,7 +40,6 @@ import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.model.chat.ChatMessage
-import com.xtrakick.app.model.chat.CheerEmote
 import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.model.chat.Image
 import com.xtrakick.app.model.chat.NamePaint
@@ -400,7 +399,7 @@ object ChatAdapterUtils {
             }
     }
 
-    fun prepareChatMessage(chatMessage: ChatMessage, cacheSignature: Long, enableTimestamps: Boolean, timestampFormat: String?, firstMsgVisibility: Int, firstChatMsg: String, redeemedChatMsg: String, redeemedNoMsg: String, rewardChatMsg: String, replyMessage: String, imageClick: ((String?, String?, String?, Boolean?, Int?, Boolean?, String?) -> Unit)?, useRandomColors: Boolean, random: Random, useReadableColors: Boolean, isLightTheme: Boolean, nameDisplay: String?, useBoldNames: Boolean, showNamePaints: Boolean, namePaints: List<NamePaint>, showStvBadges: Boolean, showKickBadges: Boolean, stvBadges: List<StvBadge>, showPersonalEmotes: Boolean, personalEmoteSets: Map<String, List<Emote>>, stvUsers: List<StvUser>, enableOverlayEmotes: Boolean, showSystemMessageEmotes: Boolean, loggedInUser: String?, chatUrl: String?, getEmoteBytes: ((String, Pair<Long, Int>) -> ByteArray?)?, userColors: HashMap<String, Int>, savedColors: HashMap<String, Int>, localChatEmotes: List<ChatEmote>, thirdPartyEmotes: List<Emote>, globalBadges: List<ChatBadge>, channelBadges: List<ChatBadge>, cheerEmotes: List<CheerEmote>, savedLocalChatEmotes: MutableMap<String, ByteArray>, savedLocalBadges: MutableMap<String, ByteArray>, savedLocalCheerEmotes: MutableMap<String, ByteArray>, savedLocalEmotes: MutableMap<String, ByteArray>, context: Context? = null): MessageResult {
+    fun prepareChatMessage(chatMessage: ChatMessage, cacheSignature: Long, enableTimestamps: Boolean, timestampFormat: String?, firstMsgVisibility: Int, firstChatMsg: String, redeemedChatMsg: String, redeemedNoMsg: String, rewardChatMsg: String, replyMessage: String, imageClick: ((String?, String?, String?, Boolean?, Int?, Boolean?, String?) -> Unit)?, useRandomColors: Boolean, random: Random, useReadableColors: Boolean, isLightTheme: Boolean, nameDisplay: String?, useBoldNames: Boolean, showNamePaints: Boolean, namePaints: List<NamePaint>, showStvBadges: Boolean, showKickBadges: Boolean, stvBadges: List<StvBadge>, showPersonalEmotes: Boolean, personalEmoteSets: Map<String, List<Emote>>, stvUsers: List<StvUser>, enableOverlayEmotes: Boolean, showSystemMessageEmotes: Boolean, loggedInUser: String?, chatUrl: String?, getEmoteBytes: ((String, Pair<Long, Int>) -> ByteArray?)?, userColors: HashMap<String, Int>, savedColors: HashMap<String, Int>, localChatEmotes: List<ChatEmote>, thirdPartyEmotes: List<Emote>, globalBadges: List<ChatBadge>, channelBadges: List<ChatBadge>, savedLocalChatEmotes: MutableMap<String, ByteArray>, savedLocalBadges: MutableMap<String, ByteArray>, savedLocalEmotes: MutableMap<String, ByteArray>, context: Context? = null): MessageResult {
         synchronized(preparedMessages) {
             preparedMessages[chatMessage]?.get(cacheSignature)?.let { return it.copyForBind() }
         }
@@ -429,7 +428,7 @@ object ChatAdapterUtils {
                     builder.append(message)
                     builder.setSpan(ForegroundColorSpan(getSavedColor("#999999", savedColors, useReadableColors, isLightTheme)), builderIndex, builderIndex + message.length, SPAN_EXCLUSIVE_EXCLUSIVE)
                     val replySourceMessage = chatMessage.replyParent?.takeIf { it.message == message } ?: chatMessage
-                    prepareEmotes(replySourceMessage, message, builder, builderIndex, images, null, useReadableColors, isLightTheme, enableOverlayEmotes, useBoldNames, loggedInUser, chatUrl, getEmoteBytes, savedColors, localChatEmotes, showPersonalEmotes, personalEmoteSets, null, thirdPartyEmotes, cheerEmotes, savedLocalChatEmotes, savedLocalCheerEmotes, savedLocalEmotes)
+                    prepareEmotes(replySourceMessage, message, builder, builderIndex, images, null, enableOverlayEmotes, useBoldNames, loggedInUser, chatUrl, getEmoteBytes, localChatEmotes, showPersonalEmotes, personalEmoteSets, null, thirdPartyEmotes, savedLocalChatEmotes, savedLocalEmotes)
                     builderIndex = builder.length
                 }
                 if (isReplyDirectedAtLoggedInUser(chatMessage, loggedInUser)) {
@@ -509,10 +508,10 @@ object ChatAdapterUtils {
                     builder.setSpan(ForegroundColorSpan(Color.WHITE), msgStart, msgStart + donorMsg.length, SPAN_EXCLUSIVE_EXCLUSIVE)
                     prepareEmotes(
                         chatMessage, donorMsg, builder, msgStart, images, imageClick,
-                        useReadableColors, isLightTheme, enableOverlayEmotes, useBoldNames,
-                        loggedInUser, chatUrl, getEmoteBytes, savedColors, localChatEmotes,
-                        showPersonalEmotes, personalEmoteSets, null, thirdPartyEmotes, cheerEmotes,
-                        savedLocalChatEmotes, savedLocalCheerEmotes, savedLocalEmotes
+                        enableOverlayEmotes, useBoldNames,
+                        loggedInUser, chatUrl, getEmoteBytes, localChatEmotes,
+                        showPersonalEmotes, personalEmoteSets, null, thirdPartyEmotes,
+                        savedLocalChatEmotes, savedLocalEmotes
                     )
                     builderIndex = builder.length
                 }
@@ -664,10 +663,10 @@ object ChatAdapterUtils {
                     builder.setSpan(ForegroundColorSpan(msgColor), msgStart, msgStart + chatMessage.message.length, SPAN_EXCLUSIVE_EXCLUSIVE)
                     prepareEmotes(
                         chatMessage, chatMessage.message, builder, msgStart, images, imageClick,
-                        useReadableColors, isLightTheme, enableOverlayEmotes, useBoldNames,
-                        loggedInUser, chatUrl, getEmoteBytes, savedColors, localChatEmotes,
-                        showPersonalEmotes, personalEmoteSets, null, thirdPartyEmotes, cheerEmotes,
-                        savedLocalChatEmotes, savedLocalCheerEmotes, savedLocalEmotes
+                        enableOverlayEmotes, useBoldNames,
+                        loggedInUser, chatUrl, getEmoteBytes, localChatEmotes,
+                        showPersonalEmotes, personalEmoteSets, null, thirdPartyEmotes,
+                        savedLocalChatEmotes, savedLocalEmotes
                     )
                     builderIndex = builder.length
                 }
@@ -684,7 +683,7 @@ object ChatAdapterUtils {
                 builder.append(chatMessage.systemMsg)
                 builder.setSpan(ForegroundColorSpan(getSavedColor("#999999", savedColors, useReadableColors, isLightTheme)), builderIndex, builderIndex + chatMessage.systemMsg.length, SPAN_EXCLUSIVE_EXCLUSIVE)
                 if (showSystemMessageEmotes) {
-                    prepareEmotes(chatMessage, chatMessage.systemMsg, builder, builderIndex, images, imageClick, useReadableColors, isLightTheme, enableOverlayEmotes, useBoldNames, loggedInUser, chatUrl, getEmoteBytes, savedColors, localChatEmotes, showPersonalEmotes, personalEmoteSets, null, thirdPartyEmotes, cheerEmotes, savedLocalChatEmotes, savedLocalCheerEmotes, savedLocalEmotes)
+                    prepareEmotes(chatMessage, chatMessage.systemMsg, builder, builderIndex, images, imageClick, enableOverlayEmotes, useBoldNames, loggedInUser, chatUrl, getEmoteBytes, localChatEmotes, showPersonalEmotes, personalEmoteSets, null, thirdPartyEmotes, savedLocalChatEmotes, savedLocalEmotes)
                 }
                 builderIndex = builder.length
             }
@@ -888,7 +887,7 @@ object ChatAdapterUtils {
                     if (chatMessage.isAction) {
                         builder.setSpan(ForegroundColorSpan(color), builderIndex, builderIndex + chatMessage.message.length, SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
-                    val result = prepareEmotes(chatMessage, chatMessage.message, builder, builderIndex, images, imageClick, useReadableColors, isLightTheme, enableOverlayEmotes, useBoldNames, loggedInUser, chatUrl, getEmoteBytes, savedColors, localChatEmotes, showPersonalEmotes, personalEmoteSets, stvUser, thirdPartyEmotes, cheerEmotes, savedLocalChatEmotes, savedLocalCheerEmotes, savedLocalEmotes)
+                    val result = prepareEmotes(chatMessage, chatMessage.message, builder, builderIndex, images, imageClick, enableOverlayEmotes, useBoldNames, loggedInUser, chatUrl, getEmoteBytes, localChatEmotes, showPersonalEmotes, personalEmoteSets, stvUser, thirdPartyEmotes, savedLocalChatEmotes, savedLocalEmotes)
                     wasMentioned = result || isMessageHighlightedForLoggedInUser(chatMessage, loggedInUser, builder.subSequence(messageStart, builder.length))
                     builderIndex = builder.length
                     if (chatMessage.isDeleted) {
@@ -1029,7 +1028,7 @@ object ChatAdapterUtils {
         return ColorUtils.HSLToColor(colorArray)
     }
 
-    private fun prepareEmotes(chatMessage: ChatMessage, message: String, builder: SpannableStringBuilder, startIndex: Int, images: ArrayList<Image>, imageClick: ((String?, String?, String?, Boolean?, Int?, Boolean?, String?) -> Unit)?, useReadableColors: Boolean, isLightTheme: Boolean, enableOverlayEmotes: Boolean, useBoldNames: Boolean, loggedInUser: String?, chatUrl: String?, getEmoteBytes: ((String, Pair<Long, Int>) -> ByteArray?)?, savedColors: HashMap<String, Int>, localChatEmotes: List<ChatEmote>, showPersonalEmotes: Boolean, personalEmoteSets: Map<String, List<Emote>>, stvUser: StvUser?, thirdPartyEmotes: List<Emote>, cheerEmotes: List<CheerEmote>, savedLocalChatEmotes: MutableMap<String, ByteArray>, savedLocalCheerEmotes: MutableMap<String, ByteArray>, savedLocalEmotes: MutableMap<String, ByteArray>): Boolean {
+    private fun prepareEmotes(chatMessage: ChatMessage, message: String, builder: SpannableStringBuilder, startIndex: Int, images: ArrayList<Image>, imageClick: ((String?, String?, String?, Boolean?, Int?, Boolean?, String?) -> Unit)?, enableOverlayEmotes: Boolean, useBoldNames: Boolean, loggedInUser: String?, chatUrl: String?, getEmoteBytes: ((String, Pair<Long, Int>) -> ByteArray?)?, localChatEmotes: List<ChatEmote>, showPersonalEmotes: Boolean, personalEmoteSets: Map<String, List<Emote>>, stvUser: StvUser?, thirdPartyEmotes: List<Emote>, savedLocalChatEmotes: MutableMap<String, ByteArray>, savedLocalEmotes: MutableMap<String, ByteArray>): Boolean {
         var wasMentioned = false
         try {
             var builderIndex = startIndex
@@ -1089,68 +1088,6 @@ object ChatAdapterUtils {
             )
             val personalEmotesByName = personalEmotes?.filter { !it.name.isNullOrBlank() }?.associateBy { it.name!! }
             for (value in split) {
-                if (chatMessage.bits != null) {
-                    val bitsCount = value.takeLastWhile { it.isDigit() }
-                    val bitsName = value.substringBeforeLast(bitsCount)
-                    if (bitsCount.isNotEmpty()) {
-                        val emote = synchronized(cheerEmotes) {
-                            cheerEmotes.findLast { it.name.equals(bitsName, true) && it.minBits <= bitsCount.toInt() }
-                        }
-                        if (emote != null) {
-                            builder.replace(builderIndex, builderIndex + bitsName.length, ".")
-                            builder.setSpan(ForegroundColorSpan(Color.TRANSPARENT), builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
-                            if (imageClick != null) {
-                                builder.setSpan(object : ClickableSpan() {
-                                    override fun onClick(widget: View) {
-                                        imageClick(emote.url4x ?: emote.url3x ?: emote.url2x ?: emote.url1x, value, emote.format, emote.isAnimated, null, null, null)
-                                    }
-
-                                    override fun updateDrawState(ds: TextPaint) {}
-                                }, builderIndex, builderIndex + 1, SPAN_EXCLUSIVE_EXCLUSIVE)
-                            }
-                            builder.setSpan(
-                                ChatEmoteSpan(
-                                    url = emote.url4x ?: emote.url3x ?: emote.url2x ?: emote.url1x,
-                                    name = value,
-                                    format = emote.format,
-                                    isAnimated = emote.isAnimated,
-                                    source = null,
-                                    thirdParty = null,
-                                    emoteId = null
-                                ),
-                                builderIndex,
-                                builderIndex + 1,
-                                SPAN_EXCLUSIVE_EXCLUSIVE
-                            )
-                            images.add(Image(
-                                localDataLoader = emote.localData?.let { getLocalEmoteData(emote.name + emote.minBits, it, savedLocalCheerEmotes, chatUrl, getEmoteBytes) },
-                                url1x = emote.url1x,
-                                url2x = emote.url2x,
-                                url3x = emote.url3x,
-                                url4x = emote.url4x,
-                                format = emote.format,
-                                isAnimated = emote.isAnimated,
-                                isEmote = true,
-                                start = builderIndex,
-                                end = builderIndex + 1
-                            ))
-                            builderIndex += 1
-                            if (!emote.color.isNullOrBlank()) {
-                                builder.setSpan(ForegroundColorSpan(getSavedColor(emote.color, savedColors, useReadableColors, isLightTheme)), builderIndex, builderIndex + bitsCount.length, SPAN_EXCLUSIVE_EXCLUSIVE)
-                            }
-                            if (!chatEmotes.isNullOrEmpty()) {
-                                val removed = bitsName.length - 1
-                                chatEmotes.forEach {
-                                    it.begin -= removed
-                                    it.end -= removed
-                                }
-                            }
-                            previousImage = null
-                            builderIndex += bitsCount.length + 1
-                            continue
-                        }
-                    }
-                }
                 val emote = personalEmotesByName?.get(value) ?: concatenatedEmoteMatcher.getExactEmote(value)
                 if (emote != null) {
                     if (emote.isOverlayEmote && enableOverlayEmotes && previousImage != null) {

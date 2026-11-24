@@ -118,7 +118,8 @@
             android:layout_height="20dp"
             android:alpha="0.6"
             android:src="@drawable/baseline_search_black_24"
-            app:tint="?android:attr/textColorSecondary" />
+            app:tint="?android:attr/textColorSecondary"
+            android:contentDescription="@null" />
 
         <EditText
             android:id="@+id/searchInput"

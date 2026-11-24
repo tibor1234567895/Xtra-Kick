@@ -3,10 +3,8 @@ package com.xtrakick.app.ui.chat
 import android.content.Context
 import com.xtrakick.app.R
 import com.xtrakick.app.model.chat.ChatMessage
-import com.xtrakick.app.repository.KickPublicApiRepository
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.ui.view.SlashCommand
-import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.KickApiHelper
 import kotlinx.coroutines.CoroutineScope
@@ -14,21 +12,19 @@ import kotlinx.coroutines.launch
 import kotlin.math.ceil
 
 /**
- * Kick slash commands: use Kick official/public APIs only (never Twitch GQL).
+ * Kick slash commands: use Kick web-session and verified official Kick APIs only.
  */
 internal class KickSlashCommandDispatcher(
     private val context: Context,
     private val kickRepository: KickRepository,
-    private val kickPublicApiRepository: KickPublicApiRepository,
     private val scope: CoroutineScope,
     private val emitMessage: suspend (ChatMessage) -> Unit,
     private val onDisconnect: () -> Unit,
     private val resolveChatroomId: suspend (channelId: String?, channelLogin: String?) -> String?,
     private val sendMessageFallback: (CharSequence, String?, String?, String?) -> Unit,
 ) {
-    fun dispatch(message: CharSequence, networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, accountId: String?, channelId: String?, channelLogin: String?, useApiChatMessages: Boolean, enableIntegrity: Boolean) {
+    fun dispatch(message: CharSequence, networkLibrary: String?, channelId: String?, channelLogin: String?) {
         val command = message.toString().substringBefore(" ")
-        val hasPublicToken = !kickPublicApiHeaders[AppConstants.HEADER_TOKEN].isNullOrBlank()
         fun missingAuth() {
             scope.launch {
                 val errorMsg = if (AuthStateHelper.isKickGoogleSession(context)) {
@@ -115,23 +111,9 @@ internal class KickSlashCommandDispatcher(
         suspend fun resolveTargetUserId(login: String): String? {
             return kickRepository.resolveUserIdBySlug(networkLibrary, login)?.toString()
         }
+        fun unresolvedModerationTarget(): Nothing = throw IllegalStateException(context.getString(R.string.token_expired))
         val hasDirectKickSession = !channelLogin.isNullOrBlank() && (AuthStateHelper.isKickGoogleSession(context) || kickRepository.hasKickWebsiteSessionCookieOnly())
         when {
-            command.startsWith("/announce", true) -> {
-                val splits = message.split(" ", limit = 2)
-                if (splits.size >= 2 && hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            kickPublicApiRepository.sendAnnouncement(
-                                networkLibrary, kickPublicApiHeaders, channelId, accountId, splits[1],
-                                splits[0].substringAfter("/announce", "").ifBlank { null },
-                            )
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
-                } else if (splits.size >= 2) {
-                    missingAuth()
-                }
-            }
             command.equals("/ban", true) -> {
                 val splits = message.split(" ", limit = 3)
                 if (splits.size >= 2) {
@@ -159,13 +141,8 @@ internal class KickSlashCommandDispatcher(
                                         reason = reason,
                                     )
                                     null
-                                } else if (hasPublicToken) {
-                                    kickPublicApiRepository.banUser(
-                                        networkLibrary, kickPublicApiHeaders, channelId, accountId, targetId,
-                                        reason = reason,
-                                    )
                                 } else {
-                                    throw IllegalStateException(context.getString(R.string.token_expired))
+                                    unresolvedModerationTarget()
                                 }
                             }
                         }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
@@ -198,10 +175,8 @@ internal class KickSlashCommandDispatcher(
                                         targetUserId = targetUserId,
                                     )
                                     null
-                                } else if (hasPublicToken) {
-                                    kickPublicApiRepository.unbanUser(networkLibrary, kickPublicApiHeaders, channelId, accountId, targetId)
                                 } else {
-                                    throw IllegalStateException(context.getString(R.string.token_expired))
+                                    unresolvedModerationTarget()
                                 }
                             }
                         }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
@@ -241,14 +216,8 @@ internal class KickSlashCommandDispatcher(
                                         reason = reason,
                                     )
                                     null
-                                } else if (hasPublicToken) {
-                                    kickPublicApiRepository.banUser(
-                                        networkLibrary, kickPublicApiHeaders, channelId, accountId, targetId,
-                                        duration = minutes.toString(),
-                                        reason = reason,
-                                    )
                                 } else {
-                                    throw IllegalStateException(context.getString(R.string.token_expired))
+                                    unresolvedModerationTarget()
                                 }
                             }
                         }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
@@ -260,12 +229,6 @@ internal class KickSlashCommandDispatcher(
             command.equals("/clear", true) -> {
                 if (hasDirectKickSession) {
                     launchNative("clear", null)
-                } else if (hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            kickPublicApiRepository.deleteMessages(networkLibrary, kickPublicApiHeaders, channelId, accountId)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
                 } else {
                     missingAuth()
                 }
@@ -283,46 +246,10 @@ internal class KickSlashCommandDispatcher(
                                 kickRepository.deleteOfficialChatMessage(networkLibrary, splits[1])
                                 null
                             }
-                        }.onSuccess { emitInfo(it) }.onFailure { error ->
-                            if (hasPublicToken) {
-                                runCatching {
-                                    kickPublicApiRepository.deleteMessages(networkLibrary, kickPublicApiHeaders, channelId, accountId, splits[1])
-                                }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                            } else {
-                                emitError(error)
-                            }
-                        }
+                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
                     }
                 } else {
                     missingArgUsage("Usage: /delete <messageId>")
-                }
-            }
-            command.equals("/color", true) -> {
-                val splits = message.split(" ")
-                if (!hasPublicToken) {
-                    missingAuth()
-                } else {
-                    scope.launch {
-                        runCatching {
-                            if (splits.size >= 2) {
-                                kickPublicApiRepository.updateChatColor(networkLibrary, kickPublicApiHeaders, accountId, splits[1])
-                            } else {
-                                kickPublicApiRepository.getChatColor(networkLibrary, kickPublicApiHeaders, accountId)
-                            }
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
-                }
-            }
-            command.equals("/commercial", true) -> {
-                val splits = message.split(" ")
-                if (splits.size >= 2 && hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            kickPublicApiRepository.startCommercial(networkLibrary, kickPublicApiHeaders, channelId, splits[1])
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
-                } else if (splits.size >= 2) {
-                    missingAuth()
                 }
             }
             command.equals("/disconnect", true) -> onDisconnect()
@@ -332,12 +259,6 @@ internal class KickSlashCommandDispatcher(
                 when (mode?.lowercase()) {
                     "on", "off" -> if (hasDirectKickSession) {
                         launchNativeChatMode(emotesMode = mode.equals("on", true))
-                    } else if (hasPublicToken) {
-                        scope.launch {
-                            runCatching {
-                                kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, emote = mode.equals("on", true))
-                            }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                        }
                     } else missingAuth()
                     else -> missingArgUsage("Usage: /emoteonly <on|off>")
                 }
@@ -345,12 +266,6 @@ internal class KickSlashCommandDispatcher(
             command.equals("/emoteonlyoff", true) -> {
                 if (hasDirectKickSession) {
                     launchNativeChatMode(emotesMode = false)
-                } else if (hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, emote = false)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
                 } else missingAuth()
             }
             command.equals("/followers", true) -> {
@@ -360,19 +275,9 @@ internal class KickSlashCommandDispatcher(
                 when (mode?.lowercase()) {
                     "on", "off" -> {
                         val on = mode.equals("on", true)
-                        val duration = if (splits.size >= 3) splits[2].toIntOrNull() else null
                         if (hasDirectKickSession) {
                             val (_, minutes) = kickFollowersModeArguments(splits.drop(1))
                             launchNativeChatMode(followersMode = on, followingMinDurationMinutes = minutes)
-                        } else if (hasPublicToken) {
-                            scope.launch {
-                                runCatching {
-                                    kickPublicApiRepository.updateChatSettings(
-                                        networkLibrary, kickPublicApiHeaders, channelId, accountId,
-                                        followers = on, followersDuration = duration,
-                                    )
-                                }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                            }
                         } else missingAuth()
                     }
                     else -> missingArgUsage("Usage: /followers <on|off> [minutes]")
@@ -381,38 +286,12 @@ internal class KickSlashCommandDispatcher(
             command.equals("/followersoff", true) -> {
                 if (hasDirectKickSession) {
                     launchNativeChatMode(followersMode = false, followingMinDurationMinutes = 0)
-                } else if (hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, followers = false)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
-                } else missingAuth()
-            }
-            command.equals("/marker", true) -> {
-                val splits = message.split(" ", limit = 2)
-                if (hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            kickPublicApiRepository.createStreamMarker(
-                                networkLibrary, kickPublicApiHeaders, channelId,
-                                if (splits.size >= 2) splits[1] else null,
-                            )
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
                 } else missingAuth()
             }
             command.equals("/mod", true) -> {
                 val splits = message.split(" ")
                 if (splits.size >= 2 && hasDirectKickSession) {
                     launchNativeCommunityRole(add = true, role = "moderator", username = splits[1].removePrefix("@").trim())
-                } else if (splits.size >= 2 && hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            val targetId = resolveTargetUserId(splits[1])
-                            kickPublicApiRepository.addModerator(networkLibrary, kickPublicApiHeaders, channelId, targetId)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
                 } else if (splits.size >= 2) {
                     missingAuth()
                 } else {
@@ -432,13 +311,6 @@ internal class KickSlashCommandDispatcher(
                 val splits = message.split(" ")
                 if (splits.size >= 2 && hasDirectKickSession) {
                     launchNativeCommunityRole(add = false, role = "moderator", username = splits[1].removePrefix("@").trim())
-                } else if (splits.size >= 2 && hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            val targetId = resolveTargetUserId(splits[1])
-                            kickPublicApiRepository.removeModerator(networkLibrary, kickPublicApiHeaders, channelId, targetId)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
                 } else if (splits.size >= 2) {
                     missingAuth()
                 } else {
@@ -479,27 +351,11 @@ internal class KickSlashCommandDispatcher(
                 if (splits.size >= 2 && hasDirectKickSession) {
                     // kick.com web executes /raid via chat-commands with command:"host".
                     launchNative("host", splits[1].removePrefix("@").trim())
-                } else if (splits.size >= 2 && hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            val targetId = resolveTargetUserId(splits[1])
-                            kickPublicApiRepository.startRaid(networkLibrary, kickPublicApiHeaders, channelId, targetId)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
                 } else if (splits.size >= 2) {
                     missingAuth()
                 } else {
                     missingArgUsage("Usage: /raid <user>")
                 }
-            }
-            command.equals("/unraid", true) -> {
-                if (hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            kickPublicApiRepository.cancelRaid(networkLibrary, kickPublicApiHeaders, channelId)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
-                } else missingAuth()
             }
             command.equals("/slow", true) -> {
                 // kick.com web requires the on_off argument ("/slow <on|off> [seconds]").
@@ -512,16 +368,6 @@ internal class KickSlashCommandDispatcher(
                             // Kick web: "/slow on <seconds 1..120>" / "/slow off"; default interval 1.
                             val (_, interval) = kickSlowModeArguments(splits.drop(1))
                             launchNativeChatMode(slowMode = on, messageIntervalSeconds = interval)
-                        } else if (hasPublicToken) {
-                            val duration = if (splits.size >= 3) splits[2].toIntOrNull() else null
-                            scope.launch {
-                                runCatching {
-                                    kickPublicApiRepository.updateChatSettings(
-                                        networkLibrary, kickPublicApiHeaders, channelId, accountId,
-                                        slow = on, slowDuration = duration,
-                                    )
-                                }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                            }
                         } else missingAuth()
                     }
                     else -> missingArgUsage("Usage: /slow <on|off> [seconds]")
@@ -530,12 +376,6 @@ internal class KickSlashCommandDispatcher(
             command.equals("/slowoff", true) -> {
                 if (hasDirectKickSession) {
                     launchNativeChatMode(slowMode = false, messageIntervalSeconds = 1)
-                } else if (hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, slow = false)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
                 } else missingAuth()
             }
             command.equals("/subscribers", true) -> {
@@ -544,12 +384,6 @@ internal class KickSlashCommandDispatcher(
                 when (mode?.lowercase()) {
                     "on", "off" -> if (hasDirectKickSession) {
                         launchNativeChatMode(subscribersMode = mode.equals("on", true))
-                    } else if (hasPublicToken) {
-                        scope.launch {
-                            runCatching {
-                                kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, subs = mode.equals("on", true))
-                            }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                        }
                     } else missingAuth()
                     else -> missingArgUsage("Usage: /subscribers <on|off>")
                 }
@@ -557,43 +391,12 @@ internal class KickSlashCommandDispatcher(
             command.equals("/subscribersoff", true) -> {
                 if (hasDirectKickSession) {
                     launchNativeChatMode(subscribersMode = false)
-                } else if (hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, subs = false)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
-                } else missingAuth()
-            }
-            command.equals("/uniquechat", true) -> {
-                if (hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, unique = true)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
-                } else missingAuth()
-            }
-            command.equals("/uniquechatoff", true) -> {
-                if (hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            kickPublicApiRepository.updateChatSettings(networkLibrary, kickPublicApiHeaders, channelId, accountId, unique = false)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
                 } else missingAuth()
             }
             command.equals("/vip", true) -> {
                 val splits = message.split(" ")
                 if (splits.size >= 2 && hasDirectKickSession) {
                     launchNativeCommunityRole(add = true, role = "vip", username = splits[1].removePrefix("@").trim())
-                } else if (splits.size >= 2 && hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            val targetId = resolveTargetUserId(splits[1])
-                            kickPublicApiRepository.addVip(networkLibrary, kickPublicApiHeaders, channelId, targetId)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
                 } else if (splits.size >= 2) {
                     missingAuth()
                 } else {
@@ -624,13 +427,6 @@ internal class KickSlashCommandDispatcher(
                 val splits = message.split(" ")
                 if (splits.size >= 2 && hasDirectKickSession) {
                     launchNativeCommunityRole(add = false, role = "vip", username = splits[1].removePrefix("@").trim())
-                } else if (splits.size >= 2 && hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            val targetId = resolveTargetUserId(splits[1])
-                            kickPublicApiRepository.removeVip(networkLibrary, kickPublicApiHeaders, channelId, targetId)
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
                 } else if (splits.size >= 2) {
                     missingAuth()
                 } else {
@@ -640,21 +436,6 @@ internal class KickSlashCommandDispatcher(
             command.equals("/vips", true) -> {
                 scope.launch {
                     emitMessage(ChatMessage(systemMsg = "Listing VIPs is not available via Kick API in this build."))
-                }
-            }
-            command.equals("/w", true) -> {
-                val splits = message.split(" ", limit = 3)
-                if (splits.size >= 3 && hasPublicToken) {
-                    scope.launch {
-                        runCatching {
-                            val targetId = resolveTargetUserId(splits[1])
-                            kickPublicApiRepository.sendWhisper(networkLibrary, kickPublicApiHeaders, accountId, targetId, splits[2])
-                        }.onSuccess { emitInfo(it) }.onFailure { emitError(it) }
-                    }
-                } else if (splits.size >= 3) {
-                    missingAuth()
-                } else {
-                    missingArgUsage("Usage: /w <user> <message>")
                 }
             }
             else -> sendMessageFallback(message, networkLibrary, channelId, channelLogin)
@@ -712,11 +493,8 @@ internal fun kickTimeoutMinutes(token: String?): Int? {
  * kick.com's web frontend: bans, chat settings modes, stream-info title,
  * community roles, chat-commands clear/host) or the app's own client-side
  * commands (/timeout, /clear, ... map to native Kick commands).
- * Arms kept in [KickSlashCommandDispatcher.dispatch] for OAuth-only fallbacks
- * but excluded here because they are not Kick commands: color, commercial,
- * marker, unraid, uniquechat, uniquechatoff, w. /category (web: picker dialog)
- * and /user (web: local identity panel) have no server-side execution and are
- * excluded too.
+ * /category (web: picker dialog) and /user (web: local identity panel) have
+ * no server-side execution and are excluded.
  */
 internal val slashCommands: List<SlashCommand> = listOf(
     SlashCommand("ban", "<user> [reason]"),

@@ -111,6 +111,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
     data class LoadResult(
         val items: List<Stream>,
         val fromCache: Boolean,
+        val networkSucceeded: Boolean = true,
     )
 
     private data class LiveCache(val account: String, val cachedAt: Long, val items: List<Stream>)
@@ -149,12 +150,14 @@ class FollowedLiveStreamsRepository @Inject constructor(
                     return@withLock LoadResult(it, true)
                 }
             }
-            loadLiveFollowedUncached(allowPerChannelFallback, account) { items ->
+            loadLiveFollowedUncached(allowPerChannelFallback, account, forceRefresh) { items ->
                 liveCache = LiveCache(account, System.currentTimeMillis(), items)
                 publish(items)
             }.also {
-                lastLoadAllowedFallback = allowPerChannelFallback
-                loadGeneration++
+                if (it.networkSucceeded) {
+                    lastLoadAllowedFallback = allowPerChannelFallback
+                    loadGeneration++
+                }
             }
         }
     }
@@ -166,6 +169,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
     private suspend fun loadLiveFollowedUncached(
         allowPerChannelFallback: Boolean,
         account: String,
+        forceRefresh: Boolean,
         onPartial: (List<Stream>) -> Unit,
     ): LoadResult {
 
@@ -212,9 +216,12 @@ class FollowedLiveStreamsRepository @Inject constructor(
 
         var sawRateLimit = false
         val isRateLimitMessage = { message: String? -> message?.contains("429", ignoreCase = true) == true }
+        var attemptedNetwork = false
+        var anyNetworkSucceeded = false
 
         var officialLiveSucceeded = false
         if (kickRepository.hasKickAccountFollowCapability()) {
+            attemptedNetwork = true
             try {
                 val officialLive = (withTimeoutOrNull(30_000L) { kickRepository.getUserLiveFollowedStreams() }
                     ?: throw java.io.IOException("Followed-live request timed out"))
@@ -228,6 +235,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
                     onPartial(resolved.values.toList().sortedByViewersDesc())
                 }
                 officialLiveSucceeded = true
+                anyNetworkSucceeded = true
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -253,34 +261,42 @@ class FollowedLiveStreamsRepository @Inject constructor(
         // OAuth-armed public API always rejects with 401 — skip those arms instead of
         // burning two guaranteed-failed calls per refresh.
         val googleSession = AuthStateHelper.isKickGoogleSession(applicationContext)
-        val fast = if (googleSession) {
+        val fast = if (googleSession || unresolvedFollows.isEmpty()) {
             null
-        } else try {
-            if (unresolvedFollows.isEmpty()) null else withTimeoutOrNull(30_000L) { loadFromPublicApi(unresolvedFollows) }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            if (isRateLimitMessage(error.message)) sawRateLimit = true
-            diagnosticWarn("Fast followed-live path failed: ${failureDetail(error)}")
-            null
+        } else {
+            attemptedNetwork = true
+            try {
+                withTimeoutOrNull(30_000L) { loadFromPublicApi(unresolvedFollows) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (isRateLimitMessage(error.message)) sawRateLimit = true
+                diagnosticWarn("Fast followed-live path failed: ${failureDetail(error)}")
+                null
+            }
         }
+        if (fast != null) anyNetworkSucceeded = true
         fast?.items?.forEach(::putStream)
         if (fast != null && resolved.isNotEmpty()) {
             onPartial(resolved.values.toList().sortedByViewersDesc())
         }
 
         val unresolvedAfterFast = fast?.unresolved ?: unresolvedFollows
-        val bulk = if (googleSession) {
+        val bulk = if (googleSession || unresolvedAfterFast.isEmpty()) {
             null
-        } else try {
-            withTimeoutOrNull(30_000L) { loadFromBulkFallback(unresolvedAfterFast) }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            if (isRateLimitMessage(error.message)) sawRateLimit = true
-            diagnosticWarn("Bulk followed-live fallback failed: ${failureDetail(error)}")
-            null
+        } else {
+            attemptedNetwork = true
+            try {
+                withTimeoutOrNull(30_000L) { loadFromBulkFallback(unresolvedAfterFast) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (isRateLimitMessage(error.message)) sawRateLimit = true
+                diagnosticWarn("Bulk followed-live fallback failed: ${failureDetail(error)}")
+                null
+            }
         }
+        if (bulk != null) anyNetworkSucceeded = true
         bulk?.items?.forEach(::putStream)
         if (bulk != null && bulk.items.isNotEmpty()) {
             onPartial(resolved.values.toList().sortedByViewersDesc())
@@ -291,13 +307,16 @@ class FollowedLiveStreamsRepository @Inject constructor(
             if (sawRateLimit) {
                 diagnosticWarn("Skipping per-channel fallback: kick API is rate limiting")
             } else {
+                attemptedNetwork = true
                 for (batch in unresolvedAfterBulk.chunked(PER_CHANNEL_BATCH_SIZE)) {
                     currentCoroutineContext().ensureActive()
                     val batchResults = coroutineScope {
                         batch.map { follow ->
                             async {
                                 try {
-                                    Result.success(withTimeoutOrNull(10_000L) { loadStreamForFollow(follow) })
+                                    withTimeoutOrNull(10_000L) {
+                                        Result.success(loadStreamForFollow(follow, forceRefresh))
+                                    } ?: Result.failure(java.io.IOException("Per-channel follow refresh timed out"))
                                 } catch (error: CancellationException) {
                                     throw error
                                 } catch (error: Exception) {
@@ -306,8 +325,13 @@ class FollowedLiveStreamsRepository @Inject constructor(
                             }
                         }.awaitAll()
                     }
+                    if (batchResults.any { it.isSuccess }) {
+                        anyNetworkSucceeded = true
+                    }
                     batchResults.mapNotNull { it.getOrNull() }.forEach(::putStream)
-                    onPartial(resolved.values.toList().sortedByViewersDesc())
+                    if (anyNetworkSucceeded) {
+                        onPartial(resolved.values.toList().sortedByViewersDesc())
+                    }
                     if (batchResults.any { isRateLimitMessage(it.exceptionOrNull()?.message) }) {
                         diagnosticWarn("Stopping per-channel fallback after rate limit")
                         break
@@ -318,10 +342,13 @@ class FollowedLiveStreamsRepository @Inject constructor(
         }
 
         val finalItems = resolved.values.toList().sortedByViewersDesc()
-        persistCache(finalItems, account)
-        onPartial(finalItems)
-        prefetchTopStreams(finalItems)
-        return LoadResult(items = finalItems, fromCache = false)
+        val networkSucceeded = !attemptedNetwork || anyNetworkSucceeded
+        if (networkSucceeded) {
+            persistCache(finalItems, account)
+            onPartial(finalItems)
+            prefetchTopStreams(finalItems)
+        }
+        return LoadResult(items = finalItems, fromCache = false, networkSucceeded = networkSucceeded)
     }
 
     internal var enablePrefetchTopStreams: Boolean = true
@@ -432,7 +459,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
             }
             .toMap(LinkedHashMap())
         if (followByLogin.isEmpty()) {
-            return PartialResult(emptyList(), follows)
+            return null
         }
 
         val broadcasterIdCache = loadBroadcasterIdCache()
@@ -456,6 +483,7 @@ class FollowedLiveStreamsRepository @Inject constructor(
             broadcasterIdCache[login] == null
         }
 
+        var anyLookupSucceeded = false
         if (loginsToFetch.isNotEmpty()) {
             coroutineScope {
                 loginsToFetch
@@ -465,14 +493,22 @@ class FollowedLiveStreamsRepository @Inject constructor(
                         currentCoroutineContext().ensureActive()
                         requestWindow.map { slugs ->
                             async {
-                                runCatching {
-                                    kickRepository.getOfficialChannels(
-                                        networkLibrary = networkLibrary,
-                                        slugs = slugs,
+                                try {
+                                    Result.success(
+                                        kickRepository.getOfficialChannels(
+                                            networkLibrary = networkLibrary,
+                                            slugs = slugs,
+                                        )
                                     )
-                                }.getOrElse { emptyList() }
+                                } catch (error: CancellationException) {
+                                    throw error
+                                } catch (error: Exception) {
+                                    Result.failure(error)
+                                }
                             }
-                        }.awaitAll().forEach { channels ->
+                        }.awaitAll().forEach { lookupResult ->
+                            val channels = lookupResult.getOrNull() ?: return@forEach
+                            anyLookupSucceeded = true
                             channels.forEach { ch ->
                                 val login = ch.slug?.takeIf { it.isNotBlank() }?.lowercase() ?: return@forEach
                                 val broadcasterId = ch.broadcasterUserId?.toString() ?: return@forEach
@@ -490,6 +526,9 @@ class FollowedLiveStreamsRepository @Inject constructor(
 
         if (cacheChanged) {
             persistBroadcasterIdCache(broadcasterIdCache)
+        }
+        if (followsByBroadcasterId.isEmpty()) {
+            return if (anyLookupSucceeded) PartialResult(emptyList(), follows) else null
         }
 
         val resolved = LinkedHashMap<String, Stream>()
@@ -524,52 +563,29 @@ class FollowedLiveStreamsRepository @Inject constructor(
         )
     }
 
-    private suspend fun loadStreamForFollow(follow: LocalFollowChannel): Stream? {
+    private suspend fun loadStreamForFollow(follow: LocalFollowChannel, forceRefresh: Boolean): Stream? {
         val login = follow.userLogin?.takeIf { it.isNotBlank() }
-        val id = follow.userId?.takeIf { it.isNotBlank() }
-        return when {
-            !login.isNullOrBlank() -> {
-                val channel = try {
-                    kickRepository.getChannel(channelSlug = login, prefetchBadgeCatalog = false)
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    if (error.message?.contains("429") == true) throw error
-                    return null
-                }
-                rememberBroadcasterId(
-                    channel.slug ?: login,
-                    channel.userId?.toString() ?: channel.user?.id?.toString()
-                )
-                val livestream = channel.livestream ?: return null
-                val enriched = if (
-                    !hasUsableThumbnail(livestream.thumbnail?.imageUrl) || livestream.category == null
-                ) {
-                    runCatching { kickRepository.getChannelLivestream(login, forceRefresh = true) }.getOrNull()
-                        ?: livestream
-                } else {
-                    livestream
-                }
-                kickRepository.toStream(channel, enriched)
-            }
-            !id.isNullOrBlank() -> {
-                val channel = try {
-                    kickRepository.getChannel(channelSlug = id, prefetchBadgeCatalog = false)
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    if (error.message?.contains("429") == true) throw error
-                    return null
-                }
-                rememberBroadcasterId(
-                    channel.slug,
-                    channel.userId?.toString() ?: channel.user?.id?.toString()
-                )
-                val livestream = channel.livestream ?: return null
-                kickRepository.toStream(channel, livestream)
-            }
-            else -> null
+        val slug = login ?: follow.userId?.takeIf { it.isNotBlank() } ?: return null
+        val channel = kickRepository.getChannel(
+            channelSlug = slug,
+            prefetchBadgeCatalog = false,
+            forceRefresh = forceRefresh,
+        )
+        rememberBroadcasterId(
+            channel.slug ?: login,
+            channel.userId?.toString() ?: channel.user?.id?.toString(),
+        )
+        val livestream = channel.livestream ?: return null
+        val enriched = if (
+            login != null &&
+            (!hasUsableThumbnail(livestream.thumbnail?.imageUrl) || livestream.category == null)
+        ) {
+            runCatching { kickRepository.getChannelLivestream(login, forceRefresh = true) }.getOrNull()
+                ?: livestream
+        } else {
+            livestream
         }
+        return kickRepository.toStream(channel, enriched)
     }
 
     private fun com.xtrakick.app.model.kick.api.livestream.Livestream.toUiStream(

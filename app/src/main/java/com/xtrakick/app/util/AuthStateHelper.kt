@@ -1,6 +1,7 @@
 package com.xtrakick.app.util
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.webkit.CookieManager
 import android.webkit.WebStorage
 import androidx.core.content.edit
@@ -57,6 +58,14 @@ object AuthStateHelper {
             expiresAt = prefs.getLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, 0L),
             nowEpochSeconds = nowEpochSeconds,
         )
+    }
+
+    fun hasUnreadableKickSession(context: Context): Boolean = hasUnreadableKickSession(context.tokenPrefs())
+
+    internal fun hasUnreadableKickSession(prefs: SharedPreferences): Boolean {
+        return listOf(AppConstants.KICK_ACCESS_TOKEN, AppConstants.KICK_REFRESH_TOKEN).any { key ->
+            prefs.contains(key) && prefs.getString(key, null) == null
+        }
     }
 
     internal fun isKickSessionAvailable(
@@ -205,21 +214,21 @@ object AuthStateHelper {
         }
         context.prefs().edit {
             remove(AppConstants.API_LOGIN)
-            remove(AppConstants.HELIX_CLIENT_ID)
-            remove(AppConstants.HELIX_REDIRECT)
+            remove("helix_client_id")
+            remove("helix_redirect")
             remove(AppConstants.GQL_CLIENT_ID)
             remove(AppConstants.GQL_REDIRECT)
             remove(AppConstants.GQL_CLIENT_ID2)
             remove(AppConstants.GQL_REDIRECT2)
             remove(AppConstants.GQL_CLIENT_ID_WEB)
-            remove(AppConstants.CHAT_PUBSUB_ENABLED)
+            remove("chat_pubsub_enabled")
             remove(AppConstants.CHAT_POINTS_COLLECT)
             remove(AppConstants.CHAT_POINTS_NOTIFY)
             remove(AppConstants.CHAT_RAIDS_SHOW)
             remove(AppConstants.CHAT_RAIDS_AUTO_SWITCH)
             remove(AppConstants.CHAT_POLLS_SHOW)
             remove(AppConstants.CHAT_PREDICTIONS_SHOW)
-            remove(AppConstants.DEBUG_EVENTSUB_CHAT)
+            remove("debug_eventsub_chat")
             remove(AppConstants.GET_ALL_GQL_HEADERS)
         }
     }

@@ -2,6 +2,7 @@ package com.xtrakick.app.util
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.DialogInterface
 import android.content.SharedPreferences
 import android.content.res.Configuration
@@ -29,7 +30,31 @@ import kotlin.coroutines.resumeWithException
 
 fun Context.prefs(): SharedPreferences = PreferenceManager.getDefaultSharedPreferences(this)
 
-fun Context.tokenPrefs(): SharedPreferences = getSharedPreferences("prefs2", Context.MODE_PRIVATE)
+private const val LEGACY_TOKEN_PREFS_NAME = "prefs2"
+private const val TOKEN_PREFS_NAME = "prefs2_secure"
+private val tokenPrefsLock = Any()
+
+@Volatile
+private var tokenPrefsInstance: SharedPreferences? = null
+
+/**
+ * Encrypted at-rest store for credentials (OAuth access/refresh tokens, proxy password).
+ *
+ * Legacy plaintext values are migrated once. All edits use the same backing store,
+ * so changes made during a Keystore outage survive recovery.
+ */
+fun Context.tokenPrefs(): SharedPreferences {
+    tokenPrefsInstance?.let { return it }
+    synchronized(tokenPrefsLock) {
+        tokenPrefsInstance?.let { return it }
+        val app = applicationContext
+        val instance = KeystoreTokenPrefs.create(app, TOKEN_PREFS_NAME)
+        val legacy = app.getSharedPreferences(LEGACY_TOKEN_PREFS_NAME, Context.MODE_PRIVATE)
+        if (instance.migrateLegacy(legacy)) app.deleteSharedPreferences(LEGACY_TOKEN_PREFS_NAME)
+        tokenPrefsInstance = instance
+        return instance
+    }
+}
 
 fun Context.getProxyPassword(): String? {
     val secure = tokenPrefs()
@@ -257,4 +282,13 @@ fun Context.hasPersistedUriPermission(
             )
         }
     }.getOrDefault(false)
+}
+
+fun Context.findActivity(): Activity? {
+    var ctx: Context? = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }

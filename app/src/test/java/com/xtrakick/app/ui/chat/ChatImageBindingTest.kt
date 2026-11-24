@@ -8,55 +8,20 @@ import android.text.SpannableStringBuilder
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
-import coil3.ImageLoader
-import coil3.decode.DataSource
-import coil3.decode.ImageSource
-import coil3.fetch.SourceFetchResult
-import coil3.request.Options
 import com.xtrakick.app.model.chat.Image
 import com.xtrakick.app.ui.view.CenteredImageSpan
-import com.xtrakick.app.util.LegacyAnimatedWebpDecoder
 import com.xtrakick.app.util.chat.ChatAdapterUtils
-import okio.Buffer
-import okio.FileSystem
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @Config(application = Application::class)
 @RunWith(RobolectricTestRunner::class)
 class ChatImageBindingTest {
-    @Test
-    @Config(sdk = [27])
-    fun legacyDecoderClaimsAnimatedWebpAndLeavesOtherFormatsUntouched() {
-        val context = RuntimeEnvironment.getApplication()
-        val loader = ImageLoader.Builder(context).build()
-        val factory = LegacyAnimatedWebpDecoder()
-        val options = Options(context)
-        fun probe(flags: Int, animationExpected: Boolean) {
-            val header = Buffer().writeUtf8("RIFF").writeIntLe(22).writeUtf8("WEBPVP8X")
-                .writeIntLe(10).writeByte(flags).write(ByteArray(9))
-            val size = header.size
-            ImageSource(header, FileSystem.SYSTEM).use { source ->
-                val decoder = factory.create(SourceFetchResult(source, "image/webp", DataSource.DISK), options, loader)
-                if (animationExpected) assertNotNull(decoder) else assertNull(decoder)
-                assertEquals(size, header.size)
-            }
-        }
-        try {
-            probe(2, animationExpected = true)
-            probe(0, animationExpected = false)
-        } finally {
-            loader.shutdown()
-        }
-    }
 
     @Test
     fun lateImagesCannotReplaceReboundTextIncludingRowsWithoutImages() {

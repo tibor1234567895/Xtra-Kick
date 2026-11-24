@@ -504,7 +504,6 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
             progressBar.isVisible = false
             speed.isVisible = false
             download.isVisible = false
-            vodGames.isVisible = false
             subtitles.isVisible = false
             audioOnly.isVisible = false
             sleepTimer.isVisible = false
@@ -1026,7 +1025,7 @@ class MultiPovFragment : Fragment(), MultiPovStreamPickerDialog.Listener {
                     }
                     add(getString(labelRes))
                 }
-                if (prefs.getBoolean(AppConstants.PLAYER_MENU_CHAT_TOGGLE, true)) {
+                if (prefs.getBoolean(AppConstants.PLAYER_MENU_CHAT_TOGGLE, false)) {
                     add(getString(if (isChatOpen) R.string.hide_chat else R.string.show_chat))
                 }
                 if (prefs.getBoolean(AppConstants.PLAYER_MENU_CHAT_DISCONNECT, true)) {

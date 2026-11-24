@@ -160,9 +160,11 @@ class NotificationChannelsViewModel @Inject constructor(
                         preferredLogin = entry.login,
                         preferredName = entry.name,
                         preferredLogoUrl = entry.logoUrl,
+                        syncFcm = false,
                     )
                     if (canonical != null) {
                         onChannelsEnabled()
+                        notificationUsersRepository.syncFcmSubscriptions()
                         if (entry.followed) {
                             localFollowChannelRepository.upsertLocalFollow(canonical, entry.login, entry.name, entry.logoUrl)
                         }
@@ -202,9 +204,13 @@ class NotificationChannelsViewModel @Inject constructor(
             try {
                 val follows = localFollowChannelRepository.loadFollows()
                 notificationUsersRepository.enableNotificationsForChannels(
-                    follows.map { listOf(it.userId, it.userLogin) }
+                    follows.map { listOf(it.userId, it.userLogin) },
+                    syncFcm = false,
                 )
-                onChannelsEnabled()
+                if (follows.isNotEmpty() && notificationUsersRepository.loadUsers().isNotEmpty()) {
+                    onChannelsEnabled()
+                }
+                notificationUsersRepository.syncFcmSubscriptions()
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -256,10 +262,11 @@ class NotificationChannelsViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-                notificationUsersRepository.restoreUsers(targetEnabledIds)
+                notificationUsersRepository.restoreUsers(targetEnabledIds, syncFcm = false)
                 if (targetEnabledIds.isNotEmpty()) {
                     onChannelsEnabled()
                 }
+                notificationUsersRepository.syncFcmSubscriptions()
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -276,8 +283,9 @@ class NotificationChannelsViewModel @Inject constructor(
      * configured, is rescheduled here too so it picks up the new subscriptions promptly.
      */
     private fun onChannelsEnabled() {
-        context.prefs().edit { putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, true) }
-        if (context.prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP, false)) {
+        val prefs = context.prefs()
+        prefs.edit { putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, true) }
+        if (prefs.getBoolean(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP, false)) {
             enqueueLiveNotificationsPollingWork(context)
         }
     }

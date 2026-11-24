@@ -16,7 +16,6 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.RecyclerView
 import com.xtrakick.app.R
 import com.xtrakick.app.model.chat.ChatMessage
-import com.xtrakick.app.model.chat.CheerEmote
 import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.model.chat.NamePaint
 import com.xtrakick.app.model.chat.StvBadge
@@ -35,7 +34,6 @@ class ReplyClickedChatAdapter(
     private val thirdPartyEmotes: List<Emote>,
     private val globalBadges: List<ChatBadge>,
     private val channelBadges: List<ChatBadge>,
-    private val cheerEmotes: List<CheerEmote>,
     private val namePaints: List<NamePaint>,
     private val stvBadges: List<StvBadge>,
     private val personalEmoteSets: Map<String, List<Emote>>,
@@ -76,7 +74,6 @@ class ReplyClickedChatAdapter(
     private val savedColors: HashMap<String, Int>,
     private val savedLocalChatEmotes: MutableMap<String, ByteArray>,
     private val savedLocalBadges: MutableMap<String, ByteArray>,
-    private val savedLocalCheerEmotes: MutableMap<String, ByteArray>,
     private val savedLocalEmotes: MutableMap<String, ByteArray>,
     private val loggedInUser: String?,
     var selectedMessage: ChatMessage?,
@@ -154,7 +151,7 @@ class ReplyClickedChatAdapter(
             useRandomColors, random, useReadableColors, isLightTheme, nameDisplay, useBoldNames, showNamePaints, namePaints, showStvBadges,
             showKickBadges, stvBadges, showPersonalEmotes, personalEmoteSets, stvUsers, enableOverlayEmotes, showSystemMessageEmotes, loggedInUser, chatUrl,
             getEmoteBytes, userColors, savedColors, localChatEmotes,
-            thirdPartyEmotes, globalBadges, channelBadges, cheerEmotes, savedLocalChatEmotes, savedLocalBadges, savedLocalCheerEmotes, savedLocalEmotes, holder.textView.context
+            thirdPartyEmotes, globalBadges, channelBadges, savedLocalChatEmotes, savedLocalBadges, savedLocalEmotes, holder.textView.context
         )
         holder.bind(chatMessage, result.builder, position, result.backgroundRes)
         if (chatMessage == selectedMessage) {

@@ -7,12 +7,8 @@ import android.os.ext.SdkExtensions
 import androidx.annotation.OptIn
 import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresExtension
-import com.xtrakick.app.BuildConfig
-import com.xtrakick.app.R
-import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.HttpEngineAvailability
-import com.xtrakick.app.util.prefs
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -21,7 +17,6 @@ import kotlinx.serialization.json.Json
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
 import org.chromium.net.CronetEngine
 import org.chromium.net.CronetProvider
 import org.chromium.net.QuicOptions
@@ -102,9 +97,7 @@ class AppModule {
                 maxRequestsPerHost = 20
             })
             connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
-            if (BuildConfig.DEBUG && application.prefs().getBoolean(AppConstants.DEBUG_NETWORK_LOGS, false)) {
-                addInterceptor(HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC })
-            }
+            applyDebugLogging(application)
         }
         return builder.build()
     }

@@ -2,6 +2,7 @@ package com.xtrakick.app.ui.channel
 
 import android.net.http.HttpEngine
 import com.xtrakick.app.util.NetworkUtils
+import androidx.core.content.edit
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -19,6 +20,7 @@ import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.DiagnosticLogger
+import com.xtrakick.app.util.prefs
 import android.content.Context
 import android.util.Log
 import dagger.Lazy
@@ -154,32 +156,7 @@ class ChannelPagerViewModel @Inject constructor(
                         null
                     }
                 } else {
-                    if (kickPublicApiHeaders.isNotEmpty()) {
-                        try {
-                            kickPublicApiRepository.getStreams(
-                                networkLibrary = networkLibrary,
-                                headers = kickPublicApiHeaders,
-                                ids = args.channelId?.let { listOf(it) },
-                                logins = if (args.channelId.isNullOrBlank()) args.channelLogin?.let { listOf(it) } else null
-                            ).data.firstOrNull()?.let {
-                                Stream(
-                                    id = it.id,
-                                    channelId = it.channelId,
-                                    channelLogin = it.channelLogin,
-                                    channelName = it.channelName,
-                                    gameId = it.gameId,
-                                    gameName = it.gameName,
-                                    title = it.title,
-                                    viewerCount = it.viewerCount,
-                                    startedAt = it.startedAt,
-                                    thumbnailUrl = it.thumbnailUrl,
-                                    tags = it.tags
-                                )
-                            }
-                        } catch (_: Exception) {
-                            null
-                        }
-                    } else null
+                    null
                 }
                 _stream.value = loadedStream
                 if (loadedStream != null) {
@@ -285,7 +262,14 @@ class ChannelPagerViewModel @Inject constructor(
                     preferredLogin = slug,
                     preferredName = name,
                     preferredLogoUrl = logo,
+                    syncFcm = false,
                 )
+                if (key != null) {
+                    if (!notificationsEnabled) {
+                        applicationContext.prefs().edit { putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, true) }
+                    }
+                    notificationUsersRepository.syncFcmSubscriptions()
+                }
                 _notificationsEnabled.value = true
                 notifications.value = Pair(true, null)
                 if (key != null && slug != null) {

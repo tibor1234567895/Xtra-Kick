@@ -124,6 +124,7 @@
     <string name="oldest_first">Mais antigos primeiro</string>
     <string name="logout_title">Sair?</string>
     <string name="logout_msg">Conectado como %s</string>
+    <string name="logout_saved_session_msg">Sair e remover a sessão do Kick salva neste dispositivo?</string>
     <string name="logout_success_toast">Você saiu da conta</string>
     <string name="logout_revoke_failed_toast">Você saiu da conta neste dispositivo, mas não foi possível revogar o token no Kick</string>
     <string name="never">Nunca</string>
@@ -192,7 +193,6 @@
     <string name="user_staff">Equipe</string>
     <string name="uptime">Transmissão no ar há %s</string>
     <string name="recentMsg_enable">Carregar mensagens recentes</string>
-    <string name="recentMsg_limit">Limite de mensagens recentes</string>
     <string name="last_broadcast_date">Última transmissão: %s</string>
     <string name="followed_at">Seguindo desde %s</string>
     <string name="following_label">Seguindo</string>
@@ -395,7 +395,6 @@
     <string name="irc_notice_whisper_limit_per_sec">Você está enviando sussurros rápido demais. Tente novamente em um segundo.</string>
     <string name="irc_notice_whisper_restricted">Suas configurações impedem o envio deste sussurro.</string>
     <string name="irc_notice_whisper_restricted_recipient">As configurações desse usuário\'s impedem que ele receba este sussurro.</string>
-    <string name="position">Posição: %s</string>
     <string name="player_viewerlist">Abrir lista de espectadores pela contagem de espectadores</string>
     <string name="broadcaster">Streamer</string>
     <string name="moderators">Moderadores</string>
@@ -493,7 +492,6 @@
     <string name="rebuffer">Recarregar buffer</string>
     <string name="buffer_settings">Configurações de buffer</string>
     <string name="player_buttons">Botões do player</string>
-    <string name="keep_chat_open">Manter o chat conectado em segundo plano</string>
     <string name="save_sort_channel">Lembrar escolhas para este canal</string>
     <string name="save_sort_game">Lembrar escolhas para este jogo</string>
     <string name="show_chat">Mostrar chat</string>
@@ -596,7 +594,6 @@
     <string name="use_integrity">Usar token de integridade</string>
     <string name="use_audio_focus">Pausar quando outros apps reproduzirem áudio</string>
     <string name="handle_audio_becoming_noisy">Pausar quando os fones de ouvido forem desconectados</string>
-    <string name="proxy_playback_access_token">Token de acesso de reprodução do proxy</string>
     <string name="proxy_multivariant_playlist">Playlist multivariante do proxy</string>
     <string name="proxy_host">Host</string>
     <string name="proxy_port">Porta</string>
@@ -642,7 +639,6 @@
     <string name="dynamic_amoled">Preto dinâmico</string>
     <string name="material_3">Tema Material 3</string>
     <string name="use_api_chat_messages">Enviar mensagens no chat pela API</string>
-    <string name="use_eventsub_chat">Chat EventSub</string>
     <string name="notification_permission_title">Permissão de notificações necessária</string>
     <string name="notification_permission_message">É necessário permitir notificações para exibir o progresso dos downloads.</string>
     <string name="select_directory">Selecionar pasta</string>
@@ -865,7 +861,6 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="download_threads_summary">Número de partes baixadas simultaneamente</string>
     <string name="minimize">Minimizar</string>
     <string name="player_menu_settings">Configurações do menu do player</string>
-    <string name="chapters">Capítulos</string>
     <string name="seek_to_live">Ir para ao vivo</string>
     <string name="zoomed_to_fill">Ampliado para preencher</string>
     <string name="original">Original</string>
@@ -874,6 +869,7 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="chat_input_toggle">Alternar entrada do chat</string>
     <string name="chat_toggle">Alternar chat</string>
     <string name="fullscreen">Tela cheia</string>
+    <string name="exit_fullscreen">Sair da tela cheia</string>
     <string name="min_buffer">Buffer mínimo</string>
     <string name="min_buffer_summary">Buffer mínimo em milissegundos</string>
     <string name="player_latency_profile">Perfil de latência ao vivo</string>
@@ -1133,6 +1129,7 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="log_in_to_kick_summary">Entre para conversar, seguir canais e acompanhar recompensas diárias</string>
     <string name="logged_in_as_summary">Conectado como %s</string>
     <string name="tap_to_log_out">Toque para sair da conta</string>
+    <string name="kick_session_unavailable">A sessão salva está temporariamente indisponível. Toque para ver as opções de saída.</string>
     <string name="verify_session_startup">Verificar a sessão ao iniciar o app</string>
     <string name="verify_session_startup_summary">Verificar a autorização do token no Kick ao abrir o app</string>
     <string name="account_sync">Sincronização da conta</string>
@@ -1140,7 +1137,11 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="login_to_import_follows">Entre para importar os canais que você segue</string>
     <string name="developer_tokens">Tokens de desenvolvedor e da API</string>
     <string name="developer_tokens_summary">Tokens OAuth, validação de sessão e webhooks EventSub</string>
-    <string name="proxy_settings_summary">Configuração de proxy HTTP, HTTPS e SOCKS5</string>
+    <string name="proxy_settings_summary">Configuração de proxy HTTP e HTTPS</string>
+    <string name="cd_open_emotes">Abrir emotes</string>
+    <string name="cd_send_message">Enviar mensagem</string>
+    <string name="cd_more_options">Mais opções</string>
+    <string name="cd_set_as_default">Definir como padrão</string>
     <string name="advanced_image_rendering">Avançado e desempenho</string>
     <string name="storage_and_cleanup">Armazenamento e limpeza</string>
     <string name="connection_timings">Tempos de conexão</string>
@@ -1183,6 +1184,8 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="action_not_now">Agora não</string>
     <string name="chat_guest_login_prompt">Entre na sua conta para conversar e resgatar recompensas</string>
     <string name="live_widget_title">Canais ao vivo</string>
+    <string name="live_widget_refreshing">Atualizando…</string>
+    <string name="live_widget_updated_just_now">Atualizado agora</string>
     <string name="live_widget_empty">Nenhum streamer que você segue está ao vivo no momento</string>
     <string name="live_widget_tap_to_open">Toque para abrir o Xtra</string>
     <string name="welcome_title">Boas-vindas ao Xtra</string>
@@ -1315,4 +1318,5 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="clip_sort_date">Data de criação</string>
     <string name="clip_sort_duration">Duração</string>
     <string name="clip_sort_recent_limit">A ordenação por data ou duração inclui até %d clipes recentes do período selecionado.</string>
+    <string name="cd_scroll_to_top">Voltar ao topo</string>
 </resources>

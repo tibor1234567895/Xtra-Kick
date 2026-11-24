@@ -103,7 +103,6 @@ import com.xtrakick.app.util.KickClipApi
 import com.xtrakick.app.util.NotificationPermissionHelper
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.isKeyboardShown
-import com.xtrakick.app.util.getProxyPassword
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.safeGetBoolean
 import com.xtrakick.app.util.tokenPrefs
@@ -244,18 +243,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             }
         }
     }
-    private var videoZoomScale = 1f
-    private var videoZoomTranslationX = 0f
-    private var videoZoomTranslationY = 0f
-    private var videoZoomGestureActive = false
-    private var videoZoomGestureStartScale = 1f
-    private var videoZoomGestureStartSpan = 0f
-    private var videoZoomGestureScaleDeadzonePassed = false
-    private var videoZoomGestureLastFocusX = 0f
-    private var videoZoomGestureLastFocusY = 0f
-    private var videoZoomPanLastX = 0f
-    private var videoZoomPanLastY = 0f
-    private var videoZoomPanMoved = false
+    private var videoZoom: VideoZoomController? = null
     private var videoZoomFillHintActive = false
     private var videoZoomFillMode = false
     private var videoZoomFillHintAnimation: ViewPropertyAnimator? = null
@@ -307,7 +295,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     fun isChatPlaybackPlaying(): Boolean =
-        (viewModel.quality == CHAT_ONLY_QUALITY && chatOnlyPositionMs != null) || isPlaybackPlaying()
+        isMaximized &&
+            bindingOrNull?.chatLayout?.isVisible == true &&
+            ((viewModel.quality == CHAT_ONLY_QUALITY && chatOnlyPositionMs != null) || isPlaybackPlaying())
 
     protected fun seekChatOnly(position: Long): Boolean {
         if (chatOnlyPositionMs == null || viewModel.quality != CHAT_ONLY_QUALITY) return false
@@ -487,7 +477,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     private fun canEngageHoldToSpeed(): Boolean {
         if (holdToSpeedActive || !isAdded || _binding == null) return false
-        return shouldArmHoldToSpeed(isMaximized, isHoldToSpeedAvailable(), isVideoZoomed(), videoZoomGestureActive, binding.offlineOverlay.isVisible, binding.playerControls.progressBar.isPressed)
+        return shouldArmHoldToSpeed(isMaximized, isHoldToSpeedAvailable(), isVideoZoomed(), videoZoom?.gestureActive == true, binding.offlineOverlay.isVisible, binding.playerControls.progressBar.isPressed)
     }
 
     private fun disengageHoldToSpeed() {
@@ -813,99 +803,70 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 }
             )
 
-            val zoomDetector = ScaleGestureDetector(
+            val zoomController = VideoZoomController(
                 requireContext(),
-                object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-                    override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-                        videoZoomGestureActive = true
+                object : VideoZoomController.Host {
+                    override fun getZoomView(): View? = _binding?.let { getVideoZoomView() }
+
+                    override fun getViewportSize(): Pair<Int, Int> {
+                        val b = _binding ?: return 0 to 0
+                        return b.playerLayout.width to b.playerLayout.height
+                    }
+
+                    override fun getZoomViewOriginInViewport(): Pair<Float, Float> =
+                        getVideoSurfaceLeft() to getVideoSurfaceTop()
+
+                    override fun onZoomActiveChanged(active: Boolean) {
+                        if (active) {
+                            _binding?.aspectRatioFrameLayout?.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        }
+                    }
+
+                    override fun onZoomChanged(scale: Float, translationX: Float, translationY: Float) {
+                        syncNonZoomVideoViews(scale, translationX, translationY)
+                    }
+
+                    override fun onScaleBegin(detector: ScaleGestureDetector) {
                         if (videoZoomFillMode) {
                             videoZoomFillMode = false
                             restoreVideoResizeMode()
                         }
-                        videoZoomGestureStartScale = videoZoomScale
-                        videoZoomGestureStartSpan = detector.currentSpan
-                        videoZoomGestureScaleDeadzonePassed = isVideoZoomed()
-                        videoZoomGestureLastFocusX = detector.focusX
-                        videoZoomGestureLastFocusY = detector.focusY
                         activePointerId = -1
-                        playerControls.root.dispatchTouchEvent(
-                            MotionEvent.obtain(
-                                detector.eventTime,
-                                detector.eventTime,
-                                MotionEvent.ACTION_CANCEL,
-                                detector.focusX,
-                                detector.focusY,
-                                0
-                            )
+                        val cancel = MotionEvent.obtain(
+                            detector.eventTime,
+                            detector.eventTime,
+                            MotionEvent.ACTION_CANCEL,
+                            detector.focusX,
+                            detector.focusY,
+                            0
                         )
-                        showVideoZoomIndicator(formatVideoZoomScale(videoZoomScale), false)
-                        return true
+                        playerControls.root.dispatchTouchEvent(cancel)
+                        cancel.recycle()
+                        videoZoom?.let { showVideoZoomIndicator(it.formatScale(), false) }
                     }
 
-                    override fun onScale(detector: ScaleGestureDetector): Boolean {
-                        if (!videoZoomGestureScaleDeadzonePassed) {
-                            val spanRatio = if (videoZoomGestureStartSpan > 0f) detector.currentSpan / videoZoomGestureStartSpan else 1f
-                            if (abs(spanRatio - 1f) < VIDEO_ZOOM_SCALE_DEADZONE_RATIO) {
-                                videoZoomGestureLastFocusX = detector.focusX
-                                videoZoomGestureLastFocusY = detector.focusY
-                                return true
-                            }
-                            videoZoomGestureScaleDeadzonePassed = true
-                        }
-                        val oldScale = videoZoomScale
-                        val newScale = (oldScale * detector.scaleFactor).coerceIn(MIN_VIDEO_ZOOM_SCALE, MAX_VIDEO_ZOOM_SCALE)
-                        if (newScale > MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_EPSILON) {
-                            binding.aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        }
-                        videoZoomTranslationX += (detector.focusX - videoZoomGestureLastFocusX) * VIDEO_ZOOM_TWO_FINGER_PAN_MULTIPLIER
-                        videoZoomTranslationY += (detector.focusY - videoZoomGestureLastFocusY) * VIDEO_ZOOM_TWO_FINGER_PAN_MULTIPLIER
-                        if (newScale != oldScale) {
-                            val scaleChange = newScale / oldScale
-                            videoZoomTranslationX = getScaledVideoTranslation(
-                                focus = detector.focusX,
-                                viewStart = getVideoSurfaceLeft(),
-                                currentTranslation = videoZoomTranslationX,
-                                scaleChange = scaleChange
-                            )
-                            videoZoomTranslationY = getScaledVideoTranslation(
-                                focus = detector.focusY,
-                                viewStart = getVideoSurfaceTop(),
-                                currentTranslation = videoZoomTranslationY,
-                                scaleChange = scaleChange
-                            )
-                        }
-                        videoZoomScale = newScale
-                        videoZoomGestureLastFocusX = detector.focusX
-                        videoZoomGestureLastFocusY = detector.focusY
-                        clampVideoZoomTranslation()
-                        applyVideoZoom()
+                    override fun onScaleChanged(scale: Float) {
                         updateVideoZoomFillHint()
-                        showVideoZoomIndicator(formatVideoZoomScale(videoZoomScale), false)
-                        return true
+                        videoZoom?.let { showVideoZoomIndicator(it.formatScale(), false) }
                     }
 
-                    override fun onScaleEnd(detector: ScaleGestureDetector) {
+                    override fun onScaleEnd(gestureStartScale: Float, finalScale: Float): Boolean {
                         when {
-                            videoZoomFillHintActive -> {
-                                snapVideoZoomToFill()
-                            }
-                            videoZoomGestureStartScale > MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_EPSILON && videoZoomScale <= MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_RESET_TOLERANCE -> {
-                                resetVideoZoom(true)
-                            }
-                            videoZoomScale <= MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_EPSILON -> {
-                                resetVideoZoom(false)
-                            }
+                            videoZoomFillHintActive -> snapVideoZoomToFill()
+                            gestureStartScale > VideoZoomController.MIN_SCALE + VideoZoomController.EPSILON &&
+                                finalScale <= VideoZoomController.MIN_SCALE + VideoZoomController.RESET_TOLERANCE -> resetVideoZoom(true)
+                            finalScale <= VideoZoomController.MIN_SCALE + VideoZoomController.EPSILON -> resetVideoZoom(false)
                             else -> {
-                                clampVideoZoomTranslation()
-                                applyVideoZoom()
+                                videoZoom?.clampAndApply()
                                 updateVideoZoomFillHint(false)
-                                showVideoZoomIndicator(formatVideoZoomScale(videoZoomScale), true)
+                                videoZoom?.let { showVideoZoomIndicator(it.formatScale(), true) }
                             }
                         }
-                        videoZoomGestureActive = false
+                        return true
                     }
                 }
             )
+            videoZoom = zoomController
 
             fun canInteractiveChatDrag(): Boolean {
                 return !isPortrait &&
@@ -1044,7 +1005,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                         controllerTapDetector.onTouchEvent(event)
                     }
                     if (event.actionMasked == MotionEvent.ACTION_DOWN &&
-                        shouldArmHoldToSpeed(isMaximized, isHoldToSpeedAvailable(), isVideoZoomed(), videoZoomGestureActive, offlineOverlay.isVisible, playerControls.progressBar.isPressed)
+                        shouldArmHoldToSpeed(isMaximized, isHoldToSpeedAvailable(), isVideoZoomed(), zoomController.gestureActive, offlineOverlay.isVisible, playerControls.progressBar.isPressed)
                     ) {
                         holdToSpeedDownX = event.x
                         holdToSpeedDownY = event.y
@@ -1258,13 +1219,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     isAnimating = false
                 }
                 if (!isAnimating) {
-                    if (event.pointerCount > 1 || videoZoomGestureActive) {
+                    if (event.pointerCount > 1 || zoomController.gestureActive) {
                         if (chatDragActive) {
                             // Multi-touch cancels interactive chat scrub mid-gesture.
                             endChatDrag(event)
                         }
                         chatDragCandidate = false
-                        zoomDetector.onTouchEvent(event)
+                        zoomController.scaleDetector.onTouchEvent(event)
                         isTap = false
                         activePointerId = -1
                         return@setOnTouchListener true
@@ -1276,13 +1237,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             val y = event.y
                             lastX = x * slidingLayout.scaleX
                             lastY = y * slidingLayout.scaleY
-                            videoZoomPanLastX = x
-                            videoZoomPanLastY = y
+                            zoomController.beginPan(x, y)
                             statusBarSwipe = !isPortrait && y <= 100
                             if (isVideoZoomed()) {
                                 isTap = true
                                 tapEventTime = event.eventTime
-                                videoZoomPanMoved = false
                                 moveAnimation?.cancel()
                                 if (playerControls.root.isVisible) {
                                     playerControls.root.dispatchTouchEvent(event)
@@ -1317,19 +1276,11 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 if (!playerControls.progressBar.isPressed && activePointerId != -1) {
                                     val pointerIndex = event.findPointerIndex(activePointerId)
                                     if (pointerIndex != -1) {
-                                        val x = event.getX(pointerIndex)
-                                        val y = event.getY(pointerIndex)
-                                        val translationX = x - videoZoomPanLastX
-                                        val translationY = y - videoZoomPanLastY
-                                        if (abs(translationX) > touchSlop || abs(translationY) > touchSlop) {
-                                            videoZoomPanMoved = true
-                                        }
-                                        videoZoomTranslationX += translationX
-                                        videoZoomTranslationY += translationY
-                                        videoZoomPanLastX = x
-                                        videoZoomPanLastY = y
-                                        clampVideoZoomTranslation()
-                                        applyVideoZoom()
+                                        zoomController.panBy(
+                                            event.getX(pointerIndex),
+                                            event.getY(pointerIndex),
+                                            touchSlop,
+                                        )
                                     }
                                 }
                             } else if (isMaximized) {
@@ -1460,7 +1411,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                             if (isVideoZoomed()) {
                                 if (playerControls.root.isVisible) {
                                     playerControls.root.dispatchTouchEvent(event)
-                                } else if (!videoZoomPanMoved && isTap && (event.eventTime - tapEventTime) < longPressTimeout) {
+                                } else if (!zoomController.panMoved && isTap && (event.eventTime - tapEventTime) < longPressTimeout) {
                                     controllerTapDetector.onTouchEvent(event)
                                 }
                                 activePointerId = -1
@@ -1495,7 +1446,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                 true
             }
             zoomIndicator.setOnClickListener {
-                if (isVideoZoomed() || videoZoomFillMode) {
+                if (isVideoZoomActive()) {
+                    rescheduleHideController()
                     resetVideoZoom(true)
                 }
             }
@@ -1681,7 +1633,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                 prefs.getString(AppConstants.PLAYER_SPEED_LIST, "0.25\n0.5\n0.75\n1.0\n1.25\n1.5\n1.75\n2.0\n3.0\n4.0\n8.0")
                                     ?.split("\n")?.find { it == speed.toString() }
                             },
-                            vodGames = !viewModel.gamesList.value.isNullOrEmpty()
                         ).show(childFragmentManager, "closeOnPip")
                     }
                 }
@@ -1799,7 +1750,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     }
                                     updateViewerCount(stream.viewerCount)
                                     if (prefs.getBoolean(AppConstants.CHAT_DISABLE, false) ||
-                                        !prefs.getBoolean(AppConstants.CHAT_PUBSUB_ENABLED, true) ||
                                         title.text.isNullOrBlank() ||
                                         category.text.isNullOrBlank()
                                     ) {
@@ -1955,21 +1905,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     if (it != null) {
                                         (childFragmentManager.findFragmentByTag("closeOnPip") as? PlayerSettingsDialog?)?.setBookmarkText(it)
                                         viewModel.isBookmarked.value = null
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (!requireArguments().getString(KEY_VIDEO_ID).isNullOrBlank() && (prefs.getBoolean(AppConstants.PLAYER_GAMESBUTTON, true) || prefs.getBoolean(AppConstants.PLAYER_MENU_GAMES, false))) {
-                        viewLifecycleOwner.lifecycleScope.launch {
-                            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                                viewModel.gamesList.collectLatest { list ->
-                                    if (!list.isNullOrEmpty()) {
-                                        if (prefs.getBoolean(AppConstants.PLAYER_GAMESBUTTON, true)) {
-                                            vodGames.visibility = View.VISIBLE
-                                            vodGames.setOnClickListener { showVodGames() }
-                                        }
-                                        (childFragmentManager.findFragmentByTag("closeOnPip") as? PlayerSettingsDialog?)?.setVodGames()
                                     }
                                 }
                             }
@@ -2231,6 +2166,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                                     if (it != null) {
                                         val wasFollowing = follow.tag as? Boolean
                                         follow.tag = it
+                                        follow.contentDescription = getString(if (it) R.string.unfollow else R.string.follow)
                                         updateChatOnlyInfo()
                                         if (it) {
                                             follow.setImageResource(R.drawable.baseline_favorite_black_24)
@@ -2407,6 +2343,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     if (prefs.getBoolean(AppConstants.PLAYER_FULLSCREEN, true)) {
                         fullscreen.visibility = View.VISIBLE
                         fullscreen.setImageResource(R.drawable.baseline_fullscreen_black_24)
+                        fullscreen.contentDescription = getString(R.string.fullscreen)
                         fullscreen.setOnClickListener {
                             requireActivity().requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                         }
@@ -2466,6 +2403,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     if (prefs.getBoolean(AppConstants.PLAYER_FULLSCREEN, true)) {
                         fullscreen.visibility = View.VISIBLE
                         fullscreen.setImageResource(R.drawable.baseline_fullscreen_exit_black_24)
+                        fullscreen.contentDescription = getString(R.string.exit_fullscreen)
                         fullscreen.setOnClickListener {
                             requireActivity().requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                             requireActivity().requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -2590,7 +2528,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     fun setResizeMode() {
         resizeMode = (resizeMode + 1).let { if (it < 5) it else 0 }
-        videoZoomFillMode = false
+        if (isVideoZoomActive()) {
+            resetVideoZoom(showIndicator = false)
+        }
         binding.aspectRatioFrameLayout.resizeMode = resizeMode
         prefs.edit { putInt(AppConstants.ASPECT_RATIO_LANDSCAPE, resizeMode) }
     }
@@ -3284,6 +3224,9 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     open fun showOfflineOverlay(messageResId: Int = R.string.stream_ended) {
         if (_binding == null) return
+        if (isVideoZoomActive()) {
+            resetVideoZoom(showIndicator = false)
+        }
         val isOffline = networkMonitor.networkType.value == NetworkMonitor.NetworkType.NONE
         val effectiveResId = if (isOffline) R.string.no_connection else messageResId
         binding.bufferingIndicator.isVisible = false
@@ -3374,12 +3317,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             resolvedUrls = urls,
             focusedKey = key,
         )
-    }
-
-    fun showVodGames() {
-        viewModel.gamesList.value?.let {
-            PlayerGamesDialog.newInstance(it).show(childFragmentManager, "closeOnPip")
-        }
     }
 
     fun checkBookmark() {
@@ -3594,12 +3531,15 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             binding.playerControls.root.removeCallbacks(controllerHideAction)
             binding.playerControls.root.alpha = 1f
             binding.playerControls.root.visibility = View.VISIBLE
+            updateProgress()
+            syncZoomIndicatorWithController(show = true, animate = false)
             rescheduleHideController()
             return
         }
         if (!binding.playerControls.root.isVisible || controllerIsAnimating) {
             controllerAnimation?.cancel()
             binding.playerControls.root.removeCallbacks(controllerHideAction)
+            syncZoomIndicatorWithController(show = true, animate = true)
             controllerAnimation = binding.playerControls.root.animate().apply {
                 alpha(1f)
                 setDuration(200L)
@@ -3636,11 +3576,13 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             controllerIsAnimating = false
             binding.playerControls.root.alpha = 0f
             binding.playerControls.root.visibility = View.GONE
+            syncZoomIndicatorWithController(show = false, animate = false)
             return
         }
         if (binding.playerControls.root.isVisible || controllerIsAnimating) {
             controllerAnimation?.cancel()
             binding.playerControls.root.removeCallbacks(controllerHideAction)
+            syncZoomIndicatorWithController(show = false, animate = true)
             controllerAnimation = binding.playerControls.root.animate().apply {
                 alpha(0f)
                 setDuration(150L)
@@ -4036,20 +3978,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     )
                 }
             }
-            if (videoType == VIDEO) {
-                val videoId = requireArguments().getString(KEY_VIDEO_ID)
-                if (!videoId.isNullOrBlank() &&
-                    !requireArguments().getString(KEY_VIDEO_SOURCE).equals(AppConstants.KICK, true) &&
-                    (prefs.getBoolean(AppConstants.PLAYER_GAMESBUTTON, true) || prefs.getBoolean(AppConstants.PLAYER_MENU_GAMES, false))
-                ) {
-                    viewModel.loadGamesList(
-                        videoId,
-                        prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                        KickApiHelper.getKickWebHeaders(requireContext()),
-                        prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-                    )
-                }
-            }
         }
     }
 
@@ -4065,7 +3993,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
                     viewerCount = requireArguments().getInt(KEY_VIEWER_COUNT).takeIf { it != -1 },
                     loop = requireContext().prefs().getBoolean(AppConstants.CHAT_DISABLE, false) ||
-                            !requireContext().prefs().getBoolean(AppConstants.CHAT_PUBSUB_ENABLED, true) ||
                             (requireContext().prefs().getBoolean(AppConstants.CHAT_POINTS_COLLECT, true) &&
                                     !requireContext().tokenPrefs().getString(AppConstants.USER_ID, null).isNullOrBlank() &&
                                     com.xtrakick.app.util.AuthStateHelper.isKickLoggedIn(requireContext())),
@@ -4141,10 +4068,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         }
 
         viewModel.loadStreamResult(
-            networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-            kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_STREAM, true)),
             channelLogin = channelLogin,
-            enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
             forceRefresh = false
         )
     }
@@ -4194,19 +4118,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
                     )
                 }
                 viewModel.loadStreamResult(
-                    networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_STREAM, true)),
                     channelLogin = channelLogin,
-                    randomDeviceId = prefs.getBoolean(AppConstants.TOKEN_RANDOM_DEVICEID, true),
-                    xDeviceId = prefs.getString(AppConstants.TOKEN_XDEVICEID, "kick-web-player"),
-                    playerType = prefs.getString(AppConstants.TOKEN_PLAYERTYPE, "site"),
-                    supportedCodecs = prefs.getString(AppConstants.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
-                    proxyPlaybackAccessToken = prefs.getBoolean(AppConstants.PROXY_PLAYBACK_ACCESS_TOKEN, false),
-                    proxyHost = prefs.getString(AppConstants.PROXY_HOST, null),
-                    proxyPort = prefs.getString(AppConstants.PROXY_PORT, null)?.toIntOrNull(),
-                    proxyUser = prefs.getString(AppConstants.PROXY_USER, null),
-                    proxyPassword = requireContext().getProxyPassword(),
-                    enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
                     forceRefresh = forceRefresh,
                     stalePlaybackUrl = stalePlaybackUrl
                 )
@@ -4272,7 +4184,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             viewModel.playbackPosition = position
             viewModel.loadVideo(
                 networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), prefs.getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
+                kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
                 videoId = requireArguments().getString(KEY_VIDEO_ID),
                 videoSource = requireArguments().getString(KEY_VIDEO_SOURCE),
                 channelId = requireArguments().getString(KEY_CHANNEL_ID),
@@ -4389,7 +4301,8 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         binding.playerControls.root.removeCallbacks(controllerHideAction)
     }
 
-    private fun isVideoZoomed() = videoZoomScale > MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_EPSILON
+    private fun isVideoZoomed() = videoZoom?.isZoomed() == true
+    private fun isVideoZoomActive() = isVideoZoomed() || videoZoomFillMode
 
     private fun restoreVideoResizeMode() {
         _binding?.aspectRatioFrameLayout?.resizeMode = if (isPortrait || !isMaximized) {
@@ -4397,10 +4310,6 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         } else {
             resizeMode
         }
-    }
-
-    private fun formatVideoZoomScale(scale: Float): String {
-        return String.format(Locale.US, "%.1fx", scale.coerceIn(MIN_VIDEO_ZOOM_SCALE, MAX_VIDEO_ZOOM_SCALE))
     }
 
     protected var lastPausedTimestampMs: Long = 0L
@@ -4462,7 +4371,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             lastPausedTimestampMs > 0L &&
             (SystemClock.uptimeMillis() - lastPausedTimestampMs) >= staleThresholdMs
 
-    private fun applyVideoZoom() {
+    private fun syncNonZoomVideoViews(scale: Float, translationX: Float, translationY: Float) {
         val binding = _binding ?: return
         val zoomView = getVideoZoomView()
         listOf(
@@ -4471,68 +4380,20 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             binding.playerTexture,
             binding.playerFreezeFrame
         ).forEach { view ->
+            if (view == zoomView) return@forEach
             view.pivotX = 0f
             view.pivotY = 0f
-            if (view == zoomView || (zoomView == binding.playerSurface && view == binding.playerFreezeFrame)) {
-                view.scaleX = videoZoomScale
-                view.scaleY = videoZoomScale
-                view.translationX = videoZoomTranslationX
-                view.translationY = videoZoomTranslationY
+            if (zoomView == binding.playerSurface && view == binding.playerFreezeFrame) {
+                view.scaleX = scale
+                view.scaleY = scale
+                view.translationX = translationX
+                view.translationY = translationY
             } else {
-                view.scaleX = MIN_VIDEO_ZOOM_SCALE
-                view.scaleY = MIN_VIDEO_ZOOM_SCALE
+                view.scaleX = VideoZoomController.MIN_SCALE
+                view.scaleY = VideoZoomController.MIN_SCALE
                 view.translationX = 0f
                 view.translationY = 0f
             }
-        }
-    }
-
-    private fun getScaledVideoTranslation(
-        focus: Float,
-        viewStart: Float,
-        currentTranslation: Float,
-        scaleChange: Float
-    ): Float {
-        return focus - viewStart - ((focus - viewStart - currentTranslation) * scaleChange)
-    }
-
-    private fun clampVideoZoomTranslation() {
-        val binding = _binding ?: return
-        val videoView = getVideoZoomView()
-        val videoWidth = videoView.width
-        val videoHeight = videoView.height
-        val viewportWidth = binding.playerLayout.width
-        val viewportHeight = binding.playerLayout.height
-        if (videoWidth <= 0 || videoHeight <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
-            videoZoomTranslationX = 0f
-            videoZoomTranslationY = 0f
-            return
-        }
-        videoZoomTranslationX = getClampedVideoTranslation(
-            translation = videoZoomTranslationX,
-            viewStart = getVideoSurfaceLeft(),
-            viewSize = videoWidth.toFloat(),
-            viewportSize = viewportWidth.toFloat()
-        )
-        videoZoomTranslationY = getClampedVideoTranslation(
-            translation = videoZoomTranslationY,
-            viewStart = getVideoSurfaceTop(),
-            viewSize = videoHeight.toFloat(),
-            viewportSize = viewportHeight.toFloat()
-        )
-    }
-
-    private fun getClampedVideoTranslation(
-        translation: Float,
-        viewStart: Float,
-        viewSize: Float,
-        viewportSize: Float
-    ): Float {
-        val scaledSize = viewSize * videoZoomScale
-        return if (scaledSize <= viewportSize) {
-            ((viewportSize - scaledSize) / 2f) - viewStart
-        } else {
-            translation.coerceIn(viewportSize - viewStart - scaledSize, -viewStart)
         }
     }
 
@@ -4558,28 +4419,21 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     private fun snapVideoZoomToFill() {
         videoZoomFillMode = true
         binding.aspectRatioFrameLayout.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-        videoZoomScale = MIN_VIDEO_ZOOM_SCALE
-        videoZoomTranslationX = 0f
-        videoZoomTranslationY = 0f
-        applyVideoZoom()
+        videoZoom?.reset(notifyActive = false)
         updateVideoZoomFillHint(false)
         showVideoZoomIndicator(getString(R.string.zoomed_to_fill), true)
     }
 
     private fun resetVideoZoom(showIndicator: Boolean) {
         videoZoomFillMode = false
-        videoZoomScale = MIN_VIDEO_ZOOM_SCALE
-        videoZoomTranslationX = 0f
-        videoZoomTranslationY = 0f
         restoreVideoResizeMode()
-        applyVideoZoom()
+        videoZoom?.reset(notifyActive = false)
         updateVideoZoomFillHint(false)
-        videoZoomIndicatorAnimation?.cancel()
+        cancelZoomIndicatorAnimation()
         if (showIndicator) {
             showVideoZoomIndicator(getString(R.string.original), true)
         } else {
             _binding?.zoomIndicator?.apply {
-                removeCallbacks(hideVideoZoomIndicatorAction)
                 alpha = 0f
                 visibility = View.GONE
             }
@@ -4637,13 +4491,27 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
     }
 
     private fun isVideoZoomInFillHintZone(): Boolean {
+        val currentScale = videoZoom?.scale ?: VideoZoomController.MIN_SCALE
         return !videoZoomFillMode &&
-            videoZoomScale in (MIN_VIDEO_ZOOM_SCALE + VIDEO_ZOOM_EPSILON)..VIDEO_ZOOM_FILL_ZONE_MAX_SCALE
+            currentScale in (VideoZoomController.MIN_SCALE + VideoZoomController.EPSILON)..VIDEO_ZOOM_FILL_ZONE_MAX_SCALE
+    }
+
+    private fun cancelZoomIndicatorAnimation() {
+        val indicator = _binding?.zoomIndicator ?: return
+        indicator.removeCallbacks(hideVideoZoomIndicatorAction)
+        videoZoomIndicatorAnimation?.apply {
+            setListener(null)
+            cancel()
+        }
+        videoZoomIndicatorAnimation = null
     }
 
     private val hideVideoZoomIndicatorAction = Runnable {
         _binding?.zoomIndicator?.let { indicator ->
-            videoZoomIndicatorAnimation?.cancel()
+            if (_binding?.playerControls?.root?.isVisible == true && isVideoZoomActive()) {
+                return@Runnable
+            }
+            cancelZoomIndicatorAnimation()
             videoZoomIndicatorAnimation = indicator.animate()
                 .alpha(0f)
                 .setDuration(180L)
@@ -4660,16 +4528,64 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
 
     private fun showVideoZoomIndicator(text: String, delayedHide: Boolean) {
         val indicator = _binding?.zoomIndicator ?: return
-        indicator.removeCallbacks(hideVideoZoomIndicatorAction)
-        videoZoomIndicatorAnimation?.cancel()
-        videoZoomIndicatorAnimation = null
+        cancelZoomIndicatorAnimation()
         indicator.text = text
-        indicator.visibility = View.VISIBLE
-        indicator.animate().setListener(null)
-        indicator.animate().cancel()
         indicator.alpha = 1f
-        if (delayedHide) {
+        indicator.visibility = View.VISIBLE
+        val keepWithController = _binding?.playerControls?.root?.isVisible == true && isVideoZoomActive()
+        if (delayedHide && !keepWithController) {
             indicator.postDelayed(hideVideoZoomIndicatorAction, VIDEO_ZOOM_INDICATOR_HIDE_DELAY_MS)
+        }
+    }
+
+    private fun syncZoomIndicatorWithController(show: Boolean, animate: Boolean = false) {
+        val binding = _binding ?: return
+        val indicator = binding.zoomIndicator
+
+        if (show && isVideoZoomActive()) {
+            val text = when {
+                videoZoomFillMode -> getString(R.string.zoomed_to_fill)
+                else -> videoZoom?.formatScale().orEmpty()
+            }
+            if (text.isNotBlank()) {
+                cancelZoomIndicatorAnimation()
+                indicator.text = text
+                indicator.visibility = View.VISIBLE
+                if (animate) {
+                    videoZoomIndicatorAnimation = indicator.animate()
+                        .alpha(1f)
+                        .setDuration(200L)
+                        .setInterpolator(DecelerateInterpolator())
+                        .setListener(
+                            object : AnimatorListenerAdapter() {
+                                override fun onAnimationEnd(animation: Animator) {
+                                    videoZoomIndicatorAnimation = null
+                                }
+                            }
+                        )
+                } else {
+                    indicator.alpha = 1f
+                }
+            }
+        } else if (!show && videoZoom?.gestureActive != true && indicator.isVisible) {
+            cancelZoomIndicatorAnimation()
+            if (animate) {
+                videoZoomIndicatorAnimation = indicator.animate()
+                    .alpha(0f)
+                    .setDuration(150L)
+                    .setInterpolator(DecelerateInterpolator())
+                    .setListener(
+                        object : AnimatorListenerAdapter() {
+                            override fun onAnimationEnd(animation: Animator) {
+                                indicator.visibility = View.GONE
+                                videoZoomIndicatorAnimation = null
+                            }
+                        }
+                    )
+            } else {
+                indicator.alpha = 0f
+                indicator.visibility = View.GONE
+            }
         }
     }
 
@@ -4787,6 +4703,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
             useController = true
             if (!controllerHideOnTouch) {
                 showController(true)
+            } else if (videoType == STREAM) {
                 updateProgress()
             }
             if (isPortrait) {
@@ -5193,6 +5110,10 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         videoStatsActiveInSession = false
         videoZoomFillHintAnimation?.cancel()
         videoZoomFillHintAnimation = null
+        videoZoomIndicatorAnimation?.cancel()
+        videoZoomIndicatorAnimation = null
+        _binding?.zoomIndicator?.removeCallbacks(hideVideoZoomIndicatorAction)
+        videoZoom = null
         keyboardGlobalLayoutListener?.let { oldListener ->
             _binding?.slidingLayout?.viewTreeObserver?.removeOnGlobalLayoutListener(oldListener)
         }
@@ -5240,13 +5161,7 @@ abstract class PlayerFragment : BaseNetworkFragment(), RadioButtonDialogFragment
         private const val REQUEST_CODE_PLAY = 4
         private const val REQUEST_CODE_MUTE = 5
         private const val REQUEST_CODE_UNMUTE = 6
-        private const val MIN_VIDEO_ZOOM_SCALE = 1f
-        private const val MAX_VIDEO_ZOOM_SCALE = 8f
-        private const val VIDEO_ZOOM_EPSILON = 0.01f
-        private const val VIDEO_ZOOM_SCALE_DEADZONE_RATIO = 0.025f
-        private const val VIDEO_ZOOM_RESET_TOLERANCE = 0.03f
         private const val VIDEO_ZOOM_FILL_ZONE_MAX_SCALE = 1.4f
-        private const val VIDEO_ZOOM_TWO_FINGER_PAN_MULTIPLIER = 1.25f
         private const val VIDEO_ZOOM_FILL_HINT_ALPHA = 0.4f
         private const val VIDEO_ZOOM_INDICATOR_HIDE_DELAY_MS = 1500L
         internal const val STREAM = "stream"

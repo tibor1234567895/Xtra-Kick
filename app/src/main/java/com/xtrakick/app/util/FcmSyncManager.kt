@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.firebase.messaging.FirebaseMessaging
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.db.NotificationUsersDao
+import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.repository.LocalFollowChannelRepository
 import com.xtrakick.app.repository.NotificationUsersRepository
 import com.xtrakick.app.service.FcmDeliveryWorker
@@ -50,25 +51,61 @@ class FcmSyncManager @Inject constructor(
     }
 
     @Suppress("DEPRECATION")
-    suspend fun syncSubscriptions(tokenOverride: String? = null): Boolean = withContext(Dispatchers.IO) {
+    suspend fun syncSubscriptions(scheduleRetry: Boolean = true): Boolean {
+        // The debug package must stay out of the production subscription store.
+        if (BuildConfig.DEBUG) return false
+        val baseUrl = BuildConfig.KICK_OAUTH_BACKEND_BASE_URL.trim().trimEnd('/')
+        if (!baseUrl.startsWith("https://")) return false
+        return reconcileSubscriptions(baseUrl, scheduleRetry) {
+            runCatching { FirebaseMessaging.getInstance().token.await() }.getOrElse {
+                currentCoroutineContext().ensureActive()
+                null
+            }
+        }
+    }
+
+    internal suspend fun reconcileSubscriptions(
+        baseUrl: String,
+        scheduleRetry: Boolean,
+        resolveToken: suspend () -> String?,
+    ): Boolean = withContext(Dispatchers.IO) {
         subscriptionMutex.withLock {
-            // Debug builds (.test) are blocked by the Firebase API-key allowlist and must stay
-            // out of the prod subscription store until a staging backend exists.
-            if (BuildConfig.DEBUG) return@withContext false
-            val baseUrl = BuildConfig.KICK_OAUTH_BACKEND_BASE_URL.trim().trimEnd('/')
-            if (baseUrl.isEmpty() || !baseUrl.startsWith("https://")) return@withContext false
+            val prefs = context.prefs()
+            val notificationsEnabled = prefs.getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)
+            val token = resolveToken()
+            if (token == null) {
+                val lastSignature = prefs.getString(FCM_LAST_SYNCED_SIGNATURE, null)
+                val needsRemoteSync = notificationsEnabled ||
+                    (lastSignature != null && !lastSignature.endsWith(":unsubscribed"))
+                if (scheduleRetry && needsRemoteSync) {
+                    FcmDeliveryWorker.enqueueTokenSync(context, deduplicatePending = false)
+                }
+                return@withLock false
+            }
 
-            val token = tokenOverride ?: runCatching {
-                FirebaseMessaging.getInstance().token.await()
-            }.getOrNull() ?: return@withContext false
-
-            val rawChannels = notificationUsersDao.getAll().map { it.channelId.trim() }.filter { it.isNotBlank() }
-            val kickUserId = context.tokenPrefs().getString(AppConstants.USER_ID, null).orEmpty()
+            val rawChannels = if (notificationsEnabled) {
+                notificationUsersDao.getAll().mapNotNull { it.channelId.trim().takeIf(String::isNotBlank) }
+            } else {
+                emptyList()
+            }
+            val subscribe = rawChannels.isNotEmpty()
+            val kickUserId = if (subscribe) context.tokenPrefs().getString(AppConstants.USER_ID, null).orEmpty() else ""
 
             val allChannelIds = LinkedHashSet<String>(rawChannels)
-            val follows = runCatching { localFollowChannelRepository?.loadFollows() }.getOrNull().orEmpty()
-            val followsByUserId = follows.mapNotNull { f -> f.userId?.takeIf(String::isNotBlank)?.let { it to f } }.toMap()
-            val followsByLogin = follows.mapNotNull { f -> f.userLogin?.trim()?.lowercase()?.takeIf(String::isNotBlank)?.let { it to f } }.toMap()
+            val follows = if (subscribe) {
+                runCatching { localFollowChannelRepository?.loadFollows().orEmpty() }.getOrElse {
+                    currentCoroutineContext().ensureActive()
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
+            val followsByUserId = HashMap<String, LocalFollowChannel>()
+            val followsByLogin = HashMap<String, LocalFollowChannel>()
+            for (follow in follows) {
+                follow.userId?.takeIf(String::isNotBlank)?.let { followsByUserId[it] = follow }
+                follow.userLogin?.trim()?.lowercase()?.takeIf(String::isNotBlank)?.let { followsByLogin[it] = follow }
+            }
             for (row in rawChannels) {
                 val follow = followsByUserId[row] ?: followsByLogin[row.lowercase()]
                 if (follow != null) {
@@ -78,21 +115,24 @@ class FcmSyncManager @Inject constructor(
                 allChannelIds.addAll(NotificationUsersRepository.getKnownAliases(row))
             }
 
-            val currentSignature = "v2:$token:$kickUserId:${allChannelIds.sorted().joinToString(",")}"
-            val lastSyncedSignature = context.prefs().getString(FCM_LAST_SYNCED_SIGNATURE, null)
-            if (tokenOverride == null && currentSignature == lastSyncedSignature) {
-                return@withContext true
+            val currentSignature = if (subscribe) {
+                "v2:$token:$kickUserId:${allChannelIds.sorted().joinToString(",")}"
+            } else {
+                "v3:$token:unsubscribed"
+            }
+            if (currentSignature == prefs.getString(FCM_LAST_SYNCED_SIGNATURE, null)) {
+                return@withLock true
             }
 
             val jsonBody = JSONObject().apply {
                 put("token", token)
-                if (kickUserId.isNotBlank()) {
-                    put("kick_user_id", kickUserId)
+                if (subscribe) {
+                    if (kickUserId.isNotBlank()) put("kick_user_id", kickUserId)
+                    put("channel_ids", JSONArray(allChannelIds))
                 }
-                put("channel_ids", JSONArray(allChannelIds.toList()))
             }.toString()
 
-            val url = "$baseUrl/v1/fcm/subscribe"
+            val url = if (subscribe) "$baseUrl/v1/fcm/subscribe" else "$baseUrl/v1/fcm/unsubscribe"
             val bodyBytes = jsonBody.toByteArray(Charsets.UTF_8)
             val headers = BackendRequestSigner.sign(
                 secret = BuildConfig.KICK_OAUTH_BACKEND_HMAC_SECRET,
@@ -104,42 +144,13 @@ class FcmSyncManager @Inject constructor(
             var retry = true
             val ok = postSubscriptionRequest(url, bodyBytes, headers) { response ->
                 retry = response.code == 429 || response.code in 500..599
-                if (isCompleteRegistration(response)) {
-                    context.prefs().edit().putString(FCM_LAST_SYNCED_SIGNATURE, currentSignature).apply()
+                val complete = if (subscribe) isCompleteRegistration(response) else response.isSuccessful
+                if (complete) {
+                    prefs.edit().putString(FCM_LAST_SYNCED_SIGNATURE, currentSignature).apply()
                 }
                 response.isSuccessful
             }
-            if (retry) FcmDeliveryWorker.enqueueTokenSync(context)
-            ok
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    suspend fun unsubscribe(tokenOverride: String? = null): Boolean = withContext(Dispatchers.IO) {
-        subscriptionMutex.withLock {
-            if (BuildConfig.DEBUG) return@withContext false
-            val baseUrl = BuildConfig.KICK_OAUTH_BACKEND_BASE_URL.trim().trimEnd('/')
-            if (baseUrl.isEmpty() || !baseUrl.startsWith("https://")) return@withContext false
-
-            val token = tokenOverride ?: runCatching {
-                FirebaseMessaging.getInstance().token.await()
-            }.getOrNull() ?: return@withContext false
-
-            val jsonBody = JSONObject().apply {
-                put("token", token)
-            }.toString()
-
-            val url = "$baseUrl/v1/fcm/unsubscribe"
-            val bodyBytes = jsonBody.toByteArray(Charsets.UTF_8)
-            val headers = BackendRequestSigner.sign(
-                secret = BuildConfig.KICK_OAUTH_BACKEND_HMAC_SECRET,
-                method = "POST",
-                url = url,
-                body = bodyBytes,
-            )
-
-            val ok = postSubscriptionRequest(url, bodyBytes, headers)
-            if (ok) context.prefs().edit().remove(FCM_LAST_SYNCED_SIGNATURE).apply()
+            if (retry && scheduleRetry) FcmDeliveryWorker.enqueueTokenSync(context, deduplicatePending = false)
             ok
         }
     }

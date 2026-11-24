@@ -7,7 +7,6 @@ import androidx.lifecycle.viewModelScope
 import com.xtrakick.app.R
 import com.xtrakick.app.model.VideoPosition
 import com.xtrakick.app.model.ui.Bookmark
-import com.xtrakick.app.model.ui.Game
 import com.xtrakick.app.model.ui.LocalFollowChannel
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.model.ui.User
@@ -71,7 +70,6 @@ class PlayerViewModel @Inject constructor(
     var playbackPosition: Long? = null
     val savedPosition = MutableStateFlow<Long?>(null)
     val isBookmarked = MutableStateFlow<Boolean?>(null)
-    val gamesList = MutableStateFlow<List<Game>?>(null)
     var shouldRetry = true
     private var lastKickStreamRefreshRetryAtMs = 0L
 
@@ -175,19 +173,7 @@ class PlayerViewModel @Inject constructor(
     private var loadStreamJob: Job? = null
 
     fun loadStreamResult(
-        networkLibrary: String? = null,
-        kickWebHeaders: Map<String, String> = emptyMap(),
         channelLogin: String,
-        randomDeviceId: Boolean? = null,
-        xDeviceId: String? = null,
-        playerType: String? = null,
-        supportedCodecs: String? = null,
-        proxyPlaybackAccessToken: Boolean = false,
-        proxyHost: String? = null,
-        proxyPort: Int? = null,
-        proxyUser: String? = null,
-        proxyPassword: String? = null,
-        enableIntegrity: Boolean = false,
         forceRefresh: Boolean = false,
         stalePlaybackUrl: String? = null,
         forceRefreshRetryAttempted: Boolean = false
@@ -227,19 +213,7 @@ class PlayerViewModel @Inject constructor(
                             "Kick stream initial fetch failed channel=$channelLogin message=${e.message} — retrying with forceRefresh"
                         )
                         loadStreamResult(
-                            networkLibrary = networkLibrary,
-                            kickWebHeaders = kickWebHeaders,
                             channelLogin = channelLogin,
-                            randomDeviceId = randomDeviceId,
-                            xDeviceId = xDeviceId,
-                            playerType = playerType,
-                            supportedCodecs = supportedCodecs,
-                            proxyPlaybackAccessToken = proxyPlaybackAccessToken,
-                            proxyHost = proxyHost,
-                            proxyPort = proxyPort,
-                            proxyUser = proxyUser,
-                            proxyPassword = proxyPassword,
-                            enableIntegrity = enableIntegrity,
                             forceRefresh = true,
                             stalePlaybackUrl = stalePlaybackUrl
                         )
@@ -253,19 +227,7 @@ class PlayerViewModel @Inject constructor(
                         )
                         delay(500L)
                         loadStreamResult(
-                            networkLibrary = networkLibrary,
-                            kickWebHeaders = kickWebHeaders,
                             channelLogin = channelLogin,
-                            randomDeviceId = randomDeviceId,
-                            xDeviceId = xDeviceId,
-                            playerType = playerType,
-                            supportedCodecs = supportedCodecs,
-                            proxyPlaybackAccessToken = proxyPlaybackAccessToken,
-                            proxyHost = proxyHost,
-                            proxyPort = proxyPort,
-                            proxyUser = proxyUser,
-                            proxyPassword = proxyPassword,
-                            enableIntegrity = enableIntegrity,
                             forceRefresh = true,
                             stalePlaybackUrl = stalePlaybackUrl,
                             forceRefreshRetryAttempted = true
@@ -491,11 +453,6 @@ class PlayerViewModel @Inject constructor(
 
     suspend fun savePosition(id: Long, position: Long) {
         playerRepository.saveVideoPosition(VideoPosition(id, position))
-    }
-
-    fun loadGamesList(videoId: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, enableIntegrity: Boolean) {
-        // Kick VODs expose no chapter/game-moment API; the Chapters dialog stays empty.
-        gamesList.value = emptyList()
     }
 
     fun checkBookmark(id: String) {

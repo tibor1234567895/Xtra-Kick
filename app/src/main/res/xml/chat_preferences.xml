@@ -299,24 +299,6 @@
         app:iconSpaceReserved="false"
         app:singleLineTitle="false" />
 
-    <SeekBarPreference
-        android:defaultValue="100"
-        android:dependency="chat_recent"
-        android:key="chat_recent_limit"
-        android:max="800"
-        android:title="@string/recentMsg_limit"
-        app:iconSpaceReserved="false"
-        app:min="1"
-        app:showSeekBarValue="true"
-        app:singleLineTitle="false" />
-
-    <SwitchPreferenceCompat
-        android:defaultValue="false"
-        android:key="player_keep_chat_open"
-        android:title="@string/keep_chat_open"
-        app:iconSpaceReserved="false"
-        app:singleLineTitle="false" />
-
     <SwitchPreferenceCompat
         android:defaultValue="false"
         android:key="chat_disable"

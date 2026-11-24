@@ -92,7 +92,7 @@ class Media3FragmentTest {
         ShownNotificationsRepository(appContext, database.shownNotificationsDao(), kick, publicApi, notifications, follows),
         notifications,
         PlayerRepository(
-            appContext, null, null, executor, client, json, kick, publicApi,
+            appContext, null, null, executor, client, json, kick,
             database.recentEmotes(), database.videoPositions(),
         ),
         BookmarksRepository(database.bookmarks(), database.videos()),

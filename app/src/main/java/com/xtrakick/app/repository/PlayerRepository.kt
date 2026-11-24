@@ -4,16 +4,12 @@ import android.content.Context
 import android.net.http.HttpEngine
 import android.os.Build
 import android.os.ext.SdkExtensions
-import android.util.Base64
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.db.RecentEmotesDao
 import com.xtrakick.app.db.VideoPositionsDao
 import com.xtrakick.app.model.VideoPosition
-import com.xtrakick.app.model.chat.CheerEmote
 import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.model.chat.RecentEmote
-import com.xtrakick.app.model.chat.ChatBadge
-import com.xtrakick.app.model.chat.ChatEmote
 import com.xtrakick.app.model.misc.StvChannelResponse
 import com.xtrakick.app.model.misc.StvGlobalResponse
 import com.xtrakick.app.model.misc.StvResponse
@@ -52,9 +48,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.source
 import org.chromium.net.CronetEngine
-import org.chromium.net.apihelpers.RedirectHandlers
 import org.chromium.net.apihelpers.UploadDataProviders
-import org.chromium.net.apihelpers.UrlRequestCallbacks
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -67,12 +61,6 @@ import java.util.zip.DeflaterOutputStream
 import java.util.zip.InflaterOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.coroutines.suspendCoroutine
-
-private val SETTINGS_URL_REGEX = Regex("https://[\\w.]+/config/settings\\..+?\\.js")
-private val SPADE_URL_REGEX = Regex("\"(?:beacon_url|spade_url)\":\"(.*?)\"")
-private val EMOTE_SMILIE_PAREN_REGEX = Regex("\\((.)\\|.\\)")
-private val EMOTE_SMILIE_BRACKET_REGEX = Regex("\\[(.).*?]")
 
 @Singleton
 class PlayerRepository @Inject constructor(
@@ -83,7 +71,6 @@ class PlayerRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val json: Json,
     private val kickRepository: KickRepository,
-    private val kickPublicApiRepository: KickPublicApiRepository,
     private val recentEmotes: RecentEmotesDao,
     private val videoPositions: VideoPositionsDao,
 ) {
@@ -209,125 +196,6 @@ class PlayerRepository @Inject constructor(
                 map.putIfAbsent(Pair(quality.name, quality.codec), quality.url)
             }
             map.takeIf { it.isNotEmpty() }
-        }
-    }
-
-    suspend fun sendMinuteWatched(networkLibrary: String?, userId: String?, streamId: String?, channelId: String?, channelLogin: String?) = withContext(Dispatchers.IO) {
-        val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
-        val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
-        val pageResponse = channelLogin?.let {
-            when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                    http is HttpEngine -> {
-                    val response = suspendCoroutine { continuation ->
-                        http.newUrlRequestBuilder("https://kick.com/${channelLogin}", cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                    }
-                    String(response.second)
-                }
-                cronet != null -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                        cronet.newUrlRequestBuilder("https://kick.com/${channelLogin}", request.callback, cronetExecutor).build().start()
-                        request.future.get().responseBody as String
-                    } else {
-                        val response = suspendCoroutine { continuation ->
-                            cronet.newUrlRequestBuilder("https://kick.com/${channelLogin}", getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                        }
-                        String(response.second)
-                    }
-                }
-                else -> {
-                    okHttpClient.newCall(Request.Builder().url("https://kick.com/${channelLogin}").build()).execute().use { response ->
-                        response.body.string()
-                    }
-                }
-            }
-        }
-        if (!pageResponse.isNullOrBlank()) {
-            val settingsRegex = Regex("https://[\\w.]+/config/settings\\..+?\\.js")
-            val settingsUrl = settingsRegex.find(pageResponse)?.value
-            val settingsResponse = settingsUrl?.let {
-                when {
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                        SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                        http is HttpEngine -> {
-                        val response = suspendCoroutine { continuation ->
-                            http.newUrlRequestBuilder(settingsUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).build().start()
-                        }
-                        String(response.second)
-                    }
-                    cronet != null -> {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                            val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                            cronet.newUrlRequestBuilder(settingsUrl, request.callback, cronetExecutor).build().start()
-                            request.future.get().responseBody as String
-                        } else {
-                            val response = suspendCoroutine { continuation ->
-                                cronet.newUrlRequestBuilder(settingsUrl, getByteArrayCronetCallback(continuation), cronetExecutor).build().start()
-                            }
-                            String(response.second)
-                        }
-                    }
-                    else -> {
-                        okHttpClient.newCall(Request.Builder().url(settingsUrl).build()).execute().use { response ->
-                            response.body.string()
-                        }
-                    }
-                }
-            }
-            if (!settingsResponse.isNullOrBlank()) {
-                val spadeRegex = SPADE_URL_REGEX
-                val spadeUrl = spadeRegex.find(settingsResponse)?.groups?.get(1)?.value
-                if (!spadeUrl.isNullOrBlank()) {
-                    val body = buildJsonObject {
-                        put("event", "minute-watched")
-                        putJsonObject("properties") {
-                            put("channel_id", channelId)
-                            put("broadcast_id", streamId)
-                            put("player", "site")
-                            put("user_id", userId?.toLong())
-                        }
-                    }.toString()
-                    val spadeRequest = "data=" + Base64.encodeToString(body.toByteArray(), Base64.NO_WRAP)
-                    when {
-                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                            SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                            http is HttpEngine -> {
-                            suspendCoroutine { continuation ->
-                                http.newUrlRequestBuilder(spadeUrl, cronetExecutor, HttpEngineUtils.byteArrayUrlCallback(continuation)).apply {
-                                    addHeader("Content-Type", "application/x-www-form-urlencoded")
-                                    setUploadDataProvider(HttpEngineUtils.byteArrayUploadProvider(spadeRequest.toByteArray()), cronetExecutor)
-                                }.build().start()
-                            }
-                        }
-                        cronet != null -> {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                val request = UrlRequestCallbacks.forStringBody(RedirectHandlers.alwaysFollow())
-                                cronet.newUrlRequestBuilder(spadeUrl, request.callback, cronetExecutor).apply {
-                                    addHeader("Content-Type", "application/x-www-form-urlencoded")
-                                    setUploadDataProvider(UploadDataProviders.create(spadeRequest.toByteArray()), cronetExecutor)
-                                }.build().start()
-                                request.future.get().responseBody as String
-                            } else {
-                                suspendCoroutine<Pair<org.chromium.net.UrlResponseInfo, ByteArray>> { continuation ->
-                                    cronet.newUrlRequestBuilder(spadeUrl, getByteArrayCronetCallback(continuation), cronetExecutor).apply {
-                                        addHeader("Content-Type", "application/x-www-form-urlencoded")
-                                        setUploadDataProvider(UploadDataProviders.create(spadeRequest.toByteArray()), cronetExecutor)
-                                    }.build().start()
-                                }
-                            }
-                        }
-                        else -> {
-                            okHttpClient.newCall(Request.Builder().apply {
-                                url(spadeUrl)
-                                header("Content-Type", "application/x-www-form-urlencoded")
-                                post(spadeRequest.toRequestBody())
-                            }.build()).execute().close()
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -668,124 +536,6 @@ class PlayerRepository @Inject constructor(
             }
         }
     }
-
-    suspend fun loadGlobalBadges(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, emoteQuality: String, enableIntegrity: Boolean): List<ChatBadge> = withContext(Dispatchers.IO) {
-        // The Twitch GQL badge queries this used to try first can never succeed against Kick.
-        if (kickPublicApiHeaders.isEmpty()) return@withContext emptyList()
-        kickPublicApiRepository.getGlobalBadges(networkLibrary, kickPublicApiHeaders).data.mapNotNull { set ->
-            set.setId?.let { setId ->
-                set.versions?.mapNotNull {
-                    it.id?.let { version ->
-                        ChatBadge(
-                            setId = setId,
-                            version = version,
-                            url1x = it.url1x,
-                            url2x = it.url2x,
-                            url3x = it.url4x,
-                            url4x = it.url4x
-                        )
-                    }
-                }
-            }
-        }.flatten()
-    }
-
-
-    suspend fun loadChannelBadges(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, channelId: String?, channelLogin: String?, emoteQuality: String, enableIntegrity: Boolean): List<ChatBadge> = withContext(Dispatchers.IO) {
-        if (kickPublicApiHeaders.isEmpty()) return@withContext emptyList()
-        kickPublicApiRepository.getChannelBadges(networkLibrary, kickPublicApiHeaders, channelId).data.mapNotNull { set ->
-            set.setId?.let { setId ->
-                set.versions?.mapNotNull {
-                    it.id?.let { version ->
-                        ChatBadge(
-                            setId = setId,
-                            version = version,
-                            url1x = it.url1x,
-                            url2x = it.url2x,
-                            url3x = it.url4x,
-                            url4x = it.url4x
-                        )
-                    }
-                }
-            }
-        }.flatten()
-    }
-
-
-    suspend fun loadCheerEmotes(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, channelId: String?, channelLogin: String?, animateGifs: Boolean, enableIntegrity: Boolean): List<CheerEmote> = withContext(Dispatchers.IO) {
-        if (kickPublicApiHeaders.isEmpty()) return@withContext emptyList()
-        kickPublicApiRepository.getCheerEmotes(networkLibrary, kickPublicApiHeaders, channelId).data.map { set ->
-            set.tiers.mapNotNull { tier ->
-                tier.images.let { it.dark ?: it.light }?.let { formats ->
-                    if (animateGifs) {
-                        formats.animated ?: formats.static
-                    } else {
-                        formats.static
-                    }?.let { urls ->
-                        CheerEmote(
-                            name = set.prefix,
-                            url1x = urls.url1x,
-                            url2x = urls.url2x,
-                            url3x = urls.url3x,
-                            url4x = urls.url4x,
-                            format = if (urls == formats.animated) "gif" else null,
-                            isAnimated = urls == formats.animated,
-                            minBits = tier.minBits,
-                            color = tier.color
-                        )
-                    }
-                }
-            }
-        }.flatten()
-    }
-
-
-    suspend fun loadUserEmotes(networkLibrary: String?, kickPublicApiHeaders: Map<String, String>, kickWebHeaders: Map<String, String>, channelId: String?, userId: String?, animateGifs: Boolean, enableIntegrity: Boolean): List<ChatEmote> = withContext(Dispatchers.IO) {
-        if (kickPublicApiHeaders.isEmpty()) return@withContext emptyList()
-        val emotes = mutableListOf<ChatEmote>()
-        var offset: String? = null
-        do {
-            val response = kickPublicApiRepository.getUserEmotes(networkLibrary, kickPublicApiHeaders, userId, channelId, offset)
-            response.data.mapNotNull { emote ->
-                emote.name?.let { name ->
-                    emote.id?.let { id ->
-                        val format = if (animateGifs) {
-                            emote.format?.find { it == "animated" } ?: emote.format?.find { it == "static" }
-                        } else {
-                            emote.format?.find { it == "static" }
-                        } ?: emote.format?.firstOrNull() ?: ""
-                        val theme = emote.theme?.find { it == "dark" } ?: emote.theme?.lastOrNull() ?: ""
-                        val scale1x = emote.scale?.find { it.startsWith("1") } ?: emote.scale?.lastOrNull() ?: ""
-                        val scale2x = emote.scale?.find { it.startsWith("2") } ?: scale1x
-                        val scale3x = emote.scale?.find { it.startsWith("3") } ?: scale2x
-                        val url = response.template
-                            .replaceFirst("{{id}}", id)
-                            .replaceFirst("{{format}}", format)
-                            .replaceFirst("{{theme_mode}}", theme)
-                        ChatEmote(
-                            name = if (emote.type == "smilies") {
-                                name.replace("\\", "").replace("?", "")
-                                    .replace("&lt;", "<").replace("&gt;", ">")
-                                    .replace(EMOTE_SMILIE_PAREN_REGEX) { it.groups[1]?.value ?: "" }
-                                    .replace(EMOTE_SMILIE_BRACKET_REGEX) { it.groups[1]?.value ?: "" }
-                            } else name,
-                            url1x = url.replaceFirst("{{scale}}", scale1x),
-                            url2x = url.replaceFirst("{{scale}}", scale2x),
-                            url3x = url.replaceFirst("{{scale}}", scale3x),
-                            url4x = url.replaceFirst("{{scale}}", scale3x),
-                            format = if (format == "animated") "gif" else null,
-                            setId = emote.setId,
-                            ownerId = emote.ownerId
-                        )
-                    }
-                }
-            }.let { emotes.addAll(it) }
-            offset = response.pagination?.cursor
-        } while (!response.pagination?.cursor.isNullOrBlank())
-        emotes
-    }
-
-
 
     fun loadRecentEmotesFlow() = recentEmotes.getAllFlow()
 

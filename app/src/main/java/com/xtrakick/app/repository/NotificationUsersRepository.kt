@@ -128,6 +128,7 @@ class NotificationUsersRepository @Inject constructor(
         preferredLogin: String? = null,
         preferredName: String? = null,
         preferredLogoUrl: String? = null,
+        syncFcm: Boolean = true,
     ): String? = withContext(Dispatchers.IO) {
         val initialKeys = candidateKeys.mapNotNull { it?.trim()?.takeIf { k -> k.isNotBlank() } }.toSet()
         if (initialKeys.isEmpty()) return@withContext null
@@ -154,7 +155,9 @@ class NotificationUsersRepository @Inject constructor(
         }
 
         notificationUsersDao.insert(NotificationUser(canonicalId))
-        runCatching { fcmSyncManager.get().syncSubscriptions() }
+        if (syncFcm) {
+            runCatching { fcmSyncManager.get().syncSubscriptions() }
+        }
         canonicalId
     }
 
@@ -170,7 +173,10 @@ class NotificationUsersRepository @Inject constructor(
      * Login-only entries fall back to per-channel resolution, run with bounded
      * concurrency since each lookup is a slow channel fetch.
      */
-    suspend fun enableNotificationsForChannels(candidateKeysPerChannel: List<Collection<String?>>): Int = withContext(Dispatchers.IO) {
+    suspend fun enableNotificationsForChannels(
+        candidateKeysPerChannel: List<Collection<String?>>,
+        syncFcm: Boolean = true,
+    ): Int = withContext(Dispatchers.IO) {
         val canonicalIds = LinkedHashSet<String>()
         val staleKeys = mutableSetOf<String>()
         val unresolvedKeys = mutableListOf<Set<String>>()
@@ -215,7 +221,9 @@ class NotificationUsersRepository @Inject constructor(
         if (missing.isNotEmpty()) {
             notificationUsersDao.insertList(missing.map { NotificationUser(it) })
         }
-        runCatching { fcmSyncManager.get().syncSubscriptions() }
+        if (syncFcm) {
+            runCatching { fcmSyncManager.get().syncSubscriptions() }
+        }
         missing.size
     }
 
@@ -244,9 +252,15 @@ class NotificationUsersRepository @Inject constructor(
         runCatching { fcmSyncManager.get().syncSubscriptions() }
     }
 
-    suspend fun restoreUsers(channelIds: Collection<String>) = withContext(Dispatchers.IO) {
+    suspend fun restoreUsers(channelIds: Collection<String>, syncFcm: Boolean = true) = withContext(Dispatchers.IO) {
         val users = channelIds.map { NotificationUser(it) }
         notificationUsersDao.replaceAll(users)
+        if (syncFcm) {
+            runCatching { fcmSyncManager.get().syncSubscriptions() }
+        }
+    }
+
+    suspend fun syncFcmSubscriptions() = withContext(Dispatchers.IO) {
         runCatching { fcmSyncManager.get().syncSubscriptions() }
     }
 

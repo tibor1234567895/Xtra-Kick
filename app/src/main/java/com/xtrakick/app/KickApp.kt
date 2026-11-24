@@ -28,13 +28,12 @@ import coil3.svg.SvgDecoder
 import coil3.video.VideoFrameDecoder
 import coil3.disk.directory
 import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.LegacyAnimatedWebpDecoder
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.DiagnosticCoilLogger
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.NetworkUtils
-import com.xtrakick.app.util.HttpEngineAvailability
 import com.xtrakick.app.util.HttpEngineUtils
+import com.xtrakick.app.util.LegacyAnimatedWebpDecoder
 import com.xtrakick.app.util.WebSocketRuntime
 import com.xtrakick.app.util.coil.CacheControlCacheStrategy
 import com.xtrakick.app.util.getByteArrayCronetCallback

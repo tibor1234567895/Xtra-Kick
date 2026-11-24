@@ -95,26 +95,26 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost {
         }
 
 
-    /** Bell enable flow: insert the row, then arm the app-wide switch and the polling backup. */
+    /** Bell enable flow: DB insert arms the app-wide switch before FCM sync inside the ViewModel. */
     private fun enableChannelNotifications() {
-        val notificationsEnabled = requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)
+        val prefs = requireContext().prefs()
+        val notificationsEnabled = prefs.getBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false)
         viewModel.enableNotifications(
             requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
             args.channelId,
             args.channelLogin,
-            requireContext().prefs().getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
+            prefs.getString(AppConstants.UI_FOLLOW_BUTTON, "0")?.toIntOrNull() ?: 0,
             notificationsEnabled,
-            requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+            prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
             KickApiHelper.getKickWebHeaders(requireContext(), true),
-            requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false)
+            prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false)
         )
         if (!notificationsEnabled) {
             BatteryOptimizationHelper.maybePrompt(requireContext())
-            viewModel.updateNotifications(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), KickApiHelper.getKickPublicApiHeaders(requireContext()))
-            if (requireContext().prefs().getBoolean(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP, false)) {
+            viewModel.updateNotifications(prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), KickApiHelper.getKickWebHeaders(requireContext(), true), KickApiHelper.getKickPublicApiHeaders(requireContext()))
+            if (prefs.getBoolean(AppConstants.LIVE_NOTIFICATIONS_POLLING_BACKUP, false)) {
                 com.xtrakick.app.util.enqueueLiveNotificationsPollingWork(requireContext())
             }
-            requireContext().prefs().edit { putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, true) }
         }
     }
 

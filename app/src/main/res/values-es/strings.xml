@@ -124,6 +124,7 @@
     <string name="oldest_first">Más antiguos primero</string>
     <string name="logout_title">¿Cerrar sesión?</string>
     <string name="logout_msg">Sesión iniciada como %s</string>
+    <string name="logout_saved_session_msg">¿Cerrar sesión y eliminar la sesión de Kick guardada en este dispositivo?</string>
     <string name="logout_success_toast">Sesión cerrada</string>
     <string name="logout_revoke_failed_toast">Sesión cerrada en este dispositivo, pero no se pudo revocar el token con Kick</string>
     <string name="never">Nunca</string>
@@ -192,7 +193,6 @@
     <string name="user_staff">Staff</string>
     <string name="uptime">%s en vivo</string>
     <string name="recentMsg_enable">Cargar mensajes recientes</string>
-    <string name="recentMsg_limit">Límite de mensajes recientes</string>
     <string name="last_broadcast_date">Última transmisión %s</string>
     <string name="followed_at">Seguido el %s</string>
     <string name="following_label">Siguiendo</string>
@@ -395,7 +395,6 @@
     <string name="irc_notice_whisper_limit_per_sec">Estás enviando susurros demasiado rápido. Inténtalo de nuevo en un segundo.</string>
     <string name="irc_notice_whisper_restricted">Tu configuración te impide enviar este susurro.</string>
     <string name="irc_notice_whisper_restricted_recipient">La configuración de ese usuario le impide recibir susurros.</string>
-    <string name="position">Posición: %s</string>
     <string name="player_viewerlist">Abrir lista de espectadores desde el contador</string>
     <string name="broadcaster">Streamer</string>
     <string name="moderators">Moderadores</string>
@@ -493,7 +492,6 @@
     <string name="rebuffer">Búfer de reanudación</string>
     <string name="buffer_settings">Ajustes de búfer</string>
     <string name="player_buttons">Botones del reproductor</string>
-    <string name="keep_chat_open">Mantener el chat conectado en segundo plano</string>
     <string name="save_sort_channel">Recordar opciones para este canal</string>
     <string name="save_sort_game">Recordar opciones para este juego</string>
     <string name="show_chat">Mostrar chat</string>
@@ -596,7 +594,6 @@
     <string name="use_integrity">Usar token de integridad</string>
     <string name="use_audio_focus">Pausar cuando otras apps reproducen audio</string>
     <string name="handle_audio_becoming_noisy">Pausar al desconectar los audífonos</string>
-    <string name="proxy_playback_access_token">Usar proxy para token de acceso de reproducción</string>
     <string name="proxy_multivariant_playlist">Usar proxy para playlist multivariante</string>
     <string name="proxy_host">Servidor</string>
     <string name="proxy_port">Puerto</string>
@@ -642,7 +639,6 @@
     <string name="dynamic_amoled">Negro dinámico</string>
     <string name="material_3">Tema Material 3</string>
     <string name="use_api_chat_messages">Enviar mensajes del chat usando la API</string>
-    <string name="use_eventsub_chat">Chat por EventSub</string>
     <string name="notification_permission_title">Se requiere permiso de notificaciones</string>
     <string name="notification_permission_message">Se requiere el permiso de notificaciones para mostrar el progreso de las descargas.</string>
     <string name="select_directory">Seleccionar carpeta</string>
@@ -870,7 +866,6 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="download_threads_summary">Cantidad de fragmentos que se descargan simultáneamente</string>
     <string name="minimize">Minimizar</string>
     <string name="player_menu_settings">Ajustes del menú del reproductor</string>
-    <string name="chapters">Capítulos</string>
     <string name="seek_to_live">Ir al momento en vivo</string>
     <string name="zoomed_to_fill">Ampliado para llenar</string>
     <string name="original">Original</string>
@@ -879,6 +874,7 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="chat_input_toggle">Mostrar campo del chat</string>
     <string name="chat_toggle">Mostrar chat</string>
     <string name="fullscreen">Pantalla completa</string>
+    <string name="exit_fullscreen">Salir de pantalla completa</string>
     <string name="min_buffer">Búfer mínimo</string>
     <string name="min_buffer_summary">Búfer mínimo en milisegundos</string>
     <string name="player_latency_profile">Perfil de latencia en vivo</string>
@@ -1138,6 +1134,7 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="log_in_to_kick_summary">Inicia sesión para chatear, seguir canales y consultar tus recompensas diarias</string>
     <string name="logged_in_as_summary">Sesión iniciada como %s</string>
     <string name="tap_to_log_out">Toca para cerrar sesión</string>
+    <string name="kick_session_unavailable">La sesión guardada no está disponible temporalmente. Toca para ver las opciones de cierre de sesión.</string>
     <string name="verify_session_startup">Verificar sesión al iniciar la app</string>
     <string name="verify_session_startup_summary">Comprobar la autorización del token con Kick al abrir la app</string>
     <string name="account_sync">Sincronización de cuenta</string>
@@ -1145,7 +1142,11 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="login_to_import_follows">Inicia sesión para importar los canales seguidos</string>
     <string name="developer_tokens">Tokens de desarrollador y API</string>
     <string name="developer_tokens_summary">Tokens OAuth, validación de sesión y webhooks de EventSub</string>
-    <string name="proxy_settings_summary">Configuración de proxy HTTP, HTTPS y SOCKS5</string>
+    <string name="proxy_settings_summary">Configuración de proxy HTTP y HTTPS</string>
+    <string name="cd_open_emotes">Abrir emotes</string>
+    <string name="cd_send_message">Enviar mensaje</string>
+    <string name="cd_more_options">Más opciones</string>
+    <string name="cd_set_as_default">Establecer como predeterminado</string>
     <string name="advanced_image_rendering">Avanzado y rendimiento</string>
     <string name="storage_and_cleanup">Almacenamiento y limpieza</string>
     <string name="connection_timings">Tiempos de conexión</string>
@@ -1188,6 +1189,8 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="action_not_now">Ahora no</string>
     <string name="chat_guest_login_prompt">Inicia sesión para chatear y reclamar recompensas</string>
     <string name="live_widget_title">Canales en vivo</string>
+    <string name="live_widget_refreshing">Actualizando…</string>
+    <string name="live_widget_updated_just_now">Actualizado ahora</string>
     <string name="live_widget_empty">Ningún streamer seguido está en vivo ahora</string>
     <string name="live_widget_tap_to_open">Toca para abrir Xtra</string>
     <string name="welcome_title">Bienvenido a Xtra</string>
@@ -1320,4 +1323,5 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="clip_sort_date">Fecha de creación</string>
     <string name="clip_sort_duration">Duración</string>
     <string name="clip_sort_recent_limit">Por fecha o duración se ordenan hasta %d clips recientes del periodo seleccionado.</string>
+    <string name="cd_scroll_to_top">Volver arriba</string>
 </resources>

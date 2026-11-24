@@ -76,7 +76,7 @@ class ChatAdapterSnapshotTest {
     private fun adapter(messages: List<ChatMessage>) = ChatAdapter(
         initialMessages = messages,
         localChatEmotes = emptyList(), thirdPartyEmotes = emptyList(), globalBadges = emptyList(),
-        channelBadges = emptyList(), cheerEmotes = emptyList(), namePaints = emptyList(),
+        channelBadges = emptyList(), namePaints = emptyList(),
         stvBadges = emptyList(), personalEmoteSets = emptyMap(), stvUsers = emptyList(),
         enableTimestamps = false, timestampFormat = null, firstMsgVisibility = 2,
         firstChatMsg = "", redeemedChatMsg = "", redeemedNoMsg = "", rewardChatMsg = "", replyMessage = "",

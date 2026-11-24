@@ -48,7 +48,7 @@ class FollowedGamesFragment : PagedListFragment(), Scrollable {
                 )
             )
         }
-        setAdapter(binding.recyclerView, pagingAdapter)
+        setAdapter(binding.recyclerView, pagingAdapter, scrollToTopOnRefresh = false)
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
             if (activity?.findViewById<LinearLayout>(R.id.navBarContainer)?.isVisible == false) {
                 val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())

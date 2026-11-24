@@ -118,14 +118,14 @@
         app:destination="@id/updateSettingsFragment" />
     <fragment
         android:id="@+id/debugSettingsFragment"
-        android:name="com.xtrakick.app.ui.settings.SettingsActivity$DebugSettingsFragment"
+        android:name="com.xtrakick.app.ui.settings.DebugSettingsFragment"
         android:label="@string/debug_settings" />
     <action
         android:id="@+id/action_global_debugSettingsFragment"
         app:destination="@id/debugSettingsFragment" />
     <fragment
         android:id="@+id/debugLogSettingsFragment"
-        android:name="com.xtrakick.app.ui.settings.SettingsActivity$DebugLogSettingsFragment"
+        android:name="com.xtrakick.app.ui.settings.DebugLogSettingsFragment"
         android:label="@string/customize_debug_logs" />
     <action
         android:id="@+id/action_global_debugLogSettingsFragment"
@@ -139,7 +139,7 @@
         app:destination="@id/multiPovSettingsFragment" />
     <fragment
         android:id="@+id/settingsSearchFragment"
-        android:name="com.xtrakick.app.ui.settings.SettingsActivity$SettingsSearchFragment"
+        android:name="com.xtrakick.app.ui.settings.SettingsSearchFragment"
         android:label="" />
     <action
         android:id="@+id/action_global_settingsSearchFragment"

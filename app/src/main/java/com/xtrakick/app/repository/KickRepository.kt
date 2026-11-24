@@ -2117,6 +2117,10 @@ class KickRepository @Inject constructor(
                     chatMessage = toChatMessage(kickMessage, eventName, chatScopeId)
                 )
             }
+            "chatmessageevent", "app\\events\\chatmessageevent" -> {
+                val message = runCatching { json.decodeFromString<KickMessage>(messageJson) }.getOrNull() ?: return null
+                KickRealtimeParsedEvent(chatMessage = toChatMessage(message, eventName, chatScopeId))
+            }
             "channel.subscription.gifts" -> {
                 val event = decodeKickOfficialRealtimePayload<KickOfficialChannelSubscriptionGiftsEvent>(messageJson) ?: return null
                 val gifter = event.gifter ?: event.subscriber

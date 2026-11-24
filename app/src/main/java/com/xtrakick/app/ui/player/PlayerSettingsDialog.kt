@@ -21,14 +21,12 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
 
         private const val TYPE = "type"
         private const val SPEED = "speed"
-        private const val VOD_GAMES = "vod_games"
 
-        fun newInstance(videoType: String?, speedText: String?, vodGames: Boolean?): PlayerSettingsDialog {
+        fun newInstance(videoType: String?, speedText: String?): PlayerSettingsDialog {
             return PlayerSettingsDialog().apply {
                 arguments = bundleOf(
                     TYPE to videoType,
                     SPEED to speedText,
-                    VOD_GAMES to vodGames
                 )
             }
         }
@@ -132,9 +130,6 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
                 }
             }
             if (videoType == PlayerFragment.VIDEO) {
-                if (arguments.getBoolean(VOD_GAMES)) {
-                    setVodGames()
-                }
                 if (requireContext().prefs().getBoolean(AppConstants.PLAYER_MENU_BOOKMARK, true)) {
                     (parentFragment as? PlayerFragment)?.checkBookmark()
                 }
@@ -231,18 +226,6 @@ class PlayerSettingsDialog : BottomSheetDialogFragment() {
             if (!text.isNullOrBlank() && menuSpeed.isVisible) {
                 speedValue.visibility = View.VISIBLE
                 speedValue.text = text
-            }
-        }
-    }
-
-    fun setVodGames() {
-        with(binding) {
-            if (requireContext().prefs().getBoolean(AppConstants.PLAYER_MENU_GAMES, false)) {
-                menuVodGames.visibility = View.VISIBLE
-                menuVodGames.setOnClickListener {
-                    (parentFragment as? PlayerFragment)?.showVodGames()
-                    dismiss()
-                }
             }
         }
     }

@@ -18,7 +18,8 @@
             android:layout_height="70dp"
             android:adjustViewBounds="true"
             android:scaleType="fitCenter"
-            tools:src="@tools:sample/backgrounds/scenic" />
+            tools:src="@tools:sample/backgrounds/scenic"
+            android:contentDescription="@null" />
 
         <TextView
             android:id="@+id/imageName"

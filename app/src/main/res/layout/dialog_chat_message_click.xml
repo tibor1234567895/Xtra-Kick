@@ -49,7 +49,8 @@
                             android:scaleType="centerCrop"
                             android:visibility="gone"
                             tools:src="@tools:sample/backgrounds/scenic"
-                            tools:visibility="visible" />
+                            tools:visibility="visible"
+                            android:contentDescription="@null" />
 
                         <View
                             android:id="@+id/bannerScrim"
@@ -95,7 +96,8 @@
                                     android:scaleType="centerCrop"
                                     android:visibility="invisible"
                                     tools:src="@tools:sample/avatars"
-                                    tools:visibility="visible" />
+                                    tools:visibility="visible"
+                                    android:contentDescription="@null" />
 
                                 <com.google.android.material.progressindicator.CircularProgressIndicator
                                     android:id="@+id/avatarLoading"

@@ -12,7 +12,9 @@ import android.os.Build
 import android.os.Debug
 import android.os.PowerManager
 import android.util.Log
+import coil3.network.HttpException
 import com.xtrakick.app.BuildConfig
+import com.xtrakick.app.repository.KickPublicApiRepository
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -468,18 +470,15 @@ object DiagnosticLogger {
     internal fun isNetworkException(throwable: Throwable): Boolean {
         var current: Throwable? = throwable
         while (current != null) {
-            if (current is java.net.SocketException ||
-                current is java.net.SocketTimeoutException ||
-                current is java.net.UnknownHostException ||
-                current is java.net.ConnectException ||
-                current is java.net.NoRouteToHostException ||
-                current is java.net.PortUnreachableException ||
-                current is javax.net.ssl.SSLException ||
-                current is java.io.InterruptedIOException ||
-                current.javaClass.name.contains("HttpException")
-            ) {
-                return true
+            when (current) {
+                is java.net.SocketException,
+                is java.net.UnknownHostException,
+                is javax.net.ssl.SSLException,
+                is java.io.InterruptedIOException,
+                is KickPublicApiRepository.KickPublicApiHttpException,
+                is HttpException -> return true
             }
+            if (current.javaClass.name.contains("HttpException")) return true
             current = current.cause
         }
         return false

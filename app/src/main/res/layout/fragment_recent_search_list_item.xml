@@ -10,7 +10,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:src="@drawable/baseline_history_black_24"
-        app:tint="?attr/colorControlNormal" />
+        app:tint="?attr/colorControlNormal"
+        android:contentDescription="@null" />
 
     <TextView
         android:id="@+id/text"
@@ -32,6 +33,7 @@
         android:layout_height="wrap_content"
         android:background="?android:selectableItemBackground"
         android:src="@drawable/baseline_delete_black_24"
-        app:tint="?attr/colorControlNormal" />
+        app:tint="?attr/colorControlNormal"
+        android:contentDescription="@string/delete" />
 
 </LinearLayout>

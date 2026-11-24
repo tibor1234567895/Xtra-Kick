@@ -11,6 +11,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.model.kick.KickLiveNotificationEvent
 import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.widget.LiveChannelsWidgetProvider
@@ -27,10 +28,11 @@ class FcmDeliveryWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, parameters) {
 
     override suspend fun doWork(): Result {
-        if (inputData.getBoolean(TOKEN_SYNC, false)) {
+        if (inputData.getBoolean(TOKEN_SYNC, false) || inputData.getBoolean(LEGACY_TOKEN_UNSUBSCRIBE, false)) {
+            if (BuildConfig.DEBUG) return Result.success()
             // Fetch the current Firebase token when work runs. WorkManager need not store it.
             return when {
-                fcmSyncManager.syncSubscriptions() -> Result.success()
+                fcmSyncManager.syncSubscriptions(scheduleRetry = false) -> Result.success()
                 runAttemptCount < 5 -> Result.retry()
                 else -> Result.failure()
             }
@@ -45,16 +47,17 @@ class FcmDeliveryWorker @AssistedInject constructor(
 
     companion object {
         internal const val TOKEN_SYNC = "token_sync"
+        private const val LEGACY_TOKEN_UNSUBSCRIBE = "token_unsubscribe"
         private val CHANNEL_SLUG = Regex("[A-Za-z0-9_-]{1,64}")
 
-        internal fun enqueueTokenSync(context: Context, policy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP) {
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                "fcm-token-sync", policy,
-                OneTimeWorkRequestBuilder<FcmDeliveryWorker>()
-                    .setInputData(workDataOf(TOKEN_SYNC to true))
-                    .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-                    .build(),
-            )
+        internal fun enqueueTokenSync(context: Context, deduplicatePending: Boolean = true) {
+            val manager = WorkManager.getInstance(context)
+            val work = OneTimeWorkRequestBuilder<FcmDeliveryWorker>()
+                .setInputData(workDataOf(TOKEN_SYNC to true))
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .build()
+            val policy = if (deduplicatePending) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE
+            manager.enqueueUniqueWork("fcm-token-sync", policy, work)
         }
 
         internal fun liveEvent(data: Data): KickLiveNotificationEvent? {

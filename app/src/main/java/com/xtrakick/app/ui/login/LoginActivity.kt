@@ -53,6 +53,7 @@ import com.xtrakick.app.util.applyTheme
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
+import com.xtrakick.app.service.FcmDeliveryWorker
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -105,7 +106,6 @@ class LoginActivity : BaseStateActivity() {
         applyTheme()
 
         if (intent.getBooleanExtra(AppConstants.LOGIN_LOGOUT_ONLY, false)) {
-            AuthStateHelper.notifyAuthStateChanged(false)
             logoutAndFinish()
             return
         }
@@ -559,7 +559,7 @@ class LoginActivity : BaseStateActivity() {
 
     private fun performLogout(clearLocalFollows: Boolean) {
         lifecycleScope.launch {
-            var revokeSucceeded = true
+            var revokeSucceeded = !AuthStateHelper.hasUnreadableKickSession(this@LoginActivity)
             val googleSession = tokenPrefs().getString(AppConstants.KICK_LOGIN_METHOD, null) ==
                 AppConstants.KICK_LOGIN_METHOD_GOOGLE
             if (googleSession) {
@@ -609,6 +609,9 @@ class LoginActivity : BaseStateActivity() {
             AuthStateHelper.clearUnexpectedLogoutNotice(this@LoginActivity)
             AuthStateHelper.clearKickAuth(this@LoginActivity)
             AuthStateHelper.clearLegacyWebAuth(this@LoginActivity)
+            if (!BuildConfig.DEBUG) {
+                FcmDeliveryWorker.enqueueTokenSync(this@LoginActivity, deduplicatePending = false)
+            }
             followImporter.resetState()
             Toast.makeText(
                 this@LoginActivity,

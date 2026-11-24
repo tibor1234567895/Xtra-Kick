@@ -64,9 +64,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
-import java.util.Timer
 import javax.inject.Inject
-import kotlin.math.max
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
@@ -208,10 +206,6 @@ class MainViewModel @Inject constructor(
     fun loadVideo(
         videoId: String?,
         offset: Long?,
-        networkLibrary: String?,
-        kickWebHeaders: Map<String, String>,
-        kickPublicApiHeaders: Map<String, String>,
-        enableIntegrity: Boolean,
         channelLogin: String? = null,
     ) {
         if (video.value == null) {
@@ -220,28 +214,7 @@ class MainViewModel @Inject constructor(
                 val item = if (id == null) {
                     null
                 } else {
-                    // Prefer Kick web / public APIs — never Twitch GQL for deep links.
                     runCatching { kickRepository.getVideoById(id, channelLogin) }.getOrNull()
-                        ?: runCatching {
-                            kickPublicApiRepository.getVideos(
-                                networkLibrary = networkLibrary,
-                                headers = kickPublicApiHeaders,
-                                ids = listOf(id),
-                            ).data.firstOrNull()?.let {
-                                Video(
-                                    id = it.id,
-                                    source = AppConstants.KICK,
-                                    channelId = it.channelId,
-                                    channelLogin = it.channelLogin ?: channelLogin,
-                                    channelName = it.channelName,
-                                    title = it.title,
-                                    viewCount = it.viewCount,
-                                    uploadDate = it.uploadDate,
-                                    duration = it.duration,
-                                    thumbnailUrl = it.thumbnailUrl,
-                                )
-                            }
-                        }.getOrNull()
                         ?: channelLogin?.let { login ->
                             runCatching {
                                 kickRepository.getChannelVideos(channelSlug = login, limit = 50)
@@ -262,7 +235,7 @@ class MainViewModel @Inject constructor(
         playerRepository.saveVideoPosition(VideoPosition(id, position))
     }
 
-    fun loadClip(clipId: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean, channelLogin: String? = null) {
+    fun loadClip(clipId: String?, channelLogin: String? = null) {
         if (clip.value == null) {
             viewModelScope.launch {
                 val id = clipId?.takeIf { it.isNotBlank() }
@@ -271,33 +244,6 @@ class MainViewModel @Inject constructor(
                     null
                 } else {
                     val clipResult = runCatching { kickRepository.getClip(id) }.getOrNull()
-                        ?: runCatching {
-                            kickPublicApiRepository.getClips(
-                                networkLibrary = networkLibrary,
-                                headers = kickPublicApiHeaders,
-                                ids = listOf(id),
-                            ).data.firstOrNull()?.let {
-                                Clip(
-                                    id = it.id,
-                                    channelId = it.channelId,
-                                    channelName = it.channelName,
-                                    videoId = it.videoId,
-                                    vodOffset = if (it.vodOffset != null && it.duration != null) {
-                                        max(it.vodOffset - it.duration.toInt(), 0)
-                                    } else {
-                                        it.vodOffset
-                                    },
-                                    gameId = it.gameId,
-                                    title = it.title,
-                                    viewCount = it.viewCount,
-                                    uploadDate = it.createdAt,
-                                    duration = it.duration,
-                                    thumbnailUrl = it.thumbnailUrl,
-                                    creatorId = it.creatorId,
-                                    creatorName = it.creatorName,
-                                )
-                            }
-                        }.getOrNull()
                     if (clipResult != null && clipResult.channelLogin.isNullOrBlank() && !channelLogin.isNullOrBlank()) {
                         clipResult.channelLogin = channelLogin
                     }

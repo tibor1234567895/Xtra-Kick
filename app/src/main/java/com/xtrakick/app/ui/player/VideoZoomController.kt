@@ -33,6 +33,18 @@ class VideoZoomController(
 
         /** Solo player switches AspectRatioFrameLayout to ZOOM while scaled. */
         fun onZoomActiveChanged(active: Boolean) {}
+
+        /** Called when a pinch gesture begins so hosts can cancel competing controls or exit fill mode. */
+        fun onScaleBegin(detector: ScaleGestureDetector) {}
+
+        /** Called after scale updates so hosts can update zoom indicators or fill-snap hints. */
+        fun onScaleChanged(scale: Float) {}
+
+        /**
+         * Called when a pinch gesture ends. Return true if the host handled the final state
+         * (e.g. snapping to fill or showing a reset indicator); return false for default snap-back.
+         */
+        fun onScaleEnd(gestureStartScale: Float, finalScale: Float): Boolean = false
     }
 
     var scale: Float = MIN_SCALE
@@ -72,6 +84,7 @@ class VideoZoomController(
                 scaleDeadzonePassed = isZoomed()
                 lastFocusX = detector.focusX
                 lastFocusY = detector.focusY
+                host.onScaleBegin(detector)
                 return true
             }
 
@@ -118,19 +131,22 @@ class VideoZoomController(
                 lastFocusX = detector.focusX
                 lastFocusY = detector.focusY
                 clampAndApply()
+                host.onScaleChanged(scale)
                 return true
             }
 
             override fun onScaleEnd(detector: ScaleGestureDetector) {
-                when {
-                    gestureStartScale > MIN_SCALE + EPSILON && scale <= MIN_SCALE + RESET_TOLERANCE -> {
-                        reset(notifyActive = true)
-                    }
-                    scale <= MIN_SCALE + EPSILON -> {
-                        reset(notifyActive = true)
-                    }
-                    else -> {
-                        clampAndApply()
+                if (!host.onScaleEnd(gestureStartScale, scale)) {
+                    when {
+                        gestureStartScale > MIN_SCALE + EPSILON && scale <= MIN_SCALE + RESET_TOLERANCE -> {
+                            reset(notifyActive = true)
+                        }
+                        scale <= MIN_SCALE + EPSILON -> {
+                            reset(notifyActive = true)
+                        }
+                        else -> {
+                            clampAndApply()
+                        }
                     }
                 }
                 gestureActive = false
@@ -257,9 +273,9 @@ class VideoZoomController(
     companion object {
         const val MIN_SCALE = 1f
         const val MAX_SCALE = 8f
-        private const val EPSILON = 0.01f
+        const val EPSILON = 0.01f
+        const val RESET_TOLERANCE = 0.03f
         private const val SCALE_DEADZONE_RATIO = 0.025f
-        private const val RESET_TOLERANCE = 0.03f
         private const val TWO_FINGER_PAN_MULTIPLIER = 1.25f
         /** Ignore per-frame focus jumps larger than this (finger-up midpoint → single finger). */
         private const val MAX_FOCUS_STEP_PX = 96f

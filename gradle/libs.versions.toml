@@ -1,9 +1,8 @@
 [versions]
 activity = "1.12.4"
-android-gradle-plugin = "9.5.1"
+android-gradle-plugin = "9.5.2"
 appcompat = "1.8.0"
 coil = "3.6.3"
-conscrypt = "2.9.0"
 constraintlayout = "2.2.2"
 coordinatorlayout = "1.3.0"
 core = "1.19.1"
@@ -12,7 +11,7 @@ cronet = "500.1.0"
 desugar = "2.1.5"
 documentfile = "1.1.0"
 fragment = "1.9.1"
-glide = "5.0.9"
+glide = "5.0.10"
 glide-webpdecoder = "2.8.5.0.9"
 hilt = "2.60.1"
 hilt-extensions = "1.4.0"
@@ -46,7 +45,6 @@ coil-gif = { module = "io.coil-kt.coil3:coil-gif", version.ref = "coil" }
 coil-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
 coil-svg = { module = "io.coil-kt.coil3:coil-svg", version.ref = "coil" }
 coil-video = { module = "io.coil-kt.coil3:coil-video", version.ref = "coil" }
-conscrypt = { module = "org.conscrypt:conscrypt-android", version.ref = "conscrypt" }
 constraintlayout = { module = "androidx.constraintlayout:constraintlayout", version.ref = "constraintlayout" }
 coordinatorlayout = { module = "androidx.coordinatorlayout:coordinatorlayout", version.ref = "coordinatorlayout" }
 core-ktx = { module = "androidx.core:core-ktx", version.ref = "core" }

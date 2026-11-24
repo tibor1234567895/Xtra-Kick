@@ -1,6 +1,7 @@
 package com.xtrakick.app.util
 
 import android.content.Context
+import android.icu.number.LocalizedNumberFormatter
 import android.icu.number.Notation
 import android.icu.number.NumberFormatter
 import android.icu.number.Precision
@@ -8,6 +9,7 @@ import android.icu.text.CompactDecimalFormat
 import android.icu.text.RelativeDateTimeFormatter
 import android.os.Build
 import android.text.format.DateUtils
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import com.xtrakick.app.R
@@ -41,6 +43,28 @@ object KickApiHelper {
     private val SLUG_NON_ALNUM_REGEX = Regex("[^a-zA-Z0-9-]")
     private val SLUG_MULTI_DASH_REGEX = Regex("-+")
     private val dateTimeFormatterCache = ConcurrentHashMap<String, DateTimeFormatter>()
+    private val relativeDateTimeFormatterCache = ConcurrentHashMap<Locale, RelativeDateTimeFormatter>()
+    private val compactDecimalFormatThreadLocal = ThreadLocal<Pair<Locale, CompactDecimalFormat>>()
+    private val numberFormatThreadLocal = ThreadLocal<Pair<Locale, NumberFormat>>()
+
+    private inline fun <T> ThreadLocal<Pair<Locale, T>>.getForLocale(locale: Locale, factory: () -> T): T {
+        val cached = get()
+        if (cached != null && cached.first == locale) return cached.second
+        return factory().also { set(locale to it) }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    private object Api30NumberFormatters {
+        private val compactCache = ConcurrentHashMap<Locale, LocalizedNumberFormatter>()
+
+        fun formatCompact(count: Int, locale: Locale): String =
+            compactCache.getOrPut(locale) {
+                NumberFormatter.withLocale(locale)
+                    .notation(Notation.compactShort())
+                    .precision(Precision.maxFraction(1))
+                    .roundingMode(RoundingMode.DOWN)
+            }.format(count).toString()
+    }
 
     private fun cachedDateTimeFormatter(pattern: String): DateTimeFormatter {
         return dateTimeFormatterCache.getOrPut(pattern) {
@@ -349,7 +373,11 @@ object KickApiHelper {
             diff >= DateUtils.HOUR_IN_MILLIS -> DateUtils.HOUR_IN_MILLIS to RelativeDateTimeFormatter.RelativeUnit.HOURS
             else -> DateUtils.MINUTE_IN_MILLIS to RelativeDateTimeFormatter.RelativeUnit.MINUTES
         }
-        return RelativeDateTimeFormatter.getInstance(Locale.getDefault()).format(
+        val locale = Locale.getDefault()
+        val formatter = relativeDateTimeFormatterCache.getOrPut(locale) {
+            RelativeDateTimeFormatter.getInstance(locale)
+        }
+        return formatter.format(
             (diff / unitMillis).toDouble(),
             RelativeDateTimeFormatter.Direction.LAST,
             unit,
@@ -381,21 +409,19 @@ object KickApiHelper {
     }
 
     fun formatCount(count: Int, compact: Boolean): String {
+        val locale = Locale.getDefault()
         return if (compact) {
             when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
-                    NumberFormatter.withLocale(Locale.getDefault())
-                        .notation(Notation.compactShort())
-                        .precision(Precision.maxFraction(1))
-                        .roundingMode(RoundingMode.DOWN)
-                        .format(count)
-                        .toString()
+                    Api30NumberFormatters.formatCompact(count, locale)
                 }
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.N -> {
-                    val format = CompactDecimalFormat.getInstance(Locale.getDefault(), CompactDecimalFormat.CompactStyle.SHORT)
-                    format.maximumFractionDigits = 1
-                    format.roundingMode = RoundingMode.DOWN.ordinal
-                    format.format(count)
+                    compactDecimalFormatThreadLocal.getForLocale(locale) {
+                        CompactDecimalFormat.getInstance(locale, CompactDecimalFormat.CompactStyle.SHORT).apply {
+                            maximumFractionDigits = 1
+                            roundingMode = RoundingMode.DOWN.ordinal
+                        }
+                    }.format(count)
                 }
                 else -> {
                     if (count > 1000) {
@@ -416,7 +442,9 @@ object KickApiHelper {
                 }
             }
         } else {
-            NumberFormat.getInstance().format(count)
+            numberFormatThreadLocal.getForLocale(locale) {
+                NumberFormat.getInstance(locale)
+            }.format(count)
         }
     }
 

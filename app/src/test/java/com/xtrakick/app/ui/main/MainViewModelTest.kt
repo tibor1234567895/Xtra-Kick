@@ -57,7 +57,7 @@ class MainViewModelTest {
     private val auth = AuthRepository(null, null, executor, client, json)
     private val kick = KickRepository(context, client, null, executor, json, auth, KickOfficialApiClient(context, client, json))
     private val publicApi = KickPublicApiRepository(null, null, executor, client, json)
-    private val player = PlayerRepository(context, null, null, executor, client, json, kick, publicApi,
+    private val player = PlayerRepository(context, null, null, executor, client, json, kick,
         database.recentEmotes(), database.videoPositions())
     private val viewModel = MainViewModel(context, publicApi, kick, player,
         OfflineRepository(database.videos(), database.localFollowsChannel(), database.bookmarks()), auth,
@@ -110,7 +110,7 @@ class MainViewModelTest {
     }
 
     private suspend fun loadClip(id: String) {
-        viewModel.loadClip(id, "OkHttp", emptyMap(), emptyMap(), false)
+        viewModel.loadClip(id)
         withTimeout(5_000) {
             while (viewModel.viewModelScope.coroutineContext[Job]!!.children.any { it.isActive }) {
                 shadowOf(Looper.getMainLooper()).idle()

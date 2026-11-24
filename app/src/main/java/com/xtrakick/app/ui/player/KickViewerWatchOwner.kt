@@ -79,7 +79,6 @@ class KickViewerWatchOwner(
             return
         }
         watch = null
-        job?.cancel()
         job = null
         scope.launch { w.stop() }
     }

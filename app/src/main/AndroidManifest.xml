@@ -13,6 +13,7 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Downloads: own MediaStore rows need no permission on API 29+; this only
          enables importing/listing videos created by other apps and showing
          thumbnails in system pickers on Android 13+. -->
@@ -86,7 +87,9 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" />
+                <!-- https only: cleartextTrafficPermitted=false already blocks plaintext
+                     loads, and accepting http:// here would let any app fire deep links
+                     that route into the app. -->
                 <data android:scheme="https" />
                 <data android:host="kick.com" />
                 <data android:host="www.kick.com" />
@@ -227,12 +230,15 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="com.xtrakick.app.ACTION_REFRESH_WIDGET" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/live_channels_widget_info" />
         </receiver>
+
+        <receiver
+            android:name=".ui.widget.LiveChannelsWidgetProvider$RefreshReceiver"
+            android:exported="false" />
 
         <service
             android:name=".ui.widget.LiveChannelsWidgetService"

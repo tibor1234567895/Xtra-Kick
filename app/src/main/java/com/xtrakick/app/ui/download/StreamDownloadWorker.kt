@@ -26,7 +26,6 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.xtrakick.app.R
-import com.xtrakick.app.model.chat.CheerEmote
 import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.model.chat.ChatBadge
 import com.xtrakick.app.model.chat.ChatEmote
@@ -788,24 +787,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                                                         }
                                                         reader.endArray()
                                                     }
-                                                    "cheerEmotes" -> {
-                                                        reader.beginArray()
-                                                        while (reader.hasNext()) {
-                                                            reader.beginObject()
-                                                            var name: String? = null
-                                                            while (reader.hasNext()) {
-                                                                when (reader.nextName()) {
-                                                                    "name" -> name = reader.nextString()
-                                                                    else -> reader.skipValue()
-                                                                }
-                                                            }
-                                                            if (!name.isNullOrBlank()) {
-                                                                savedEmotes.add(name)
-                                                            }
-                                                            reader.endObject()
-                                                        }
-                                                        reader.endArray()
-                                                    }
+                                                    "cheerEmotes" -> reader.skipValue()
                                                     "emotes" -> {
                                                         reader.beginArray()
                                                         while (reader.hasNext()) {
@@ -870,7 +852,6 @@ class StreamDownloadWorker @AssistedInject constructor(
         val channelId = resolvedChannel?.id?.toString() ?: offlineVideo.channelId
         val chatroomId = resolvedChannel?.chatroom?.id?.toString()
         val badgeList = emptyList<ChatBadge>()
-        val cheerEmoteList = emptyList<CheerEmote>()
         val emoteList = mutableListOf<Emote>().apply {
             if (downloadEmotes) {
                 if (channelId != null) {
@@ -924,7 +905,7 @@ class StreamDownloadWorker @AssistedInject constructor(
                                     put("kickEvent", eventName)
                                     put("kickData", messageJson)
                                 }.toString()
-                                saveMessage(envelope, writer, downloadEmotes, networkLibrary, emoteQuality, savedChatEmotes, savedBadges, savedEmotes, badgeList, cheerEmoteList, emoteList)
+                                saveMessage(envelope, writer, downloadEmotes, networkLibrary, emoteQuality, savedChatEmotes, savedBadges, savedEmotes, badgeList, emoteList)
                             }
                         }
                     },
@@ -936,7 +917,7 @@ class StreamDownloadWorker @AssistedInject constructor(
         }
     }
 
-    private suspend fun saveMessage(message: String, writer: JsonWriter, downloadEmotes: Boolean, networkLibrary: String?, emoteQuality: String, savedChatEmotes: MutableSet<String>, savedBadges: MutableSet<Pair<String, String>>, savedEmotes: MutableSet<String>, badgeList: List<ChatBadge>, cheerEmoteList: List<CheerEmote>, emoteList: List<Emote>) {
+    private suspend fun saveMessage(message: String, writer: JsonWriter, downloadEmotes: Boolean, networkLibrary: String?, emoteQuality: String, savedChatEmotes: MutableSet<String>, savedBadges: MutableSet<Pair<String, String>>, savedEmotes: MutableSet<String>, badgeList: List<ChatBadge>, emoteList: List<Emote>) {
         val http = NetworkUtils.resolveHttpEngine(networkLibrary, httpEngine)
         val cronet = NetworkUtils.resolveCronetEngine(networkLibrary, cronetEngine)
         var position = chatPosition
@@ -961,7 +942,6 @@ class StreamDownloadWorker @AssistedInject constructor(
             for (chatMessage in parsedChatMessages) {
                 val chatEmotes = mutableListOf<ChatEmote>()
                 val ChatBadges = mutableListOf<ChatBadge>()
-                val cheerEmotes = mutableListOf<CheerEmote>()
                 val emotes = mutableListOf<Emote>()
                 chatMessage.emotes?.forEach {
                     if (it.id != null && savedChatEmotes.add(it.id)) {
@@ -979,20 +959,9 @@ class StreamDownloadWorker @AssistedInject constructor(
                 }
                 chatMessage.message?.split(" ")?.forEach { word ->
                     if (savedEmotes.add(word)) {
-                        val cheerEmote = if (chatMessage.bits != null) {
-                            val bitsCount = word.takeLastWhile { it.isDigit() }
-                            val bitsName = word.substringBeforeLast(bitsCount)
-                            if (bitsCount.isNotEmpty()) {
-                                cheerEmoteList.findLast { it.name.equals(bitsName, true) && it.minBits <= bitsCount.toInt() }
-                            } else null
-                        } else null
-                        if (cheerEmote != null) {
-                            cheerEmotes.add(cheerEmote)
-                        } else {
-                            val emote = emoteList.find { it.name == word }
-                            if (emote != null) {
-                                emotes.add(emote)
-                            }
+                        val emote = emoteList.find { it.name == word }
+                        if (emote != null) {
+                            emotes.add(emote)
                         }
                     }
                 }
@@ -1072,48 +1041,6 @@ class StreamDownloadWorker @AssistedInject constructor(
                         writer.name("version".also { position += it.length + 4 }).value(badge.version.also { position += it.toByteArray().size + it.count { c -> c == '"' || c == '\\' } + 2 })
                         writer.endObject().also { position += 1 }
                         if (badge != last) {
-                            position += 1
-                        }
-                    }
-                    writer.endArray().also { position += 1 }
-                }
-                if (cheerEmotes.isNotEmpty()) {
-                    writer.name("cheerEmotes".also { position += it.length + 4 })
-                    writer.beginArray().also { position += 1 }
-                    val last = cheerEmotes.lastOrNull()
-                    cheerEmotes.forEach { cheerEmote ->
-                        val url = when (emoteQuality) {
-                            "4" -> cheerEmote.url4x ?: cheerEmote.url3x ?: cheerEmote.url2x ?: cheerEmote.url1x
-                            "3" -> cheerEmote.url3x ?: cheerEmote.url2x ?: cheerEmote.url1x
-                            "2" -> cheerEmote.url2x ?: cheerEmote.url1x
-                            else -> cheerEmote.url1x
-                        }!!
-                        val response = when {
-                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                                SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 7 &&
-                                http is HttpEngine -> {
-                                val response = NetworkUtils.downloadHttpEngine(http, url, cronetExecutor)
-                                response.second
-                            }
-                            cronet != null -> {
-                                NetworkUtils.downloadCronet(cronet, url, cronetExecutor).let { result ->
-                                    check(result.first.httpStatusCode in 200..299) { "Segment request failed (${result.first.httpStatusCode})" }
-                                    result.second
-                                }
-                            }
-                            else -> {
-                                okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                                    response.body.source().readByteArray()
-                                }
-                            }
-                        }
-                        writer.beginObject().also { position += 1 }
-                        writer.name("data".also { position += it.length + 3 }).value(Base64.encodeToString(response, Base64.NO_WRAP or Base64.NO_PADDING).also { position += it.toByteArray().size + 2 })
-                        writer.name("name".also { position += it.length + 4 }).value(cheerEmote.name.also { position += it.toByteArray().size + it.count { c -> c == '"' || c == '\\' } + 2 })
-                        writer.name("minBits".also { position += it.length + 4 }).value(cheerEmote.minBits.also { position += it.toString().length })
-                        cheerEmote.color?.let { value -> writer.name("color".also { position += it.length + 4 }).value(value.also { position += it.toByteArray().size + it.count { c -> c == '"' || c == '\\' } + 2 }) }
-                        writer.endObject().also { position += 1 }
-                        if (cheerEmote != last) {
                             position += 1
                         }
                     }

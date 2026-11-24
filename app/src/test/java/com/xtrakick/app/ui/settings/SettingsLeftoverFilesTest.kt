@@ -43,7 +43,7 @@ class SettingsLeftoverFilesTest {
     private val kick = KickRepository(context, client, null, executor, json, auth, KickOfficialApiClient(context, client, json))
     private val publicApi = KickPublicApiRepository(null, null, executor, client, json)
     private val offline = OfflineRepository(database.videos(), database.localFollowsChannel(), database.bookmarks())
-    private val player = PlayerRepository(context, null, null, executor, client, json, kick, publicApi,
+    private val player = PlayerRepository(context, null, null, executor, client, json, kick,
         database.recentEmotes(), database.videoPositions())
     private val follows = LocalFollowChannelRepository(database.localFollowsChannel(), database)
     private val notifications = NotificationUsersRepository(context, database.notificationsDao(), kick, dagger.Lazy { error("Unused FCM") })

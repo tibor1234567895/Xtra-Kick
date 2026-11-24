@@ -124,7 +124,8 @@
                 android:layout_margin="5dp"
                 android:background="?android:selectableItemBackground"
                 android:src="@drawable/baseline_close_black_36"
-                app:tint="?attr/colorControlNormal" />
+                app:tint="?attr/colorControlNormal"
+                android:contentDescription="@string/delete" />
 
         </LinearLayout>
 

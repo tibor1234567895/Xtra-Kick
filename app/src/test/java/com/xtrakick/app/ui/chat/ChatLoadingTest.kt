@@ -22,6 +22,7 @@ import com.xtrakick.app.repository.NotificationUsersRepository
 import com.xtrakick.app.repository.OfflineRepository
 import com.xtrakick.app.repository.PlayerRepository
 import com.xtrakick.app.repository.ShownNotificationsRepository
+import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.tokenPrefs
 import com.xtrakick.app.ui.player.PlayerViewModel
 import kotlinx.coroutines.Job
@@ -54,6 +55,22 @@ import java.time.Duration
 @Config(application = android.app.Application::class)
 @RunWith(RobolectricTestRunner::class)
 class ChatLoadingTest {
+    @Test fun whispersStayLocalInBothCommandModesAndReplies() {
+        context.tokenPrefs().edit()
+            .putString(AppConstants.KICK_USER_ID, "43")
+            .putString(AppConstants.KICK_ACCESS_TOKEN, "test-session")
+            .putString(AppConstants.KICK_LOGIN_METHOD, AppConstants.KICK_LOGIN_METHOD_GOOGLE)
+            .commit()
+        viewModel.send("/w someone private", null, "OkHttp", "42", "test", useApiCommands = true)
+        viewModel.send("/WHISPER\tsomeone private", null, "OkHttp", "42", "test", useApiCommands = false)
+        viewModel.send("/w someone private", "reply-id", "OkHttp", "42", "test", useApiCommands = true)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(3, viewModel.chatMessages.size)
+        assertTrue(viewModel.chatMessages.all { it.systemMsg?.contains("not available") == true })
+        assertFalse("Whisper text must never be sent to channel chat", requests.any { it.method == "POST" })
+    }
+
     @Test fun deletingMessagesPreservesDonationAndGiftContent() {
         val donation = KicksDonation(100)
         val gift = GiftedSubInfo("Gifter")
@@ -124,8 +141,8 @@ class ChatLoadingTest {
     private val follows = LocalFollowChannelRepository(database.localFollowsChannel(), database)
     private val notifications = NotificationUsersRepository(context, database.notificationsDao(), kick, dagger.Lazy { error("Unused FCM") })
     private val shown = ShownNotificationsRepository(context, database.shownNotificationsDao(), kick, publicApi, notifications, follows)
-    private val player = PlayerRepository(context, null, null, executor, client, json, kick, publicApi, database.recentEmotes(), database.videoPositions())
-    private val viewModel = ChatViewModel(context, publicApi, kick, MutedChatUsersRepository(database.mutedChatUsers()),
+    private val player = PlayerRepository(context, null, null, executor, client, json, kick, database.recentEmotes(), database.videoPositions())
+    private val viewModel = ChatViewModel(context, kick, MutedChatUsersRepository(database.mutedChatUsers()),
         KickAccountMutedUsersStore(kick), player, shown, null, json)
     private val store = ViewModelStore().apply { put("chat", viewModel) }
 

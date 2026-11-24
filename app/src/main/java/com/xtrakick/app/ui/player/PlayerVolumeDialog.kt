@@ -86,6 +86,7 @@ class PlayerVolumeDialog : BottomSheetDialogFragment() {
         with(binding) {
             volumeText.text = String.format(Locale.getDefault(), "%d", volume.toInt())
             volumeMute.setImageResource(getVolumeIconRes(volume.toInt()))
+            volumeMute.contentDescription = getString(if (volume == 0f) R.string.unmute else R.string.mute)
             if (volume == 0f) {
                 volumeMute.setOnClickListener {
                     val prefs = requireContext().prefs()

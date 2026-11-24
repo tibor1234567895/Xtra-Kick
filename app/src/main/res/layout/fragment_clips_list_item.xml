@@ -19,7 +19,8 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
-            tools:src="@tools:sample/backgrounds/scenic" />
+            tools:src="@tools:sample/backgrounds/scenic"
+            android:contentDescription="@null" />
 
         <com.xtrakick.app.ui.view.TextWithShadow
             android:id="@+id/views"
@@ -99,7 +100,8 @@
             app:layout_constraintTop_toBottomOf="@id/thumbnail"
             app:layout_constraintVertical_bias="0.0"
             tools:src="@tools:sample/backgrounds/scenic"
-            tools:visibility="visible" />
+            tools:visibility="visible"
+            android:contentDescription="@null" />
 
         <LinearLayout
             android:layout_width="0dp"
@@ -158,7 +160,8 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="5dp"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toBottomOf="@id/thumbnail" />
+            app:layout_constraintTop_toBottomOf="@id/thumbnail"
+            android:contentDescription="@string/cd_more_options" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 </com.google.android.material.card.MaterialCardView>

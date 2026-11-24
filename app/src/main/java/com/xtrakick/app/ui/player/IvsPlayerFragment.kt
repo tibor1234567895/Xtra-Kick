@@ -452,6 +452,7 @@ class IvsPlayerFragment : PlayerFragment() {
         with(binding.playerControls) {
             if (isPlaying) {
                 playPause.setImageResource(R.drawable.baseline_pause_black_48)
+                playPause.contentDescription = getString(R.string.pause)
                 if (videoType == STREAM && !prefs.getBoolean(AppConstants.PLAYER_PAUSE, false)) {
                     playPause.visibility = View.GONE
                 } else {
@@ -459,6 +460,7 @@ class IvsPlayerFragment : PlayerFragment() {
                 }
             } else {
                 playPause.setImageResource(R.drawable.baseline_play_arrow_black_48)
+                playPause.contentDescription = getString(R.string.play)
                 playPause.visibility = View.VISIBLE
             }
             val duration = player?.duration?.takeIf { it > 0 } ?: 0L

@@ -17,7 +17,7 @@
         app:useSimpleSummaryProvider="true" />
 
     <SwitchPreferenceCompat
-        android:defaultValue="false"
+        android:defaultValue="true"
         android:key="player_ivs_latency_catchup"
         android:title="@string/player_ivs_latency_catchup"
         app:iconSpaceReserved="false"

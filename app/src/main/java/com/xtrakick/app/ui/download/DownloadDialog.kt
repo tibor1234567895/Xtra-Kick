@@ -211,7 +211,7 @@ class DownloadDialog : DialogFragment() {
                 }
                 viewModel.setStream(
                     networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), requireContext().prefs().getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_STREAM, true)),
+                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
                     channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
                     qualities = requireArguments().getStringArray(KEY_QUALITY_KEYS)?.let { keys ->
                         requireArguments().getStringArray(KEY_QUALITY_NAMES)?.let { names ->
@@ -221,7 +221,7 @@ class DownloadDialog : DialogFragment() {
                         }
                     },
                     randomDeviceId = requireContext().prefs().getBoolean(AppConstants.TOKEN_RANDOM_DEVICEID, true),
-                    xDeviceId = requireContext().prefs().getString(AppConstants.TOKEN_XDEVICEID, "kick-web-player"),
+                    xDeviceId = "kick-web-player",
                     playerType = requireContext().prefs().getString(AppConstants.TOKEN_PLAYERTYPE, "site"),
                     supportedCodecs = requireContext().prefs().getString(AppConstants.TOKEN_SUPPORTED_CODECS, "av1,h265,h264"),
                     enableIntegrity = requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
@@ -255,7 +255,7 @@ class DownloadDialog : DialogFragment() {
                 }
                 viewModel.setVideo(
                     networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), requireContext().prefs().getBoolean(AppConstants.TOKEN_INCLUDE_TOKEN_VIDEO, true)),
+                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext()),
                     videoId = requireArguments().getString(KEY_VIDEO_ID),
                     animatedPreviewUrl = requireArguments().getString(KEY_VIDEO_ANIMATED_PREVIEW),
                     videoType = requireArguments().getString(KEY_VIDEO_TYPE),

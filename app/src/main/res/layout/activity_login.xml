@@ -95,7 +95,8 @@
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:tint="?attr/colorControlNormal"
-        tools:visibility="visible" />
+        tools:visibility="visible"
+        android:contentDescription="@string/text_size" />
 
     <com.google.android.material.button.MaterialButton
         android:id="@+id/havingTrouble"

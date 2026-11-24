@@ -2,18 +2,22 @@ package com.xtrakick.app.util.chat
 
 import android.net.Uri
 import android.util.Log
+import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.KickRewardsRepository
 import com.xtrakick.app.util.WebSocket
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import javax.net.ssl.X509TrustManager
 import kotlin.coroutines.cancellation.CancellationException
@@ -30,16 +34,26 @@ class KickViewerWatchWebSocket(
 ) {
     private val tag = "KickViewerWatch"
     private val writeMutex = Mutex()
+    @Volatile
     private var webSocket: WebSocket? = null
+    @Volatile
     private var socketJob: Job? = null
+    @Volatile
     private var heartbeatJob: Job? = null
+    @Volatile
     private var currentViewersHeartbeatJob: Job? = null
+    @Volatile
     private var rewardsPollJob: Job? = null
+    @Volatile
     private var parentScope: CoroutineScope? = null
     private var resolvedLivestreamId: String? = null
+    @Volatile
     private var resolvedChannelId: String? = null
+    @Volatile
+    private var stopped = false
 
     fun start(scope: CoroutineScope): Job {
+        stopped = false
         parentScope = scope
         val job = scope.launch(Dispatchers.IO) {
             if (!kickRepository.isDailyRewardsEnabled()) {
@@ -82,13 +96,18 @@ class KickViewerWatchWebSocket(
             resolvedLivestreamId = activeLivestreamId
             resolvedChannelId = effectiveChannelId
 
+            if (stopped || !isActive) return@launch
             if (debugLogging) {
                 Log.i(tag, "starting viewer watch presence channel=$effectiveChannelId livestream=$activeLivestreamId channelLogin=$channelLogin")
             }
             startCurrentViewersHeartbeat(activeLivestreamId)
             startRewardsPolling()
 
-            while (isActive) {
+            if (BuildConfig.KICK_VIEWER_CLIENT_TOKEN.isBlank()) {
+                // Debug builds can run the periodic rewards work without viewer socket credentials.
+                awaitCancellation()
+            }
+            while (isActive && !stopped) {
                 if (!kickRepository.hasUsableKickWebsiteSession()) {
                     delay(30_000L)
                     continue
@@ -107,6 +126,7 @@ class KickViewerWatchWebSocket(
                     delay(10_000L)
                     continue
                 }
+                if (stopped || !isActive) break
 
                 val socketUrl = "wss://websockets.kick.com/viewer/v1/connect?token=${Uri.encode(token)}"
                 val socket = WebSocket(
@@ -130,12 +150,14 @@ class KickViewerWatchWebSocket(
                         Log.w(tag, "viewer socket session ended: ${e.message}")
                     }
                 } finally {
-                    webSocket = null
+                    if (webSocket === socket) {
+                        webSocket = null
+                    }
                     heartbeatJob?.cancel()
                     heartbeatJob = null
                 }
 
-                if (isActive) {
+                if (isActive && !stopped) {
                     delay(3_000L)
                 }
             }
@@ -153,32 +175,47 @@ class KickViewerWatchWebSocket(
     }
 
     suspend fun stop() = withContext(Dispatchers.IO) {
+        stopped = true
         rewardsPollJob?.cancel()
         rewardsPollJob = null
         currentViewersHeartbeatJob?.cancel()
         currentViewersHeartbeatJob = null
         heartbeatJob?.cancel()
         heartbeatJob = null
-        socketJob?.cancel()
-        socketJob = null
         val socket = webSocket
         val channel = resolvedChannelId
+        val runningJob = socketJob
         webSocket = null
-        if (socket != null) {
-            if (!channel.isNullOrBlank()) {
-                runCatching { socket.write(buildDisconnectionMessage(channel).toString()) }
+        socketJob = null
+        try {
+            if (socket != null && !channel.isNullOrBlank()) {
+                // The watchdog closes the transport even if a blocking write ignores cancellation.
+                val watchdog = launch(start = CoroutineStart.UNDISPATCHED) {
+                    delay(DISCONNECT_GRACE_MS)
+                    runningJob?.cancel()
+                }
+                try {
+                    withTimeoutOrNull(DISCONNECT_GRACE_MS) {
+                        writeMutex.withLock {
+                            runCatching { socket.write(buildDisconnectionMessage(channel).toString()) }
+                        }
+                    }
+                } finally {
+                    watchdog.cancel()
+                }
             }
-            socket.disconnect()
+        } finally {
+            runningJob?.cancel()
         }
     }
 
     private fun startRewardsPolling() {
-        if (!kickRepository.hasUsableKickWebsiteSession()) return
         rewardsPollJob?.cancel()
         rewardsPollJob = parentScope?.launch(Dispatchers.IO) {
-            while (isActive) {
+            while (isActive && !stopped) {
                 delay(REWARDS_POLL_INTERVAL_MS)
-                if (!kickRepository.hasUsableKickWebsiteSession()) break
+                if (stopped) break
+                if (!kickRepository.hasUsableKickWebsiteSession()) continue
                 runCatching {
                     val raw = kickRepository.executeKickWebSessionRequest("https://web.kick.com/api/v1/gamification/challenges")
                     rewardsRepository?.updateChallengesFromRaw(raw)
@@ -198,7 +235,7 @@ class KickViewerWatchWebSocket(
     private fun startCurrentViewersHeartbeat(livestreamId: String) {
         currentViewersHeartbeatJob?.cancel()
         currentViewersHeartbeatJob = parentScope?.launch(Dispatchers.IO) {
-            while (isActive) {
+            while (isActive && !stopped) {
                 runCatching {
                     val result = kickRepository.pingCurrentViewers(livestreamId)
                     if (debugLogging) {
@@ -243,11 +280,13 @@ class KickViewerWatchWebSocket(
 
     private fun startHeartbeat(socket: WebSocket, channelId: String, livestreamId: String) {
         heartbeatJob?.cancel()
+        if (stopped || socketJob?.isActive != true || socket !== webSocket) return
         heartbeatJob = parentScope?.launch(Dispatchers.IO) {
             var watchElapsedMs = 0L
             var pingElapsedMs = 0L
-            while (isActive) {
+            while (isActive && !stopped && socket === webSocket) {
                 delay(HEARTBEAT_INTERVAL_MS)
+                if (stopped || socket !== webSocket) break
                 sendHandshake(socket, channelId)
                 watchElapsedMs += HEARTBEAT_INTERVAL_MS
                 pingElapsedMs += HEARTBEAT_INTERVAL_MS
@@ -269,6 +308,7 @@ class KickViewerWatchWebSocket(
         private val livestreamId: String,
     ) : WebSocket.Listener {
         override suspend fun onConnect(webSocket: WebSocket) {
+            if (stopped || socketJob?.isActive != true || webSocket !== this@KickViewerWatchWebSocket.webSocket) return
             if (debugLogging) {
                 Log.i(tag, "viewer socket connected channel=$channelId livestream=$livestreamId")
             }
@@ -304,6 +344,7 @@ class KickViewerWatchWebSocket(
         private const val WATCH_EVENT_INTERVAL_MS = 60_000L
         const val CURRENT_VIEWERS_INTERVAL_MS = 60_000L
         const val REWARDS_POLL_INTERVAL_MS = 120_000L
+        private const val DISCONNECT_GRACE_MS = 750L
         private const val PING = "{\"type\":\"ping\"}"
         private const val PONG = "{\"type\":\"pong\"}"
 

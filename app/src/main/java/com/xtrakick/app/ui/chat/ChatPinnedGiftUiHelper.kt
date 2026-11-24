@@ -181,10 +181,8 @@ class ChatPinnedGiftUiHelper(
                 thirdPartyEmotes = thirdPartyEmotes,
                 globalBadges = viewModel.globalBadges,
                 channelBadges = viewModel.channelBadges,
-                cheerEmotes = viewModel.cheerEmotes,
                 savedLocalChatEmotes = mutableMapOf(),
                 savedLocalBadges = mutableMapOf(),
-                savedLocalCheerEmotes = mutableMapOf(),
                 savedLocalEmotes = mutableMapOf(),
             )
         } else {

@@ -1,7 +1,6 @@
 package com.xtrakick.app.service
 
 import android.os.Build
-import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
@@ -15,7 +14,7 @@ class XtraFirebaseMessagingService : FirebaseMessagingService() {
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     override fun onNewToken(token: String) {
         if (BuildConfig.DEBUG) return
-        FcmDeliveryWorker.enqueueTokenSync(applicationContext, ExistingWorkPolicy.REPLACE)
+        FcmDeliveryWorker.enqueueTokenSync(applicationContext, deduplicatePending = false)
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {

@@ -10,6 +10,9 @@ plugins {
 }
 
 import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.testing.TestDescriptor
+import org.gradle.api.tasks.testing.TestListener
+import org.gradle.api.tasks.testing.TestResult
 
 kotlin {
     jvmToolchain(21)
@@ -60,10 +63,9 @@ android {
     // Fixed client token the official app sends as X-CLIENT-TOKEN when minting the viewer
     // watch socket token. Kept as a build-time value so a Kick rotation is an .env/-P change
     // (or an over-the-air update) instead of a source edit and a full release.
-    val kickViewerClientToken = projectPropertyOrDefault(
-        "KICK_VIEWER_CLIENT_TOKEN",
-        "f3a7c8b1e5d9246aa8f6b37d5c8e9a2fd4e1c0abf79d3826b4c5e7a9d8f2b6c3",
-    ).replace("\"", "\\\"")
+    // Deliberately NO hardcoded default: this file is published to the public repo, so a
+    // baked-in value would be world-readable (and is extractable from Kick's own APK anyway).
+    val kickViewerClientToken = projectPropertyOrDefault("KICK_VIEWER_CLIENT_TOKEN").replace("\"", "\\\"")
     val targetAbis = (project.findProperty("TARGET_ABI") as String?)
         ?.split(',')
         ?.map { it.trim() }
@@ -96,6 +98,19 @@ android {
         releaseStorePassword.isNotEmpty() &&
         releaseKeyAlias.isNotEmpty() &&
         releaseKeyPassword.isNotEmpty()
+
+    val verifyReleaseViewerToken = tasks.register("verifyReleaseViewerToken") {
+        val viewerTokenConfigured = kickViewerClientToken.isNotBlank()
+        doLast {
+            check(viewerTokenConfigured) {
+                "KICK_VIEWER_CLIENT_TOKEN is required to package a release. Set it via -P, " +
+                    "the environment, Xtra/.env, or the release workflow secret."
+            }
+        }
+    }
+    tasks.matching { it.name == "packageRelease" || it.name == "packageReleaseBundle" }.configureEach {
+        dependsOn(verifyReleaseViewerToken)
+    }
 
     if (releaseSigningConfigured) {
         signingConfigs.create("release").apply {
@@ -196,7 +211,6 @@ android {
             "AndroidGradlePluginVersion",
             "AppBundleLocaleChanges",
             "ChromeOsAbiSupport",
-            "ContentDescription",
             "GradleDependency",
             "IntentFilterUniqueDataAttributes",
             "LeanbackUsesWifi",
@@ -244,6 +258,7 @@ dependencies {
     coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation("com.google.guava:guava:33.8.0-android") // exoplayer
     implementation("com.google.android.gms:play-services-cronet:18.1.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.11.0")
     implementation("androidx.credentials:credentials:1.3.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.2.1")
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
@@ -274,7 +289,7 @@ dependencies {
 
     implementation(libs.cronet.api)
     implementation(libs.okhttp)
-    implementation(libs.okhttp.logging)
+    debugImplementation(libs.okhttp.logging)
     implementation(libs.serialization.json)
     implementation(libs.ivs.player)
 
@@ -303,18 +318,53 @@ dependencies {
 
     implementation(libs.coroutines)
     testImplementation("junit:junit:4.13.2")
-// Real org.json for JVM tests — android.jar's stub throws "not mocked".
-testImplementation("org.json:json:20260814")
+    // Real org.json for JVM tests — android.jar's stub throws "not mocked".
+    testImplementation("org.json:json:20260814")
     // ChatBackgroundUtilsTest computes its expected values with androidx ColorUtils,
     // which calls android.graphics.Color — absent on a plain JVM. Robolectric supplies it.
-    testImplementation("org.robolectric:robolectric:4.18")
+    testImplementation("org.robolectric:robolectric:4.18.1")
 }
 
 // Robolectric reaches FileDescriptor internals via jdk.internal.access.SharedSecrets,
 // which JPMS hides by default. Export and open it for the unit-test JVM.
 tasks.withType<Test> {
+    if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+        // Robolectric adds test names and app directories to SQLite paths. A nested temp root can exceed MAX_PATH.
+        val userTemp = providers.environmentVariable("LOCALAPPDATA").orNull?.let { File(it, "Temp") }
+        val gradleTemp = File(System.getProperty("java.io.tmpdir"))
+        listOfNotNull(userTemp, gradleTemp)
+            .filter { it.isDirectory && it.canWrite() }
+            .minByOrNull { it.absolutePath.length }
+            ?.let { systemProperty("java.io.tmpdir", it.absolutePath) }
+    }
     if (providers.environmentVariable("GITHUB_ACTIONS").orNull == "true") {
-        testLogging.events("started", "failed")
+        testLogging.events("failed")
+        addTestListener(object : TestListener {
+            private var completed = 0
+
+            override fun beforeSuite(suite: TestDescriptor) {
+                if (suite.parent == null) {
+                    println("Test run started")
+                }
+            }
+            override fun beforeTest(testDescriptor: TestDescriptor) = Unit
+
+            override fun afterTest(testDescriptor: TestDescriptor, result: TestResult) {
+                if (++completed % 100 == 0) {
+                    println("Test progress: $completed tests finished")
+                }
+            }
+
+            override fun afterSuite(suite: TestDescriptor, result: TestResult) {
+                if (suite.parent == null) {
+                    val seconds = (result.endTime - result.startTime) / 1000
+                    println("Test summary: ${result.testCount} tests in ${seconds}s " +
+                        "(${result.successfulTestCount} passed, " +
+                        "${result.failedTestCount} failed, " +
+                        "${result.skippedTestCount} skipped)")
+                }
+            }
+        })
     }
     jvmArgs(
         "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED",

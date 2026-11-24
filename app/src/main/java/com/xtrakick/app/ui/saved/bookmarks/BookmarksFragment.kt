@@ -59,9 +59,6 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                 requireContext().filesDir.path,
                 it,
                 requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                KickApiHelper.getKickWebHeaders(requireContext()),
-                KickApiHelper.getKickPublicApiHeaders(requireContext()),
-                requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
             )
         }, {
             DownloadDialog.newInstance(
@@ -266,10 +263,6 @@ class BookmarksFragment : BaseNetworkFragment(), Scrollable, Sortable, Bookmarks
                 KickApiHelper.getKickPublicApiHeaders(requireContext()),
                 requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
             )
-        }
-        val kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext())
-        if (kickPublicApiHeaders.isNotEmpty()) {
-            viewModel.updateVideos(requireContext().filesDir.path, requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), kickPublicApiHeaders)
         }
     }
 

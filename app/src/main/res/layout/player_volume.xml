@@ -17,7 +17,8 @@
         app:layout_constraintEnd_toStartOf="@id/volumeBar"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        app:tint="?attr/colorControlNormal" />
+        app:tint="?attr/colorControlNormal"
+        android:contentDescription="@string/mute" />
 
     <com.google.android.material.slider.Slider
         android:id="@+id/volumeBar"

@@ -13,7 +13,6 @@ import com.xtrakick.app.databinding.CommonRecyclerViewLayoutBinding
 import com.xtrakick.app.model.ui.Stream
 import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -28,28 +27,23 @@ abstract class PagedListFragment : BaseNetworkFragment() {
     var concatAdapter: RecyclerView.Adapter<*>? = null
         protected set
 
+    private var pendingScrollToTop = false
+    private var registeredScrollTopButton: View? = null
+
+    protected fun requestScrollToTopOnNextRefresh() {
+        pendingScrollToTop = true
+    }
+
     fun <T : Any, VH : RecyclerView.ViewHolder> setAdapter(
         recyclerView: RecyclerView,
         adapter: PagingDataAdapter<T, VH>,
-        withFooter: Boolean = true
+        withFooter: Boolean = true,
+        scrollToTopOnRefresh: Boolean = true,
+        scrollTopButton: View? = null,
     ) {
-        adapter.registerAdapterDataObserver(object : RecyclerView.AdapterDataObserver() {
-
-            override fun onItemRangeInserted(positionStart: Int, itemCount: Int) {
-                adapter.unregisterAdapterDataObserver(this)
-                adapter.registerAdapterDataObserver(object : RecyclerView.AdapterDataObserver() {
-                    override fun onItemRangeInserted(positionStart: Int, itemCount: Int) {
-                        try {
-                            if (positionStart == 0) {
-                                recyclerView.scrollToPosition(0)
-                            }
-                        } catch (e: Exception) {
-
-                        }
-                    }
-                })
-            }
-        })
+        if (scrollTopButton != null) {
+            registeredScrollTopButton = scrollTopButton
+        }
         val targetAdapter: RecyclerView.Adapter<*> = if (withFooter) {
             val footerAdapter = CommonLoadStateAdapter { adapter.retry() }
             val combined = adapter.withLoadStateFooter(footerAdapter)
@@ -71,6 +65,31 @@ abstract class PagedListFragment : BaseNetworkFragment() {
         }
         concatAdapter = targetAdapter
         recyclerView.adapter = targetAdapter
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                var wasRefreshing = false
+                adapter.loadStateFlow.collect { loadState ->
+                    when (loadState.refresh) {
+                        is LoadState.Loading -> wasRefreshing = true
+                        is LoadState.NotLoading -> {
+                            if (wasRefreshing) {
+                                wasRefreshing = false
+                                val shouldScroll = scrollToTopOnRefresh || pendingScrollToTop
+                                pendingScrollToTop = false
+                                if (shouldScroll && recyclerView.adapter === targetAdapter) {
+                                    recyclerView.scrollToPosition(0)
+                                    registeredScrollTopButton?.isVisible = false
+                                }
+                            }
+                        }
+                        is LoadState.Error -> {
+                            wasRefreshing = false
+                            pendingScrollToTop = false
+                        }
+                    }
+                }
+            }
+        }
         if (adapter is StreamsAdapter || adapter is StreamsCompactAdapter) {
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -108,22 +127,34 @@ abstract class PagedListFragment : BaseNetworkFragment() {
         return percentage > 3f
     }
 
+    override fun onDestroyView() {
+        registeredScrollTopButton = null
+        pendingScrollToTop = false
+        concatAdapter = null
+        super.onDestroyView()
+    }
+
     fun <T : Any, VH : RecyclerView.ViewHolder> initializeAdapter(binding: CommonRecyclerViewLayoutBinding, pagingAdapter: PagingDataAdapter<T, VH>, enableSwipeRefresh: Boolean = true, enableScrollTopButton: Boolean = true) {
         with(binding) {
+            registeredScrollTopButton = scrollTop
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
                     pagingAdapter.loadStateFlow.collectLatest { loadState ->
-                        progressBar.isVisible = loadState.refresh is LoadState.Loading && pagingAdapter.itemCount == 0
+                        val isRefreshing = loadState.refresh is LoadState.Loading
+                        progressBar.isVisible = isRefreshing && pagingAdapter.itemCount == 0
                         if (enableSwipeRefresh) {
-                            swipeRefresh.isRefreshing = loadState.refresh is LoadState.Loading && pagingAdapter.itemCount != 0
+                            swipeRefresh.isRefreshing = isRefreshing && pagingAdapter.itemCount != 0
                         }
-                        nothingHere.isVisible = loadState.refresh !is LoadState.Loading && loadState.append !is LoadState.Loading && pagingAdapter.itemCount == 0
+                        nothingHere.isVisible = !isRefreshing && loadState.append !is LoadState.Loading && pagingAdapter.itemCount == 0
                     }
                 }
             }
             if (enableSwipeRefresh) {
                 swipeRefresh.isEnabled = true
-                swipeRefresh.setOnRefreshListener { pagingAdapter.refresh() }
+                swipeRefresh.setOnRefreshListener {
+                    requestScrollToTopOnNextRefresh()
+                    pagingAdapter.refresh()
+                }
             }
             if (enableScrollTopButton && requireContext().prefs().getBoolean(AppConstants.UI_SCROLLTOP, true)) {
                 recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {

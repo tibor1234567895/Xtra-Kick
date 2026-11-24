@@ -20,7 +20,7 @@ class ChatReplayManagerLocalTest {
     fun clipPreloadIncludesMessagesBeforePreviewZeroWithoutEmittingFutureMessages() = runBlocking {
         val emitted = mutableListOf<String?>()
         val scope = CoroutineScope(coroutineContext + Job())
-        val replay = ChatReplayManagerLocal({ 0L }, { 1f }, scope, object : ChatReplayManager.Listener {
+        val replay = ChatReplayManagerLocal({ 0L }, { 1f }, scope, object : ChatReplayManagerLocal.Listener {
             override suspend fun onChatMessages(messages: List<ChatMessage>) { emitted += messages.map { it.id } }
             override suspend fun onChatMessage(message: ChatMessage) { emitted += message.id }
         })
@@ -43,7 +43,7 @@ class ChatReplayManagerLocalTest {
         val scope = CoroutineScope(coroutineContext + Job())
         val donation = KicksDonation(100, giftName = "Gift")
         val giftedSub = GiftedSubInfo("Gifter", count = 5, isCommunityGift = true)
-        val replay = ChatReplayManagerLocal({ position }, { 1f }, scope, object : ChatReplayManager.Listener {
+        val replay = ChatReplayManagerLocal({ position }, { 1f }, scope, object : ChatReplayManagerLocal.Listener {
             override suspend fun onChatMessage(message: ChatMessage) { emitted += message }
         })
         try {
@@ -67,7 +67,7 @@ class ChatReplayManagerLocalTest {
         var position = 0L
         val emitted = mutableListOf<String?>()
         val scope = CoroutineScope(coroutineContext + Job())
-        val replay = ChatReplayManagerLocal({ position }, { 1f }, scope, object : ChatReplayManager.Listener {
+        val replay = ChatReplayManagerLocal({ position }, { 1f }, scope, object : ChatReplayManagerLocal.Listener {
             override suspend fun onChatMessage(message: ChatMessage) { emitted += message.id }
             override suspend fun onChatMessages(messages: List<ChatMessage>) { emitted += messages.map { it.id } }
         })
@@ -98,7 +98,7 @@ class ChatReplayManagerLocalTest {
     fun stoppingBeforeQueuedLoadRunsAlsoCancelsItsClearEvent() = runBlocking {
         var clears = 0
         val scope = CoroutineScope(coroutineContext + Job())
-        val replay = ChatReplayManagerLocal({ 0L }, { 1f }, scope, object : ChatReplayManager.Listener {
+        val replay = ChatReplayManagerLocal({ 0L }, { 1f }, scope, object : ChatReplayManagerLocal.Listener {
             override suspend fun clearMessages() { clears++ }
         })
         try {
@@ -119,7 +119,7 @@ class ChatReplayManagerLocalTest {
         val emitted = mutableListOf<String?>()
         val scope = CoroutineScope(coroutineContext + Job())
         val replay = ChatReplayManagerLocal({ position }, { 1f }, scope,
-            object : ChatReplayManager.Listener {
+            object : ChatReplayManagerLocal.Listener {
                 override suspend fun onChatMessage(message: ChatMessage) {
                     emitted.add(message.id)
                     if (emitted.size == 1) playing = false
@@ -150,6 +150,67 @@ class ChatReplayManagerLocalTest {
         assertEquals(3, ChatReplayManagerLocal.messageLowerBound(messages, 2001))
         assertEquals(4, ChatReplayManagerLocal.messageLowerBound(messages, 4000))
         assertEquals(0, ChatReplayManagerLocal.messageLowerBound(emptyList(), 4000))
+    }
+
+    @Test
+    fun resumeAfterLargeForwardJumpReloadsPreloadWindowInsteadOfBursting() = runBlocking {
+        var position = 0L
+        var playing = false
+        var clears = 0
+        val singleEmitted = mutableListOf<String?>()
+        val bulkEmitted = mutableListOf<String?>()
+        val scope = CoroutineScope(coroutineContext + Job())
+        val replay = ChatReplayManagerLocal({ position }, { 1f }, scope,
+            object : ChatReplayManagerLocal.Listener {
+                override suspend fun clearMessages() { clears++ }
+                override suspend fun onChatMessages(messages: List<ChatMessage>) { bulkEmitted += messages.map { it.id } }
+                override suspend fun onChatMessage(message: ChatMessage) { singleEmitted += message.id }
+            }, isPlaybackPlaying = { playing })
+        try {
+            val messages = (1..300).map { ChatMessage(id = "m$it", timestamp = it * 1_000L) }
+            replay.setMessages(messages, 0L)
+            replay.startLoad()
+            delay(40)
+            position = 250_000L
+            playing = true
+            withTimeout(2000) { while (bulkEmitted.isEmpty()) delay(10) }
+            assertTrue(clears >= 2)
+            assertTrue(singleEmitted.isEmpty())
+            assertEquals("m250", bulkEmitted.last())
+            assertTrue(bulkEmitted.size <= 200)
+        } finally {
+            replay.stop()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun forwardJumpDuringDelayWhilePlayingReloadsPreloadWindowInsteadOfBursting() = runBlocking {
+        var position = 0L
+        var clears = 0
+        val singleEmitted = mutableListOf<String?>()
+        val bulkEmitted = mutableListOf<String?>()
+        val scope = CoroutineScope(coroutineContext + Job())
+        val replay = ChatReplayManagerLocal({ position }, { 1f }, scope,
+            object : ChatReplayManagerLocal.Listener {
+                override suspend fun clearMessages() { clears++ }
+                override suspend fun onChatMessages(messages: List<ChatMessage>) { bulkEmitted += messages.map { it.id } }
+                override suspend fun onChatMessage(message: ChatMessage) { singleEmitted += message.id }
+            }, isPlaybackPlaying = { true })
+        try {
+            val messages = (1..300).map { ChatMessage(id = "m$it", timestamp = it * 1_000L) }
+            replay.setMessages(messages, 0L)
+            replay.startLoad()
+            delay(30)
+            position = 250_000L
+            withTimeout(2000) { while (bulkEmitted.isEmpty()) delay(10) }
+            assertTrue(clears >= 2)
+            assertTrue(singleEmitted.isEmpty())
+            assertEquals("m250", bulkEmitted.last())
+        } finally {
+            replay.stop()
+            scope.cancel()
+        }
     }
 
     @Test

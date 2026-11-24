@@ -67,18 +67,6 @@ data class KickOfficialReward(
 )
 
 @Serializable
-data class KickOfficialRewardsResponse(
-    val message: String? = null,
-    val data: List<KickOfficialReward> = emptyList(),
-)
-
-@Serializable
-data class KickOfficialRewardResponse(
-    val message: String? = null,
-    val data: KickOfficialReward? = null,
-)
-
-@Serializable
 data class KickOfficialRewardCreateRequest(
     val title: String,
     val cost: Int,
@@ -152,11 +140,6 @@ data class KickRewardRedemptionsResponse(
 data class KickRewardRedemptionsPage(
     val groups: List<KickRewardRedemptionGroup> = emptyList(),
     val nextCursor: String? = null,
-)
-
-@Serializable
-data class KickRewardRedemptionBulkActionRequest(
-    val ids: List<String>,
 )
 
 @Serializable

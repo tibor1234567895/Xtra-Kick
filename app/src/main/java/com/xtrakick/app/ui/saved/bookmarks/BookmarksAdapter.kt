@@ -42,9 +42,16 @@ class BookmarksAdapter(
         override fun areItemsTheSame(oldItem: Bookmark, newItem: Bookmark): Boolean =
             oldItem.id == newItem.id
 
-        override fun areContentsTheSame(oldItem: Bookmark, newItem: Bookmark): Boolean =
-            oldItem.title == newItem.title &&
-                    oldItem.duration == newItem.duration
+        override fun areContentsTheSame(oldItem: Bookmark, newItem: Bookmark): Boolean = with(oldItem) {
+            val sameChannel = userId == newItem.userId && userLogin == newItem.userLogin &&
+                userName == newItem.userName && userLogo == newItem.userLogo
+            val sameChannelType = userType == newItem.userType && userBroadcasterType == newItem.userBroadcasterType
+            val sameCategory = gameId == newItem.gameId && gameSlug == newItem.gameSlug && gameName == newItem.gameName
+            val sameVideo = videoId == newItem.videoId && type == newItem.type && duration == newItem.duration
+            val sameDetails = title == newItem.title && createdAt == newItem.createdAt &&
+                thumbnail == newItem.thumbnail && animatedPreviewURL == newItem.animatedPreviewURL
+            sameChannel && sameChannelType && sameCategory && sameVideo && sameDetails
+        }
     }) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PagingViewHolder {

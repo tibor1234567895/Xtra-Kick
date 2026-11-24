@@ -124,6 +124,7 @@
     <string name="oldest_first">Älteste zuerst</string>
     <string name="logout_title">Abmelden?</string>
     <string name="logout_msg">Angemeldet als %s</string>
+    <string name="logout_saved_session_msg">Abmelden und die gespeicherte Kick-Sitzung von diesem Gerät entfernen?</string>
     <string name="logout_success_toast">Abgemeldet</string>
     <string name="logout_revoke_failed_toast">Auf diesem Gerät abgemeldet, aber das Widerrufen des Tokens bei Kick ist fehlgeschlagen</string>
     <string name="never">Nie</string>
@@ -192,7 +193,6 @@
     <string name="user_staff">Mitarbeiter</string>
     <string name="uptime">%s online</string>
     <string name="recentMsg_enable">Kürzliche Nachrichten laden</string>
-    <string name="recentMsg_limit">Limit für kürzliche Nachrichten</string>
     <string name="last_broadcast_date">Letzter Stream %s</string>
     <string name="followed_at">Gefolgt seit %s</string>
     <string name="following_label">Gefolgt</string>
@@ -395,7 +395,6 @@
     <string name="irc_notice_whisper_limit_per_sec">Du sendest Direktnachrichten zu schnell. Versuche es in einer Sekunde erneut.</string>
     <string name="irc_notice_whisper_restricted">Deine Einstellungen verhindern das Senden dieser Nachricht.</string>
     <string name="irc_notice_whisper_restricted_recipient">Die Einstellungen des Nutzers verhindern das Empfangen dieser Nachricht.</string>
-    <string name="position">Position: %s</string>
     <string name="player_viewerlist">Zuschauerliste über Aufrufzahl öffnen</string>
     <string name="broadcaster">Streamer</string>
     <string name="moderators">Moderatoren</string>
@@ -493,7 +492,6 @@
     <string name="rebuffer">Nachpuffer</string>
     <string name="buffer_settings">Puffer-Einstellungen</string>
     <string name="player_buttons">Player-Buttons</string>
-    <string name="keep_chat_open">Chat im Hintergrund verbunden lassen</string>
     <string name="save_sort_channel">Auswahl für diesen Kanal merken</string>
     <string name="save_sort_game">Auswahl für dieses Spiel merken</string>
     <string name="show_chat">Chat anzeigen</string>
@@ -596,7 +594,6 @@
     <string name="use_integrity">Integritätstoken verwenden</string>
     <string name="use_audio_focus">Pausieren, wenn andere Apps Audio wiedergeben</string>
     <string name="handle_audio_becoming_noisy">Pausieren, wenn Kopfhörer getrennt werden</string>
-    <string name="proxy_playback_access_token">Proxy für Wiedergabe-Zugriffstoken</string>
     <string name="proxy_multivariant_playlist">Proxy für Multivariant-Playlist</string>
     <string name="proxy_host">Host</string>
     <string name="proxy_port">Port</string>
@@ -642,7 +639,6 @@
     <string name="dynamic_amoled">Dynamisch schwarz</string>
     <string name="material_3">Material 3-Design</string>
     <string name="use_api_chat_messages">Chat-Nachrichten über die API senden</string>
-    <string name="use_eventsub_chat">EventSub-Chat</string>
     <string name="notification_permission_title">Benachrichtigungsberechtigung erforderlich</string>
     <string name="notification_permission_message">Die Benachrichtigungsberechtigung wird benötigt, um den Download-Fortschritt anzuzeigen.</string>
     <string name="select_directory">Ordner auswählen</string>
@@ -863,7 +859,6 @@
     <string name="download_threads_summary">Anzahl der Segmente, die gleichzeitig heruntergeladen werden</string>
     <string name="minimize">Minimieren</string>
     <string name="player_menu_settings">Player-Menü-Einstellungen</string>
-    <string name="chapters">Kapitel</string>
     <string name="seek_to_live">Zum Live-Signal springen</string>
     <string name="zoomed_to_fill">Auf Bildschirmgröße gezoomt</string>
     <string name="original">Original</string>
@@ -872,6 +867,7 @@
     <string name="chat_input_toggle">Chat-Eingabe umschalten</string>
     <string name="chat_toggle">Chat umschalten</string>
     <string name="fullscreen">Vollbild</string>
+    <string name="exit_fullscreen">Vollbild verlassen</string>
     <string name="min_buffer">Minimaler Puffer</string>
     <string name="min_buffer_summary">Minimaler Puffer in Millisekunden</string>
     <string name="player_latency_profile">Live-Latenzprofil</string>
@@ -1131,6 +1127,7 @@
     <string name="log_in_to_kick_summary">Anmelden, um zu chatten, Kanälen zu folgen und tägliche Belohnungen zu sammeln</string>
     <string name="logged_in_as_summary">Angemeldet als %s</string>
     <string name="tap_to_log_out">Tippen zum Abmelden</string>
+    <string name="kick_session_unavailable">Die gespeicherte Sitzung ist vorübergehend nicht verfügbar. Tippe hier, um dich abzumelden.</string>
     <string name="verify_session_startup">Sitzung beim App-Start überprüfen</string>
     <string name="verify_session_startup_summary">Token-Autorisierung bei Kick beim Start der App prüfen</string>
     <string name="account_sync">Kontosynchronisierung</string>
@@ -1138,7 +1135,11 @@
     <string name="login_to_import_follows">Anmelden, um gefolgte Kanäle zu importieren</string>
     <string name="developer_tokens">Entwickler- &amp; API-Tokens</string>
     <string name="developer_tokens_summary">OAuth-Tokens, Sitzungsvalidierung und EventSub-Webhooks</string>
-    <string name="proxy_settings_summary">HTTP-, HTTPS- und SOCKS5-Proxy-Konfiguration</string>
+    <string name="proxy_settings_summary">HTTP- und HTTPS-Proxy-Konfiguration</string>
+    <string name="cd_open_emotes">Emotes öffnen</string>
+    <string name="cd_send_message">Nachricht senden</string>
+    <string name="cd_more_options">Weitere Optionen</string>
+    <string name="cd_set_as_default">Als Standard festlegen</string>
     <string name="advanced_image_rendering">Erweitert &amp; Leistung</string>
     <string name="storage_and_cleanup">Speicher &amp; Bereinigung</string>
     <string name="connection_timings">Verbindungs-Timings</string>
@@ -1181,6 +1182,8 @@
     <string name="action_not_now">Jetzt nicht</string>
     <string name="chat_guest_login_prompt">Melde dich an, um zu chatten und Belohnungen einzulösen</string>
     <string name="live_widget_title">Live-Kanäle</string>
+    <string name="live_widget_refreshing">Wird aktualisiert…</string>
+    <string name="live_widget_updated_just_now">Gerade aktualisiert</string>
     <string name="live_widget_empty">Derzeit ist kein gefolgter Streamer live</string>
     <string name="live_widget_tap_to_open">Tippen, um Xtra zu öffnen</string>
     <string name="welcome_title">Willkommen bei Xtra</string>
@@ -1313,4 +1316,5 @@
     <string name="clip_sort_date">Erstellungsdatum</string>
     <string name="clip_sort_duration">Dauer</string>
     <string name="clip_sort_recent_limit">Nach Datum oder Dauer lassen sich bis zu %d der neuesten Clips im gewählten Zeitraum sortieren.</string>
+    <string name="cd_scroll_to_top">Nach oben scrollen</string>
 </resources>

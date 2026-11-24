@@ -1,17 +1,11 @@
 package com.xtrakick.app.ui.settings
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ActivityNotFoundException
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.ComponentName
-import android.content.DialogInterface
 import android.content.Intent
 import com.xtrakick.app.ui.login.LoginActivity
 import android.content.pm.PackageManager
-import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -19,48 +13,34 @@ import android.text.InputType
 import android.provider.Settings
 import android.text.format.Formatter
 import android.util.TypedValue
-import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.ImageButton
-import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.SearchView
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.core.content.edit
-import androidx.core.content.FileProvider
-import androidx.core.content.res.use
 import androidx.core.net.toUri
 import androidx.core.os.LocaleListCompat
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
-import androidx.core.view.updatePadding
-import androidx.core.widget.NestedScrollView
-import androidx.core.widget.TextViewCompat
-import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.withResumed
 import androidx.navigation.fragment.NavHostFragment
-import com.xtrakick.app.util.HttpEngineAvailability
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.setupWithNavController
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import androidx.preference.Preference
-import androidx.preference.PreferenceGroup
-import androidx.preference.PreferenceManager
 import androidx.preference.SeekBarPreference
 import androidx.preference.SwitchPreferenceCompat
 import androidx.preference.forEach
@@ -68,6 +48,7 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import com.xtrakick.app.ui.view.SafeLinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.xtrakick.app.BuildConfig
+import com.xtrakick.app.service.FcmDeliveryWorker
 import com.xtrakick.app.R
 import com.xtrakick.app.SettingsNavGraphDirections
 import com.xtrakick.app.util.AppUpdateDialogHelper
@@ -75,12 +56,8 @@ import com.xtrakick.app.databinding.ActivitySettingsBinding
 import com.xtrakick.app.model.kick.KickEventSubscription
 import com.xtrakick.app.model.kick.KickEventSubscriptionRequestItem
 import com.xtrakick.app.model.ui.SettingsDragListItem
-import com.xtrakick.app.model.ui.SettingsSearchItem
 import com.xtrakick.app.repository.KickOfficialApiValidationUtils
 import com.xtrakick.app.repository.KickRepository
-import com.xtrakick.app.repository.LocalFollowChannelRepository
-import com.xtrakick.app.repository.NotificationUsersRepository
-import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.ui.main.RewardClaimScheduler
 import com.xtrakick.app.ui.common.BaseStateActivity
 import com.xtrakick.app.ui.common.CompactDialogs.constrainSheets
@@ -91,7 +68,6 @@ import com.xtrakick.app.util.AppConstants
 import kotlin.math.max
 import kotlin.math.roundToInt
 import com.xtrakick.app.util.BatteryOptimizationHelper
-import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.CrashReports
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.KickOAuthConfig
@@ -104,15 +80,11 @@ import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.setProxyPassword
 import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.appbar.AppBarLayout
-import com.google.android.material.button.MaterialButton
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import com.xtrakick.app.KickApp
 import java.util.Collections
 import javax.inject.Inject
 
@@ -247,7 +219,7 @@ class SettingsActivity : BaseStateActivity() {
             .show()
     }
 
-    private fun showSearchView(showSearch: Boolean) {
+    internal fun showSearchView(showSearch: Boolean) {
         with(binding) {
             if (showSearch) {
                 toolbar.menu.findItem(R.id.search).isVisible = false
@@ -260,7 +232,7 @@ class SettingsActivity : BaseStateActivity() {
         }
     }
 
-    private fun setResult() {
+    internal fun setResult() {
         if (!changed) {
             changed = true
             setResult(RESULT_OK)
@@ -343,11 +315,12 @@ class SettingsActivity : BaseStateActivity() {
 
         private fun updateAccountSummary() {
             findPreference<Preference>("nav_api_token_settings")?.apply {
-                val username = requireContext().tokenPrefs().getString(AppConstants.KICK_USER_LOGIN, null)?.takeIf { it.isNotBlank() }
-                summary = if (username != null) {
-                    getString(R.string.logged_in_as_summary, username)
-                } else {
-                    getString(R.string.log_in_to_kick_summary)
+                val context = requireContext()
+                val username = context.tokenPrefs().getString(AppConstants.KICK_USER_LOGIN, null)?.takeIf { it.isNotBlank() }
+                summary = when {
+                    username != null -> getString(R.string.logged_in_as_summary, username)
+                    AuthStateHelper.hasUnreadableKickSession(context) -> getString(R.string.kick_session_unavailable)
+                    else -> getString(R.string.log_in_to_kick_summary)
                 }
             }
         }
@@ -364,18 +337,24 @@ class SettingsActivity : BaseStateActivity() {
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.notifications_preferences, rootKey)
             findPreference<SwitchPreferenceCompat>(AppConstants.LIVE_NOTIFICATIONS_ENABLED)?.setOnPreferenceChangeListener { _, newValue ->
+                val context = requireContext()
+                val enabled = newValue as Boolean
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                     ActivityCompat.checkSelfPermission(requireActivity(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
                 ) {
                     ActivityCompat.requestPermissions(requireActivity(), arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
                 }
+                context.prefs().edit { putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, enabled) }
+                if (!BuildConfig.DEBUG) {
+                    FcmDeliveryWorker.enqueueTokenSync(context, deduplicatePending = false)
+                }
                 viewModel.toggleNotifications(
-                    enabled = newValue as Boolean,
+                    enabled = enabled,
                     networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
                     kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), true),
                     kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext())
                 )
-                if (newValue == true) {
+                if (enabled) {
                     BatteryOptimizationHelper.maybePrompt(requireActivity())
                 }
                 (requireActivity() as? SettingsActivity)?.setResult()
@@ -1243,9 +1222,12 @@ class SettingsActivity : BaseStateActivity() {
             val username = context.tokenPrefs().getString(AppConstants.KICK_USER_LOGIN, null)?.takeIf { it.isNotBlank() }
             val isLoggedIn = AuthStateHelper.isKickLoggedIn(context)
             findPreference<Preference>("action_kick_auth_toggle")?.apply {
-                if (username != null && isLoggedIn) {
-                    title = username
+                if (isLoggedIn) {
+                    title = username ?: getString(R.string.kick_account)
                     summary = getString(R.string.tap_to_log_out)
+                } else if (AuthStateHelper.hasUnreadableKickSession(context)) {
+                    title = getString(R.string.kick_account)
+                    summary = getString(R.string.kick_session_unavailable)
                 } else if (username != null) {
                     title = username
                     summary = getString(R.string.token_expired)
@@ -1276,10 +1258,13 @@ class SettingsActivity : BaseStateActivity() {
                 val context = requireContext()
                 val username = context.tokenPrefs().getString(AppConstants.KICK_USER_LOGIN, null)?.takeIf { it.isNotBlank() }
                 val isLoggedIn = AuthStateHelper.isKickLoggedIn(context)
-                if (username != null && isLoggedIn) {
+                if (isLoggedIn || AuthStateHelper.hasUnreadableKickSession(context)) {
                     context.getAlertDialogBuilder().apply {
                         setTitle(getString(R.string.logout_title))
-                        setMessage(getString(R.string.logout_msg, username))
+                        setMessage(
+                            if (isLoggedIn && username != null) getString(R.string.logout_msg, username)
+                            else getString(R.string.logout_saved_session_msg)
+                        )
                         setNegativeButton(getString(R.string.no), null)
                         setPositiveButton(getString(R.string.yes)) { _, _ ->
                             authResultLauncher?.launch(
@@ -1660,9 +1645,9 @@ class SettingsActivity : BaseStateActivity() {
                 }
             }
             findPreference<SwitchPreferenceCompat>("update_use_browser")?.setOnPreferenceChangeListener { _, newValue ->
-                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-                    newValue == false &&
-                    requireContext().prefs().getBoolean(AppConstants.UPDATE_CHECK_ENABLED, false) &&
+                val switchingToInAppUpdates = Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE && newValue == false
+                if (switchingToInAppUpdates &&
+                    requireContext().prefs().getBoolean(AppConstants.UPDATE_CHECK_ENABLED, true) &&
                     !requireContext().packageManager.canRequestPackageInstalls()
                 ) {
                     try {
@@ -1682,547 +1667,6 @@ class SettingsActivity : BaseStateActivity() {
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
             super.onViewCreated(view, savedInstanceState)
             setupStandardListBehavior()
-        }
-    }
-
-    @AndroidEntryPoint
-    class DebugSettingsFragment : MaterialPreferenceFragment() {
-        @Inject
-        lateinit var localFollowChannelRepository: LocalFollowChannelRepository
-
-        @Inject
-        lateinit var notificationUsersRepository: NotificationUsersRepository
-
-        @Inject
-        lateinit var shownNotificationsRepository: ShownNotificationsRepository
-
-        override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
-            setPreferencesFromResource(R.xml.debug_preferences, rootKey)
-            findPreference<Preference>("action_customize_debug_logs")?.setOnPreferenceClickListener {
-                findNavController().navigate(SettingsNavGraphDirections.actionGlobalDebugLogSettingsFragment())
-                true
-            }
-            findPreference<Preference>("action_force_kick_token_expiry")?.setOnPreferenceClickListener {
-                requireContext().tokenPrefs().edit {
-                    putLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, (System.currentTimeMillis() / 1000L) - 3600L)
-                }
-                Toast.makeText(requireContext(), R.string.debug_force_kick_token_expiry_done, Toast.LENGTH_LONG).show()
-                true
-            }
-            findPreference<Preference>("action_reset_update_timestamps")?.setOnPreferenceClickListener {
-                requireContext().tokenPrefs().edit {
-                    putLong(AppConstants.UPDATE_LAST_CHECKED, 0L)
-                    putLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
-                    putLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, 0L)
-                    putLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, 0L)
-                }
-                Toast.makeText(requireContext(), R.string.debug_reset_update_timestamps_success, Toast.LENGTH_SHORT).show()
-                true
-            }
-            findPreference<Preference>("action_api_settings")?.setOnPreferenceClickListener { preference ->
-                var newId = 1000
-                val view = LinearLayout(requireContext()).apply {
-                    id = R.id.layout
-                    orientation = LinearLayout.VERTICAL
-                }
-                val list = listOf(
-                    Triple(getString(R.string.games), AppConstants.API_PREFS_GAMES, AppConstants.DEFAULT_API_PREFS_GAMES),
-                    Triple(getString(R.string.streams), AppConstants.API_PREFS_STREAMS, AppConstants.DEFAULT_API_PREFS_STREAMS),
-                    Triple(getString(R.string.followed_games), AppConstants.API_PREFS_FOLLOWED_GAMES, AppConstants.DEFAULT_API_PREFS_FOLLOWED_GAMES),
-                    Triple(getString(R.string.followed_streams), AppConstants.API_PREFS_FOLLOWED_STREAMS, AppConstants.DEFAULT_API_PREFS_FOLLOWED_STREAMS),
-                    Triple(getString(R.string.followed_channels), AppConstants.API_PREFS_FOLLOWED_CHANNELS, AppConstants.DEFAULT_API_PREFS_FOLLOWED_CHANNELS),
-                    Triple(getString(R.string.channel_videos), AppConstants.API_PREFS_CHANNEL_VIDEOS, AppConstants.DEFAULT_API_PREFS_CHANNEL_VIDEOS),
-                    Triple(getString(R.string.channel_clips), AppConstants.API_PREFS_CHANNEL_CLIPS, AppConstants.DEFAULT_API_PREFS_CHANNEL_CLIPS),
-                    Triple(getString(R.string.game_streams), AppConstants.API_PREFS_GAME_STREAMS, AppConstants.DEFAULT_API_PREFS_GAME_STREAMS),
-                    Triple(getString(R.string.game_clips), AppConstants.API_PREFS_GAME_CLIPS, AppConstants.DEFAULT_API_PREFS_GAME_CLIPS),
-                    Triple(getString(R.string.search_videos), AppConstants.API_PREFS_SEARCH_VIDEOS, AppConstants.DEFAULT_API_PREFS_SEARCH_VIDEOS),
-                    Triple(getString(R.string.search_streams), AppConstants.API_PREFS_SEARCH_STREAMS, AppConstants.DEFAULT_API_PREFS_SEARCH_STREAMS),
-                    Triple(getString(R.string.search_games), AppConstants.API_PREFS_SEARCH_GAMES, AppConstants.DEFAULT_API_PREFS_SEARCH_GAMES),
-                ).map { item ->
-                    newId++
-                    view.addView(TextView(requireContext()).apply {
-                        text = item.first
-                        layoutParams = LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                        ).apply {
-                            val horizontalMargin = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 20f, resources.displayMetrics).toInt()
-                            val verticalMargin = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 3f, resources.displayMetrics).toInt()
-                            setMargins(horizontalMargin, verticalMargin, horizontalMargin, verticalMargin)
-                        }
-                        context.obtainStyledAttributes(intArrayOf(com.google.android.material.R.attr.textAppearanceTitleMedium)).use {
-                            TextViewCompat.setTextAppearance(this, it.getResourceId(0, 0))
-                        }
-                    })
-                    val prefKey = item.second
-                    val list = (requireContext().prefs().getString(prefKey, null) ?: item.third).split(',').mapNotNull {
-                        val split = it.split(':')
-                        if (split.getOrNull(0) != AppConstants.KICK) return@mapNotNull null
-                        SettingsDragListItem(
-                            key = split[0],
-                            text = when (split[0]) {
-                                "3" -> getString(R.string.api_kick)
-                                else -> getString(R.string.api_kick)
-                            },
-                            default = false,
-                            enabled = split.getOrNull(1) != "0",
-                        )
-                    }
-                    val listAdapter = SettingsDragListAdapter()
-                    val itemTouchHelper = ItemTouchHelper(
-                        object : ItemTouchHelper.SimpleCallback(ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0) {
-                            override fun onMove(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder): Boolean {
-                                Collections.swap(list, viewHolder.bindingAdapterPosition, target.bindingAdapterPosition)
-                                listAdapter.notifyItemMoved(viewHolder.bindingAdapterPosition, target.bindingAdapterPosition)
-                                return true
-                            }
-
-                            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {}
-
-                            override fun isLongPressDragEnabled(): Boolean {
-                                return false
-                            }
-                        }
-                    )
-                    listAdapter.itemTouchHelper = itemTouchHelper
-                    val recyclerView = RecyclerView(requireContext()).apply {
-                        id = newId
-                        layoutManager = SafeLinearLayoutManager(requireContext())
-                        adapter = listAdapter
-                    }
-                    itemTouchHelper.attachToRecyclerView(recyclerView)
-                    listAdapter.submitList(list)
-                    view.addView(recyclerView)
-                    prefKey to listAdapter
-                }
-                requireContext().getAlertDialogBuilder()
-                    .setTitle(preference.title)
-                    .setView(NestedScrollView(requireContext()).apply {
-                        addView(view)
-                        val padding = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 10f, resources.displayMetrics).toInt()
-                        setPadding(0, padding, 0, 0)
-                    })
-                    .setPositiveButton(getString(android.R.string.ok)) { _, _ ->
-                        requireContext().prefs().edit {
-                            list.forEach { item ->
-                                putString(item.first, item.second.currentList.joinToString(",") {
-                                    "${it.key}:${if (it.enabled) "1" else "0"}"
-                                })
-                            }
-                            (requireActivity() as? SettingsActivity)?.setResult()
-                        }
-                    }
-                    .setNegativeButton(getString(android.R.string.cancel), null)
-                    .show()
-                true
-            }
-            findPreference<Preference>("action_delete_all_followed_channels")?.setOnPreferenceClickListener {
-                requireActivity().getAlertDialogBuilder()
-                    .setTitle(getString(R.string.debug_delete_all_followed_channels))
-                    .setMessage(getString(R.string.debug_delete_all_followed_channels_message))
-                    .setPositiveButton(getString(R.string.yes)) { _, _ ->
-                        viewLifecycleOwner.lifecycleScope.launch {
-                            localFollowChannelRepository.deleteAllFollows()
-                            notificationUsersRepository.deleteAllUsers()
-                            shownNotificationsRepository.deleteAll()
-                            Toast.makeText(requireContext(), getString(R.string.debug_delete_all_followed_channels_done), Toast.LENGTH_LONG).show()
-                        }
-                    }
-                    .setNegativeButton(getString(android.R.string.cancel), null)
-                    .show()
-                true
-            }
-            findPreference<EditTextPreference>("gql_headers")?.apply {
-                isPersistent = false
-                text = requireContext().tokenPrefs().getString(AppConstants.GQL_HEADERS, null)
-                setOnPreferenceChangeListener { _, newValue ->
-                    requireContext().tokenPrefs().edit {
-                        putString(AppConstants.GQL_HEADERS, newValue.toString())
-                    }
-                    true
-                }
-            }
-            val app = requireActivity().application as? KickApp
-            val httpEngine = HttpEngineAvailability.isAvailable && app?.isHttpEngineAvailable() == true
-            val cronet = app?.isCronetAvailable() == true
-            findPreference<ListPreference>(AppConstants.NETWORK_LIBRARY)?.apply {
-                setOnPreferenceChangeListener { _, _ ->
-                    runCatching {
-                        @OptIn(coil3.annotation.DelicateCoilApi::class)
-                        coil3.SingletonImageLoader.reset()
-                    }
-                    true
-                }
-                if (!httpEngine || !cronet) {
-                    when {
-                        !httpEngine && !cronet -> {
-                            isVisible = false
-                            if (value != "OkHttp") {
-                                value = "OkHttp"
-                            }
-                        }
-                        !cronet -> {
-                            setEntries(R.array.networkLibraryEntriesNoCronet)
-                            setEntryValues(R.array.networkLibraryEntriesNoCronet)
-                            if (value == "Cronet") {
-                                value = if (httpEngine) "HttpEngine" else "OkHttp"
-                            }
-                        }
-                        else -> {
-                            setEntries(R.array.networkLibraryEntriesNoHttpEngine)
-                            setEntryValues(R.array.networkLibraryEntriesNoHttpEngine)
-                            if (value == "HttpEngine") {
-                                value = if (cronet) "Cronet" else "OkHttp"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-            super.onViewCreated(view, savedInstanceState)
-            setupStandardListBehavior()
-        }
-    }
-
-    class DebugLogSettingsFragment : MaterialPreferenceFragment() {
-        override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
-            setPreferencesFromResource(R.xml.debug_log_preferences, rootKey)
-            findPreference<Preference>("action_clear_diagnostic_log")?.setOnPreferenceClickListener {
-                DiagnosticLogger.clear(requireContext())
-                Toast.makeText(requireContext(), R.string.diagnostic_log_clear_done, Toast.LENGTH_SHORT).show()
-                refreshDiagnosticSummary()
-                true
-            }
-            findPreference<Preference>("action_share_diagnostic_log")?.setOnPreferenceClickListener {
-                openDiagnosticLogViewer()
-                true
-            }
-            findPreference<Preference>("action_test_diagnostic_log")?.setOnPreferenceClickListener {
-                DiagnosticLogger.testEntry()
-                Toast.makeText(requireContext(), R.string.diagnostic_log_test_done, Toast.LENGTH_SHORT).show()
-                refreshDiagnosticSummary()
-                true
-            }
-        }
-
-        override fun onResume() {
-            super.onResume()
-            refreshDiagnosticSummary()
-        }
-
-        /** Live state under the View entry: size + entries, or empty. */
-        private fun refreshDiagnosticSummary() {
-            val pref = findPreference<Preference>("action_share_diagnostic_log") ?: return
-            lifecycleScope.launch {
-                val logView = withContext(Dispatchers.IO) {
-                    runCatching { DiagnosticLogger.readForView(requireContext()) }.getOrNull()
-                }
-                if (!isAdded) return@launch
-                pref.summary = if (logView == null) {
-                    getString(R.string.diagnostic_log_share_empty)
-                } else {
-                    getString(
-                        R.string.diagnostic_log_status,
-                        Formatter.formatShortFileSize(requireContext(), logView.totalBytes),
-                        logView.entryCount,
-                    )
-                }
-            }
-        }
-
-        private fun openDiagnosticLogViewer() {
-            lifecycleScope.launch {
-                val logView = withContext(Dispatchers.IO) {
-                    runCatching { DiagnosticLogger.readForView(requireContext()) }.getOrNull()
-                }
-                if (!isAdded) return@launch
-                if (logView == null) {
-                    Toast.makeText(requireContext(), R.string.diagnostic_log_share_empty, Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                showDiagnosticLogDialog(logView)
-            }
-        }
-
-        private fun showDiagnosticLogDialog(logView: DiagnosticLogger.DiagnosticLogView) {
-            val context = requireContext()
-            val density = resources.displayMetrics.density
-            val status = TextView(context).apply {
-                text = buildDiagnosticStatusText(logView)
-            }
-            val preview = TextView(context).apply {
-                text = logView.preview
-                typeface = Typeface.MONOSPACE
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextIsSelectable(true)
-            }
-            val scroll = NestedScrollView(context).apply {
-                addView(preview)
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    (360f * density).toInt(),
-                )
-            }
-            val container = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(status)
-                addView(scroll, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ).apply { topMargin = (8f * density).toInt() })
-                val padding = (20f * density).toInt()
-                setPadding(padding, (4f * density).toInt(), padding, 0)
-            }
-            val dialog = context.getAlertDialogBuilder()
-                .setTitle(R.string.diagnostic_log_share)
-                .setView(container)
-                .setPositiveButton(R.string.share) { _, _ ->
-                    shareDiagnosticLog()
-                }
-                .setNeutralButton(R.string.diagnostic_log_copy, null)
-                .setNegativeButton(R.string.close, null)
-                .create()
-
-            dialog.setOnShowListener {
-                val neutralBtn = dialog.getButton(DialogInterface.BUTTON_NEUTRAL)
-                (neutralBtn as? MaterialButton)?.setIconResource(R.drawable.baseline_content_copy_24)
-                neutralBtn?.setOnClickListener {
-                    copyDiagnosticLogToClipboard(logView)
-                }
-            }
-            dialog.show()
-        }
-
-        private fun copyDiagnosticLogToClipboard(logView: DiagnosticLogger.DiagnosticLogView) {
-            val context = context ?: return
-            lifecycleScope.launch {
-                val fullText = withContext(Dispatchers.IO) {
-                    runCatching { DiagnosticLogger.exportFile(context)?.readText() }.getOrNull()
-                }?.takeIf { it.isNotBlank() } ?: logView.preview
-
-                if (!isAdded) return@launch
-                val clipboard = ContextCompat.getSystemService(context, ClipboardManager::class.java)
-                if (clipboard != null) {
-                    val clip = ClipData.newPlainText("Xtra Diagnostic Log", fullText)
-                    clipboard.setPrimaryClip(clip)
-                    Toast.makeText(context, R.string.diagnostic_log_copied, Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-
-        private fun buildDiagnosticStatusText(logView: DiagnosticLogger.DiagnosticLogView): String {
-            val context = requireContext()
-            val base = getString(
-                R.string.diagnostic_log_status,
-                Formatter.formatShortFileSize(context, logView.totalBytes),
-                logView.entryCount,
-            )
-            return if (logView.truncated) {
-                base + "\n" + getString(
-                    R.string.diagnostic_log_preview_truncated,
-                    (logView.preview.length / 1024).coerceAtLeast(1),
-                )
-            } else {
-                base
-            }
-        }
-
-        private fun shareDiagnosticLog() {
-            val exportFile = DiagnosticLogger.exportFile(requireContext())
-            if (exportFile == null) {
-                Toast.makeText(requireContext(), R.string.diagnostic_log_share_empty, Toast.LENGTH_SHORT).show()
-            } else {
-                val uri = FileProvider.getUriForFile(
-                    requireContext(),
-                    "${requireContext().packageName}.diagnostic-file-provider",
-                    exportFile
-                )
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                startActivity(Intent.createChooser(intent, getString(R.string.diagnostic_log_share_title)))
-            }
-        }
-
-        override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-            super.onViewCreated(view, savedInstanceState)
-            setupStandardListBehavior()
-        }
-    }
-
-    class SettingsSearchFragment : Fragment() {
-        private var preferences: List<SettingsSearchItem>? = null
-        private var adapter: SettingsSearchAdapter? = null
-        private var savedQuery: String? = null
-
-        override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
-            return RecyclerView(requireContext()).apply {
-                clipToPadding = false
-                layoutManager = SafeLinearLayoutManager(requireContext())
-            }
-        }
-
-        @SuppressLint("RestrictedApi")
-        override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-            super.onViewCreated(view, savedInstanceState)
-            ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
-                val insets = windowInsets.getInsets(
-                    WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()
-                )
-                view.updatePadding(bottom = insets.bottom)
-                WindowInsetsCompat.CONSUMED
-            }
-            requireActivity().findViewById<AppBarLayout>(R.id.appBar)?.let { appBar ->
-                if (requireContext().prefs().getBoolean(AppConstants.UI_THEME_APPBAR_LIFT, true)) {
-                    (view as RecyclerView).let {
-                        appBar.setLiftOnScrollTargetView(it)
-                        it.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-                            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                                super.onScrolled(recyclerView, dx, dy)
-                                appBar.isLifted = recyclerView.canScrollVertically(-1)
-                            }
-                        })
-                        it.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                            appBar.isLifted = it.canScrollVertically(-1)
-                        }
-                    }
-                } else {
-                    appBar.setLiftable(false)
-                    appBar.background = null
-                }
-            }
-            (requireActivity() as? SettingsActivity)?.showSearchView(true)
-            adapter = SettingsSearchAdapter(this).also {
-                it.registerAdapterDataObserver(object : RecyclerView.AdapterDataObserver() {
-
-                    override fun onItemRangeInserted(positionStart: Int, itemCount: Int) {
-                        it.unregisterAdapterDataObserver(this)
-                        it.registerAdapterDataObserver(object : RecyclerView.AdapterDataObserver() {
-                            override fun onItemRangeInserted(positionStart: Int, itemCount: Int) {
-                                try {
-                                    if (positionStart == 0) {
-                                        (view as RecyclerView).scrollToPosition(0)
-                                    }
-                                } catch (e: Exception) {
-
-                                }
-                            }
-                        })
-                    }
-                })
-            }
-            (view as RecyclerView).adapter = adapter
-            if (preferences == null) {
-                val list = mutableListOf<SettingsSearchItem>()
-                val preferenceManager = PreferenceManager(requireContext())
-                fun searchSource(xmlRes: Int, nav: androidx.navigation.NavDirections, titleRes: Int) =
-                    Triple(xmlRes, nav, getString(titleRes))
-                val searchSources = mutableListOf(
-                    searchSource(R.xml.notifications_preferences, SettingsNavGraphDirections.actionGlobalNotificationsSettingsFragment(), R.string.notifications_and_rewards),
-                    searchSource(R.xml.appearance_preferences, SettingsNavGraphDirections.actionGlobalAppearanceSettingsFragment(), R.string.appearance),
-                    searchSource(R.xml.navigation_preferences, SettingsNavGraphDirections.actionGlobalNavigationSettingsFragment(), R.string.navigation),
-                    searchSource(R.xml.chat_preferences, SettingsNavGraphDirections.actionGlobalChatSettingsFragment(), R.string.chat_settings),
-                    searchSource(R.xml.player_overview_preferences, SettingsNavGraphDirections.actionGlobalPlayerOverviewFragment(), R.string.video_and_audio),
-                    searchSource(R.xml.player_background_preferences, SettingsNavGraphDirections.actionGlobalPlayerBackgroundSettingsFragment(), R.string.background_and_pip),
-                    searchSource(R.xml.player_button_preferences, SettingsNavGraphDirections.actionGlobalPlayerButtonSettingsFragment(), R.string.player_buttons),
-                    searchSource(R.xml.player_menu_preferences, SettingsNavGraphDirections.actionGlobalPlayerMenuSettingsFragment(), R.string.player_menu_settings),
-                    searchSource(R.xml.multipov_preferences, SettingsNavGraphDirections.actionGlobalMultiPovSettingsFragment(), R.string.multipov_settings),
-                    searchSource(R.xml.buffer_preferences, SettingsNavGraphDirections.actionGlobalBufferSettingsFragment(), R.string.buffer_settings),
-                    searchSource(R.xml.download_preferences, SettingsNavGraphDirections.actionGlobalDownloadSettingsFragment(), R.string.download_settings),
-                    searchSource(R.xml.advanced_preferences, SettingsNavGraphDirections.actionGlobalAdvancedSettingsFragment(), R.string.system_and_advanced),
-                    searchSource(R.xml.proxy_preferences, SettingsNavGraphDirections.actionGlobalProxySettingsFragment(), R.string.proxy_settings),
-                    searchSource(R.xml.playback_preferences, SettingsNavGraphDirections.actionGlobalPlaybackSettingsFragment(), R.string.stream_parameters),
-                    searchSource(R.xml.api_token_preferences, SettingsNavGraphDirections.actionGlobalApiTokenSettingsFragment(), R.string.account),
-                    searchSource(R.xml.update_preferences, SettingsNavGraphDirections.actionGlobalUpdateSettingsFragment(), R.string.update_settings),
-                )
-                // Debug Settings can swap the entire playback stack and the search
-                // implementation. It must not be reachable in a shipped build.
-                // The log-only screen is safe and always searchable.
-                searchSources.add(searchSource(R.xml.debug_log_preferences, SettingsNavGraphDirections.actionGlobalDebugLogSettingsFragment(), R.string.customize_debug_logs))
-                if (BuildConfig.DEBUG) {
-                    searchSources.add(searchSource(R.xml.debug_preferences, SettingsNavGraphDirections.actionGlobalDebugSettingsFragment(), R.string.debug_settings))
-                    // The developer token screen exposes live tokens and must stay
-                    // out of release search results.
-                    searchSources.add(searchSource(R.xml.developer_preferences, SettingsNavGraphDirections.actionGlobalDeveloperSettingsFragment(), R.string.developer_tokens))
-                }
-                fun collectPreferences(pref: Preference, navDirections: androidx.navigation.NavDirections, location: String) {
-                    if (!BuildConfig.DEBUG && (pref.key == "nav_developer_settings" || pref.key == "nav_debug_settings")) {
-                        return
-                    }
-                    if (pref is PreferenceGroup) {
-                        pref.forEach { child ->
-                            collectPreferences(child, navDirections, location)
-                        }
-                        return
-                    }
-                    when (pref) {
-                        is SwitchPreferenceCompat -> {
-                            list.add(SettingsSearchItem(
-                                navDirections = navDirections,
-                                location = location,
-                                key = pref.key,
-                                title = pref.title,
-                                summary = pref.summary,
-                                value = if (pref.isChecked) {
-                                    getString(R.string.enabled_setting)
-                                } else {
-                                    getString(R.string.disabled_setting)
-                                }
-                            ))
-                        }
-                        is SeekBarPreference -> {
-                            list.add(SettingsSearchItem(
-                                navDirections = navDirections,
-                                location = location,
-                                key = pref.key,
-                                title = pref.title,
-                                summary = pref.summary,
-                                value = pref.value.toString()
-                            ))
-                        }
-                        else -> {
-                            list.add(SettingsSearchItem(
-                                navDirections = navDirections,
-                                location = location,
-                                key = pref.key,
-                                title = pref.title,
-                                summary = pref.summary,
-                            ))
-                        }
-                    }
-                }
-                searchSources.forEach { item ->
-                    preferenceManager.inflateFromResource(requireContext(), item.first, null).let { root ->
-                        collectPreferences(root, item.second, item.third)
-                    }
-                }
-                preferences = list
-            }
-            requireActivity().findViewById<SearchView>(R.id.searchView)?.let {
-                savedQuery?.let { query -> it.setQuery(query, true) }
-                it.requestFocus()
-                WindowCompat.getInsetsController(requireActivity().window, it).show(WindowInsetsCompat.Type.ime())
-            }
-        }
-
-        fun search(query: String) {
-            savedQuery = query
-            if (query.isNotBlank()) {
-                preferences?.filter { it.title?.contains(query, true) == true || it.summary?.contains(query, true) == true }?.let { list ->
-                    adapter?.submitList(list)
-                }
-            } else {
-                adapter?.submitList(emptyList())
-            }
-        }
-
-        override fun onDestroyView() {
-            super.onDestroyView()
-            (requireActivity() as? SettingsActivity)?.showSearchView(false)
         }
     }
 }

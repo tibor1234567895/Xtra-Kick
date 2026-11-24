@@ -11,13 +11,8 @@ import com.xtrakick.app.model.kick.KickDropParticipatingChannel
 import com.xtrakick.app.model.kick.KickRewardsParsing
 import com.xtrakick.app.model.kick.KickUserLevel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -63,18 +58,6 @@ class KickRewardsRepository @Inject constructor(
             val root = json.parseToJsonElement(rawJson)
             val challenges = KickRewardsParsing.parseChallenges(root)
             _dailyChallengesFlow.value = challenges
-        }
-    }
-
-    fun pollDailyChallenges(intervalMs: Long = REWARDS_POLL_INTERVAL_MS): Flow<List<KickDailyChallenge>> = flow {
-        while (currentCoroutineContext().isActive) {
-            if (canAttemptClaims()) {
-                val challenges = runCatching { getDailyChallenges() }.getOrNull()
-                if (challenges != null) {
-                    emit(challenges)
-                }
-            }
-            delay(intervalMs)
         }
     }
 

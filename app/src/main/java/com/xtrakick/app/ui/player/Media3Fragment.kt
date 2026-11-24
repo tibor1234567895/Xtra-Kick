@@ -1009,14 +1009,8 @@ class Media3Fragment : PlayerFragment() {
 
     override fun updateProgress() {
         with(binding.playerControls) {
-            if (videoType == STREAM) {
+            if (videoType == STREAM && isMaximized) {
                 val offset = if (viewModel.isLiveRewound) null else player?.currentLiveOffset?.takeIf { it != androidx.media3.common.C.TIME_UNSET }
-                val isKickStream = requireArguments().getString(KEY_STREAM_SOURCE).equals(AppConstants.KICK, true)
-                val catchupEnabled = if (isKickStream) {
-                    prefs.getBoolean(AppConstants.PLAYER_IVS_LATENCY_CATCHUP, true)
-                } else {
-                    true
-                }
                 val targetOffset = liveTargetOffsetMs ?: LiveLatencySettings.resolve(prefs).targetOffsetMs
                 updateLatency(offset, targetOffset)
             }
@@ -1031,7 +1025,8 @@ class Media3Fragment : PlayerFragment() {
             }
             root.removeCallbacks(updateProgressAction)
             player?.let { player ->
-                if (player.isPlaying) {
+                val shouldPoll = root.isVisible || (videoType == STREAM && isMaximized)
+                if (player.isPlaying && shouldPoll) {
                     val speed = player.playbackParameters.speed
                     val delay = if (speed > 0f) {
                         (progressBar.preferredUpdateDelay / speed).toLong().coerceIn(200L..1000L)

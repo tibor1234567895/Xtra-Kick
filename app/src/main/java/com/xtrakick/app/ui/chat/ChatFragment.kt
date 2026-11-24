@@ -1408,7 +1408,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         thirdPartyEmotes = viewModel.thirdPartyEmotes,
                         globalBadges = viewModel.globalBadges,
                         channelBadges = viewModel.channelBadges,
-                        cheerEmotes = viewModel.cheerEmotes,
                         namePaints = viewModel.namePaints,
                         stvBadges = viewModel.stvBadges,
                         personalEmoteSets = viewModel.personalEmoteSets,
@@ -2113,12 +2112,13 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
-                            viewModel.updateMessage.collectLatest { update ->
-                                val message = update.second
-                                ChatAdapterUtils.invalidatePreparedMessage(message)
+                            viewModel.updateMessages.collect { updatedMessages ->
+                                updatedMessages.forEach { ChatAdapterUtils.invalidatePreparedMessage(it) }
                                 renderBufferedMessages()
-                                messageDialog?.updateMessage(message)
-                                replyDialog?.updateMessage(message)
+                                updatedMessages.forEach { message ->
+                                    messageDialog?.updateMessage(message)
+                                    replyDialog?.updateMessage(message)
+                                }
                             }
                         }
                     }
@@ -2207,7 +2207,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 channelId = channelId,
                 channelLogin = channelLogin,
                 chatUrl = args.getString(KEY_CHAT_URL),
-                videoId = args.getString(KEY_VIDEO_ID),
                 startTime = args.getInt(KEY_START_TIME),
                 getCurrentPosition = (parentFragment as PlayerFragment)::getChatPosition,
                 getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,
@@ -2589,14 +2588,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     message = text,
                     replyId = replyId,
                     networkLibrary = requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                    kickWebHeaders = KickApiHelper.getKickWebHeaders(requireContext(), true),
-                    kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(requireContext()),
-                    accountId = requireContext().tokenPrefs().getString(AppConstants.USER_ID, null),
                     channelId = requireArguments().getString(KEY_CHANNEL_ID),
                     channelLogin = requireArguments().getString(KEY_CHANNEL_LOGIN),
                     useApiCommands = requireContext().prefs().getBoolean(AppConstants.DEBUG_API_COMMANDS, true),
-                    useApiChatMessages = requireContext().prefs().getBoolean(AppConstants.DEBUG_API_CHAT_MESSAGES, true),
-                    enableIntegrity = requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false),
                 )
                 val lastIndex = synchronized(viewModel.chatMessages) {
                     viewModel.chatMessages.lastIndex
@@ -2724,7 +2718,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     channelId = channelId,
                     channelLogin = channelLogin,
                     chatUrl = args.getString(KEY_CHAT_URL),
-                    videoId = args.getString(KEY_VIDEO_ID),
                     startTime = args.getInt(KEY_START_TIME),
                     getCurrentPosition = (parentFragment as PlayerFragment)::getChatPosition,
                     getCurrentSpeed = (parentFragment as PlayerFragment)::getCurrentSpeed,

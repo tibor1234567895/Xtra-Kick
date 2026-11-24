@@ -8,6 +8,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.xtrakick.app.R
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.findActivity
 import com.xtrakick.app.util.prefs
 
 class GridRecyclerView : RecyclerView {
@@ -32,6 +33,7 @@ class GridRecyclerView : RecyclerView {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (context.findActivity()?.isInPictureInPictureMode == true) return
         if (!material3) {
             removeItemDecorationAt(0)
         }

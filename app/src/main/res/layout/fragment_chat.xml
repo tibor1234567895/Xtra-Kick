@@ -173,7 +173,8 @@
                 android:layout_gravity="center_vertical"
                 android:background="?android:selectableItemBackground"
                 android:src="@drawable/baseline_close_black_36"
-                app:tint="?attr/colorControlNormal" />
+                app:tint="?attr/colorControlNormal"
+                android:contentDescription="@string/close" />
         </LinearLayout>
 
         <LinearLayout
@@ -217,7 +218,8 @@
                 android:src="@drawable/baseline_backspace_black_24"
                 android:visibility="gone"
                 app:tint="?attr/colorControlNormal"
-                tools:visibility="visible" />
+                tools:visibility="visible"
+                android:contentDescription="@string/clear" />
 
             <ImageButton
                 android:id="@+id/emotes"
@@ -226,7 +228,8 @@
                 android:background="?android:selectableItemBackground"
                 android:src="@drawable/ic_tag_faces_black_24dp"
                 app:tint="?attr/colorControlNormal"
-                tools:visibility="visible" />
+                tools:visibility="visible"
+                android:contentDescription="@string/cd_open_emotes" />
 
             <ImageButton
                 android:id="@+id/send"
@@ -236,7 +239,8 @@
                 android:src="@drawable/ic_send_black_24dp"
                 android:visibility="gone"
                 app:tint="?attr/colorControlNormal"
-                tools:visibility="visible" />
+                tools:visibility="visible"
+                android:contentDescription="@string/cd_send_message" />
         </LinearLayout>
 
         <LinearLayout
@@ -424,7 +428,8 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintVertical_bias="0.0"
-            tools:src="@tools:sample/avatars" />
+            tools:src="@tools:sample/avatars"
+            android:contentDescription="@null" />
 
         <TextView
             android:id="@+id/pinnedGiftTitle"
@@ -518,7 +523,8 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintVertical_bias="0.0"
-            tools:src="@tools:sample/backgrounds/scenic" />
+            tools:src="@tools:sample/backgrounds/scenic"
+            android:contentDescription="@null" />
 
         <TextView
             android:id="@+id/raidText"
@@ -565,7 +571,8 @@
             android:src="@drawable/baseline_close_black_36"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
-            app:tint="?attr/colorControlNormal" />
+            app:tint="?attr/colorControlNormal"
+            android:contentDescription="@string/close" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <androidx.constraintlayout.widget.ConstraintLayout
@@ -640,7 +647,8 @@
             android:src="@drawable/baseline_close_black_36"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
-            app:tint="?attr/colorControlNormal" />
+            app:tint="?attr/colorControlNormal"
+            android:contentDescription="@string/close" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <androidx.constraintlayout.widget.ConstraintLayout
@@ -720,7 +728,8 @@
             android:src="@drawable/baseline_close_black_36"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
-            app:tint="?attr/colorControlNormal" />
+            app:tint="?attr/colorControlNormal"
+            android:contentDescription="@string/close" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <androidx.constraintlayout.widget.ConstraintLayout

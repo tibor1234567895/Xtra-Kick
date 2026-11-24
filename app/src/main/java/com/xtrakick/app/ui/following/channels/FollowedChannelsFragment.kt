@@ -13,7 +13,6 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.paging.LoadState
 import androidx.paging.PagingDataAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.xtrakick.app.R
@@ -40,7 +39,6 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
     private val binding get() = _binding!!
     private val viewModel: FollowedChannelsViewModel by viewModels()
     private lateinit var pagingAdapter: PagingDataAdapter<User, out RecyclerView.ViewHolder>
-    private var scrollToTopAfterRefresh = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = CommonRecyclerViewLayoutBinding.inflate(inflater, container, false)
@@ -50,7 +48,7 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         pagingAdapter = FollowedChannelsAdapter(this)
-        setAdapter(binding.recyclerView, pagingAdapter)
+        setAdapter(binding.recyclerView, pagingAdapter, scrollToTopOnRefresh = false)
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
             if (activity?.findViewById<LinearLayout>(R.id.navBarContainer)?.isVisible == false) {
                 val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -77,18 +75,9 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
                 }
             }
         }
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                pagingAdapter.loadStateFlow.collectLatest { loadState ->
-                    if (scrollToTopAfterRefresh && loadState.refresh is LoadState.NotLoading) {
-                        binding.recyclerView.scrollToPosition(0)
-                        scrollToTopAfterRefresh = false
-                    }
-                }
-            }
-        }
         initializeAdapter(binding, pagingAdapter)
         binding.swipeRefresh.setOnRefreshListener {
+            requestScrollToTopOnNextRefresh()
             viewLifecycleOwner.lifecycleScope.launch {
                 kickFollowSync.refreshNow()
                 pagingAdapter.refresh()
@@ -117,7 +106,7 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
         if ((parentFragment as? FragmentHost)?.currentFragment == this) {
             viewLifecycleOwner.lifecycleScope.launch {
                 if (changed) {
-                    scrollToTopAfterRefresh = true
+                    requestScrollToTopOnNextRefresh()
                     viewModel.setFilter(sort, order)
                     viewModel.sortText.value = buildSortText(sortText, orderText)
                 }

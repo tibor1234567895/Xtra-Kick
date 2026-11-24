@@ -24,7 +24,6 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.xtrakick.app.R
-import com.xtrakick.app.model.chat.CheerEmote
 import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.model.chat.ChatBadge
 import com.xtrakick.app.model.chat.ChatEmote
@@ -960,7 +959,6 @@ class VideoDownloadWorker @AssistedInject constructor(
                 val useWebp = context.prefs().getBoolean(AppConstants.CHAT_USE_WEBP, true)
                 val channelId = offlineVideo.channelId
                 val channelLogin = offlineVideo.channelLogin
-                val cheerEmoteList = emptyList<CheerEmote>()
                 val emoteList = emptyList<Emote>()
                 var completedChatBytes = 0L
                 if (isShared) {
@@ -1042,7 +1040,6 @@ class VideoDownloadWorker @AssistedInject constructor(
                         }
                         val chatBadgesList = mutableListOf<ChatBadge>()
                         val chatEmotesList = mutableListOf<ChatEmote>()
-                        val cheerEmotesList = mutableListOf<CheerEmote>()
                         val emotesList = mutableListOf<Emote>()
 
                         suspend fun walkChain(chain: Int): ChatWalkResult {
@@ -1141,16 +1138,7 @@ class VideoDownloadWorker @AssistedInject constructor(
                             }
                             result.words.forEach { word ->
                                 if (savedEmotes.add(word)) {
-                                    val bitsCount = word.takeLastWhile { it.isDigit() }
-                                    val cheerEmote = if (bitsCount.isNotEmpty()) {
-                                        val bitsName = word.substringBeforeLast(bitsCount)
-                                        cheerEmoteList.findLast { it.name.equals(bitsName, true) && it.minBits <= bitsCount.toInt() }
-                                    } else null
-                                    if (cheerEmote != null) {
-                                        cheerEmotesList.add(cheerEmote)
-                                    } else {
-                                        emoteList.find { it.name == word }?.let { emotesList.add(it) }
-                                    }
+                                    emoteList.find { it.name == word }?.let { emotesList.add(it) }
                                 }
                             }
                         }
@@ -1228,23 +1216,6 @@ class VideoDownloadWorker @AssistedInject constructor(
                                 writer.name("data".also { position += it.length + 3 }).value(Base64.encodeToString(response, Base64.NO_WRAP or Base64.NO_PADDING).also { position += it.toByteArray().size + 2 })
                                 writer.name("setId".also { position += it.length + 4 }).value(badge.setId.also { position += it.toByteArray().size + it.count { c -> c == '"' || c == '\\' } + 2 })
                                 writer.name("version".also { position += it.length + 4 }).value(badge.version.also { position += it.toByteArray().size + it.count { c -> c == '"' || c == '\\' } + 2 })
-                                writer.endObject().also { position += 1 }
-                            }
-                        }
-                        if (downloadEmotes && cheerEmotesList.isNotEmpty()) {
-                            writeImageArray("cheerEmotes", cheerEmotesList, { cheerEmote ->
-                                when (emoteQuality) {
-                                    "4" -> cheerEmote.url4x ?: cheerEmote.url3x ?: cheerEmote.url2x ?: cheerEmote.url1x
-                                    "3" -> cheerEmote.url3x ?: cheerEmote.url2x ?: cheerEmote.url1x
-                                    "2" -> cheerEmote.url2x ?: cheerEmote.url1x
-                                    else -> cheerEmote.url1x
-                                }
-                            }) { cheerEmote, response ->
-                                writer.beginObject().also { position += 1 }
-                                writer.name("data".also { position += it.length + 3 }).value(Base64.encodeToString(response, Base64.NO_WRAP or Base64.NO_PADDING).also { position += it.toByteArray().size + 2 })
-                                writer.name("name".also { position += it.length + 4 }).value(cheerEmote.name.also { position += it.toByteArray().size + it.count { c -> c == '"' || c == '\\' } + 2 })
-                                writer.name("minBits".also { position += it.length + 4 }).value(cheerEmote.minBits.also { position += it.toString().length })
-                                cheerEmote.color?.let { value -> writer.name("color".also { position += it.length + 4 }).value(value.also { position += it.toByteArray().size + it.count { c -> c == '"' || c == '\\' } + 2 }) }
                                 writer.endObject().also { position += 1 }
                             }
                         }

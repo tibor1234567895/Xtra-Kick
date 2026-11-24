@@ -124,6 +124,7 @@
     <string name="oldest_first">En eski başta</string>
     <string name="logout_title">Çıkış yapılsın mı?</string>
     <string name="logout_msg">%s olarak giriş yapıldı</string>
+    <string name="logout_saved_session_msg">Çıkış yapıp bu cihazdaki kayıtlı Kick oturumu kaldırılsın mı?</string>
     <string name="logout_success_toast">Çıkış yapıldı</string>
     <string name="logout_revoke_failed_toast">Bu cihazda çıkış yapıldı ancak Kick üzerindeki belirteç iptal edilemedi</string>
     <string name="never">Asla</string>
@@ -192,7 +193,6 @@
     <string name="user_staff">Personel</string>
     <string name="uptime">%s süredir yayında</string>
     <string name="recentMsg_enable">Son mesajları yükle</string>
-    <string name="recentMsg_limit">Son mesaj sınırı</string>
     <string name="last_broadcast_date">Son yayın %s</string>
     <string name="followed_at">Takip tarihi: %s</string>
     <string name="following_label">Takip Ediliyor</string>
@@ -395,7 +395,6 @@
     <string name="irc_notice_whisper_limit_per_sec">Çok hızlı fısıltı gönderiyorsunuz. Bir saniye içinde tekrar deneyin.</string>
     <string name="irc_notice_whisper_restricted">Ayarlarınız bu fısıltıyı göndermenizi engelliyor.</string>
     <string name="irc_notice_whisper_restricted_recipient">Bu kullanıcının ayarları bu fısıltıyı almasını engelliyor.</string>
-    <string name="position">Konum: %s</string>
     <string name="player_viewerlist">İzleyici sayısından izleyici listesini aç</string>
     <string name="broadcaster">Yayıncı</string>
     <string name="moderators">Moderatörler</string>
@@ -493,7 +492,6 @@
     <string name="rebuffer">Yeniden arabelleğe alma</string>
     <string name="buffer_settings">Arabellek ayarları</string>
     <string name="player_buttons">Oynatıcı düğmeleri</string>
-    <string name="keep_chat_open">Sohbeti arka planda bağlı tut</string>
     <string name="save_sort_channel">Bu kanal için seçimleri hatırla</string>
     <string name="save_sort_game">Bu oyun için seçimleri hatırla</string>
     <string name="show_chat">Sohbeti göster</string>
@@ -596,7 +594,6 @@
     <string name="use_integrity">Bütünlük belirteci kullan</string>
     <string name="use_audio_focus">Diğer uygulamalar ses çaldığında duraklat</string>
     <string name="handle_audio_becoming_noisy">Kulaklık çıkarıldığında duraklat</string>
-    <string name="proxy_playback_access_token">Oynatma erişim belirteci için vekil sunucu kullan</string>
     <string name="proxy_multivariant_playlist">Çok varyantlı oynatma listesi için vekil sunucu kullan</string>
     <string name="proxy_host">Sunucu (Host)</string>
     <string name="proxy_port">Bağlantı noktası (Port)</string>
@@ -642,7 +639,6 @@
     <string name="dynamic_amoled">Dinamik siyah</string>
     <string name="material_3">Material 3 teması</string>
     <string name="use_api_chat_messages">Sohbet mesajlarını API kullanarak gönder</string>
-    <string name="use_eventsub_chat">EventSub sohbeti</string>
     <string name="notification_permission_title">Bildirim izni gerekli</string>
     <string name="notification_permission_message">İndirme ilerlemesini göstermek için bildirim izni gereklidir.</string>
     <string name="select_directory">Dizin seç</string>
@@ -865,7 +861,6 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="download_threads_summary">Eşzamanlı olarak indirilen parça sayısı</string>
     <string name="minimize">Küçült</string>
     <string name="player_menu_settings">Oynatıcı menüsü ayarları</string>
-    <string name="chapters">Bölümler</string>
     <string name="seek_to_live">Canlı yayına atla</string>
     <string name="zoomed_to_fill">Ekrana sığacak şekilde yakınlaştırıldı</string>
     <string name="original">Orijinal</string>
@@ -874,6 +869,7 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="chat_input_toggle">Sohbet girişini aç/kapat</string>
     <string name="chat_toggle">Sohbeti aç/kapat</string>
     <string name="fullscreen">Tam ekran</string>
+    <string name="exit_fullscreen">Tam ekrandan çık</string>
     <string name="min_buffer">Minimum arabellek</string>
     <string name="min_buffer_summary">Milisaniye cinsinden minimum arabellek</string>
     <string name="player_latency_profile">Canlı gecikme profili</string>
@@ -1133,6 +1129,7 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="log_in_to_kick_summary">Sohbet etmek, kanalları takip etmek ve günlük ödülleri takip etmek için giriş yapın</string>
     <string name="logged_in_as_summary">%s olarak giriş yapıldı</string>
     <string name="tap_to_log_out">Çıkış yapmak için dokunun</string>
+    <string name="kick_session_unavailable">Kayıtlı oturum geçici olarak kullanılamıyor. Çıkış seçenekleri için dokun.</string>
     <string name="verify_session_startup">Uygulama başlangıcında oturumu doğrula</string>
     <string name="verify_session_startup_summary">Uygulamayı başlatırken belirteç yetkilendirmesini Kick ile kontrol edin</string>
     <string name="account_sync">Hesap Eşitleme</string>
@@ -1140,7 +1137,11 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="login_to_import_follows">Takip edilen kanalları içe aktarmak için giriş yapın</string>
     <string name="developer_tokens">Geliştirici ve API Belirteçleri</string>
     <string name="developer_tokens_summary">OAuth belirteçleri, oturum doğrulama ve EventSub webhook\'ları</string>
-    <string name="proxy_settings_summary">HTTP, HTTPS ve SOCKS5 vekil sunucu yapılandırması</string>
+    <string name="proxy_settings_summary">HTTP ve HTTPS vekil sunucu yapılandırması</string>
+    <string name="cd_open_emotes">İfadeleri aç</string>
+    <string name="cd_send_message">Mesaj gönder</string>
+    <string name="cd_more_options">Diğer seçenekler</string>
+    <string name="cd_set_as_default">Varsayılan olarak ayarla</string>
     <string name="advanced_image_rendering">Gelişmiş ve Performans</string>
     <string name="storage_and_cleanup">Depolama ve Temizlik</string>
     <string name="connection_timings">Bağlantı Zamanlamaları</string>
@@ -1183,6 +1184,8 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="action_not_now">Şimdi değil</string>
     <string name="chat_guest_login_prompt">Sohbet etmek ve ödülleri almak için giriş yapın</string>
     <string name="live_widget_title">Canlı Kanallar</string>
+    <string name="live_widget_refreshing">Yenileniyor…</string>
+    <string name="live_widget_updated_just_now">Az önce güncellendi</string>
     <string name="live_widget_empty">Şu anda hiçbir takip edilen yayıncı canlı değil</string>
     <string name="live_widget_tap_to_open">Xtra\'yı açmak için dokunun</string>
     <string name="welcome_title">Xtra\'ya Hoş Geldiniz</string>
@@ -1315,4 +1318,5 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="clip_sort_date">Oluşturulma tarihi</string>
     <string name="clip_sort_duration">Süre</string>
     <string name="clip_sort_recent_limit">Tarihe veya süreye göre sıralama, seçilen dönemdeki en yeni %d klibi kapsar.</string>
+    <string name="cd_scroll_to_top">Yukarı kaydır</string>
 </resources>

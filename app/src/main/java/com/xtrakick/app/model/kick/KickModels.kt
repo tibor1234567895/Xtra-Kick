@@ -133,11 +133,6 @@ class KickChannelLivestream(
 }
 
 @Serializable
-class KickChannelLivestreamResponse(
-    val data: KickChannelLivestream? = null,
-)
-
-@Serializable
 class KickCategory(
     val id: Long? = null,
     val name: String? = null,

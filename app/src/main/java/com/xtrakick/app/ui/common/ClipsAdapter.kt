@@ -12,7 +12,6 @@ import androidx.paging.PagingDataAdapter
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import coil3.imageLoader
-import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.request.target
@@ -55,6 +54,8 @@ class ClipsAdapter(
                     oldItem.uploadDate == newItem.uploadDate
     }) {
 
+    private val prefs = fragment.requireContext().prefs()
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PagingViewHolder {
         val binding = FragmentClipsListItemBinding.inflate(LayoutInflater.from(parent.context), parent, false)
         return PagingViewHolder(binding, fragment, showGame, showChannel)
@@ -81,10 +82,9 @@ class ClipsAdapter(
                     val resolvedThumbnail = item.thumbnail
                     thumbnail.visibility = View.VISIBLE
                     if (!resolvedThumbnail.isNullOrBlank()) {
-                        fragment.requireContext().imageLoader.enqueue(
-                            ImageRequest.Builder(fragment.requireContext()).apply {
+                        context.imageLoader.enqueue(
+                            ImageRequest.Builder(context).apply {
                                 data(resolvedThumbnail)
-                                diskCachePolicy(CachePolicy.DISABLED)
                                 crossfade(true)
                                 target(thumbnail)
                             }.build()
@@ -107,7 +107,7 @@ class ClipsAdapter(
                         views.text = context.resources.getQuantityString(
                             R.plurals.views,
                             count,
-                            KickApiHelper.formatCount(count, context.prefs().getBoolean(AppConstants.UI_TRUNCATEVIEWCOUNT, true))
+                            KickApiHelper.formatCount(count, prefs.getBoolean(AppConstants.UI_TRUNCATEVIEWCOUNT, true))
                         )
                     } else {
                         views.visibility = View.GONE
@@ -134,10 +134,10 @@ class ClipsAdapter(
                         }
                         if (item.channelLogo != null) {
                             userImage.visibility = View.VISIBLE
-                            fragment.requireContext().imageLoader.enqueue(
-                                ImageRequest.Builder(fragment.requireContext()).apply {
+                            context.imageLoader.enqueue(
+                                ImageRequest.Builder(context).apply {
                                     data(item.channelLogo)
-                                    if (context.prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
+                                    if (prefs.getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
                                         transformations(CircleCropTransformation())
                                     }
                                     crossfade(true)
@@ -152,7 +152,7 @@ class ClipsAdapter(
                         if (effectiveChannelName != null) {
                             username.visibility = View.VISIBLE
                             username.text = if (item.channelLogin != null && !item.channelLogin.equals(effectiveChannelName, true)) {
-                                when (context.prefs().getString(AppConstants.UI_NAME_DISPLAY, "1")) {
+                                when (prefs.getString(AppConstants.UI_NAME_DISPLAY, "1")) {
                                     "0" -> "${effectiveChannelName}(${item.channelLogin})"
                                     "1" -> effectiveChannelName
                                     else -> item.channelLogin
@@ -183,7 +183,7 @@ class ClipsAdapter(
                             val resolvedSlug = KickApiHelper.resolveEffectiveCategorySlug(item.gameSlug, effectiveGameName)
                             val resolvedId = KickApiHelper.sanitizeGameId(item.gameId, resolvedSlug)
                             fragment.findNavController().navigate(
-                                if (context.prefs().getBoolean(AppConstants.UI_GAMEPAGER, true)) {
+                                if (prefs.getBoolean(AppConstants.UI_GAMEPAGER, true)) {
                                     GamePagerFragmentDirections.actionGlobalGamePagerFragment(
                                         gameId = resolvedId,
                                         gameSlug = resolvedSlug,

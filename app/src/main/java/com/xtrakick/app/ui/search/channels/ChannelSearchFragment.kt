@@ -48,7 +48,7 @@ class ChannelSearchFragment : PagedListFragment(), Searchable, Scrollable {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         pagingAdapter = ChannelSearchAdapter(this, viewModel::resolveProfileImage)
-        setAdapter(binding.recyclerView, pagingAdapter)
+        setAdapter(binding.recyclerView, pagingAdapter, scrollTopButton = binding.scrollTop)
         ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
             if (activity?.findViewById<LinearLayout>(R.id.navBarContainer)?.isVisible == false) {
                 val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())

@@ -1,5 +1,6 @@
 package com.xtrakick.app.ui.widget
 
+import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -52,13 +53,18 @@ class LiveChannelsWidgetService : RemoteViewsService() {
         val repository = EntryPointAccessors.fromApplication(
             applicationContext, LiveChannelsWidgetEntryPoint::class.java,
         ).followedLiveStreamsRepository()
-        return LiveChannelsRemoteViewsFactory(applicationContext, repository)
+        val appWidgetId = intent.getIntExtra(
+            AppWidgetManager.EXTRA_APPWIDGET_ID,
+            AppWidgetManager.INVALID_APPWIDGET_ID,
+        )
+        return LiveChannelsRemoteViewsFactory(applicationContext, repository, appWidgetId)
     }
 }
 
 class LiveChannelsRemoteViewsFactory(
     private val context: Context,
     private val repository: FollowedLiveStreamsRepository,
+    private val appWidgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID,
 ) : RemoteViewsService.RemoteViewsFactory {
 
     @Volatile private var streams: List<Stream> = emptyList()
@@ -73,16 +79,35 @@ class LiveChannelsRemoteViewsFactory(
     override fun onCreate() {}
 
     override fun onDataSetChanged() {
-        streams = runCatching {
-            runBlocking {
-                kotlinx.coroutines.withTimeout(15_000L) {
-                    repository.loadLiveFollowed(forceRefresh = LiveChannelsWidgetProvider.consumeRefreshRequest()).items
+        val force = LiveChannelsWidgetProvider.consumeRefreshRequest(appWidgetId)
+        var refreshedSuccessfully = false
+        try {
+            val result = runCatching {
+                runBlocking {
+                    kotlinx.coroutines.withTimeout(15_000L) {
+                        repository.loadLiveFollowed(forceRefresh = force)
+                    }
+                }
+            }.getOrNull()
+            if (result != null && result.networkSucceeded) {
+                streams = result.items
+                refreshedSuccessfully = true
+            } else {
+                streams = repository.peekCache(maxAgeMs = TimeUnit.HOURS.toMillis(24))
+            }
+        } finally {
+            if (force) {
+                if (refreshedSuccessfully) {
+                    LiveChannelsWidgetProvider.showRefreshedFeedback(context, appWidgetId)
+                } else {
+                    LiveChannelsWidgetProvider.resetWidgetHeader(context, appWidgetId)
                 }
             }
-        }.getOrElse { repository.peekCache(maxAgeMs = TimeUnit.HOURS.toMillis(24)) }
+        }
     }
 
     override fun onDestroy() {
+        LiveChannelsWidgetProvider.flushPendingHeaderReset(context, appWidgetId)
         avatarScope.cancel()
         avatars.evictAll()
         avatarRetryAfter.evictAll()

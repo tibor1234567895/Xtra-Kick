@@ -1,15 +1,16 @@
 package com.xtrakick.app.ui.saved.bookmarks
 
+import android.graphics.BitmapFactory
 import android.net.http.HttpEngine
 import com.xtrakick.app.util.NetworkUtils
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xtrakick.app.model.ui.Bookmark
 import com.xtrakick.app.model.ui.SortChannel
-import com.xtrakick.app.model.ui.Video
 import com.xtrakick.app.model.ui.VodBookmarkIgnoredUser
 import com.xtrakick.app.repository.BookmarksRepository
 import com.xtrakick.app.repository.KickPublicApiRepository
+import com.xtrakick.app.repository.KickRepository
 import com.xtrakick.app.repository.PlayerRepository
 import com.xtrakick.app.repository.SortChannelRepository
 import com.xtrakick.app.repository.VodBookmarkIgnoredUsersRepository
@@ -21,16 +22,20 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import org.chromium.net.CronetEngine
 import java.io.File
-import java.io.FileOutputStream
+import java.io.IOException
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 
 @HiltViewModel
 class BookmarksViewModel @Inject internal constructor(
     private val kickPublicApiRepository: KickPublicApiRepository,
+    private val kickRepository: KickRepository,
     private val bookmarksRepository: BookmarksRepository,
     private val sortChannelRepository: SortChannelRepository,
     playerRepository: PlayerRepository,
@@ -41,12 +46,10 @@ class BookmarksViewModel @Inject internal constructor(
     private val okHttpClient: OkHttpClient,
 ) : ViewModel() {
 
-    val integrity = MutableStateFlow<String?>(null)
-
     val positions = playerRepository.loadVideoPositions()
     val ignoredUsers = vodBookmarkIgnoredUsersRepository.loadUsersFlow()
     private var updatedUsers = false
-    private var updatedVideos = false
+    private val refreshMutex = Mutex()
 
     val filter = MutableStateFlow<Filter?>(null)
     val sortText = MutableStateFlow<CharSequence?>(null)
@@ -115,161 +118,73 @@ class BookmarksViewModel @Inject internal constructor(
         }
     }
 
-    private fun enqueueThumbnailDownload(
-        filesDir: String,
-        videoId: String?,
+    private suspend fun downloadThumbnail(
+        directory: File,
+        bookmarkId: Int,
         thumbUrl: String?,
         networkLibrary: String?,
-    ): String? {
-        val validId = videoId?.takeIf { it.isNotBlank() } ?: return null
-        val validUrl = thumbUrl?.takeIf { it.isNotBlank() } ?: return null
-        File(filesDir, "thumbnails").mkdirs()
-        val path = filesDir + File.separator + "thumbnails" + File.separator + validId
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val (status, bytes) = NetworkUtils.fetchBytesRaw(
-                    httpEngine = httpEngine,
-                    cronetEngine = cronetEngine,
-                    executor = cronetExecutor,
-                    okHttp = okHttpClient,
-                    networkLibrary = networkLibrary,
-                    url = validUrl,
-                )
-                if (status in 200..299) {
-                    FileOutputStream(path).use { outputStream ->
-                        outputStream.write(bytes)
-                    }
-                }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-            }
+    ): String? = withContext(Dispatchers.IO) {
+        val url = thumbUrl?.takeIf { it.isNotBlank() } ?: return@withContext null
+        try {
+            val (status, bytes) = NetworkUtils.fetchBytesRaw(
+                httpEngine = httpEngine,
+                cronetEngine = cronetEngine,
+                executor = cronetExecutor,
+                okHttp = okHttpClient,
+                networkLibrary = networkLibrary,
+                url = url,
+            )
+            writeBookmarkThumbnail(directory, bookmarkId, status, bytes)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            null
         }
-        return path
     }
 
-    fun updateVideo(filesDir: String, videoId: String?, networkLibrary: String?, kickWebHeaders: Map<String, String>, kickPublicApiHeaders: Map<String, String>, enableIntegrity: Boolean) {
+    fun updateVideo(filesDir: String, videoId: String?, networkLibrary: String?) {
+        if (videoId.isNullOrBlank()) return
         viewModelScope.launch {
-            if (!videoId.isNullOrBlank()) {
-                val video = if (kickPublicApiHeaders.isNotEmpty()) {
-                    try {
-                        kickPublicApiRepository.getVideos(
-                            networkLibrary = networkLibrary,
-                            headers = kickPublicApiHeaders,
-                            ids = listOf(videoId),
-                        ).data.firstOrNull()?.let {
-                            Video(
-                                id = it.id,
-                                channelId = it.channelId,
-                                channelLogin = it.channelLogin,
-                                channelName = it.channelName,
-                                title = it.title,
-                                viewCount = it.viewCount,
-                                uploadDate = it.uploadDate,
-                                duration = it.duration,
-                                thumbnailUrl = it.thumbnailUrl,
-                            )
-                        }
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                        null
-                    }
-                } else null
+            refreshMutex.withLock {
+                val initial = bookmarksRepository.getBookmarkByVideoId(videoId) ?: return@withLock
+                val video = try {
+                    kickRepository.getVideoById(videoId, initial.userLogin)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    null
+                } ?: return@withLock
+                val directory = File(filesDir, "thumbnails")
+                val downloadedThumbnail = downloadThumbnail(directory, initial.id, video.thumbnail, networkLibrary)
                 val bookmark = bookmarksRepository.getBookmarkByVideoId(videoId)
-                if (video != null && bookmark != null) {
-                    val downloadedThumbnail = enqueueThumbnailDownload(filesDir, video.id, video.thumbnail, networkLibrary)
-                    bookmarksRepository.updateBookmark(
-                        Bookmark(
-                            videoId = bookmark.videoId,
-                            userId = video.channelId ?: bookmark.userId,
-                            userLogin = video.channelLogin ?: bookmark.userLogin,
-                            userName = video.channelName ?: bookmark.userName,
-                            userType = bookmark.userType,
-                            userBroadcasterType = bookmark.userBroadcasterType,
-                            userLogo = bookmark.userLogo,
-                            gameId = video.gameId ?: bookmark.gameId,
-                            gameSlug = video.gameSlug ?: bookmark.gameSlug,
-                            gameName = video.gameName ?: bookmark.gameName,
-                            title = video.title ?: bookmark.title,
-                            createdAt = video.uploadDate ?: bookmark.createdAt,
-                            thumbnail = downloadedThumbnail,
-                            type = video.type ?: bookmark.type,
-                            duration = video.duration ?: bookmark.duration,
-                            animatedPreviewURL = video.animatedPreviewURL ?: bookmark.animatedPreviewURL
-                        )
-                    )
+                if (bookmark?.id != initial.id) {
+                    downloadedThumbnail?.let { withContext(Dispatchers.IO) { File(it).delete() } }
+                    return@withLock
                 }
-            }
-        }
-    }
-
-    fun updateVideos(filesDir: String, networkLibrary: String?, kickPublicApiHeaders: Map<String, String>) {
-        if (!updatedVideos) {
-            viewModelScope.launch {
-                val bookmarks = bookmarksRepository.loadBookmarks()
-                val bookmarksByVideoId = LinkedHashMap<String?, Bookmark>(bookmarks.size).apply {
-                    bookmarks.forEach { bookmark -> putIfAbsent(bookmark.videoId, bookmark) }
-                }
-                bookmarks.mapNotNull { it.videoId }.chunked(100).forEach { ids ->
-                    val videos = try {
-                        kickPublicApiRepository.getVideos(
-                            networkLibrary = networkLibrary,
-                            headers = kickPublicApiHeaders,
-                            ids = ids,
-                        ).data
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                        emptyList()
-                    }
-                    videos.map {
-                        Video(
-                            id = it.id,
-                            channelId = it.channelId,
-                            channelLogin = it.channelLogin,
-                            channelName = it.channelName,
-                            title = it.title,
-                            viewCount = it.viewCount,
-                            uploadDate = it.uploadDate,
-                            duration = it.duration,
-                            thumbnailUrl = it.thumbnailUrl,
-                        )
-                    }.forEach { video ->
-                        video.id?.takeIf { it.isNotBlank() }
-                            ?.let(bookmarksByVideoId::get)
-                            ?.let { bookmark ->
-                            if (bookmark.userId != video.channelId ||
-                                bookmark.userLogin != video.channelLogin ||
-                                bookmark.userName != video.channelName ||
-                                bookmark.title != video.title ||
-                                bookmark.createdAt != video.uploadDate ||
-                                bookmark.type != video.type ||
-                                bookmark.duration != video.duration
-                            ) {
-                                val downloadedThumbnail = enqueueThumbnailDownload(filesDir, video.id, video.thumbnail, networkLibrary)
-                                bookmarksRepository.updateBookmark(
-                                    Bookmark(
-                                        videoId = bookmark.videoId,
-                                        userId = video.channelId ?: bookmark.userId,
-                                        userLogin = video.channelLogin ?: bookmark.userLogin,
-                                        userName = video.channelName ?: bookmark.userName,
-                                        userType = bookmark.userType,
-                                        userBroadcasterType = bookmark.userBroadcasterType,
-                                        userLogo = bookmark.userLogo,
-                                        gameId = bookmark.gameId,
-                                        gameSlug = bookmark.gameSlug,
-                                        gameName = bookmark.gameName,
-                                        title = video.title ?: bookmark.title,
-                                        createdAt = video.uploadDate ?: bookmark.createdAt,
-                                        thumbnail = downloadedThumbnail,
-                                        type = video.type ?: bookmark.type,
-                                        duration = video.duration ?: bookmark.duration,
-                                        animatedPreviewURL = video.animatedPreviewURL ?: bookmark.animatedPreviewURL
-                                    )
-                                )
-                            }
-                        }
+                bookmarksRepository.updateBookmark(
+                    Bookmark(
+                        videoId = bookmark.videoId,
+                        userId = video.channelId ?: bookmark.userId,
+                        userLogin = video.channelLogin ?: bookmark.userLogin,
+                        userName = video.channelName ?: bookmark.userName,
+                        userType = bookmark.userType,
+                        userBroadcasterType = bookmark.userBroadcasterType,
+                        userLogo = bookmark.userLogo,
+                        gameId = video.gameId ?: bookmark.gameId,
+                        gameSlug = video.gameSlug ?: bookmark.gameSlug,
+                        gameName = video.gameName ?: bookmark.gameName,
+                        title = video.title ?: bookmark.title,
+                        createdAt = video.uploadDate ?: bookmark.createdAt,
+                        thumbnail = downloadedThumbnail ?: bookmark.thumbnail,
+                        type = video.type ?: bookmark.type,
+                        duration = video.duration ?: bookmark.duration,
+                        animatedPreviewURL = video.animatedPreviewURL ?: bookmark.animatedPreviewURL
+                    ).apply { id = bookmark.id }
+                )
+                if (downloadedThumbnail != null) {
+                    val previous = bookmark.thumbnail?.let(::File)
+                    if (previous?.parentFile == directory && previous.name.startsWith("bookmark-${bookmark.id}-")) {
+                        withContext(Dispatchers.IO) { previous.delete() }
                     }
                 }
-                updatedVideos = true
             }
         }
     }
@@ -290,4 +205,20 @@ class BookmarksViewModel @Inject internal constructor(
         val sort: String?,
         val order: String?,
     )
+}
+
+internal fun writeBookmarkThumbnail(directory: File, bookmarkId: Int, status: Int, bytes: ByteArray): String? {
+    if (status !in 200..299 || bytes.isEmpty()) return null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    directory.mkdirs()
+    val target = File.createTempFile("bookmark-$bookmarkId-", ".image", directory)
+    return try {
+        target.writeBytes(bytes)
+        target.path
+    } catch (_: IOException) {
+        target.delete()
+        null
+    }
 }

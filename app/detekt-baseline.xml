@@ -34,7 +34,6 @@
     <ID>ComplexCondition:ChatViewModel.kt$ChatViewModel$stvUserId.isNotBlank() &amp;&amp; !channelId.isNullOrBlank() &amp;&amp; (self &amp;&amp; !sessionId.isNullOrBlank() || !self) &amp;&amp; stvLastPresenceUpdate?.let { (System.currentTimeMillis() - it) &gt; 10000 } != false</ID>
     <ID>ComplexCondition:ChatViewModel.kt$ChatViewModel.KickCentrifugoChatListener$!isHostResolutionFailure &amp;&amp; !isTransientGatewayFailure &amp;&amp; !isTransportError &amp;&amp; shouldEmitDisconnect</ID>
     <ID>ComplexCondition:ChatViewModel.kt$ChatViewModel.KickCentrifugoChatListener$msg.message.isNullOrBlank() &amp;&amp; msg.systemMsg.isNullOrBlank() &amp;&amp; msg.msgId == null &amp;&amp; msg.kicksDonation == null &amp;&amp; msg.giftedSubInfo == null</ID>
-    <ID>ComplexCondition:DiagnosticLogger.kt$DiagnosticLogger$current is java.net.SocketException || current is java.net.SocketTimeoutException || current is java.net.UnknownHostException || current is java.net.ConnectException || current is java.net.NoRouteToHostException || current is java.net.PortUnreachableException || current is javax.net.ssl.SSLException || current is java.io.InterruptedIOException || current.javaClass.name.contains("HttpException")</ID>
     <ID>ComplexCondition:DownloadDialog.kt$DownloadDialog$it != null &amp;&amp; it != "done" &amp;&amp; requireContext().prefs().getBoolean(AppConstants.ENABLE_INTEGRITY, false) &amp;&amp; requireContext().prefs().getBoolean(AppConstants.USE_WEBVIEW_INTEGRITY, true)</ID>
     <ID>ComplexCondition:DownloadDialog.kt$DownloadDialog.&lt;no name provided&gt;$text.getOrNull(0)?.isDigit() == true &amp;&amp; text.getOrNull(1)?.isDigit() == true &amp;&amp; text.getOrNull(2).let { it == null || it == ':' }</ID>
     <ID>ComplexCondition:DownloadStorage.kt$DownloadStorage$type == "application/x-mpegurl" || type == "application/vnd.apple.mpegurl" || type == "audio/mpegurl" || type == "audio/x-mpegurl"</ID>
@@ -358,7 +357,7 @@
     <ID>ThrowsCount:DownloadsViewModel.kt$DownloadsViewModel$fun convertToFile(video: OfflineVideo)</ID>
     <ID>ThrowsCount:DownloadsViewModel.kt$DownloadsViewModel$fun delete(video: OfflineVideo, keepFiles: Boolean)</ID>
     <ID>ThrowsCount:DownloadsViewModel.kt$DownloadsViewModel$fun moveToSharedStorage(newUri: Uri, video: OfflineVideo)</ID>
-    <ID>ThrowsCount:FollowedLiveStreamsRepository.kt$FollowedLiveStreamsRepository$private suspend fun loadLiveFollowedUncached( allowPerChannelFallback: Boolean, account: String, onPartial: (List&lt;Stream&gt;) -&gt; Unit, ): LoadResult</ID>
+    <ID>ThrowsCount:FollowedLiveStreamsRepository.kt$FollowedLiveStreamsRepository$private suspend fun loadLiveFollowedUncached( allowPerChannelFallback: Boolean, account: String, forceRefresh: Boolean, onPartial: (List&lt;Stream&gt;) -&gt; Unit, ): LoadResult</ID>
     <ID>ThrowsCount:FollowedLiveStreamsRepository.kt$FollowedLiveStreamsRepository$private suspend fun loadStreamForFollow(follow: LocalFollowChannel): Stream?</ID>
     <ID>ThrowsCount:KickFollowSnapshot.kt$KickFollowSnapshot$fun parsePage(payload: String, requireComplete: Boolean = false): KickRepository.KickFollowedChannelsPage</ID>
     <ID>ThrowsCount:KickFollowSnapshot.kt$KickFollowSnapshot$suspend fun collect(fetchPage: suspend (String?) -&gt; KickRepository.KickFollowedChannelsPage): List&lt;KickRepository.KickFollowedChannel&gt;</ID>

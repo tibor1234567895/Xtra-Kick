@@ -21,7 +21,7 @@ import kotlinx.coroutines.delay
  */
 object ChatReplayPacing {
 
-    suspend fun awaitPlayback(isPlaying: () -> Boolean, pollIntervalMs: Long = 16L) {
+    suspend fun awaitPlayback(isPlaying: () -> Boolean, pollIntervalMs: Long = 150L) {
         while (!isPlaying()) {
             delay(pollIntervalMs)
         }

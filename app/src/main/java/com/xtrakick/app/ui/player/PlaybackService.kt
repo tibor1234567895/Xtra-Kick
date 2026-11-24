@@ -421,6 +421,10 @@ class PlaybackService : MediaSessionService() {
             setSeekBackIncrementMs(prefs().seekSeconds(AppConstants.PLAYER_REWIND) * 1000L)
             setSeekForwardIncrementMs(prefs().seekSeconds(AppConstants.PLAYER_FORWARD) * 1000L)
             setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
+            // PlaybackRefreshRateController owns window refresh-rate policy (including
+            // releasing it when minimized and boosting on scroll); ExoPlayer's default
+            // Surface.setFrameRate vote fights high-refresh scrolling in miniplayer mode.
+            setVideoChangeFrameRateStrategy(androidx.media3.common.C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
         }.build()
         val rewindSeconds = prefs().seekSeconds(AppConstants.PLAYER_REWIND)
         val forwardSeconds = prefs().seekSeconds(AppConstants.PLAYER_FORWARD)

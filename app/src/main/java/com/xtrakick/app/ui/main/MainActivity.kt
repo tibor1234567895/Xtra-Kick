@@ -837,10 +837,6 @@ class MainActivity : BaseStateActivity() {
                             viewModel.loadVideo(
                                 videoId = link.videoId,
                                 offset = link.offsetMs,
-                                networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                kickWebHeaders = KickApiHelper.getKickWebHeaders(this),
-                                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(this),
-                                enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
                                 channelLogin = link.channelLogin,
                             )
                         }
@@ -848,10 +844,6 @@ class MainActivity : BaseStateActivity() {
                             viewModel.loadClip(
                                 clipId = link.clipId,
                                 channelLogin = link.channelLogin,
-                                networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                                kickWebHeaders = KickApiHelper.getKickWebHeaders(this),
-                                kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(this),
-                                enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
                             )
                         }
                         is KickLink.Category -> {
@@ -1130,13 +1122,7 @@ class MainActivity : BaseStateActivity() {
     }
 
     fun loadClip(clipId: String) {
-        viewModel.loadClip(
-            clipId = clipId,
-            networkLibrary = prefs.getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-            kickWebHeaders = KickApiHelper.getKickWebHeaders(this),
-            kickPublicApiHeaders = KickApiHelper.getKickPublicApiHeaders(this),
-            enableIntegrity = prefs.getBoolean(AppConstants.ENABLE_INTEGRITY, false),
-        )
+        viewModel.loadClip(clipId)
     }
 
     fun startOfflineVideo(video: OfflineVideo) {

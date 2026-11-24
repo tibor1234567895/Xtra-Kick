@@ -2,6 +2,7 @@
 <full-backup-content>
     <include domain="sharedpref" path="."/>
     <exclude domain="sharedpref" path="prefs2.xml"/>
+    <exclude domain="sharedpref" path="prefs2_secure.xml"/>
     <include domain="database" path="."/>
     <exclude domain="database" path="androidx.work.workdb"/>
     <exclude domain="database" path="androidx.work.workdb-shm"/>

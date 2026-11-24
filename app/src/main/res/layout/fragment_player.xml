@@ -41,7 +41,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:scaleType="fitCenter"
-                    android:visibility="gone" />
+                    android:visibility="gone"
+                    android:contentDescription="@null" />
 
             </androidx.media3.ui.AspectRatioFrameLayout>
 
@@ -58,6 +59,17 @@
                 android:indeterminate="true"
                 android:visibility="gone" />
 
+            <com.xtrakick.app.ui.view.VideoFillHintView
+                android:id="@+id/zoomFillHint"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:alpha="0"
+                android:visibility="gone" />
+
+            <include
+                android:id="@+id/playerControls"
+                layout="@layout/player_layout" />
+
             <TextView
                 android:id="@+id/zoomIndicator"
                 android:layout_width="wrap_content"
@@ -66,7 +78,11 @@
                 android:layout_marginTop="12dp"
                 android:alpha="0"
                 android:background="@drawable/bg_player_zoom_indicator"
-                android:elevation="4dp"
+                android:clickable="true"
+                android:contentDescription="@string/original"
+                android:elevation="6dp"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
                 android:gravity="center"
                 android:minWidth="54dp"
                 android:textColor="@android:color/white"
@@ -82,24 +98,13 @@
                 android:layout_marginTop="12dp"
                 android:alpha="0"
                 android:background="@drawable/bg_player_zoom_indicator"
-                android:elevation="4dp"
+                android:elevation="6dp"
                 android:gravity="center"
                 android:minWidth="54dp"
                 android:textColor="@android:color/white"
                 android:textSize="14sp"
                 android:textStyle="bold"
                 android:visibility="gone" />
-
-            <com.xtrakick.app.ui.view.VideoFillHintView
-                android:id="@+id/zoomFillHint"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:alpha="0"
-                android:visibility="gone" />
-
-            <include
-                android:id="@+id/playerControls"
-                layout="@layout/player_layout" />
 
             <TextView
                 android:id="@+id/audioOnlyBadge"

@@ -3,12 +3,13 @@ package com.xtrakick.app.util
 import android.app.Application
 import androidx.room.Room
 import com.xtrakick.app.db.AppDatabase
+import com.xtrakick.app.model.NotificationUser
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
@@ -18,6 +19,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.net.ServerSocket
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import okhttp3.OkHttpClient
@@ -26,6 +28,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
+import org.json.JSONObject
 
 @Config(application = Application::class)
 @RunWith(RobolectricTestRunner::class)
@@ -96,25 +99,49 @@ class FcmSyncManagerTest {
         }
     }
 
-    @Test fun subscriptionAndUnsubscriptionShareTheSameSerializationBoundary() = runBlocking {
+    @Test fun queuedReconciliationUsesCurrentAlertsAndAccountAfterAnOlderUnsubscribe() = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
-        try {
-            val manager = FcmSyncManager(context, database.notificationsDao())
-            val mutex = FcmSyncManager::class.java.getDeclaredField("subscriptionMutex")
-                .apply { isAccessible = true }.get(manager) as Mutex
-            mutex.lock()
-            val sync = async { manager.syncSubscriptions("test-token") }
-            val unsubscribe = async { manager.unsubscribe("test-token") }
-            delay(50)
-            assertFalse(sync.isCompleted)
-            assertFalse(unsubscribe.isCompleted)
-            mutex.unlock()
-            withTimeout(2000) {
-                // Debug operations leave the production subscription store alone.
-                assertFalse(sync.await())
-                assertFalse(unsubscribe.await())
+        val unsubscribeStarted = CompletableDeferred<Unit>()
+        val releaseUnsubscribe = CountDownLatch(1)
+        val paths = CopyOnWriteArrayList<String>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            paths += request.url.encodedPath
+            if (request.url.encodedPath.endsWith("/unsubscribe")) {
+                unsubscribeStarted.complete(Unit)
+                assertTrue(releaseUnsubscribe.await(5, TimeUnit.SECONDS))
+            } else {
+                val body = JSONObject(Buffer().also { request.body!!.writeTo(it) }.readUtf8())
+                assertEquals("new-account", body.getString("kick_user_id"))
+                assertEquals("42", body.getJSONArray("channel_ids").getString(0))
             }
-        } finally { database.close() }
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("fixture")
+                .body("""{"ok":true,"complete":true}""".toResponseBody()).build()
+        }.build()
+        try {
+            val manager = FcmSyncManager(context, database.notificationsDao(), okHttpClient = client)
+            context.prefs().edit().putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, false).commit()
+            suspend fun reconcile() = manager.reconcileSubscriptions("https://example.invalid", scheduleRetry = false) { "queue-token" }
+
+            withTimeout(5_000L) {
+                val first = async { reconcile() }
+                unsubscribeStarted.await()
+                val queued = async { reconcile() }
+                withContext(Dispatchers.IO) { database.notificationsDao().insert(NotificationUser("42")) }
+                context.tokenPrefs().edit().putString(AppConstants.USER_ID, "new-account").commit()
+                context.prefs().edit().putBoolean(AppConstants.LIVE_NOTIFICATIONS_ENABLED, true).commit()
+                releaseUnsubscribe.countDown()
+                assertTrue(first.await())
+                assertTrue(queued.await())
+                assertTrue(reconcile())
+            }
+            assertEquals(listOf("/v1/fcm/unsubscribe", "/v1/fcm/subscribe"), paths)
+        } finally {
+            releaseUnsubscribe.countDown()
+            context.tokenPrefs().edit().remove(AppConstants.USER_ID).commit()
+            database.close()
+            client.dispatcher.executorService.shutdownNow()
+        }
     }
 }

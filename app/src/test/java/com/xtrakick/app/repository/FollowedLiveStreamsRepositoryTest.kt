@@ -72,7 +72,7 @@ class FollowedLiveStreamsRepositoryTest {
                 status = publicStatus
                 """{"data":[${(1..27).joinToString { """{"broadcaster_user_id":${1000 + it},"slug":"follow$it","viewer_count":$it}""" }}]}"""
             }
-            path == "/public/v1/users/livestreams" -> {
+            path == "/public/v1/users/livestreams" || path == "/public/v1/channels" -> {
                 status = publicStatus
                 """{"data":[]}"""
             }
@@ -298,5 +298,67 @@ class FollowedLiveStreamsRepositoryTest {
             factory.onDestroy()
             LiveChannelsWidgetProvider.consumeRefreshRequest()
         }
+    }
+
+    @Test fun widgetKeepsCacheAndReportsNetworkFailureWhenAllArmsReturn503() = runBlocking {
+        addFollows()
+        login("oauth")
+        publicStatus = 200
+        val repository = repository()
+        val initial = repository.loadLiveFollowed(forceRefresh = true)
+        assertTrue(initial.networkSucceeded)
+        assertEquals(27, initial.items.size)
+
+        publicStatus = 503
+        val failed = repository.loadLiveFollowed(forceRefresh = true)
+        assertFalse(failed.networkSucceeded)
+        assertEquals(27, repository.peekCache().size)
+
+        val factory = LiveChannelsRemoteViewsFactory(context, repository)
+        try {
+            shadowOf(AppWidgetManager.getInstance(context)).createWidget(LiveChannelsWidgetProvider::class.java, R.layout.widget_live_channels)
+            LiveChannelsWidgetProvider.notifyDataChanged(context, forceRefresh = true)
+            factory.onDataSetChanged()
+            assertEquals(27, factory.getCount())
+        } finally {
+            factory.onDestroy()
+            LiveChannelsWidgetProvider.consumeRefreshRequest()
+        }
+    }
+
+    @Test fun perChannelFallbackFailurePreservesCacheAndReportsNetworkFailure() = runBlocking {
+        addFollows()
+        login("logged-out")
+        channelStatus = 200
+        val repository = repository()
+        val initial = repository.loadLiveFollowed(forceRefresh = true, allowPerChannelFallback = true)
+        assertTrue(initial.networkSucceeded)
+        assertEquals(27, initial.items.size)
+
+        channelStatus = 503
+        val failed = repository.loadLiveFollowed(forceRefresh = true, allowPerChannelFallback = true)
+        assertFalse(failed.networkSucceeded)
+        assertEquals(27, repository.peekCache().size)
+    }
+
+    @Test fun slugOnlyBulkFallbackFailurePreservesCacheAndReportsNetworkFailure() = runBlocking {
+        follows.saveFollow(LocalFollowChannel(userId = null, userLogin = "follow1"))
+        login("logged-out")
+        channelStatus = 200
+        val repository = repository()
+        val initial = repository.loadLiveFollowed(forceRefresh = true, allowPerChannelFallback = true)
+        assertTrue(initial.networkSucceeded)
+        assertEquals(1, initial.items.size)
+
+        // Clear broadcaster ID cache and switch to oauth with 503 on public channels lookup.
+        context.prefs().edit().remove("kick_broadcaster_id_cache_v1").commit()
+        context.tokenPrefs().edit()
+            .putString(AppConstants.KICK_ACCESS_TOKEN, "fixture-token")
+            .putLong(AppConstants.KICK_ACCESS_TOKEN_EXPIRES_AT, Long.MAX_VALUE)
+            .commit()
+        publicStatus = 503
+        val failed = repository.loadLiveFollowed(forceRefresh = true, allowPerChannelFallback = false)
+        assertFalse(failed.networkSucceeded)
+        assertEquals(1, repository.peekCache().size)
     }
 }

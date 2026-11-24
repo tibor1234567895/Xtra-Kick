@@ -14,9 +14,14 @@ class ChatReplayManagerLocal(
     private val getCurrentPosition: () -> Long?,
     private val getCurrentSpeed: () -> Float?,
     private val coroutineScope: CoroutineScope,
-    private val listener: ChatReplayManager.Listener,
+    private val listener: Listener,
     private val isPlaybackPlaying: () -> Boolean = { true },
 ) {
+    interface Listener {
+        suspend fun onChatMessage(message: ChatMessage) {}
+        suspend fun onChatMessages(messages: List<ChatMessage>) {}
+        suspend fun clearMessages() {}
+    }
     companion object {
         internal fun messageLowerBound(messages: List<ChatMessage>, timestamp: Long): Int {
             var low = 0
@@ -147,13 +152,27 @@ class ChatReplayManagerLocal(
         }
     }
 
+    private fun reloadIfPositionJumped(position: Long): Boolean {
+        if (position - lastCheckedPosition !in 0..LARGE_SEEK_THRESHOLD_MS) {
+            lastCheckedPosition = position
+            load(position + startTime, preload = true)
+            return true
+        }
+        return false
+    }
+
+    private suspend fun awaitPlaybackOrReloadIfJumped(): Boolean {
+        if (isPlaybackPlaying()) return false
+        ChatReplayPacing.awaitPlayback(isPlaybackPlaying)
+        return reloadIfPositionJumped(getCurrentPosition() ?: 0L)
+    }
+
     private fun startJob() {
         messageJob = coroutineScope.launch {
-            while (isActive) {
-                ChatReplayPacing.awaitPlayback(isPlaybackPlaying)
+            while (coroutineContext.isActive) {
+                if (awaitPlaybackOrReloadIfJumped()) return@launch
                 val message = queuedMessages.getOrNull(nextMessageIndex) ?: break
                 if (message.timestamp != null) {
-                    var currentPosition: Long
                     val bucketStart = message.timestamp
                     // Downloaded chat inherits Kick's whole-second offsets, so every message from
                     // the same second shares one target and the bucket would otherwise go out in
@@ -165,26 +184,25 @@ class ChatReplayManagerLocal(
                     }
                     val stagger = ChatReplayPacing.staggerForEmission(spreadStaggerMs)
                     val messageOffset = bucketStart + stagger
-                    while (
-                        (getCurrentPosition() ?: 0).let { position ->
-                            lastCheckedPosition = position
-                            currentPosition = position + startTime
-                            currentPosition < messageOffset
-                        }
-                    ) {
-                        ChatReplayPacing.awaitPlayback(isPlaybackPlaying)
+                    while (coroutineContext.isActive) {
+                        if (awaitPlaybackOrReloadIfJumped()) return@launch
+                        val position = getCurrentPosition() ?: 0L
+                        if (reloadIfPositionJumped(position)) return@launch
+                        lastCheckedPosition = position
+                        val currentPosition = position + startTime
+                        if (currentPosition >= messageOffset) break
                         delay(nextSyncDelay(messageOffset - currentPosition))
                     }
-                    if (!isActive) {
+                    if (!coroutineContext.isActive) {
                         break
                     }
-                    ChatReplayPacing.awaitPlayback(isPlaybackPlaying)
+                    if (awaitPlaybackOrReloadIfJumped()) return@launch
                     listener.onChatMessage(message.copyContent())
                     // Counted before the head is removed below, so the just-emitted message is
                     // included - that is what [advanceStagger] expects.
                     spreadStaggerMs = ChatReplayPacing.advanceStagger(stagger, remainingInBucket)
                     remainingInBucket--
-                } else if (!isActive) break
+                } else if (!coroutineContext.isActive) break
                 nextMessageIndex++
             }
         }

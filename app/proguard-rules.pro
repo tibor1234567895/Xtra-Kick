@@ -1,26 +1,24 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
-
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
-
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
+# Preserve source file names and line numbers for R8 stack trace retracing.
 -keepattributes SourceFile,LineNumberTable
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Preserve WebView @JavascriptInterface entry points.
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
 
--dontobfuscate
+# nav_graph.xml declares app:argType="com.xtrakick.app.model.ui.Tag[]" (loaded via Class.forName).
+-keepnames class com.xtrakick.app.model.ui.Tag
+
+# CustomSwipeRefreshLayout matches CircleImageView by simpleName.
+-keep class androidx.swiperefreshlayout.widget.CircleImageView { *; }
+
+# ViewExtensions reflects on ViewPager2.mRecyclerView and RecyclerView.mTouchSlop.
+-keepclassmembers class androidx.viewpager2.widget.ViewPager2 {
+    androidx.recyclerview.widget.RecyclerView mRecyclerView;
+}
+-keepclassmembers class androidx.recyclerview.widget.RecyclerView {
+    int mTouchSlop;
+}
 
 -assumenosideeffects class android.util.Log {
     public static *** d(...);

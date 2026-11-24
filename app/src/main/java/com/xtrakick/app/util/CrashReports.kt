@@ -40,7 +40,7 @@ object CrashReports {
     )
     private val printableAscii = Regex("^[\\x20-\\x7E]+$")
     private val unsafeMessagePattern = Regex(
-        "://|@|/data/|/storage/|/sdcard/|/mnt/|bearer\\s|token|secret|password|cookie|authorization",
+        "://|@|/data/|/storage/|/sdcard/|/mnt/|[<>`]|bearer\\s|token|secret|password|cookie|authorization",
         RegexOption.IGNORE_CASE,
     )
     private val whitespace = Regex("\\s+")
