@@ -307,7 +307,7 @@ dependencies {
 testImplementation("org.json:json:20260814")
     // ChatBackgroundUtilsTest computes its expected values with androidx ColorUtils,
     // which calls android.graphics.Color — absent on a plain JVM. Robolectric supplies it.
-    testImplementation("org.robolectric:robolectric:4.18")
+    testImplementation("org.robolectric:robolectric:4.18.1")
 }
 
 // Robolectric reaches FileDescriptor internals via jdk.internal.access.SharedSecrets,
