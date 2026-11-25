@@ -657,6 +657,9 @@ class IvsPlayerService : Service() {
 
                 override fun onError(exception: PlayerException) {
                     if (multiPovDelegate == null) stopKickViewerWatch()
+                    if (exception.code != 404) {
+                        UsagePing.notePlaybackError(this@IvsPlayerService)
+                    }
                     DiagnosticLogger.logPause(
                         callingContext = this@IvsPlayerService,
                         source = "IvsPlayerService.onError",

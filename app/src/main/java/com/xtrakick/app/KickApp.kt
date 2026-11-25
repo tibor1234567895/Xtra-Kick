@@ -55,6 +55,7 @@ import okio.buffer
 import okio.source
 import org.chromium.net.CronetEngine
 import org.chromium.net.apihelpers.UploadDataProviders
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -84,9 +85,34 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                 parsed.host.equals("stream.kick.com", ignoreCase = true) ||
                     parsed.host.equals("images.kick.com", ignoreCase = true) -> KickImageHostTier.AUTHENTICATED_THUMBNAIL
                 parsed.host.equals("ext.cdn.kick.com", ignoreCase = true) ||
-                    parsed.host.equals("files.kick.com", ignoreCase = true) -> KickImageHostTier.PUBLIC_CDN
+                    parsed.host.equals("files.kick.com", ignoreCase = true) ||
+                    parsed.host.equals("content.kick.com", ignoreCase = true) ||
+                    parsed.host.equals("static.kick.com", ignoreCase = true) -> KickImageHostTier.PUBLIC_CDN
                 else -> null
             }
+        }
+
+        internal fun mergeKickImageHeaders(
+            requestHeaders: Map<String, List<String>>,
+            extraHeaders: Map<String, String>?,
+        ): List<Pair<String, String>> {
+            val merged = ArrayList<Pair<String, String>>(requestHeaders.size + (extraHeaders?.size ?: 0))
+            if (extraHeaders.isNullOrEmpty()) {
+                requestHeaders.forEach { (key, values) ->
+                    values.forEach { merged.add(key to it) }
+                }
+                return merged
+            }
+            val overriddenKeys = extraHeaders.keys.mapTo(HashSet(extraHeaders.size)) { it.lowercase(Locale.ROOT) }
+            requestHeaders.forEach { (key, values) ->
+                if (key.lowercase(Locale.ROOT) !in overriddenKeys) {
+                    values.forEach { merged.add(key to it) }
+                }
+            }
+            extraHeaders.forEach { (name, value) ->
+                merged.add(name to value)
+            }
+            return merged
         }
 
         internal fun canFollowKickImageRedirect(originalUrl: String, newLocationUrl: String?): Boolean {
@@ -337,12 +363,10 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                                         },
                                                     ),
                                                 ).apply {
-                                                    request.headers.asMap().forEach { entry ->
-                                                        entry.value.forEach {
-                                                            addHeader(entry.key, it)
-                                                        }
-                                                    }
-                                                    kickImageHeaders(request.url)?.forEach { (name, value) ->
+                                                    mergeKickImageHeaders(
+                                                        request.headers.asMap(),
+                                                        kickImageHeaders(request.url),
+                                                    ).forEach { (name, value) ->
                                                         addHeader(name, value)
                                                     }
                                                     requestBody?.let {
@@ -397,12 +421,10 @@ class KickApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                                                     ),
                                                     cronetExecutor,
                                                 ).apply {
-                                                    request.headers.asMap().forEach { entry ->
-                                                        entry.value.forEach {
-                                                            addHeader(entry.key, it)
-                                                        }
-                                                    }
-                                                    kickImageHeaders(request.url)?.forEach { (name, value) ->
+                                                    mergeKickImageHeaders(
+                                                        request.headers.asMap(),
+                                                        kickImageHeaders(request.url),
+                                                    ).forEach { (name, value) ->
                                                         addHeader(name, value)
                                                     }
                                                     requestBody?.let {

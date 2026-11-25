@@ -529,6 +529,9 @@ class PlaybackService : MediaSessionService() {
                     stopKickViewerWatch()
                     logPlayerError(error)
                     val httpCode = Media3ErrorUtils.httpResponseCode(error)
+                    if (httpCode != 404 && !Media3ErrorUtils.isBehindLiveWindowError(error)) {
+                        UsagePing.notePlaybackError(this@PlaybackService)
+                    }
                     if (httpCode == 404 && videoId == null && offlineVideoId == null) {
                         DiagnosticLogger.w(TAG, "stream 404 terminal error in service, stopping playback")
                         player.clearMediaItems()

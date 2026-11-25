@@ -1,10 +1,12 @@
 package com.xtrakick.app.util
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import androidx.appcompat.app.AppCompatDelegate
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.ui.player.KickLivePlayback
 import java.net.HttpURLConnection
@@ -12,6 +14,7 @@ import java.net.URL
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicBoolean
@@ -28,6 +31,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 object UsagePing {
 
     private const val REQUEST_TIMEOUT_MS = 15_000L
+    private const val PLAYBACK_ERROR_COOLDOWN_MS = 5_000L
+    private const val MAX_RECENT_CRASH_BUILDS = 32
+    private val ABI_REGEX = Regex("[A-Za-z0-9._-]{1,16}")
+    private val LANG_REGEX = Regex("[a-z]{2,3}")
+    private val BATCH_ID_REGEX = Regex("[0-9a-f]{32}")
+
+    private data class PlaybackErrorBatch(val date: String, val id: String, val count: Int)
 
     private val dayFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC)
     private val inFlight = AtomicBoolean(false)
@@ -38,6 +48,8 @@ object UsagePing {
     private var watchStartElapsedRealtime: Long? = null
     @Volatile
     private var retryAfterElapsedRealtime = 0L
+    @Volatile
+    private var lastPlaybackErrorElapsedRealtime = Long.MIN_VALUE
     private val isEmulatorDevice: Boolean by lazy { isLikelyEmulator() }
 
     fun noteUserInteraction(context: Context) {
@@ -48,6 +60,7 @@ object UsagePing {
     internal fun resetInteractionForTests() {
         hasUserInteracted.set(false)
         retryAfterElapsedRealtime = 0L
+        lastPlaybackErrorElapsedRealtime = Long.MIN_VALUE
     }
 
     internal fun isLikelyEmulator(
@@ -138,6 +151,8 @@ object UsagePing {
             }
             val sessions = prefs.getInt(AppConstants.USAGE_SESSIONS_UNREPORTED, 0).coerceIn(0, 100_000)
             val crashes = prefs.getInt(AppConstants.USAGE_UNREPORTED_CRASHES, 0).coerceIn(0, 10_000)
+            val crashBuilds = recentCrashBuilds(prefs.getStringSet(AppConstants.USAGE_RECENT_CRASH_BUILDS, null), today)
+            val playbackErrorBatch = pendingPlaybackErrorBatch(prefs, today)
             val (playbackStartsIvs, playbackStartsExo) = synchronized(this) {
                 prefs.getInt(AppConstants.USAGE_PLAYBACK_STARTS_UNREPORTED_IVS, 0).coerceIn(0, 100_000) to
                     prefs.getInt(AppConstants.USAGE_PLAYBACK_STARTS_UNREPORTED_EXO, 0).coerceIn(0, 100_000)
@@ -159,6 +174,8 @@ object UsagePing {
 
             val pid = sha256Hex(seed)
             val country = runCatching { java.util.Locale.getDefault().country }.getOrNull().orEmpty()
+            val abi = resolvePrimaryAbi()
+            val lang = resolveActiveLanguage()
             val isOAuthSignedIn = runCatching {
                 AuthStateHelper.isKickLoggedIn(context) && !AuthStateHelper.isKickGoogleSession(context)
             }.getOrDefault(false)
@@ -167,11 +184,19 @@ object UsagePing {
                 append(",\"b\":").append(BuildConfig.VERSION_CODE)
                 append(",\"os\":\"").append(Build.VERSION.SDK_INT).append('"')
                 if (country.length == 2) append(",\"cc\":\"").append(country).append('"')
+                if (abi.isNotEmpty()) append(",\"abi\":\"").append(escapeJson(abi)).append('"')
+                if (lang.isNotEmpty()) append(",\"lang\":\"").append(escapeJson(lang)).append('"')
                 if (sessions > 0) append(",\"s\":").append(sessions)
                 append(",\"pe\":\"").append(playerEngine).append('"')
                 if (playbackStartsIvs > 0) append(",\"si\":").append(playbackStartsIvs)
                 if (playbackStartsExo > 0) append(",\"se\":").append(playbackStartsExo)
+                if (playbackErrorBatch != null) {
+                    append(",\"pb\":{\"id\":\"").append(playbackErrorBatch.id)
+                    append("\",\"date\":\"").append(playbackErrorBatch.date)
+                    append("\",\"count\":").append(playbackErrorBatch.count).append('}')
+                }
                 if (crashes > 0) append(",\"c\":").append(crashes)
+                crashBuilds.joinTo(this, separator = ",", prefix = ",\"cb\":[", postfix = "]") { "\"${escapeJson(it)}\"" }
                 append(",\"wt\":\"").append(watchTimeBucket).append('"')
                 if (isOAuthSignedIn) append(",\"li\":true")
                 append("}")
@@ -223,6 +248,15 @@ object UsagePing {
                         .putInt(AppConstants.USAGE_UNREPORTED_CRASHES, reportedCrashes)
                         .putInt(AppConstants.USAGE_WATCH_TIME_UNREPORTED_MINUTES, reportedMinutes)
                         .apply()
+                    if (playbackErrorBatch != null && connection.getHeaderField("X-Playback-Errors-Accepted") == playbackErrorBatch.id) {
+                        synchronized(this) {
+                            val remaining = (prefs.getInt(AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED, 0) - playbackErrorBatch.count).coerceAtLeast(0)
+                            prefs.edit()
+                                .putInt(AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED, remaining)
+                                .remove(AppConstants.USAGE_PLAYBACK_ERROR_BATCH)
+                                .apply()
+                        }
+                    }
                     // Advance active watch start anchor if playback was ongoing during ping
                     synchronized(this) {
                         if (watchStartElapsedRealtime != null) {
@@ -274,14 +308,83 @@ object UsagePing {
         synchronized(this) { lastPlaybackIds.remove(engine) }
     }
 
-    fun noteCrash(context: Context) {
+    private fun pendingPlaybackErrorBatch(prefs: SharedPreferences, today: String): PlaybackErrorBatch? = synchronized(this) {
+        val count = prefs.getInt(AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED, 0).coerceIn(0, 100_000)
+        if (count == 0) return null
+        val saved = prefs.getString(AppConstants.USAGE_PLAYBACK_ERROR_BATCH, null)?.split('|')
+        val restored = saved?.takeIf { it.size == 3 }?.let { (date, id, value) ->
+            val savedCount = value.toIntOrNull() ?: return@let null
+            if (savedCount !in 1..count || !BATCH_ID_REGEX.matches(id)) return@let null
+            if (runCatching { LocalDate.parse(date).toString() }.getOrNull() != date) return@let null
+            PlaybackErrorBatch(date, id, savedCount)
+        }
+        val batch = restored ?: PlaybackErrorBatch(today, randomHex(16), count)
+        // Persist the snapshot before sending so a lost response or app restart can replay it verbatim.
+        val durable = prefs.edit()
+            .putString(AppConstants.USAGE_PLAYBACK_ERROR_BATCH, "${batch.date}|${batch.id}|${batch.count}")
+            .commit()
+        batch.takeIf { durable }
+    }
+
+    fun notePlaybackError(context: Context) {
+        runCatching {
+            val now = SystemClock.elapsedRealtime()
+            synchronized(this) {
+                if (lastPlaybackErrorElapsedRealtime != Long.MIN_VALUE &&
+                    now - lastPlaybackErrorElapsedRealtime < PLAYBACK_ERROR_COOLDOWN_MS
+                ) {
+                    return
+                }
+                val prefs = context.applicationContext.prefs()
+                if (!prefs.getBoolean(AppConstants.USAGE_STATS_ENABLED, true)) return
+                lastPlaybackErrorElapsedRealtime = now
+                prefs.edit()
+                    .putInt(
+                        AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED,
+                        (prefs.getInt(AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED, 0) + 1).coerceAtMost(100_000),
+                    )
+                    .apply()
+            }
+        }
+    }
+
+    private fun resolvePrimaryAbi(): String =
+        runCatching { Build.SUPPORTED_ABIS?.firstOrNull()?.trim().orEmpty() }
+            .getOrDefault("")
+            .takeIf { ABI_REGEX.matches(it) }
+            .orEmpty()
+
+    private fun resolveActiveLanguage(): String =
+        runCatching {
+            val appLang = AppCompatDelegate.getApplicationLocales().get(0)?.language.orEmpty()
+            val raw = appLang.ifBlank { java.util.Locale.getDefault().language.orEmpty() }
+            raw.trim().lowercase(java.util.Locale.ROOT)
+        }.getOrDefault("")
+            .takeIf { LANG_REGEX.matches(it) }
+            .orEmpty()
+
+    internal fun noteCrash(context: Context, now: Instant = Instant.now()) {
         runCatching {
             val prefs = context.applicationContext.prefs()
             val current = prefs.getInt(AppConstants.USAGE_UNREPORTED_CRASHES, 0)
-            prefs.edit()
+            val edit = prefs.edit()
                 .putInt(AppConstants.USAGE_UNREPORTED_CRASHES, (current + 1).coerceAtMost(10_000))
-                .commit() // Must flush synchronously before unhandled exception terminates process
+            if (prefs.getBoolean(AppConstants.USAGE_STATS_ENABLED, true)) {
+                val today = dayFormat.format(now)
+                val event = "$today|${BuildConfig.VERSION_NAME}|${BuildConfig.VERSION_CODE}"
+                val stored = prefs.getStringSet(AppConstants.USAGE_RECENT_CRASH_BUILDS, null).orEmpty()
+                edit.putStringSet(AppConstants.USAGE_RECENT_CRASH_BUILDS, recentCrashBuilds(stored + event, today).toSet())
+            }
+            edit.commit() // Must flush synchronously before unhandled exception terminates process
         }
+    }
+
+    private fun recentCrashBuilds(events: Set<String>?, today: String): List<String> {
+        if (events.isNullOrEmpty()) return emptyList()
+        val oldest = LocalDate.parse(today).minusDays(30).toString()
+        return events.filter { it.substringBefore('|') >= oldest && it.substringBefore('|') <= today }
+            .sortedDescending()
+            .take(MAX_RECENT_CRASH_BUILDS)
     }
 
     fun noteWatchStarted() {

@@ -26,6 +26,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.view.doOnNextLayout
@@ -35,7 +36,11 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.MarginPageTransformer
@@ -50,7 +55,6 @@ import coil3.request.SuccessResult
 import coil3.request.error
 import coil3.request.fallback
 import coil3.request.target
-import coil3.size.Size
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.chip.Chip
@@ -69,11 +73,13 @@ import com.xtrakick.app.model.kick.KickRewardsParsing
 import com.xtrakick.app.repository.KickRewardsPolicy
 import com.xtrakick.app.repository.KickRewardsRepository
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.ReelStripBuilder
 import com.xtrakick.app.util.RouletteAnimationAssets
 import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import dagger.hilt.android.AndroidEntryPoint
+import okhttp3.OkHttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -102,6 +108,9 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
     @Inject
     lateinit var rewardsRepository: KickRewardsRepository
 
+    @Inject
+    lateinit var okHttpClient: OkHttpClient
+
     private var _binding: DialogKickDailyRewardBinding? = null
     private val binding get() = _binding!!
     private var challenges: List<KickDailyChallenge> = emptyList()
@@ -126,6 +135,8 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
     private var backgroundPlayer: ExoPlayer? = null
     private var unboxPlayerView: PlayerView? = null
     private var backgroundPlayerView: PlayerView? = null
+    @Volatile
+    private var unboxTerminalError = false
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -693,15 +704,19 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         urls: List<String>,
         tileWidth: Int,
         tileHeight: Int,
+        cardWidth: Int,
+        cardHeight: Int,
         winnerUrl: String,
     ): kotlinx.coroutines.Deferred<Unit> = lifecycleScope.async(Dispatchers.IO) {
         val appContext = context.applicationContext ?: return@async
+        val targetCardWidth = cardWidth.coerceAtLeast(tileWidth)
+        val targetCardHeight = cardHeight.coerceAtLeast(tileHeight)
         urls.map { url ->
             async {
                 val isWinnerCard = (url == winnerUrl)
                 runCatching {
                     val request = buildKickImageRequest(appContext, url).apply {
-                        if (isWinnerCard) size(Size.ORIGINAL) else size(tileWidth, tileHeight)
+                        if (isWinnerCard) size(targetCardWidth, targetCardHeight) else size(tileWidth, tileHeight)
                     }.build()
                     val result = appContext.imageLoader.execute(request) as? SuccessResult
                     val drawable = result?.image?.asDrawable(appContext.resources)
@@ -770,6 +785,8 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         val containerWidth = currentBinding.cardViewPager.width.takeIf { it > 0 }
             ?: resources.displayMetrics.widthPixels
         val density = resources.displayMetrics.density
+        val cardHeight = currentBinding.cardViewPager.height.takeIf { it > 0 }
+            ?: (210 * density).roundToInt()
         val gapPx = (REEL_GAP_DP * density).roundToInt()
         val tileWidth = ((containerWidth - 2f * gapPx) / VISIBLE_TILES).roundToInt()
         val tileHeight = (tileWidth * REEL_TILE_H_RATIO).roundToInt()
@@ -778,7 +795,15 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         val rouletteUrls = result.roulette.mapNotNull { safeRewardImageUrl(it.itemUrl) }
         val effectiveRouletteUrls = if (rouletteUrls.isNotEmpty()) rouletteUrls else FALLBACK_ROULETTE_URLS
         val allUrlsToPreload = (effectiveRouletteUrls + listOfNotNull(winnerUrl, safeRewardImageUrl(winner?.thumbnailUrl)) + FALLBACK_ROULETTE_URLS).distinct()
-        val preloadJob = startPreloadingRouletteAssets(appContext, allUrlsToPreload, tileWidth, tileHeight, winnerUrl)
+        val preloadJob = startPreloadingRouletteAssets(
+            appContext,
+            allUrlsToPreload,
+            tileWidth,
+            tileHeight,
+            containerWidth,
+            cardHeight,
+            winnerUrl,
+        )
 
         // ---- Phase: openBox — prepare stage and keep crate image visible until unbox video renders ----
         itemBinding.reelBackgroundVideo.isVisible = false
@@ -797,7 +822,7 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
             currentBinding.claimButton.alpha = 1f
         }.start()
 
-        startStagePlayers(appContext, itemBinding, safeRewardImageUrl(activeChallenge.unboxAnimationUrl))
+        startStagePlayers(appContext, itemBinding, activeChallenge.unboxAnimationUrl)
 
         val nearFired = awaitOpenBoxNearComplete()
         itemBinding.rewardImage.isVisible = false
@@ -810,12 +835,17 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         withTimeoutOrNull(1200L) { preloadJob.await() }
 
         if (!nearFired) {
-            // Unbox video missing/ended before the spin window — reveal the reward directly
-            releaseStagePlayers()
-            container.isVisible = false
-            showRewardImage(itemBinding.rewardImage, winnerUrl)
-            celebrate(activeChallenge, winner, refreshAfterClaim)
-            return
+            if (result.roulette.isEmpty()) {
+                // Unbox video missing/ended and no roulette strip — reveal the reward directly
+                releaseStagePlayers()
+                container.isVisible = false
+                showRewardImage(itemBinding.rewardImage, winnerUrl)
+                celebrate(activeChallenge, winner, refreshAfterClaim)
+                return
+            }
+            // Unbox video failed or ended early, but roulette tiles are available — spin the carousel anyway.
+            DiagnosticLogger.e("KickRewards", "Unbox stage video skipped; proceeding directly to roulette carousel")
+            itemBinding.stageUnboxVideo.alpha = 0f
         }
 
         if (result.roulette.isEmpty()) {
@@ -856,14 +886,20 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
     /** Waits for the unbox video's last 1000ms (kick.com's NEAR trigger). Degrades on failure. */
     private suspend fun awaitOpenBoxNearComplete(): Boolean {
         var sawPlayback = false
+        var consecutiveIdlePolls = 0
         val deadline = System.currentTimeMillis() + UNBOX_WAIT_TIMEOUT_MS
         while (isAdded && _binding != null && System.currentTimeMillis() < deadline) {
             delay(UNBOX_POLL_INTERVAL_MS)
+            if (unboxTerminalError) return false
             val player = unboxPlayer ?: break
             when (player.playbackState) {
-                Player.STATE_READY, Player.STATE_BUFFERING -> sawPlayback = true
+                Player.STATE_READY, Player.STATE_BUFFERING -> {
+                    sawPlayback = true
+                    consecutiveIdlePolls = 0
+                }
                 Player.STATE_ENDED -> return false
-                Player.STATE_IDLE -> if (sawPlayback) return false
+                // Allow one transient IDLE poll while onPlayerError swaps to defaultUri
+                Player.STATE_IDLE -> if (sawPlayback && ++consecutiveIdlePolls >= 2) return false
             }
             val durationMs = player.duration.takeIf { it > 0 } ?: DEFAULT_UNBOX_DURATION_MS
             if (durationMs - player.currentPosition <= NEAR_COMPLETE_MS) return true
@@ -1115,50 +1151,68 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         }
     }
 
+    @OptIn(UnstableApi::class)
     private fun startStagePlayers(
         appContext: Context,
         itemBinding: ItemRewardCardPageBinding,
         unboxServerUrl: String?,
     ) {
         releaseStagePlayers()
+        unboxTerminalError = false
+        val httpFactory = OkHttpDataSource.Factory(okHttpClient)
+            .setDefaultRequestProperties(KICK_IMAGE_HEADERS)
+        val mediaSourceFactory = DefaultMediaSourceFactory(
+            DefaultDataSource.Factory(appContext, httpFactory)
+        )
         val unboxUri = RouletteAnimationAssets.unboxSourceUri(appContext, unboxServerUrl)
         val defaultUri = RouletteAnimationAssets.unboxSourceUri(appContext, null)
         var usingDefaultUnbox = unboxUri == defaultUri
         var firstFrameRendered = false
-        unboxPlayer = ExoPlayer.Builder(appContext).build().apply {
-            setMediaItem(MediaItem.fromUri(unboxUri))
-            volume = 0f
-            repeatMode = Player.REPEAT_MODE_OFF
-            playWhenReady = true
-            itemBinding.stageUnboxVideo.player = this
-            addListener(object : Player.Listener {
-                override fun onRenderedFirstFrame() {
-                    if (!firstFrameRendered) {
-                        firstFrameRendered = true
-                        itemBinding.rewardImage.isVisible = false
+        unboxPlayer = ExoPlayer.Builder(appContext)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(unboxUri))
+                volume = 0f
+                repeatMode = Player.REPEAT_MODE_OFF
+                playWhenReady = true
+                itemBinding.stageUnboxVideo.player = this
+                addListener(object : Player.Listener {
+                    override fun onRenderedFirstFrame() {
+                        if (!firstFrameRendered) {
+                            firstFrameRendered = true
+                            itemBinding.rewardImage.isVisible = false
+                        }
                     }
-                }
-                override fun onPlayerError(error: PlaybackException) {
-                    // Server-hosted video unplayable — swap once to kick.com's own unbox.webm
-                    if (!usingDefaultUnbox) {
-                        usingDefaultUnbox = true
-                        setMediaItem(MediaItem.fromUri(defaultUri))
-                        prepare()
+                    override fun onPlayerError(error: PlaybackException) {
+                        DiagnosticLogger.e(
+                            "KickRewards",
+                            "Unbox stage video error (usingDefault=$usingDefaultUnbox, code=${error.errorCodeName}): ${error.message}",
+                            error,
+                        )
+                        // Server-hosted video unplayable — swap once to kick.com's own unbox.webm
+                        if (!usingDefaultUnbox) {
+                            usingDefaultUnbox = true
+                            setMediaItem(MediaItem.fromUri(defaultUri))
+                            prepare()
+                        } else {
+                            unboxTerminalError = true
+                        }
                     }
-                }
-            })
-            prepare()
-        }
+                })
+                prepare()
+            }
         unboxPlayerView = itemBinding.stageUnboxVideo
         // Buffers & loops seamlessly underneath the unbox video; surface ready for the spin handoff
-        backgroundPlayer = ExoPlayer.Builder(appContext).build().apply {
-            setMediaItem(MediaItem.fromUri(RouletteAnimationAssets.backgroundSourceUri(appContext)))
-            volume = 0f
-            repeatMode = Player.REPEAT_MODE_ONE
-            playWhenReady = true
-            itemBinding.reelBackgroundVideo.player = this
-            prepare()
-        }
+        backgroundPlayer = ExoPlayer.Builder(appContext)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(RouletteAnimationAssets.backgroundSourceUri(appContext)))
+                volume = 0f
+                repeatMode = Player.REPEAT_MODE_ONE
+                playWhenReady = true
+                itemBinding.reelBackgroundVideo.player = this
+                prepare()
+            }
         backgroundPlayerView = itemBinding.reelBackgroundVideo
         itemBinding.reelBackgroundVideo.isVisible = true
     }
@@ -1209,7 +1263,7 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         } else {
             val ctx = imageView.context
             ctx.imageLoader.enqueue(
-                buildKickImageRequest(ctx, url)
+                buildKickImageRequest(ctx, url, logAsError = true)
                     .fallback(R.drawable.ic_kick_gem)
                     .error(R.drawable.ic_kick_gem)
                     .target(imageView)
@@ -1327,7 +1381,11 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         }
     }
 
-    private fun buildKickImageRequest(context: Context, url: String): ImageRequest.Builder {
+    private fun buildKickImageRequest(
+        context: Context,
+        url: String,
+        logAsError: Boolean = false,
+    ): ImageRequest.Builder {
         val headersMap = if (url.contains(".kick.com", ignoreCase = true)) {
             KICK_IMAGE_HEADERS
         } else {
@@ -1339,6 +1397,16 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
         return ImageRequest.Builder(context)
             .data(url)
             .httpHeaders(headers)
+            .listener(
+                onError = { _, result ->
+                    val message = "Reward image load failed ($url): ${result.throwable.message}"
+                    if (logAsError) {
+                        DiagnosticLogger.e("KickRewards", message, result.throwable)
+                    } else {
+                        DiagnosticLogger.w("KickRewards", message, result.throwable)
+                    }
+                },
+            )
     }
 
     /** Loads the persisted JSON of the last real claim so the debug sim replays the exact data shape. */
@@ -1463,7 +1531,9 @@ class KickDailyRewardDialog : BottomSheetDialogFragment() {
                     } else {
                         val ctx = itemBinding.rewardImage.context
                         ctx.imageLoader.enqueue(
-                            buildKickImageRequest(ctx, imageUrl)
+                            buildKickImageRequest(ctx, imageUrl, logAsError = true)
+                                .fallback(R.drawable.ic_kick_gem)
+                                .error(R.drawable.ic_kick_gem)
                                 .target(itemBinding.rewardImage)
                                 .build()
                         )

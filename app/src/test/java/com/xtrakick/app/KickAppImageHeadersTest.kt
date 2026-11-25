@@ -26,6 +26,44 @@ class KickAppImageHeadersTest {
             KickApp.KickImageHostTier.PUBLIC_CDN,
             KickApp.classifyKickImageUrl("https://files.kick.com/images/user/123/profile.webp")
         )
+        assertEquals(
+            KickApp.KickImageHostTier.PUBLIC_CDN,
+            KickApp.classifyKickImageUrl("https://content.kick.com/public/rewards/thumbnails/abc.webp")
+        )
+        assertEquals(
+            KickApp.KickImageHostTier.PUBLIC_CDN,
+            KickApp.classifyKickImageUrl("https://static.kick.com/rewards/daily-rewards/idle.gif")
+        )
+    }
+
+    @Test
+    fun mergeKickImageHeadersDeduplicatesCaseInsensitively() {
+        val merged = KickApp.mergeKickImageHeaders(
+            requestHeaders = linkedMapOf(
+                "user-agent" to listOf("OldUA"),
+                "referer" to listOf("https://kick.com/"),
+                "accept" to listOf("image/webp", "image/png"),
+            ),
+            extraHeaders = linkedMapOf(
+                "Referer" to "https://kick.com/",
+                "User-Agent" to "ChromeUA",
+            ),
+        )
+        assertEquals(
+            listOf(
+                "accept" to "image/webp",
+                "accept" to "image/png",
+                "Referer" to "https://kick.com/",
+                "User-Agent" to "ChromeUA",
+            ),
+            merged,
+        )
+
+        val passthrough = KickApp.mergeKickImageHeaders(
+            requestHeaders = linkedMapOf("accept" to listOf("image/webp")),
+            extraHeaders = null,
+        )
+        assertEquals(listOf("accept" to "image/webp"), passthrough)
     }
 
     @Test

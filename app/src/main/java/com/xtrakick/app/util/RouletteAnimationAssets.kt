@@ -4,11 +4,11 @@ import android.content.Context
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
-import java.util.Locale
 
 /**
  * Prefetches and serves the daily-reward roulette stage videos that kick.com ships on
@@ -55,23 +55,23 @@ object RouletteAnimationAssets {
         }
     }
 
-    /**
-     * Resolves the unbox video source. The claim API's `animations.unbox_url` is read by the
-     * web player as a video, but our model normalizes it to an image URL (`.gif` suffix) for
-     * Coil, so only URLs that actually point at a video are served server-first; anything
-     * else falls back to kick.com's own default unbox.webm (cached file preferred, then the
-     * direct CDN URL — mirrors the web's `animations?.unbox_url || DEFAULT_UNBOX_URL`).
-     */
+    /** Resolves the event-specific video, otherwise the cached or remote default. */
     fun unboxSourceUri(context: Context, serverUnboxUrl: String?): Uri {
-        val isServerVideo = serverUnboxUrl != null &&
-            VIDEO_EXTENSIONS.any { serverUnboxUrl.lowercase(Locale.ROOT).endsWith(it) }
-        if (isServerVideo) {
-            if (serverUnboxUrl == DEFAULT_UNBOX_URL) {
-                localSourceUri(context, DEFAULT_UNBOX_URL)?.let { return it }
-            }
-            return Uri.parse(serverUnboxUrl)
-        }
+        val videoUrl = unboxVideoUrl(serverUnboxUrl)
+        if (videoUrl != null && videoUrl != DEFAULT_UNBOX_URL) return Uri.parse(videoUrl)
         return localSourceUri(context, DEFAULT_UNBOX_URL) ?: Uri.parse(DEFAULT_UNBOX_URL)
+    }
+
+    internal fun unboxVideoUrl(serverUnboxUrl: String?): String? {
+        val url = serverUnboxUrl?.toHttpUrlOrNull() ?: return null
+        if (!url.isHttps || (url.host != "kick.com" && !url.host.endsWith(".kick.com"))) return null
+        val path = url.encodedPath
+        val filename = path.substringAfterLast('/')
+        return when {
+            VIDEO_EXTENSIONS.any { filename.endsWith(it, ignoreCase = true) } -> url.toString()
+            filename.isNotEmpty() && '.' !in filename -> url.newBuilder().encodedPath("$path.webm").build().toString()
+            else -> null
+        }
     }
 
     /** @return background loop file, or the direct CDN URL as fallback. */
@@ -89,7 +89,11 @@ object RouletteAnimationAssets {
     }
 
     private fun download(okHttpClient: OkHttpClient, url: String, target: File) {
-        val request = Request.Builder().url(url).build()
+        val request = Request.Builder()
+            .url(url)
+            .header("Referer", "https://kick.com/")
+            .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36")
+            .build()
         target.parentFile?.mkdirs()
         okHttpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {

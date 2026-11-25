@@ -841,13 +841,16 @@ class SettingsActivity : BaseStateActivity() {
                 findNavController().navigate(SettingsNavGraphDirections.actionGlobalNavigationSettingsFragment())
                 true
             }
-            findPreference<Preference>("action_check_updates")?.setOnPreferenceClickListener {
-                val lastInstallTime = requireContext().tokenPrefs().getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
-                viewModel.checkUpdates(
-                    requireContext().prefs().getString(AppConstants.UPDATE_URL, null) ?: "https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest",
-                    lastInstallTime
-                )
-                true
+            findPreference<Preference>("action_check_updates")?.apply {
+                summary = "v${BuildConfig.VERSION_NAME} (b${BuildConfig.VERSION_CODE})"
+                setOnPreferenceClickListener {
+                    val lastInstallTime = requireContext().tokenPrefs().getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
+                    viewModel.checkUpdates(
+                        requireContext().prefs().getString(AppConstants.UPDATE_URL, null) ?: "https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest",
+                        lastInstallTime
+                    )
+                    true
+                }
             }
             findPreference<Preference>("nav_update_settings")?.setOnPreferenceClickListener {
                 requireActivity().findViewById<AppBarLayout>(R.id.appBar)?.setExpanded(true)

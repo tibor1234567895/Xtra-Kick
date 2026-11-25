@@ -445,12 +445,7 @@ object KickRewardsParsing {
                     url.endsWith(".png", ignoreCase = true)
                 ) url else "$url.gif"
             },
-            unboxAnimationUrl = animations?.scalar("unbox_url")?.let { url ->
-                if (url.endsWith(".gif", ignoreCase = true) ||
-                    url.endsWith(".webp", ignoreCase = true) ||
-                    url.endsWith(".png", ignoreCase = true)
-                ) url else "$url.gif"
-            },
+            unboxAnimationUrl = animations?.scalar("unbox_url"),
             activePeriodEndsAtEpochMs = activePeriod?.scalar("ends_at")?.let(::parseIsoTimestampMs),
             dropTable = parsedDropTable,
             winnerThumbnailUrl = parsedThumbnail ?: parsedCard,

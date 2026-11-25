@@ -4,6 +4,7 @@ import android.app.Application
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.ui.player.KickLivePlayback
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
@@ -18,9 +19,11 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowSystemClock
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.Duration
+import java.time.Instant
 
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class)
@@ -202,13 +205,92 @@ class UsagePingTest {
         assertFalse(oauthPayload.containsKey("ah"))
     }
 
+    @Test
+    fun playbackErrorsDeduplicateWithinCooldownAndReportWithAbiAndLanguage() {
+        UsagePing.notePlaybackError(context)
+        UsagePing.notePlaybackError(context)
+        assertEquals(1, prefs.getInt(AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED, 0))
+
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(6))
+        UsagePing.notePlaybackError(context)
+        assertEquals(2, prefs.getInt(AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED, 0))
+
+        val conn = Connection(errorsAcknowledged = true)
+        UsagePing.sendOnce(context, "2026-11-25") { conn }
+        val payload = conn.payload()
+        assertEquals("2", payload.getValue("pb").jsonObject.getValue("count").jsonPrimitive.content)
+        assertTrue(payload.getValue("lang").jsonPrimitive.content.matches(Regex("[a-z]{2,3}")))
+        assertEquals(0, prefs.getInt(AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED, 0))
+    }
+
+    @Test
+    fun olderBackendRetainsErrorsAndAcknowledgementKeepsNewErrors() {
+        UsagePing.notePlaybackError(context)
+        val legacy = Connection(acknowledged = true, playbackErrorAckOverride = "1")
+        UsagePing.sendOnce(context, "2026-11-25") { legacy }
+        assertEquals(1, prefs.getInt(AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED, 0))
+
+        val backend = Connection(errorsAcknowledged = true) {
+            ShadowSystemClock.advanceBy(Duration.ofSeconds(6))
+            UsagePing.notePlaybackError(context)
+        }
+        UsagePing.sendOnce(context, "2026-11-26") { backend }
+        assertEquals(legacy.payload().getValue("pb"), backend.payload().getValue("pb"))
+        assertEquals(1, prefs.getInt(AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED, 0))
+    }
+
+    @Test
+    fun lostResponseReusesThePersistedBatchAcrossDays() {
+        UsagePing.notePlaybackError(context)
+        val lost = Connection { throw IOException("Response lost") }
+        UsagePing.sendOnce(context, "2026-11-30") { lost }
+        val original = lost.payload().getValue("pb").jsonObject
+        assertEquals("2026-11-30", original.getValue("date").jsonPrimitive.content)
+        assertTrue(prefs.contains(AppConstants.USAGE_PLAYBACK_ERROR_BATCH))
+        assertFalse(prefs.contains(AppConstants.USAGE_PING_LAST_DAY))
+
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(6))
+        UsagePing.notePlaybackError(context)
+        val recovered = Connection(errorsAcknowledged = true)
+        UsagePing.sendOnce(context, "2026-12-01") { recovered }
+        assertEquals(original, recovered.payload().getValue("pb"))
+        assertEquals(1, prefs.getInt(AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED, 0))
+        assertFalse(prefs.contains(AppConstants.USAGE_PLAYBACK_ERROR_BATCH))
+
+        val next = Connection(errorsAcknowledged = true)
+        UsagePing.sendOnce(context, "2026-12-02") { next }
+        val remaining = next.payload().getValue("pb").jsonObject
+        assertFalse(original.getValue("id") == remaining.getValue("id"))
+        assertEquals("1", remaining.getValue("count").jsonPrimitive.content)
+        assertEquals(0, prefs.getInt(AppConstants.USAGE_PLAYBACK_ERRORS_UNREPORTED, 0))
+    }
+
+    @Test
+    fun crashCoverageKeepsTheCrashDayAndBuildAcrossPings() {
+        val crash = Instant.parse("2026-10-31T23:59:00Z")
+        repeat(2) { UsagePing.noteCrash(context, crash) }
+        for (day in listOf("2026-11-01", "2026-11-02", "2026-12-01")) {
+            val backend = Connection()
+            UsagePing.sendOnce(context, day) { backend }
+            val payload = Json.parseToJsonElement(backend.body.toString(Charsets.UTF_8)).jsonObject
+            val reports = payload.getValue("cb").jsonArray.map { it.jsonPrimitive.content }
+            val report = "2026-10-31|${BuildConfig.VERSION_NAME}|${BuildConfig.VERSION_CODE}"
+            assertEquals(if (day == "2026-12-01") emptyList() else listOf(report), reports)
+            if (day == "2026-11-01") assertEquals("2", payload.getValue("c").jsonPrimitive.content)
+            else assertFalse(payload.containsKey("c"))
+        }
+    }
+
     private class Connection(
         private val status: Int = 204,
         private val acknowledged: Boolean = false,
         private val retryAfter: String? = null,
+        private val errorsAcknowledged: Boolean = false,
+        private val playbackErrorAckOverride: String? = null,
         private val duringResponse: () -> Unit = {},
     ) : HttpURLConnection(URL("https://backend.invalid/v1/metrics/ping")) {
         val body = ByteArrayOutputStream()
+        fun payload() = Json.parseToJsonElement(body.toString(Charsets.UTF_8)).jsonObject
         override fun connect() = Unit
         override fun disconnect() = Unit
         override fun usingProxy() = false
@@ -219,6 +301,9 @@ class UsagePingTest {
         }
         override fun getHeaderField(name: String?): String? = when {
             name.equals("X-Playback-Starts-Accepted", true) && acknowledged -> "1"
+            name.equals("X-Playback-Errors-Accepted", true) -> playbackErrorAckOverride ?: if (errorsAcknowledged) {
+                payload()["pb"]?.jsonObject?.get("id")?.jsonPrimitive?.content
+            } else null
             name.equals("Retry-After", true) -> retryAfter
             else -> null
         }

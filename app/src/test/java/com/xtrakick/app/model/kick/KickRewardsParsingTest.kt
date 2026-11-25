@@ -1,5 +1,6 @@
 package com.xtrakick.app.model.kick
 
+import com.xtrakick.app.util.RouletteAnimationAssets
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -8,6 +9,19 @@ import org.junit.Test
 class KickRewardsParsingTest {
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    @Test
+    fun unboxVideoResolverPreservesSignedUrlsAndRejectsUnsupportedSources() {
+        val signed = "https://static.kick.com/event/unbox.MP4?sig=abc"
+        assertEquals(signed, RouletteAnimationAssets.unboxVideoUrl(signed))
+        assertEquals(
+            "https://static.kick.com/event/unbox.webm?sig=abc",
+            RouletteAnimationAssets.unboxVideoUrl("https://static.kick.com/event/unbox?sig=abc"),
+        )
+        assertNull(RouletteAnimationAssets.unboxVideoUrl("https://static.kick.com/event/unbox.gif"))
+        assertNull(RouletteAnimationAssets.unboxVideoUrl("https://static.kick.com.example/event/unbox"))
+        assertNull(RouletteAnimationAssets.unboxVideoUrl("http://static.kick.com/event/unbox"))
+    }
 
     @Test
     fun parsesDataWrappedChallengesWithNumbersIdsAndWinner() {
@@ -98,7 +112,11 @@ class KickRewardsParsingTest {
         assertEquals("Trick or Treat", challenge.name)
         assertEquals("Claim your Trick or Treat for a chance to win big!", challenge.description)
         assertEquals("https://static.kick.com/rewards/halloween-2610/idle.gif", challenge.idleAnimationUrl)
-        assertEquals("https://static.kick.com/rewards/halloween-2610/unbox.gif", challenge.unboxAnimationUrl)
+        assertEquals("https://static.kick.com/rewards/halloween-2610/unbox", challenge.unboxAnimationUrl)
+        assertEquals(
+            "https://static.kick.com/rewards/halloween-2610/unbox.webm",
+            RouletteAnimationAssets.unboxVideoUrl(challenge.unboxAnimationUrl),
+        )
         assertEquals(KickRewardsParsing.parseIsoTimestampMs("2026-11-01T00:00:00Z"), challenge.activePeriodEndsAtEpochMs)
 
         assertEquals(4, challenge.dropTable.size)
