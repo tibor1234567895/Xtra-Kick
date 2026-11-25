@@ -49,8 +49,8 @@ class LocalFollowChannelRepository @Inject constructor(
                         localFollowsChannelDao.insert(item)
                         changed = true
                     } else {
-                        val name = item.userName ?: saved.userName
-                        val logo = item.channelLogo ?: saved.channelLogo
+                        val name = item.userName?.takeIf { it.isNotBlank() } ?: saved.userName
+                        val logo = item.channelLogo?.takeIf { it.isNotBlank() } ?: saved.channelLogo
                         val mask = saved.sourceMask or AppConstants.FOLLOW_SOURCE_MASK_KICK
                         if (name != saved.userName || logo != saved.channelLogo || mask != saved.sourceMask) {
                             saved.userName = name
@@ -159,8 +159,8 @@ class LocalFollowChannelRepository @Inject constructor(
                     saved.apply {
                         userId = item.userId?.takeIf { it.isNotBlank() } ?: userId
                         userLogin = item.userLogin?.takeIf { it.isNotBlank() } ?: userLogin
-                        userName = item.userName ?: userName
-                        channelLogo = item.channelLogo ?: channelLogo
+                        userName = item.userName?.takeIf { it.isNotBlank() } ?: userName
+                        channelLogo = item.channelLogo?.takeIf { it.isNotBlank() } ?: channelLogo
                         sourceMask = sourceMask or item.sourceMask
                     }.also(localFollowsChannelDao::update)
                 }
@@ -215,8 +215,8 @@ class LocalFollowChannelRepository @Inject constructor(
         } else {
             existing.userId = normalizedUserId ?: existing.userId
             existing.userLogin = normalizedUserLogin ?: existing.userLogin
-            existing.userName = userName ?: existing.userName
-            existing.channelLogo = channelLogo ?: existing.channelLogo
+            existing.userName = userName?.takeIf { it.isNotBlank() } ?: existing.userName
+            existing.channelLogo = channelLogo?.takeIf { it.isNotBlank() } ?: existing.channelLogo
             if (sourceMask != null) {
                 existing.sourceMask = existing.sourceMask or sourceMask
             }
@@ -260,8 +260,8 @@ class LocalFollowChannelRepository @Inject constructor(
             } else {
                 val mergedId = existing.userId ?: item.userId
                 val mergedLogin = existing.userLogin ?: item.userLogin
-                val mergedName = existing.userName ?: item.userName
-                val mergedLogo = existing.channelLogo ?: item.channelLogo
+                val mergedName = existing.userName?.takeIf { it.isNotBlank() } ?: item.userName?.takeIf { it.isNotBlank() } ?: existing.userName
+                val mergedLogo = existing.channelLogo?.takeIf { it.isNotBlank() } ?: item.channelLogo?.takeIf { it.isNotBlank() } ?: existing.channelLogo
                 val mergedSourceMask = existing.sourceMask or item.sourceMask
 
                 var changed = false

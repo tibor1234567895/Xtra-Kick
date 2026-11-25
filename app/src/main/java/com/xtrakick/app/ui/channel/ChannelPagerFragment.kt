@@ -841,9 +841,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost {
                     lastBroadcast.text = getString(R.string.last_broadcast_date, formatted)
                 }
             }
-            if (args.updateLocal) {
-                viewModel.updateLocalUser(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), requireContext().filesDir.path, user)
-            }
+            viewModel.updateLocalUser(requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"), requireContext().filesDir.path, user)
         }
     }
 

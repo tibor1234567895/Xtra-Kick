@@ -119,4 +119,30 @@ class LocalFollowChannelRepositoryTest {
             database.close()
         }
     }
+
+    @Test
+    fun blankNameOrLogoDoesNotOverwriteExistingValues() = runBlocking {
+        val database = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), AppDatabase::class.java).build()
+        try {
+            val repository = LocalFollowChannelRepository(database.localFollowsChannel(), database)
+            repository.saveFollow(LocalFollowChannel("10", "streamer", "Streamer", "https://example.com/a.jpg", sourceMask = 1))
+
+            repository.upsertLocalFollow("10", "streamer", "   ", "")
+            var saved = repository.loadFollows().single()
+            assertEquals("Streamer", saved.userName)
+            assertEquals("https://example.com/a.jpg", saved.channelLogo)
+
+            repository.upsertLocalFollows(listOf(LocalFollowChannel("10", "streamer", "", "  ", sourceMask = 1)))
+            saved = repository.loadFollows().single()
+            assertEquals("Streamer", saved.userName)
+            assertEquals("https://example.com/a.jpg", saved.channelLogo)
+
+            repository.reconcileKickFollows(listOf(LocalFollowChannel(userLogin = "streamer", userName = " ", channelLogo = ""))) { true }
+            saved = repository.loadFollows().single()
+            assertEquals("Streamer", saved.userName)
+            assertEquals("https://example.com/a.jpg", saved.channelLogo)
+        } finally {
+            database.close()
+        }
+    }
 }

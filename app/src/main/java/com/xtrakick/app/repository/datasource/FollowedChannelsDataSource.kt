@@ -26,8 +26,13 @@ class FollowedChannelsDataSource(
 ) : PagingSource<Int, User>() {
 
     companion object {
-        private const val AVATAR_RETRY_DELAY_MS = 60_000L
+        internal const val AVATAR_RETRY_DELAY_MS = 60_000L
+        internal const val AVATAR_REFRESH_INTERVAL_MS = 30L * 60_000L
         private val avatarRetryAfter = ConcurrentHashMap<String, Long>()
+
+        fun clearRefreshCooldowns() {
+            avatarRetryAfter.entries.removeIf { it.value != Long.MAX_VALUE }
+        }
     }
 
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, User> {
@@ -35,31 +40,38 @@ class FollowedChannelsDataSource(
         kickRepository?.let { repo ->
             if (!avatarScope.isActive) return@let
             val now = elapsedTimeMs()
-            val missing = follows.mapNotNull { follow ->
-                if (!follow.channelLogo.isNullOrBlank()) return@mapNotNull null
+            val toRefresh = LinkedHashMap<String, LocalFollowChannel>()
+            // Fetch missing avatars before refreshing already-populated ones.
+            val (missing, populated) = follows.partition { it.channelLogo.isNullOrBlank() }
+            for (follow in missing + populated) {
                 val login = follow.userLogin?.trim()?.takeIf { it.isNotBlank() }
-                    ?.lowercase(Locale.ROOT) ?: return@mapNotNull null
+                    ?.lowercase(Locale.ROOT) ?: continue
+                if (toRefresh.containsKey(login)) continue
                 val retryAfter = avatarRetryAfter[login]
                 val reserved = if (retryAfter == null) {
                     avatarRetryAfter.putIfAbsent(login, Long.MAX_VALUE) == null
                 } else {
                     retryAfter <= now && avatarRetryAfter.replace(login, retryAfter, Long.MAX_VALUE)
                 }
-                if (reserved) login to follow else null
-            }.toMap()
-            if (missing.isNotEmpty()) {
+                if (reserved) {
+                    toRefresh[login] = follow
+                }
+            }
+            if (toRefresh.isNotEmpty()) {
                 val pendingLogins = ConcurrentHashMap.newKeySet<String>().apply {
-                    addAll(missing.keys)
+                    addAll(toRefresh.keys)
                 }
                 val job = avatarScope.launch(Dispatchers.IO) {
-                    for ((login, follow) in missing) {
+                    for ((login, follow) in toRefresh) {
                         ensureActive()
+                        var nextCheckDelay = AVATAR_RETRY_DELAY_MS
                         try {
                             val channelResp = repo.getChannel(login, prefetchBadgeCatalog = false, forceRefresh = true)
                             val pic = channelResp.user?.profileImage
                             if (!pic.isNullOrBlank()) {
+                                nextCheckDelay = AVATAR_REFRESH_INTERVAL_MS
                                 val current = localFollowsChannel.getFollow(follow.userId, follow.userLogin)
-                                if (current != null && current.channelLogo.isNullOrBlank()) {
+                                if (current != null && current.channelLogo != pic) {
                                     current.channelLogo = pic
                                     localFollowsChannel.updateFollow(current)
                                 }
@@ -68,7 +80,7 @@ class FollowedChannelsDataSource(
                             throw error
                         } catch (_: Exception) {
                         } finally {
-                            avatarRetryAfter[login] = elapsedTimeMs() + AVATAR_RETRY_DELAY_MS
+                            avatarRetryAfter[login] = elapsedTimeMs() + nextCheckDelay
                             pendingLogins.remove(login)
                         }
                     }

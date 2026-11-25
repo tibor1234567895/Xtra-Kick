@@ -26,11 +26,13 @@ import android.util.Log
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import org.chromium.net.CronetEngine
 import java.io.File
@@ -448,10 +450,28 @@ class ChannelPagerViewModel @Inject constructor(
             updatedLocalUser = true
             user.channelId.takeIf { !it.isNullOrBlank() }?.let { userId ->
                 viewModelScope.launch {
+                    localFollowsChannel.getFollow(userId, user.channelLogin)?.let { existing ->
+                        val nextLogin = user.channelLogin?.takeIf { it.isNotBlank() } ?: existing.userLogin
+                        val nextName = user.channelName?.takeIf { it.isNotBlank() } ?: existing.userName
+                        val nextLogo = user.profileImageUrl?.takeIf { it.isNotBlank() } ?: existing.channelLogo
+                        val changed = existing.userId != userId ||
+                            existing.userLogin != nextLogin ||
+                            existing.userName != nextName ||
+                            existing.channelLogo != nextLogo
+                        if (changed) {
+                            localFollowsChannel.updateFollow(existing.apply {
+                                this.userId = userId
+                                userLogin = nextLogin
+                                userName = nextName
+                                channelLogo = nextLogo
+                            })
+                        }
+                    }
+                    val offlineVideos = offlineRepository.getVideosByUserId(userId)
+                    val bookmarks = bookmarksRepository.getBookmarksByUserId(userId)
+                    if (offlineVideos.isEmpty() && bookmarks.isEmpty()) return@launch
                     val downloadedLogo = user.channelLogo.takeIf { !it.isNullOrBlank() }?.let { logoUrl ->
-                        File(filesDir, "profile_pics").mkdir()
-                        val path = filesDir + File.separator + "profile_pics" + File.separator + userId
-                        viewModelScope.launch(Dispatchers.IO) {
+                        withContext(Dispatchers.IO) {
                             try {
                                 val (status, bytes) = NetworkUtils.fetchBytesRaw(
                                     httpEngine = httpEngine,
@@ -461,35 +481,35 @@ class ChannelPagerViewModel @Inject constructor(
                                     networkLibrary = networkLibrary,
                                     url = logoUrl,
                                 )
-                                if (status in 200..299) {
-                                    FileOutputStream(path).use { outputStream ->
+                                if (status in 200..299 && bytes.isNotEmpty()) {
+                                    val dir = File(filesDir, "profile_pics").apply { mkdirs() }
+                                    val file = File(dir, userId)
+                                    FileOutputStream(file).use { outputStream ->
                                         outputStream.write(bytes)
                                     }
+                                    file.path
+                                } else {
+                                    null
                                 }
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (_: Exception) {
+                                null
                             }
                         }
-                        path
                     }
-                    localFollowsChannel.getFollow(userId, user.channelLogin)?.let {
-                        localFollowsChannel.updateFollow(it.apply {
-                            if (!userId.isNullOrBlank()) this.userId = userId
-                            userLogin = user.channelLogin
-                            userName = user.channelName
-                        })
-                    }
-                    offlineRepository.getVideosByUserId(userId).forEach {
+                    offlineVideos.forEach {
                         offlineRepository.updateChannelMetadata(it.apply {
                             channelLogin = user.channelLogin
                             channelName = user.channelName
-                            channelLogo = downloadedLogo
+                            if (downloadedLogo != null) channelLogo = downloadedLogo
                         })
                     }
-                    bookmarksRepository.getBookmarksByUserId(userId).forEach {
+                    bookmarks.forEach {
                         bookmarksRepository.updateBookmark(it.apply {
                             userLogin = user.channelLogin
                             userName = user.channelName
-                            userLogo = downloadedLogo
+                            if (downloadedLogo != null) userLogo = downloadedLogo
                         })
                     }
                 }

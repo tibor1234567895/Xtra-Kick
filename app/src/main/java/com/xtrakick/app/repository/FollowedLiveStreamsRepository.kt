@@ -575,6 +575,20 @@ class FollowedLiveStreamsRepository @Inject constructor(
             channel.slug ?: login,
             channel.userId?.toString() ?: channel.user?.id?.toString(),
         )
+        val freshLogo = channel.user?.profileImage
+        if (!freshLogo.isNullOrBlank() && freshLogo != follow.channelLogo) {
+            try {
+                localFollowsChannel.getFollow(follow.userId, follow.userLogin)?.let { current ->
+                    if (current.channelLogo != freshLogo) {
+                        current.channelLogo = freshLogo
+                        localFollowsChannel.updateFollow(current)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
         val livestream = channel.livestream ?: return null
         val enriched = if (
             login != null &&

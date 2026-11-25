@@ -51,6 +51,7 @@ class FollowedChannelsDataSourceTest {
 
     @Before
     fun setUp() {
+        FollowedChannelsDataSource.clearRefreshCooldowns()
         val context = RuntimeEnvironment.getApplication()
         database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
         localFollows = LocalFollowChannelRepository(database.localFollowsChannel(), database)
@@ -190,6 +191,73 @@ class FollowedChannelsDataSourceTest {
         awaitFetches()
         assertEquals(2, requests.get())
         assertEquals("https://example.com/avatar.jpg", localFollows.getFollow(null, "cancel-pending")?.channelLogo)
+    }
+
+    @Test
+    fun existingStaleAvatarRefreshesAndRespectsRefreshInterval() = runBlocking {
+        localFollows.saveFollow(LocalFollowChannel(userLogin = "stale-avatar", channelLogo = "https://example.com/old.jpg"))
+        var currentAvatar = "https://example.com/new-1.jpg"
+        response = { request ->
+            avatarResponse(request, body = """{"user":{"profile_picture":"$currentAvatar"}}""")
+        }
+
+        load()
+        awaitFetches()
+        assertEquals(1, requests.get())
+        assertEquals("https://example.com/new-1.jpg", localFollows.loadFollows().single().channelLogo)
+
+        // Within refresh interval: no duplicate request even if remote changes.
+        currentAvatar = "https://example.com/new-2.jpg"
+        now.set(FollowedChannelsDataSource.AVATAR_RETRY_DELAY_MS + 1)
+        load()
+        awaitFetches()
+        assertEquals(1, requests.get())
+        assertEquals("https://example.com/new-1.jpg", localFollows.loadFollows().single().channelLogo)
+
+        // After refresh interval elapses: picks up the newer avatar.
+        now.set(FollowedChannelsDataSource.AVATAR_REFRESH_INTERVAL_MS + 1)
+        load()
+        awaitFetches()
+        assertEquals(2, requests.get())
+        assertEquals("https://example.com/new-2.jpg", localFollows.loadFollows().single().channelLogo)
+    }
+
+    @Test
+    fun clearRefreshCooldownsForcesRecheckWithoutNotifyingWhenUnchanged() = runBlocking {
+        localFollows.saveFollow(LocalFollowChannel(userLogin = "manual-refresh", channelLogo = "https://example.com/v1.jpg"))
+        var currentAvatar = "https://example.com/v1.jpg"
+        response = { request ->
+            avatarResponse(request, body = """{"user":{"profile_picture":"$currentAvatar"}}""")
+        }
+
+        val initialVersion = localFollows.changeVersion
+        load()
+        awaitFetches()
+        assertEquals(1, requests.get())
+        assertEquals(initialVersion, localFollows.changeVersion)
+
+        currentAvatar = "https://example.com/v2.jpg"
+        FollowedChannelsDataSource.clearRefreshCooldowns()
+        load()
+        awaitFetches()
+        assertEquals(2, requests.get())
+        assertEquals("https://example.com/v2.jpg", localFollows.loadFollows().single().channelLogo)
+        assertTrue(localFollows.changeVersion > initialVersion)
+    }
+
+    @Test
+    fun missingAvatarsAreFetchedBeforePopulatedAvatars() = runBlocking {
+        localFollows.saveFollow(LocalFollowChannel(userLogin = "has-avatar", channelLogo = "https://example.com/old.jpg"))
+        localFollows.saveFollow(LocalFollowChannel(userLogin = "no-avatar", channelLogo = null))
+        val requestedSlugs = java.util.Collections.synchronizedList(mutableListOf<String>())
+        response = { request ->
+            requestedSlugs += request.url.pathSegments.last()
+            avatarResponse(request)
+        }
+
+        load()
+        awaitFetches()
+        assertEquals(listOf("no-avatar", "has-avatar"), requestedSlugs)
     }
 
     private suspend fun load(owner: CoroutineScope = scope): PagingSource.LoadResult<Int, User> =

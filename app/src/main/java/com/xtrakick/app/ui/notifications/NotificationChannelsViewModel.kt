@@ -1,6 +1,7 @@
 package com.xtrakick.app.ui.notifications
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
@@ -514,45 +515,75 @@ class NotificationChannelsViewModel @Inject constructor(
             .sortedWith(compareBy({ !it.followed }, { it.name?.lowercase() ?: "" }, { it.id }))
     }
 
+    private data class ChannelMetadataPatch(
+        val id: String,
+        val name: String?,
+        val login: String,
+        val logoUrl: String?,
+    )
+
     private suspend fun enrichMissingChannelDetails() = withContext(Dispatchers.IO) {
         val current = _channels.value ?: return@withContext
-        val missing = current.filter { 
-            (it.logoUrl.isNullOrBlank() || it.name == it.id) && 
-            !it.login.isNullOrBlank() && 
-            !it.login.all(Char::isDigit) 
-        }.take(15)
-        if (missing.isEmpty()) return@withContext
-
-        var changed = false
-        val updated = current.toMutableList()
-
-        for (item in missing) {
-            val slug = item.login ?: continue
-            val ch = runCatching { kickRepository.getChannel(slug, prefetchBadgeCatalog = false) }.getOrNull() ?: continue
-            val logo = ch.user?.profileImage
-            val realName = ch.user?.username ?: ch.slug ?: item.name
-            val trueUserId = ch.userId?.toString() ?: item.id
-            if (!logo.isNullOrBlank() || realName != item.name) {
-                notificationUsersRepository.saveChannelMetadata(trueUserId, slug, realName, logo)
-                notificationUsersRepository.saveChannelMetadata(item.id, slug, realName, logo)
-                if (item.followed) {
-                    localFollowChannelRepository.upsertLocalFollow(trueUserId, slug, realName, logo)
-                }
-                val idx = updated.indexOfFirst { it.id == item.id && it.followed == item.followed }
-                if (idx >= 0) {
-                    updated[idx] = updated[idx].copy(
-                        id = trueUserId,
-                        name = realName,
-                        login = slug,
-                        logoUrl = logo ?: updated[idx].logoUrl
-                    )
-                    changed = true
-                }
+        val now = SystemClock.elapsedRealtime()
+        val missing = ArrayList<ChannelUi>()
+        val stale = ArrayList<ChannelUi>()
+        for (item in current) {
+            val login = item.login?.trim()?.takeIf { it.isNotEmpty() && !it.all(Char::isDigit) } ?: continue
+            if (item.logoUrl.isNullOrBlank() || item.name == item.id) {
+                missing += item
+            } else if ((channelRefreshAfter[login.lowercase(Locale.ROOT)] ?: 0L) <= now) {
+                stale += item
             }
         }
-        if (changed) {
+        val candidates = (missing + stale).take(15)
+        if (candidates.isEmpty()) return@withContext
+
+        val patches = HashMap<Pair<String, Boolean>, ChannelMetadataPatch>()
+
+        for (item in candidates) {
+            val slug = item.login ?: continue
+            val key = slug.trim().lowercase(Locale.ROOT)
+            val ch = try {
+                kickRepository.getChannel(slug, prefetchBadgeCatalog = false, forceRefresh = true)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                continue
+            }
+            val logo = ch.user?.profileImage?.takeIf { it.isNotBlank() }
+            val realName = ch.user?.username?.takeIf { it.isNotBlank() } ?: ch.slug ?: item.name
+            val trueUserId = ch.userId?.toString() ?: item.id
+            channelRefreshAfter[key] = SystemClock.elapsedRealtime() + CHANNEL_REFRESH_INTERVAL_MS
+            val logoChanged = logo != null && logo != item.logoUrl
+            val nameChanged = realName != item.name
+            if (logoChanged || nameChanged) {
+                val effectiveLogo = logo ?: item.logoUrl
+                notificationUsersRepository.saveChannelMetadata(trueUserId, slug, realName, effectiveLogo)
+                notificationUsersRepository.saveChannelMetadata(item.id, slug, realName, effectiveLogo)
+                if (item.followed) {
+                    localFollowChannelRepository.upsertLocalFollow(trueUserId, slug, realName, effectiveLogo)
+                }
+                patches[item.id to item.followed] = ChannelMetadataPatch(
+                    id = trueUserId,
+                    name = realName,
+                    login = slug,
+                    logoUrl = effectiveLogo,
+                )
+            }
+        }
+        if (patches.isNotEmpty()) {
             withContext(Dispatchers.Main) {
-                _channels.value = updated.sortedWith(compareBy({ !it.followed }, { it.name?.lowercase() ?: "" }, { it.id }))
+                val latest = _channels.value ?: return@withContext
+                val merged = latest.map { row ->
+                    val patch = patches[row.id to row.followed] ?: return@map row
+                    row.copy(
+                        id = patch.id,
+                        name = patch.name,
+                        login = patch.login,
+                        logoUrl = patch.logoUrl,
+                    )
+                }
+                _channels.value = merged.sortedWith(compareBy({ !it.followed }, { it.name?.lowercase() ?: "" }, { it.id }))
             }
         }
     }
@@ -560,6 +591,8 @@ class NotificationChannelsViewModel @Inject constructor(
     companion object {
         private const val TAG = "NotifChannels"
         const val MAX_UNDO_STEPS = 10
+        private const val CHANNEL_REFRESH_INTERVAL_MS = 30L * 60_000L
+        private val channelRefreshAfter = ConcurrentHashMap<String, Long>()
 
         /**
          * Pure search + enabled-only filter over the loaded list. The filter never

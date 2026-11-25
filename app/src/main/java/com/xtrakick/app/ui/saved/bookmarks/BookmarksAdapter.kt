@@ -30,6 +30,7 @@ import com.xtrakick.app.ui.main.MainActivity
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.prefs
+import java.io.File
 
 class BookmarksAdapter(
     private val fragment: Fragment,
@@ -198,11 +199,15 @@ class BookmarksAdapter(
                     } else {
                         type.visibility = View.GONE
                     }
-                    if (item.userLogo != null) {
+                    val userLogo = item.userLogo
+                    if (userLogo != null) {
                         userImage.visibility = View.VISIBLE
                         fragment.requireContext().imageLoader.enqueue(
                             ImageRequest.Builder(fragment.requireContext()).apply {
-                                data(item.userLogo)
+                                data(userLogo)
+                                if (userLogo.startsWith("/")) {
+                                    memoryCacheKey("$userLogo:${File(userLogo).lastModified()}")
+                                }
                                 diskCachePolicy(CachePolicy.DISABLED)
                                 if (context.prefs().getBoolean(AppConstants.UI_ROUNDUSERIMAGE, true)) {
                                     transformations(CircleCropTransformation())

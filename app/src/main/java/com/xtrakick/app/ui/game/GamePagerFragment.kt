@@ -341,16 +341,14 @@ class GamePagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost {
                 KickApiHelper.getKickWebHeaders(requireContext(), true),
             )
         }
-        if (args.updateLocal) {
-            viewModel.updateLocalGame(
-                requireContext().filesDir.path,
-                args.gameId,
-                args.gameName,
-                requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
-                KickApiHelper.getKickWebHeaders(requireContext()),
-                KickApiHelper.getKickPublicApiHeaders(requireContext()),
-            )
-        }
+        viewModel.updateLocalGame(
+            requireContext().filesDir.path,
+            args.gameId,
+            args.gameName,
+            requireContext().prefs().getString(AppConstants.NETWORK_LIBRARY, "OkHttp"),
+            KickApiHelper.getKickWebHeaders(requireContext()),
+            KickApiHelper.getKickPublicApiHeaders(requireContext()),
+        )
     }
 
     private fun updateGameLayout(game: Game?) {

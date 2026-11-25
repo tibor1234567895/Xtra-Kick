@@ -20,6 +20,7 @@ import com.xtrakick.app.databinding.CommonRecyclerViewLayoutBinding
 import com.xtrakick.app.databinding.SortBarBinding
 import com.xtrakick.app.model.ui.SortChannel
 import com.xtrakick.app.model.ui.User
+import com.xtrakick.app.repository.datasource.FollowedChannelsDataSource
 import com.xtrakick.app.ui.common.FragmentHost
 import com.xtrakick.app.ui.common.PagedListFragment
 import com.xtrakick.app.ui.common.Scrollable
@@ -80,6 +81,7 @@ class FollowedChannelsFragment : PagedListFragment(), Scrollable, Sortable, Foll
             requestScrollToTopOnNextRefresh()
             viewLifecycleOwner.lifecycleScope.launch {
                 kickFollowSync.refreshNow()
+                FollowedChannelsDataSource.clearRefreshCooldowns()
                 pagingAdapter.refresh()
             }
         }
