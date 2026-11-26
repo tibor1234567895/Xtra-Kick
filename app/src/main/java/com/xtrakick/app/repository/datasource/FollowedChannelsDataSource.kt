@@ -45,16 +45,17 @@ class FollowedChannelsDataSource(
             val (missing, populated) = follows.partition { it.channelLogo.isNullOrBlank() }
             for (follow in missing + populated) {
                 val login = follow.userLogin?.trim()?.takeIf { it.isNotBlank() }
-                    ?.lowercase(Locale.ROOT) ?: continue
-                if (toRefresh.containsKey(login)) continue
-                val retryAfter = avatarRetryAfter[login]
-                val reserved = if (retryAfter == null) {
-                    avatarRetryAfter.putIfAbsent(login, Long.MAX_VALUE) == null
-                } else {
-                    retryAfter <= now && avatarRetryAfter.replace(login, retryAfter, Long.MAX_VALUE)
-                }
-                if (reserved) {
-                    toRefresh[login] = follow
+                    ?.lowercase(Locale.ROOT)
+                if (login != null && !toRefresh.containsKey(login)) {
+                    val retryAfter = avatarRetryAfter[login]
+                    val reserved = if (retryAfter == null) {
+                        avatarRetryAfter.putIfAbsent(login, Long.MAX_VALUE) == null
+                    } else {
+                        retryAfter <= now && avatarRetryAfter.replace(login, retryAfter, Long.MAX_VALUE)
+                    }
+                    if (reserved) {
+                        toRefresh[login] = follow
+                    }
                 }
             }
             if (toRefresh.isNotEmpty()) {
