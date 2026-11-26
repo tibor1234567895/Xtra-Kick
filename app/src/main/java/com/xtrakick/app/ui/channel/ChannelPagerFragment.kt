@@ -509,7 +509,7 @@ class ChannelPagerFragment : BaseNetworkFragment(), Scrollable, FragmentHost {
                     } else {
                         appBar.setExpanded(false, isResumed)
                         appBar.background = null
-                        AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL
+                        AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL or AppBarLayout.LayoutParams.SCROLL_FLAG_EXIT_UNTIL_COLLAPSED
                     }
                     viewPager.doOnLayout {
                         childFragmentManager.findFragmentByTag("f${position}").let { fragment ->

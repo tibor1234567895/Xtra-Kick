@@ -853,6 +853,8 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="kick_prediction_vote_minimum">Apuesta mínima: %1$s</string>
     <string name="kick_prediction_vote_current_stake">Apuesta actual en este resultado: %1$s</string>
     <string name="kick_prediction_vote_only_selected">Solo puedes apostar por tu resultado seleccionado</string>
+    <string name="kick_poll_tap_to_vote">Toca una opción para votar</string>
+    <string name="kick_prediction_tap_to_bet">Toca un resultado para apostar</string>
     <string name="prediction_outcome_compact">%1$d%%: %2$s</string>
     <string name="prediction_outcome_compact_winner">Ganador: %1$d%%: %2$s</string>
     <string name="download_settings">Descargas</string>

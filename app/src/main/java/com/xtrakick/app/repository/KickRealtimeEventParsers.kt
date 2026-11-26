@@ -23,11 +23,17 @@ private val CHANNEL_MOVE_EVENTS = setOf(
 
 private val PREDICTION_EVENTS = setOf(
     "predictioncreated",
+    "app\\events\\predictioncreated",
     "predictionupdated",
+    "app\\events\\predictionupdated",
     "predictionlocked",
+    "app\\events\\predictionlocked",
     "predictionended",
+    "app\\events\\predictionended",
     "predictionresolved",
+    "app\\events\\predictionresolved",
     "predictioncancelled",
+    "app\\events\\predictioncancelled",
 )
 
 private val ROOM_STATE_KEYS = setOf(
@@ -152,6 +158,18 @@ internal class KickRealtimeEventParsers(private val json: Json) {
 
     fun parseKickRealtimePollUpdate(eventName: String?, messageJson: String): Poll? {
         val normalizedEvent = eventName?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (normalizedEvent == "app\\events\\polldeleteevent") {
+            val root = runCatching { json.parseToJsonElement(messageJson).jsonObject }.getOrNull()
+            val pollObject = root?.objOrNull("poll") ?: root
+            return Poll(
+                id = pollObject?.firstPrimitiveOrNull("poll_id", "id", "title"),
+                title = pollObject?.primitiveOrNull("title"),
+                status = "DELETED",
+                choices = null,
+                totalVotes = null,
+                remainingMilliseconds = 0,
+            )
+        }
         if (normalizedEvent != "app\\events\\pollupdateevent") {
             return null
         }
@@ -269,6 +287,7 @@ internal class KickRealtimeEventParsers(private val json: Json) {
             choices = choices,
             totalVotes = totalVotes,
             remainingMilliseconds = remainingSeconds?.times(1000)?.toInt(),
+            durationMilliseconds = pollObject.firstLongOrNull("duration", "duration_seconds")?.times(1000)?.toInt(),
             resultDisplayMilliseconds = pollObject.firstLongOrNull("result_display_duration", "result_display_seconds")?.times(1000)?.toInt(),
             hasVoted = pollObject["has_voted"]?.let { (it as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: (it as? JsonPrimitive)?.intOrNull?.let { intValue -> intValue != 0 } },
             votedChoiceId = pollObject.firstLongOrNull("voted_option_id", "voted_choice_id")?.toInt(),
@@ -293,7 +312,7 @@ internal class KickRealtimeEventParsers(private val json: Json) {
                     ?: outcome.firstPrimitiveOrNull("status", "state", "result")?.equals("won", ignoreCase = true),
             )
         }
-        val status = predictionObject.firstPrimitiveOrNull("status", "state") ?: when (normalizedEvent) {
+        val status = predictionObject.firstPrimitiveOrNull("status", "state") ?: when (normalizedEvent?.substringAfterLast('\\')) {
             "predictionlocked" -> "LOCKED"
             "predictionresolved", "predictionended" -> "RESOLVED"
             "predictioncancelled" -> "CANCELED"

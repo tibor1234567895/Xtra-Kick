@@ -38,6 +38,16 @@ class KickRealtimeEventParsersTest {
     }
 
     @Test
+    fun parsesPollDeleteEventAsDeleted() {
+        val poll = parsers.parseKickRealtimePollUpdate("App\\Events\\PollDeleteEvent", "{\"poll\": {\"id\": \"p9\"}}")
+
+        assertEquals("p9", poll?.id)
+        assertEquals("DELETED", poll?.status)
+        assertFalse(poll?.isEnded() == true)
+        assertFalse(poll?.isActive() == true)
+    }
+
+    @Test
     fun parsesPredictionUpdateWithStatusAndUserVote() {
         val payload = """
         {
@@ -56,6 +66,8 @@ class KickRealtimeEventParsersTest {
         val prediction = parsers.parseKickRealtimePredictionUpdate("PredictionCreated", payload)
 
         assertEquals("OPEN", prediction?.status)
+        assertTrue(prediction?.isActive() == true)
+        assertFalse(prediction?.isLocked() == true)
         assertEquals(300, prediction?.predictionWindowSeconds)
         assertEquals(2, prediction?.outcomes?.size)
         assertEquals(100, prediction?.outcomes?.firstOrNull()?.totalPoints)
@@ -65,9 +77,12 @@ class KickRealtimeEventParsersTest {
 
     @Test
     fun mapsPredictionEndEventsToStatus() {
-        assertEquals("LOCKED", parsers.parseKickRealtimePredictionUpdate("PredictionLocked", "{\"a\":1}")?.status)
-        assertEquals("RESOLVED", parsers.parseKickRealtimePredictionUpdate("PredictionEnded", "{\"a\":1}")?.status)
-        assertEquals("CANCELED", parsers.parseKickRealtimePredictionUpdate("PredictionCancelled", "{\"a\":1}")?.status)
+        for (prefix in listOf("", "App\\Events\\")) {
+            assertEquals("LOCKED", parsers.parseKickRealtimePredictionUpdate("${prefix}PredictionLocked", "{\"a\":1}")?.status)
+            assertEquals("RESOLVED", parsers.parseKickRealtimePredictionUpdate("${prefix}PredictionEnded", "{\"a\":1}")?.status)
+            assertEquals("RESOLVED", parsers.parseKickRealtimePredictionUpdate("${prefix}PredictionResolved", "{\"a\":1}")?.status)
+            assertEquals("CANCELED", parsers.parseKickRealtimePredictionUpdate("${prefix}PredictionCancelled", "{\"a\":1}")?.status)
+        }
     }
 
     @Test

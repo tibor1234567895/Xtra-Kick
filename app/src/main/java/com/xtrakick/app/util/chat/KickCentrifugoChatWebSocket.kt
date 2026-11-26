@@ -40,6 +40,7 @@ class KickCentrifugoChatWebSocket(
             channelId?.takeIf { it.isNotBlank() }?.let {
                 add("channel.$it")
                 add("channel_$it")
+                add("predictions-channel-$it")
             }
             addAll(publicChannelNames)
             addAll(privateChannelNames)

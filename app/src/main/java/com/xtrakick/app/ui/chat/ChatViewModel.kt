@@ -374,12 +374,15 @@ class ChatViewModel @Inject constructor(
     val poll = MutableStateFlow<Poll?>(null)
     var pollClosed = false
     val pollSecondsLeft = MutableStateFlow<Int?>(null)
+    val pollProgress = MutableStateFlow<Float?>(null)
+    private var pollTotalSeconds: Int = 0
     var pollTimer: Job? = null
     val prediction = MutableStateFlow<Prediction?>(null)
     val latestPrediction = MutableStateFlow<Prediction?>(null)
     private var currentPrediction: Prediction? = null
     var predictionClosed = false
     val predictionSecondsLeft = MutableStateFlow<Int?>(null)
+    val predictionProgress = MutableStateFlow<Float?>(null)
     var predictionTimerJob: Job? = null
     var predictionTimer: Job?
         get() = predictionTimerJob
@@ -976,12 +979,8 @@ class ChatViewModel @Inject constructor(
     override fun onCleared() {
         stopLiveChat()
         stopReplayChat()
-        pollSecondsLeft.value = null
-        pollTimer?.cancel()
-        currentPrediction = null
-        latestPrediction.value = null
-        predictionSecondsLeft.value = null
-        predictionTimerJob?.cancel()
+        clearPollState(resetUsedId = true)
+        clearPredictionState(resetUsedId = true)
     }
 
     private fun loadEmotes(channelId: String?, channelLogin: String?) {
@@ -3119,17 +3118,29 @@ class ChatViewModel @Inject constructor(
         channelLogin: String?,
         forceRefresh: Boolean = false,
     ) {
-        updateChannelPointsBalance(null)
-        updateChannelPointRewards(emptyList(), false)
-        latestPrediction.value = null
         if (channelLogin.isNullOrBlank()) {
+            updateChannelPointsBalance(null)
+            updateChannelPointRewards(emptyList(), false)
+            latestPrediction.value = null
             return
         }
         viewModelScope.launch {
             runCatching {
+                kickRepository.getKickWebPoll(channelLogin)
+            }.onSuccess { activePoll ->
+                if (activePoll != null && activePoll.isActive()) {
+                    applyPollUpdate(activePoll)
+                }
+            }
+            runCatching {
                 kickRepository.getLatestKickPrediction(channelLogin)
-            }.onSuccess {
-                latestPrediction.value = it
+            }.onSuccess { fetchedPrediction ->
+                if (fetchedPrediction != null) {
+                    latestPrediction.value = fetchedPrediction
+                    if (fetchedPrediction.isActive() || fetchedPrediction.isLocked() || currentPrediction?.id == fetchedPrediction.id) {
+                        applyPredictionUpdate(fetchedPrediction)
+                    }
+                }
             }
             val fallbackResult = runCatching {
                 kickRepository.getChannelPointRewards(
@@ -3173,7 +3184,7 @@ class ChatViewModel @Inject constructor(
                     )
                 }
             }
-            updateChannelPointsBalance(fallbackResult?.balance)
+            fallbackResult?.balance?.let(::updateChannelPointsBalance)
             updateChannelPointRewards(
                 rewards = mergedRewards.values.toList(),
                 available = fallbackResult?.available == true || officialRewards.isNotEmpty()
@@ -3247,16 +3258,8 @@ class ChatViewModel @Inject constructor(
         kickReplaySessionKey = null
         usedRaidId = null
         raidClosed = true
-        usedPollId = null
-        pollClosed = true
-        pollSecondsLeft.value = null
-        pollTimer?.cancel()
-        usedPredictionId = null
-        currentPrediction = null
-        latestPrediction.value = null
-        predictionClosed = true
-        predictionSecondsLeft.value = null
-        predictionTimerJob?.cancel()
+        clearPollState(resetUsedId = true)
+        clearPredictionState(resetUsedId = true)
         viewModelScope.launch {
             clearChatBuffers(rawChatMessages, chatMessages).let {
                 removeMessages.emit(it)
@@ -3312,9 +3315,7 @@ class ChatViewModel @Inject constructor(
             }
             val normalizedEvent = eventName.trim().lowercase(Locale.ROOT)
             if (eventName.equals("App\\Events\\PollDeleteEvent", ignoreCase = true)) {
-                pollTimer?.cancel()
-                pollSecondsLeft.value = null
-                poll.value = null
+                clearPollState(resetUsedId = false)
                 if (!hidePoll.value) {
                     hidePoll.value = true
                 }
@@ -3562,6 +3563,11 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun applyPredictionUpdate(predictionUpdate: Prediction) {
+        if (!applicationContext.prefs().getBoolean(AppConstants.CHAT_PREDICTIONS_SHOW, true)) {
+            clearPredictionState(resetUsedId = true)
+            latestPrediction.value = predictionUpdate
+            return
+        }
         val mergedPrediction = currentPrediction
             ?.takeIf { it.id == predictionUpdate.id }
             ?.let { existing ->
@@ -3582,9 +3588,11 @@ class ChatViewModel @Inject constructor(
             predictionClosed = false
             predictionTimeoutJob?.cancel()
             if (mergedPrediction.createdAt != null && mergedPrediction.predictionWindowSeconds != null) {
+                val totalSeconds = mergedPrediction.predictionWindowSeconds.coerceAtLeast(1)
                 val secondsLeft = ((((mergedPrediction.createdAt + (mergedPrediction.predictionWindowSeconds * 1000)) - System.currentTimeMillis())) / 1000).toInt()
                 if (secondsLeft > 0) {
                     predictionSecondsLeft.value = secondsLeft
+                    predictionProgress.value = (secondsLeft.toFloat() / totalSeconds).coerceIn(0f, 1f)
                     predictionTimerJob?.cancel()
                     predictionTimerJob = viewModelScope.launch {
                         while (isActive) {
@@ -3592,12 +3600,17 @@ class ChatViewModel @Inject constructor(
                             val seconds = predictionSecondsLeft.value ?: break
                             val next = seconds - 1
                             predictionSecondsLeft.value = next
+                            predictionProgress.value = (next.toFloat() / totalSeconds).coerceIn(0f, 1f)
                             if (next <= 0) break
                         }
                     }
+                } else {
+                    predictionProgress.value = null
                 }
+            } else {
+                predictionProgress.value = null
             }
-        } else if (mergedPrediction.status == "LOCKED" || mergedPrediction.status == "CANCEL_PENDING" || mergedPrediction.status == "RESOLVE_PENDING") {
+        } else if (mergedPrediction.isLocked() || mergedPrediction.isCanceled() || mergedPrediction.isResolved()) {
             predictionClosed = false
         }
         currentPrediction = mergedPrediction
@@ -3605,7 +3618,35 @@ class ChatViewModel @Inject constructor(
         prediction.value = mergedPrediction
     }
 
+    private fun clearPollState(resetUsedId: Boolean) {
+        if (resetUsedId) usedPollId = null
+        pollTimer?.cancel()
+        pollTimeoutJob?.cancel()
+        pollSecondsLeft.value = null
+        pollProgress.value = null
+        pollTotalSeconds = 0
+        pollClosed = true
+        poll.value = null
+    }
+
+    private fun clearPredictionState(resetUsedId: Boolean) {
+        if (resetUsedId) usedPredictionId = null
+        predictionTimerJob?.cancel()
+        predictionTimeoutJob?.cancel()
+        currentPrediction = null
+        latestPrediction.value = null
+        predictionSecondsLeft.value = null
+        predictionProgress.value = null
+        predictionClosed = true
+        prediction.value = null
+    }
+
     private fun applyPollUpdate(pollUpdate: Poll) {
+        val showPolls = applicationContext.prefs().getBoolean(AppConstants.CHAT_POLLS_SHOW, true)
+        if (!showPolls || pollUpdate.status.equals("DELETED", ignoreCase = true)) {
+            clearPollState(resetUsedId = !showPolls)
+            return
+        }
         val mergedPoll = poll.value
             ?.takeIf { it.id == pollUpdate.id }
             ?.let { existing ->
@@ -3616,34 +3657,124 @@ class ChatViewModel @Inject constructor(
                     choices = pollUpdate.choices ?: existing.choices,
                     totalVotes = pollUpdate.totalVotes ?: existing.totalVotes,
                     remainingMilliseconds = pollUpdate.remainingMilliseconds ?: existing.remainingMilliseconds,
+                    durationMilliseconds = pollUpdate.durationMilliseconds ?: existing.durationMilliseconds,
                     resultDisplayMilliseconds = pollUpdate.resultDisplayMilliseconds ?: existing.resultDisplayMilliseconds,
                     hasVoted = pollUpdate.hasVoted ?: existing.hasVoted,
                     votedChoiceId = pollUpdate.votedChoiceId ?: existing.votedChoiceId,
                 )
             } ?: pollUpdate
-        val shouldResetTimer = mergedPoll.status == "ACTIVE"
+        val shouldResetTimer = pollUpdate.remainingMilliseconds != null || mergedPoll.id != usedPollId
         if (mergedPoll.id != usedPollId) {
             usedPollId = mergedPoll.id
+            pollTotalSeconds = 0
             pollClosed = false
             pollTimeoutJob?.cancel()
-        } else if (mergedPoll.status == "COMPLETED" || mergedPoll.status == "TERMINATED") {
+        } else if (mergedPoll.isEnded()) {
             pollClosed = false
         }
         poll.value = mergedPoll
-        if (shouldResetTimer) {
-            restartPollCountdown(mergedPoll)
+        if (mergedPoll.isActive()) {
+            if (shouldResetTimer) restartPollCountdown(mergedPoll)
         } else {
             pollTimer?.cancel()
             pollSecondsLeft.value = null
+            if (!mergedPoll.isEnded()) {
+                pollProgress.value = null
+            }
         }
     }
 
-    fun applyLocalPollUpdate(pollUpdate: Poll) {
-        applyPollUpdate(pollUpdate)
+    fun applyOptimisticPollVote(choiceId: Int, serverPoll: Poll?) {
+        if (serverPoll != null) {
+            applyPollUpdate(
+                Poll(
+                    id = serverPoll.id,
+                    title = serverPoll.title,
+                    status = serverPoll.status,
+                    choices = serverPoll.choices,
+                    totalVotes = serverPoll.totalVotes,
+                    remainingMilliseconds = serverPoll.remainingMilliseconds,
+                    durationMilliseconds = serverPoll.durationMilliseconds,
+                    resultDisplayMilliseconds = serverPoll.resultDisplayMilliseconds,
+                    hasVoted = serverPoll.hasVoted ?: true,
+                    votedChoiceId = serverPoll.votedChoiceId ?: choiceId,
+                )
+            )
+            return
+        }
+        val existing = poll.value ?: return
+        val updatedChoices = existing.choices?.map { choice ->
+            if (choice.id == choiceId) {
+                Poll.PollChoice(
+                    id = choice.id,
+                    title = choice.title,
+                    totalVotes = (choice.totalVotes ?: 0) + 1,
+                )
+            } else {
+                choice
+            }
+        }
+        val updatedTotal = updatedChoices?.sumOf { it.totalVotes ?: 0 } ?: ((existing.totalVotes ?: 0) + 1)
+        applyPollUpdate(
+            Poll(
+                id = existing.id,
+                title = existing.title,
+                status = existing.status,
+                choices = updatedChoices,
+                totalVotes = updatedTotal,
+                remainingMilliseconds = null,
+                durationMilliseconds = existing.durationMilliseconds,
+                resultDisplayMilliseconds = existing.resultDisplayMilliseconds,
+                hasVoted = true,
+                votedChoiceId = choiceId,
+            )
+        )
     }
 
-    fun applyLocalPredictionUpdate(predictionUpdate: Prediction) {
-        applyPredictionUpdate(predictionUpdate)
+    fun applyOptimisticPredictionBet(outcomeId: String, amount: Int, serverPrediction: Prediction?) {
+        channelPointsBalance.value?.let { current ->
+            updateChannelPointsBalance((current - amount).coerceAtLeast(0))
+        }
+        val base = serverPrediction ?: currentPrediction ?: latestPrediction.value ?: return
+        val existingVote = (currentPrediction ?: latestPrediction.value)
+            ?.takeIf { it.id == base.id }
+            ?.userVote
+        val resolvedUserVote = serverPrediction?.userVote ?: Prediction.UserVote(
+            outcomeId = outcomeId,
+            totalVoteAmount = (existingVote?.takeIf { it.outcomeId == outcomeId }?.totalVoteAmount ?: 0) + amount,
+        )
+        val resolvedOutcomes = if (serverPrediction?.outcomes != null) {
+            serverPrediction.outcomes
+        } else {
+            val isFirstBet = existingVote?.outcomeId == null
+            base.outcomes?.map { outcome ->
+                if (outcome.id == outcomeId) {
+                    Prediction.PredictionOutcome(
+                        id = outcome.id,
+                        title = outcome.title,
+                        totalPoints = (outcome.totalPoints ?: 0) + amount,
+                        totalUsers = (outcome.totalUsers ?: 0) + if (isFirstBet) 1 else 0,
+                        returnRate = outcome.returnRate,
+                        isWinner = outcome.isWinner,
+                    )
+                } else {
+                    outcome
+                }
+            }
+        }
+        applyPredictionUpdate(
+            Prediction(
+                id = base.id,
+                createdAt = base.createdAt,
+                endedAt = base.endedAt,
+                outcomes = resolvedOutcomes,
+                predictionWindowSeconds = base.predictionWindowSeconds,
+                status = base.status,
+                title = base.title,
+                winningOutcomeId = base.winningOutcomeId,
+                userVote = resolvedUserVote,
+            )
+        )
     }
 
     private fun restartPollCountdown(pollUpdate: Poll) {
@@ -3651,16 +3782,21 @@ class ChatViewModel @Inject constructor(
         pollTimer?.cancel()
         if (secondsLeft <= 0) {
             pollSecondsLeft.value = null
+            pollProgress.value = null
             poll.value = pollUpdate.copyCompleted()
             return
         }
+        val declaredTotal = (pollUpdate.durationMilliseconds ?: 0) / 1000
+        pollTotalSeconds = maxOf(pollTotalSeconds, declaredTotal, secondsLeft)
         pollSecondsLeft.value = secondsLeft
+        pollProgress.value = (secondsLeft.toFloat() / pollTotalSeconds).coerceIn(0f, 1f)
         pollTimer = viewModelScope.launch {
             while (isActive) {
                 delay(1000)
                 val seconds = pollSecondsLeft.value ?: break
                 if (seconds <= 1) {
                     pollSecondsLeft.value = null
+                    pollProgress.value = 0f
                     val currentPoll = poll.value
                     if (currentPoll != null) {
                         val completedPoll = currentPoll.copyCompleted()
@@ -3668,7 +3804,11 @@ class ChatViewModel @Inject constructor(
                     }
                     break
                 } else {
-                    pollSecondsLeft.value = seconds - 1
+                    val next = seconds - 1
+                    pollSecondsLeft.value = next
+                    if (pollTotalSeconds > 0) {
+                        pollProgress.value = (next.toFloat() / pollTotalSeconds).coerceIn(0f, 1f)
+                    }
                 }
             }
         }
@@ -3682,6 +3822,7 @@ class ChatViewModel @Inject constructor(
             choices = choices,
             totalVotes = totalVotes,
             remainingMilliseconds = 0,
+            durationMilliseconds = durationMilliseconds,
             resultDisplayMilliseconds = resultDisplayMilliseconds,
             hasVoted = hasVoted,
             votedChoiceId = votedChoiceId,
@@ -3993,19 +4134,40 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun startPollTimeout(delayMs: Long = 20_000L, hide: () -> Unit) {
-        pollTimeoutJob?.cancel()
+    fun startPollTimeout(delayMs: Long = 20_000L) {
+        if (pollTimeoutJob?.isActive == true) return
+        val totalMs = delayMs.coerceAtLeast(1_000L)
+        pollProgress.value = 1f
         pollTimeoutJob = viewModelScope.launch {
-            delay(delayMs)
-            hide()
+            val startedAt = System.currentTimeMillis()
+            while (isActive) {
+                val elapsed = System.currentTimeMillis() - startedAt
+                val remaining = (totalMs - elapsed).coerceAtLeast(0L)
+                pollProgress.value = (remaining.toFloat() / totalMs).coerceIn(0f, 1f)
+                if (remaining <= 0L) break
+                delay(250L.coerceAtMost(remaining))
+            }
+            pollProgress.value = null
+            poll.value = null
         }
     }
 
-    fun startPredictionTimeout(hide: () -> Unit) {
-        predictionTimeoutJob?.cancel()
+    fun startPredictionTimeout() {
+        if (predictionTimeoutJob?.isActive == true) return
+        val totalMs = 20_000L
+        predictionProgress.value = 1f
         predictionTimeoutJob = viewModelScope.launch {
-            delay(20000)
-            hide()
+            val startedAt = System.currentTimeMillis()
+            while (isActive) {
+                val elapsed = System.currentTimeMillis() - startedAt
+                val remaining = (totalMs - elapsed).coerceAtLeast(0L)
+                predictionProgress.value = (remaining.toFloat() / totalMs).coerceIn(0f, 1f)
+                if (remaining <= 0L) break
+                delay(250L.coerceAtMost(remaining))
+            }
+            predictionProgress.value = null
+            predictionClosed = true
+            hidePrediction.value = true
         }
     }
 

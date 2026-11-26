@@ -9,6 +9,8 @@ import com.xtrakick.app.model.chat.Emote
 import com.xtrakick.app.model.chat.ChatMessage
 import com.xtrakick.app.model.chat.GiftedSubInfo
 import com.xtrakick.app.model.chat.KicksDonation
+import com.xtrakick.app.model.chat.Poll
+import com.xtrakick.app.model.chat.Prediction
 import com.xtrakick.app.model.chat.RecentEmote
 import com.xtrakick.app.repository.AuthRepository
 import com.xtrakick.app.repository.BookmarksRepository
@@ -23,6 +25,7 @@ import com.xtrakick.app.repository.OfflineRepository
 import com.xtrakick.app.repository.PlayerRepository
 import com.xtrakick.app.repository.ShownNotificationsRepository
 import com.xtrakick.app.util.AppConstants
+import com.xtrakick.app.util.prefs
 import com.xtrakick.app.util.tokenPrefs
 import com.xtrakick.app.ui.player.PlayerViewModel
 import kotlinx.coroutines.Job
@@ -106,6 +109,8 @@ class ChatLoadingTest {
     private var historyMode = "empty"
     private var channelCategory = ""
     private var livestreamStatus = 200
+    private var pollJson = "{}"
+    private var predictionJson = "{}"
     private val message = """{"id":"m1","content":"hello","created_at":"2026-11-02T10:00:00Z","sender":{"id":43,"username":"tester"}}"""
     private val client = OkHttpClient.Builder().addInterceptor { chain ->
         val request = chain.request()
@@ -113,6 +118,8 @@ class ChatLoadingTest {
         val path = request.url.encodedPath
         var status = 200
         val body = when {
+            path.endsWith("/polls") -> pollJson
+            path.endsWith("/predictions/latest") -> predictionJson
             path == "/api/v2/channels/test" -> """
                 {"id":42,"user_id":43,"slug":"test","livestream":{
                 "id":17,"session_title":"Live title","viewer_count":50$channelCategory}}
@@ -151,7 +158,117 @@ class ChatLoadingTest {
         shadowOf(Looper.getMainLooper()).idle()
         database.close()
         context.tokenPrefs().edit().clear().commit()
+        context.prefs().edit().remove(AppConstants.CHAT_POLLS_SHOW).remove(AppConstants.CHAT_PREDICTIONS_SHOW).commit()
         executor.shutdownNow()
+    }
+
+    private fun login() {
+        context.tokenPrefs().edit()
+            .putString(AppConstants.KICK_USER_ID, "43")
+            .putString(AppConstants.KICK_ACCESS_TOKEN, "test-session")
+            .putString(AppConstants.KICK_LOGIN_METHOD, AppConstants.KICK_LOGIN_METHOD_GOOGLE)
+            .commit()
+    }
+
+    private fun applyPrediction(value: Prediction) {
+        ChatViewModel::class.java.getDeclaredMethod("applyPredictionUpdate", Prediction::class.java)
+            .apply { isAccessible = true }.invoke(viewModel, value)
+    }
+
+    private fun applyPoll(value: Poll) {
+        ChatViewModel::class.java.getDeclaredMethod("applyPollUpdate", Poll::class.java)
+            .apply { isAccessible = true }.invoke(viewModel, value)
+    }
+
+    private suspend fun refreshPrediction() = withTimeout(5_000) {
+        viewModel.refreshKickChannelPointState("OkHttp", "42", "test")
+        while (viewModel.latestPrediction.value == null) {
+            shadowOf(Looper.getMainLooper()).idle()
+            delay(5)
+        }
+    }
+
+    @Test fun refreshHonorsDisabledBannerPreferences() = runBlocking {
+        login()
+        context.prefs().edit().putBoolean(AppConstants.CHAT_POLLS_SHOW, false)
+            .putBoolean(AppConstants.CHAT_PREDICTIONS_SHOW, false).commit()
+        pollJson = """{"poll":{"id":"poll1","title":"Poll","remaining":60,"options":[{"id":1,"label":"Yes","votes":2}]}}"""
+        predictionJson = """{"prediction":{"id":"p1","status":"OPEN","title":"Question","outcomes":[]}}"""
+
+        refreshPrediction()
+
+        assertNull(viewModel.poll.value)
+        assertNull(viewModel.prediction.value)
+        assertEquals("OPEN", viewModel.latestPrediction.value?.status)
+    }
+
+    @Test fun terminalRefreshReplacesCurrentOpenPrediction() = runBlocking {
+        login()
+        for (status in listOf("RESOLVED", "CANCELED", "RESOLVE_PENDING", "CANCEL_PENDING")) {
+            applyPrediction(Prediction("p1", null, null, emptyList(), null, "OPEN", "Question", null))
+            viewModel.latestPrediction.value = null
+            predictionJson = """{"prediction":{"id":"p1","status":"$status","title":"Question","outcomes":[]}}"""
+
+            refreshPrediction()
+
+            assertEquals(status, viewModel.prediction.value?.status)
+        }
+    }
+
+    @Test fun reenabledBannersCanShowTheSamePollAndPrediction() {
+        val poll = Poll("poll1", "Question", "ACTIVE", emptyList(), 0, 60_000)
+        val prediction = Prediction("p1", null, null, emptyList(), null, "OPEN", "Question", null)
+        applyPoll(poll)
+        applyPrediction(prediction)
+        context.prefs().edit().putBoolean(AppConstants.CHAT_POLLS_SHOW, false)
+            .putBoolean(AppConstants.CHAT_PREDICTIONS_SHOW, false).commit()
+        applyPoll(poll)
+        applyPrediction(prediction)
+        assertNull(viewModel.poll.value)
+        assertNull(viewModel.prediction.value)
+
+        context.prefs().edit().putBoolean(AppConstants.CHAT_POLLS_SHOW, true)
+            .putBoolean(AppConstants.CHAT_PREDICTIONS_SHOW, true).commit()
+        applyPoll(poll)
+        applyPrediction(prediction)
+
+        assertFalse(viewModel.pollClosed)
+        assertFalse(viewModel.predictionClosed)
+    }
+
+    @Test fun pastPredictionRefreshStaysInChannelPointsWithoutOpeningBanner() = runBlocking {
+        login()
+        predictionJson = """{"prediction":{"id":"past","status":"RESOLVED","title":"Question","outcomes":[]}}"""
+
+        refreshPrediction()
+
+        assertEquals("RESOLVED", viewModel.latestPrediction.value?.status)
+        assertNull(viewModel.prediction.value)
+    }
+
+    @Test fun optimisticPollVotePreservesRemainingCountdown() {
+        applyPoll(Poll("poll1", "Question", "ACTIVE", listOf(Poll.PollChoice(1, "Yes", 2)), 2, 60_000))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(20))
+        assertEquals(40, viewModel.pollSecondsLeft.value)
+
+        viewModel.applyOptimisticPollVote(1, null)
+
+        assertEquals(40, viewModel.pollSecondsLeft.value)
+        assertEquals(true, viewModel.poll.value?.hasVoted)
+        assertEquals(3, viewModel.poll.value?.totalVotes)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(40))
+        assertTrue(viewModel.poll.value?.isEnded() == true)
+    }
+
+    @Test fun pollVoteResponseWithoutTimingKeepsCountdownAndServerTimingStillUpdatesIt() {
+        applyPoll(Poll("poll1", "Question", "ACTIVE", emptyList(), 0, 60_000))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(20))
+
+        viewModel.applyOptimisticPollVote(1, Poll("poll1", "Question", "ACTIVE", emptyList(), 1, null))
+        assertEquals(40, viewModel.pollSecondsLeft.value)
+
+        applyPoll(Poll("poll1", "Question", "ACTIVE", emptyList(), 1, 30_000))
+        assertEquals(30, viewModel.pollSecondsLeft.value)
     }
 
     private suspend fun finish(job: Job) = withTimeout(5_000) {

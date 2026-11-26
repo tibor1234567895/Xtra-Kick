@@ -846,6 +846,8 @@
     <string name="kick_prediction_vote_minimum">Mindesteinsatz: %1$s</string>
     <string name="kick_prediction_vote_current_stake">Aktueller Einsatz auf dieses Ergebnis: %1$s</string>
     <string name="kick_prediction_vote_only_selected">Du kannst deinen Einsatz nur für dein gewähltes Ergebnis erhöhen</string>
+    <string name="kick_poll_tap_to_vote">Tippe auf eine Option zum Abstimmen</string>
+    <string name="kick_prediction_tap_to_bet">Tippe auf ein Ergebnis zum Wetten</string>
     <string name="prediction_outcome_compact">%1$d%%: %2$s</string>
     <string name="prediction_outcome_compact_winner">Gewinner: %1$d%%: %2$s</string>
     <string name="download_settings">Downloads</string>

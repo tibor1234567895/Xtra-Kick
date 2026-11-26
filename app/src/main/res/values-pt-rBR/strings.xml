@@ -848,6 +848,8 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="kick_prediction_vote_minimum">Aposta mínima: %1$s</string>
     <string name="kick_prediction_vote_current_stake">Aposta atual neste resultado: %1$s</string>
     <string name="kick_prediction_vote_only_selected">Você só pode aumentar a aposta no resultado selecionado</string>
+    <string name="kick_poll_tap_to_vote">Toque em uma opção para votar</string>
+    <string name="kick_prediction_tap_to_bet">Toque em um resultado para apostar</string>
     <string name="prediction_outcome_compact">%1$d%%: %2$s</string>
     <string name="prediction_outcome_compact_winner">Vencedor: %1$d%%: %2$s</string>
     <string name="download_settings">Downloads</string>

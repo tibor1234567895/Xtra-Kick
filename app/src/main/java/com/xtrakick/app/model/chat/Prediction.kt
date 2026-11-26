@@ -11,6 +11,18 @@ class Prediction(
     val winningOutcomeId: String?,
     val userVote: UserVote? = null,
 ) {
+    fun isActive(): Boolean = status.equals("ACTIVE", ignoreCase = true) ||
+        status.equals("OPEN", ignoreCase = true)
+
+    fun isLocked(): Boolean = status.equals("LOCKED", ignoreCase = true)
+
+    fun isResolved(): Boolean = status.equals("RESOLVED", ignoreCase = true) ||
+        status.equals("RESOLVE_PENDING", ignoreCase = true)
+
+    fun isCanceled(): Boolean = status.equals("CANCELED", ignoreCase = true) ||
+        status.equals("CANCELLED", ignoreCase = true) ||
+        status.equals("CANCEL_PENDING", ignoreCase = true)
+
     class PredictionOutcome(
         val id: String?,
         val title: String?,

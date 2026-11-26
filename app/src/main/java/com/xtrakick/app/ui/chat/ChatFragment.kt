@@ -16,7 +16,6 @@ import android.text.Spanned
 import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
-import android.text.method.LinkMovementMethod
 import android.text.format.DateUtils
 import android.util.Log
 import android.util.TypedValue
@@ -194,7 +193,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     var isLiveRewound = false
     private var pinnedMessageDialogSeed: ChatMessage? = null
     private var tappedMessageDialogSeed: ChatMessage? = null
-    private var channelPointsDialog: AlertDialog? = null
+    private var channelPointsDialog: android.app.Dialog? = null
     private var rebuildingChannelPointsDialog = false
     private var scrollToBottomQueued = false
     private var pendingScrollToBottomPosition: Int? = null
@@ -623,6 +622,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         binding.channelPointsInputButton.contentDescription = buildChannelPointsButtonText()
         binding.channelPointsInputButton.setOnClickListener {
             if (visible) {
+                refreshKickRewardState()
                 showChannelPointRewardsDialog()
             } else {
                 refreshKickRewardState()
@@ -659,7 +659,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             ?: ContextCompat.getColor(context, R.color.accent)
         val tileBackground = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = 10.dp().toFloat()
+            cornerRadius = 12.dp().toFloat()
             setColor(rewardColor)
         }
         val title = reward.title ?: reward.prompt ?: reward.id ?: getString(R.string.channel_points_rewards_title)
@@ -742,9 +742,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             })
 
             addView(TextView(context).apply {
-                text = title.uppercase()
+                text = title
                 setTypeface(typeface, Typeface.BOLD)
-                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelLarge)
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
                 gravity = android.view.Gravity.CENTER_HORIZONTAL
                 minLines = 1
                 maxLines = 2
@@ -776,10 +776,9 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
     }
 
-    private fun buildChannelPointsPredictionStatusText(prediction: Prediction): String {
-        val totalPoints = prediction.outcomes.orEmpty().sumOf { it.totalPoints?.toLong() ?: 0L }
-        val statusText = when (prediction.status) {
-            "ACTIVE" -> {
+    private fun buildChannelPointsPredictionStatusBadgeText(prediction: Prediction): String {
+        return when {
+            prediction.isActive() -> {
                 val secondsLeft = (
                     if (viewModel.prediction.value?.id == prediction.id) {
                         viewModel.predictionSecondsLeft.value
@@ -797,12 +796,12 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     getString(R.string.channel_points_prediction_open)
                 }
             }
-            "LOCKED" -> getString(R.string.prediction_locked)
-            "CANCELED", "CANCEL_PENDING" -> getString(R.string.prediction_refunded)
-            else -> getString(R.string.channel_points_prediction_closed)
+            prediction.isLocked() -> getString(R.string.prediction_locked)
+            prediction.isCanceled() -> getString(R.string.prediction_refunded)
+            else -> formatPredictionFinishedAt(prediction)?.let {
+                getString(R.string.channel_points_prediction_closed_at, it)
+            } ?: getString(R.string.channel_points_prediction_closed)
         }
-        val poolText = getString(R.string.channel_points_prediction_pool, formatCompactPoints(totalPoints))
-        return "$statusText • $poolText"
     }
 
     private fun formatPredictionOdds(returnRate: Double?): String? {
@@ -810,14 +809,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         val rounded = (returnRate * 10).roundToInt() / 10.0
         val text = if (rounded % 1.0 == 0.0) rounded.toInt().toString() else rounded.toString()
         return getString(R.string.channel_points_prediction_odds, text)
-    }
-
-    private fun isPastPrediction(prediction: Prediction): Boolean {
-        return when (prediction.status) {
-            "RESOLVED", "RESOLVE_PENDING", "CANCELED", "CANCEL_PENDING" -> true
-            "ACTIVE", "LOCKED" -> false
-            else -> prediction.endedAt != null
-        }
     }
 
     private fun predictionFinishedAt(prediction: Prediction): Long? {
@@ -857,7 +848,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
     }
 
     private fun buildResolvedPredictionResultText(prediction: Prediction): String? {
-        if (prediction.status != "RESOLVED" && prediction.status != "RESOLVE_PENDING") return null
+        if (!prediction.isResolved()) return null
         val userVote = prediction.userVote ?: return null
         val stake = userVote.totalVoteAmount ?: return null
         val selectedOutcome = prediction.outcomes.orEmpty().firstOrNull { it.id == userVote.outcomeId }
@@ -873,50 +864,221 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         }
     }
 
-
-    private fun createChannelPointsPredictionCard(
-        prediction: Prediction,
-        compact: Boolean = false,
+    private fun createChannelPointsPollCard(
+        poll: com.xtrakick.app.model.chat.Poll,
+        onTimerViewCreated: ((TextView) -> Unit)? = null,
+        onProgressBarCreated: ((android.widget.ProgressBar) -> Unit)? = null,
     ): View {
         val context = requireContext()
-        val surfaceBaseColor = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainerHighest, Color.DKGRAY)
-        val surfaceColor = ColorUtils.blendARGB(surfaceBaseColor, Color.WHITE, 0.06f)
+        val cardSurface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainer, Color.DKGRAY)
+        val rowSurface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainerHigh, Color.GRAY)
+        val onSurface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurface, Color.WHITE)
         val onSurfaceVariant = MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.LTGRAY)
         val primaryColor = MaterialColors.getColor(context, androidx.appcompat.R.attr.colorPrimary, Color.WHITE)
-        val titleText = prediction.title?.takeIf { it.isNotBlank() }
-            ?: getString(R.string.channel_points_prediction_fallback_title)
-        val summaryText = buildChannelPointsPredictionSummaryText(prediction)
-        val totalPoints = prediction.outcomes.orEmpty().sumOf { it.totalPoints?.toLong() ?: 0L }
-        val resolved = prediction.status == "RESOLVED" || prediction.status == "RESOLVE_PENDING"
-        val selectedOutcomeId = prediction.userVote?.outcomeId
-        val pastPrediction = isPastPrediction(prediction)
-        val metaText = buildString {
-            append(getString(if (pastPrediction) R.string.channel_points_prediction_past_label else R.string.channel_points_prediction_current_label))
-            formatPredictionFinishedAt(prediction)?.let {
-                append('\n')
-                append(getString(R.string.channel_points_prediction_closed_at, it))
-            } ?: run {
-                append('\n')
-                append(buildChannelPointsPredictionStatusText(prediction))
-            }
-            append('\n')
-            append(getString(R.string.channel_points_prediction_pool, formatCompactPoints(totalPoints)))
-        }
+        val trackColor = ColorUtils.setAlphaComponent(onSurface, 24)
+        val titleText = poll.title?.takeIf { it.isNotBlank() }
+            ?: getString(R.string.poll_title, "")
+        val canVotePoll = currentChannelLogin() != null && poll.isActive() && poll.hasVoted != true
+        val maxVotes = poll.choices.orEmpty().maxOfOrNull { it.totalVotes ?: 0 } ?: 0
+        val winnerCount = poll.choices.orEmpty().count { (it.totalVotes ?: 0) == maxVotes && maxVotes > 0 }
+        val totalVotes = max(poll.totalVotes ?: 0, 1)
+
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = 12.dp().toFloat()
-                setColor(surfaceColor)
-                setStroke(1.dp(), ColorUtils.setAlphaComponent(Color.WHITE, 42))
+                cornerRadius = 16.dp().toFloat()
+                setColor(cardSurface)
             }
-            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+            setPadding(14.dp(), 14.dp(), 14.dp(), 14.dp())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                bottomMargin = 12.dp()
+                bottomMargin = 14.dp()
             }
+
+            val secondsLeft = viewModel.pollSecondsLeft.value
+            val timerView = TextView(context).apply {
+                isVisible = poll.isActive() && secondsLeft != null && secondsLeft > 0
+                if (secondsLeft != null && secondsLeft > 0) {
+                    text = getString(R.string.remaining_time, DateUtils.formatElapsedTime(secondsLeft.toLong()))
+                }
+                setTypeface(typeface, Typeface.BOLD)
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+                setTextColor(primaryColor)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 10.dp().toFloat()
+                    setColor(ColorUtils.setAlphaComponent(primaryColor, 32))
+                }
+                setPadding(8.dp(), 3.dp(), 8.dp(), 3.dp())
+            }
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                addView(TextView(context).apply {
+                    text = titleText
+                    setTypeface(typeface, Typeface.BOLD)
+                    setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                addView(timerView)
+            })
+            onTimerViewCreated?.invoke(timerView)
+
+            if (canVotePoll) {
+                addView(TextView(context).apply {
+                    text = getString(R.string.kick_poll_tap_to_vote)
+                    setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
+                    setTextColor(onSurfaceVariant)
+                    setPadding(0, 4.dp(), 0, 2.dp())
+                })
+            }
+
+            poll.choices.orEmpty().forEachIndexed { index, choice ->
+                val isSelected = poll.votedChoiceId != null && choice.id == poll.votedChoiceId
+                val isUniqueWinner = !poll.isActive() && winnerCount == 1 && maxVotes > 0 && (choice.totalVotes ?: 0) == maxVotes
+                val choiceClickable = canVotePoll && choice.id != null
+                val percent = (((choice.totalVotes ?: 0).toLong() * 100.0) / totalVotes).roundToInt()
+                val accent = pollPredictionUiHelper.outcomeAccentColor(index, primaryColor)
+
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = 12.dp().toFloat()
+                        if (isSelected || isUniqueWinner) {
+                            setColor(ColorUtils.setAlphaComponent(accent, 34))
+                            setStroke(1.dp(), ColorUtils.setAlphaComponent(accent, 150))
+                        } else {
+                            setColor(rowSurface)
+                        }
+                    }
+                    setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        topMargin = 8.dp()
+                    }
+                    if (choiceClickable) {
+                        isClickable = true
+                        isFocusable = true
+                        pollPredictionUiHelper.applySelectableRipple(this)
+                        val choiceId = choice.id
+                        setOnClickListener {
+                            pollPredictionUiHelper.submitKickPollVote(choiceId)
+                        }
+                    }
+                    addView(LinearLayout(context).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.CENTER_VERTICAL
+                        addView(TextView(context).apply {
+                            text = if (isUniqueWinner) {
+                                getString(R.string.channel_points_prediction_outcome_winner_title, choice.title)
+                            } else {
+                                choice.title
+                            }
+                            setTypeface(typeface, if (isSelected || isUniqueWinner) Typeface.BOLD else Typeface.NORMAL)
+                            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+                            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        })
+                        addView(TextView(context).apply {
+                            text = getString(R.string.channel_points_prediction_percent, percent)
+                            setTypeface(typeface, Typeface.BOLD)
+                            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelLarge)
+                            setTextColor(if (isSelected || isUniqueWinner) accent else onSurface)
+                            setPadding(8.dp(), 0, 0, 0)
+                        })
+                    })
+                    addView(TextView(context).apply {
+                        text = getString(
+                            R.string.channel_points_prediction_votes_short,
+                            choice.totalVotes?.let { NumberFormat.getInstance().format(it) } ?: "0"
+                        )
+                        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
+                        setTextColor(onSurfaceVariant)
+                        setPadding(0, 2.dp(), 0, 0)
+                    })
+                    addView(pollPredictionUiHelper.createProgressBarRow(percent, accent, trackColor))
+                })
+            }
+
+            val countdownBar = pollPredictionUiHelper.createCountdownProgressBar(
+                initialProgress = viewModel.pollProgress.value,
+                trackColor = trackColor,
+            )
+            addView(countdownBar)
+            onProgressBarCreated?.invoke(countdownBar)
+        }
+    }
+
+    private fun createChannelPointsPredictionCard(
+        prediction: Prediction,
+        compact: Boolean = false,
+        onStatusBadgeCreated: ((TextView) -> Unit)? = null,
+        onProgressBarCreated: ((android.widget.ProgressBar) -> Unit)? = null,
+    ): View {
+        val context = requireContext()
+        val cardSurface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainer, Color.DKGRAY)
+        val rowSurface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainerHigh, Color.GRAY)
+        val onSurface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurface, Color.WHITE)
+        val onSurfaceVariant = MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.LTGRAY)
+        val primaryColor = MaterialColors.getColor(context, androidx.appcompat.R.attr.colorPrimary, Color.WHITE)
+        val trackColor = ColorUtils.setAlphaComponent(onSurface, 24)
+        val titleText = prediction.title?.takeIf { it.isNotBlank() }
+            ?: getString(R.string.channel_points_prediction_fallback_title)
+        val summaryText = buildChannelPointsPredictionSummaryText(prediction)
+        val totalPoints = prediction.outcomes.orEmpty().sumOf { it.totalPoints?.toLong() ?: 0L }
+        val resolved = prediction.isResolved()
+        val isActive = prediction.isActive()
+        val selectedOutcomeId = prediction.userVote?.outcomeId
+
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 16.dp().toFloat()
+                setColor(cardSurface)
+            }
+            setPadding(14.dp(), 14.dp(), 14.dp(), 14.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = 14.dp()
+            }
+
+            val statusBadgeView = TextView(context).apply {
+                text = buildChannelPointsPredictionStatusBadgeText(prediction)
+                setTypeface(typeface, Typeface.BOLD)
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+                setTextColor(if (isActive) primaryColor else onSurfaceVariant)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 10.dp().toFloat()
+                    setColor(if (isActive) ColorUtils.setAlphaComponent(primaryColor, 32) else rowSurface)
+                }
+                setPadding(8.dp(), 3.dp(), 8.dp(), 3.dp())
+            }
+            onStatusBadgeCreated?.invoke(statusBadgeView)
+
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                addView(statusBadgeView)
+                addView(View(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, 0, 1f)
+                })
+                addView(TextView(context).apply {
+                    text = getString(R.string.channel_points_prediction_pool, formatCompactPoints(totalPoints))
+                    setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+                    setTextColor(onSurfaceVariant)
+                })
+            })
 
             addView(TextView(context).apply {
                 text = titleText
@@ -924,26 +1086,41 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
-            })
-
-            addView(TextView(context).apply {
-                text = metaText
-                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
-                setTextColor(onSurfaceVariant)
-                setPadding(0, 4.dp(), 0, 0)
+                setPadding(0, 10.dp(), 0, 0)
             })
 
             summaryText?.let {
                 addView(TextView(context).apply {
                     text = it
                     setTypeface(typeface, Typeface.BOLD)
-                    setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
-                    setPadding(0, 8.dp(), 0, 0)
+                    setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelLarge)
+                    setTextColor(primaryColor)
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = 10.dp().toFloat()
+                        setColor(ColorUtils.setAlphaComponent(primaryColor, 26))
+                    }
+                    setPadding(10.dp(), 6.dp(), 10.dp(), 6.dp())
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        topMargin = 8.dp()
+                    }
+                })
+            }
+
+            if (isActive && currentChannelLogin() != null) {
+                addView(TextView(context).apply {
+                    text = getString(R.string.kick_prediction_tap_to_bet)
+                    setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
+                    setTextColor(onSurfaceVariant)
+                    setPadding(0, 8.dp(), 0, 2.dp())
                 })
             }
 
             val outcomes = prediction.outcomes.orEmpty()
-            val visibleOutcomes = if (compact) {
+            val visibleOutcomes = if (compact && !isActive) {
                 outcomes.filter { outcome ->
                     resolved && (outcome.isWinner == true || (prediction.winningOutcomeId != null && prediction.winningOutcomeId == outcome.id))
                 }.ifEmpty {
@@ -952,45 +1129,75 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
             } else {
                 outcomes
             }
-            visibleOutcomes.forEach { outcome ->
+            val selectedStrokePx = (1.5f * resources.displayMetrics.density).roundToInt()
+            visibleOutcomes.forEachIndexed { index, outcome ->
                 val isSelected = selectedOutcomeId != null && outcome.id == selectedOutcomeId
                 val isWinner = resolved && (outcome.isWinner == true || (prediction.winningOutcomeId != null && prediction.winningOutcomeId == outcome.id))
+                val canTapOutcome = isActive && currentChannelLogin() != null && outcome.id != null
+                val outcomeSelectable = canTapOutcome && (selectedOutcomeId == null || selectedOutcomeId == outcome.id)
                 val percent = (((outcome.totalPoints ?: 0).toLong() * 100.0) / max(totalPoints, 1)).roundToInt()
+                val accent = pollPredictionUiHelper.outcomeAccentColor(index, primaryColor)
                 val details = listOfNotNull(
-                    getString(R.string.channel_points_prediction_percent, percent),
                     getString(R.string.channel_points_prediction_points_short, outcome.totalPoints?.let { NumberFormat.getInstance().format(it) }),
                     getString(R.string.channel_points_prediction_votes_short, outcome.totalUsers?.let { NumberFormat.getInstance().format(it) }),
                     formatPredictionOdds(outcome.returnRate),
-                ).joinToString("  ")
+                ).joinToString(" · ")
+
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
-                    if (isWinner || isSelected) {
-                        background = GradientDrawable().apply {
-                            shape = GradientDrawable.RECTANGLE
-                            cornerRadius = 8.dp().toFloat()
-                            if (isWinner) {
-                                setColor(ColorUtils.setAlphaComponent(primaryColor, 34))
-                                setStroke(1.dp(), ColorUtils.setAlphaComponent(primaryColor, 120))
-                            } else {
-                                setColor(ColorUtils.setAlphaComponent(Color.WHITE, 24))
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = 12.dp().toFloat()
+                        when {
+                            isWinner -> {
+                                setColor(ColorUtils.setAlphaComponent(accent, 38))
+                                setStroke(selectedStrokePx, ColorUtils.setAlphaComponent(accent, 190))
+                            }
+                            isSelected -> {
+                                setColor(ColorUtils.setAlphaComponent(accent, 30))
+                                setStroke(selectedStrokePx, ColorUtils.setAlphaComponent(accent, 175))
+                            }
+                            else -> {
+                                setColor(rowSurface)
                             }
                         }
                     }
-                    setPadding(if (isWinner || isSelected) 8.dp() else 0, 7.dp(), if (isWinner || isSelected) 8.dp() else 0, 7.dp())
+                    setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
                     layoutParams = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
                     ).apply {
-                        topMargin = 6.dp()
+                        topMargin = 8.dp()
                     }
-                    addView(TextView(context).apply {
-                        text = if (isWinner) {
-                            getString(R.string.channel_points_prediction_outcome_winner_title, outcome.title)
-                        } else {
-                            outcome.title
+                    if (canTapOutcome) {
+                        isClickable = true
+                        isFocusable = true
+                        pollPredictionUiHelper.applySelectableRipple(this)
+                        alpha = if (outcomeSelectable) 1f else 0.48f
+                        setOnClickListener {
+                            pollPredictionUiHelper.showKickPredictionVoteDialog(prediction, outcome)
                         }
-                        setTypeface(typeface, if (isWinner || isSelected) Typeface.BOLD else Typeface.NORMAL)
-                        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+                    }
+                    addView(LinearLayout(context).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.CENTER_VERTICAL
+                        addView(TextView(context).apply {
+                            text = if (isWinner) {
+                                getString(R.string.channel_points_prediction_outcome_winner_title, outcome.title)
+                            } else {
+                                outcome.title
+                            }
+                            setTypeface(typeface, if (isWinner || isSelected) Typeface.BOLD else Typeface.NORMAL)
+                            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+                            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        })
+                        addView(TextView(context).apply {
+                            text = getString(R.string.channel_points_prediction_percent, percent)
+                            setTypeface(typeface, Typeface.BOLD)
+                            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelLarge)
+                            setTextColor(if (isWinner || isSelected) accent else onSurface)
+                            setPadding(8.dp(), 0, 0, 0)
+                        })
                     })
                     addView(TextView(context).apply {
                         text = details
@@ -998,74 +1205,114 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                         setTextColor(onSurfaceVariant)
                         setPadding(0, 2.dp(), 0, 0)
                     })
+                    addView(pollPredictionUiHelper.createProgressBarRow(percent, accent, trackColor))
                 })
             }
+
+            val countdownBar = pollPredictionUiHelper.createCountdownProgressBar(
+                initialProgress = viewModel.predictionProgress.value,
+                trackColor = trackColor,
+            )
+            addView(countdownBar)
+            onProgressBarCreated?.invoke(countdownBar)
         }
     }
 
     private fun showChannelPointRewardsDialog() {
         val context = requireContext()
-        val balanceText = getString(
-            R.string.channel_points_rewards_balance,
-            viewModel.channelPointsBalance.value?.let { NumberFormat.getInstance().format(it) } ?: "?"
-        )
+        fun formatBalanceValue(balance: Int?): String =
+            balance?.let { NumberFormat.getInstance().format(it) } ?: "?"
+
         val rewards = viewModel.channelPointRewards.value
-        val prediction = getChannelPointsDialogPrediction()
-        val dialogHorizontalPadding = 14.dp()
-        val tileGap = 8.dp()
+        val initialPrediction = getChannelPointsDialogPrediction()
+        val initialPoll = viewModel.poll.value
+        val hasActivityPanel = initialPrediction != null || initialPoll != null
         val screenWidth = resources.displayMetrics.widthPixels
         val screenHeight = resources.displayMetrics.heightPixels
         val isWideViewport = screenWidth > screenHeight
-        val useCompactPrediction = isWideViewport && prediction != null
+        val useCompactPrediction = isWideViewport && hasActivityPanel
         val useWidePanels = useCompactPrediction && screenWidth >= 700.dp()
+        val sheetHorizontalPadding = 16.dp()
+        val tileGap = 8.dp()
         val landscapeHeightLimit = (screenHeight - 24.dp()).coerceAtLeast(240.dp())
-        val landscapeScrollableHeight = (landscapeHeightLimit - 112.dp()).coerceAtLeast(160.dp())
-        val dialogWidth = (
-            if (isWideViewport) {
-                (screenWidth * 0.72f).roundToInt()
-            } else {
-                screenWidth - 16.dp()
-            }
-            ).coerceAtLeast(if (isWideViewport) 520.dp() else 280.dp())
-            .coerceAtMost(screenWidth - 16.dp())
-        val tileColumns = 3
-        // AlertDialog adds its own horizontal insets around a custom view, so reserve space for them
-        // before dividing the remaining width into equal tiles.
-        val rewardsWidth = if (useWidePanels) {
-            ((dialogWidth - 48.dp() - (dialogHorizontalPadding * 2) - 12.dp()) * 0.48f).roundToInt()
+        val landscapeScrollableHeight = (landscapeHeightLimit - 104.dp()).coerceAtLeast(160.dp())
+        val dialogWidth = if (isWideViewport) {
+            (screenWidth * 0.72f).roundToInt()
+                .coerceAtLeast(520.dp())
+                .coerceAtMost(screenWidth - 16.dp())
         } else {
-            dialogWidth - 48.dp() - (dialogHorizontalPadding * 2)
+            screenWidth
         }
-        val tileWidth = (
-            rewardsWidth - (tileGap * (tileColumns - 1))
-            ).div(tileColumns)
+        val tileColumns = 3
+        val horizontalChrome = if (isWideViewport) 48.dp() else 0
+        val rewardsWidth = if (useWidePanels) {
+            ((dialogWidth - horizontalChrome - (sheetHorizontalPadding * 2) - 12.dp()) * 0.48f).roundToInt()
+        } else {
+            dialogWidth - horizontalChrome - (sheetHorizontalPadding * 2)
+        }
+        val tileWidth = (rewardsWidth - (tileGap * (tileColumns - 1)))
+            .div(tileColumns)
             .coerceAtLeast(if (useWidePanels) 58.dp() else 72.dp())
+
+        val onSurfaceVariant = MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.LTGRAY)
+        val primaryColor = MaterialColors.getColor(context, androidx.appcompat.R.attr.colorPrimary, Color.WHITE)
+        val pillSurface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainerHigh, Color.DKGRAY)
+
         val dialogContent = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dialogHorizontalPadding, 10.dp(), dialogHorizontalPadding, 6.dp())
+            setPadding(sheetHorizontalPadding, if (isWideViewport) 14.dp() else 10.dp(), sheetHorizontalPadding, 16.dp())
         }
-        val closeButton = TextView(context).apply {
-            text = getString(R.string.close)
-            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
-            setTextColor(MaterialColors.getColor(context, androidx.appcompat.R.attr.colorAccent, Color.WHITE))
-            gravity = android.view.Gravity.CENTER
-            setPadding(18.dp(), 6.dp(), 0, 8.dp())
+
+        if (!isWideViewport) {
+            dialogContent.addView(View(context).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 2.dp().toFloat()
+                    setColor(ColorUtils.setAlphaComponent(onSurfaceVariant, 95))
+                }
+                layoutParams = LinearLayout.LayoutParams(36.dp(), 4.dp()).apply {
+                    gravity = android.view.Gravity.CENTER_HORIZONTAL
+                    bottomMargin = 14.dp()
+                }
+            })
         }
+
+        val balanceValueView = TextView(context).apply {
+            text = formatBalanceValue(viewModel.channelPointsBalance.value)
+            setTypeface(typeface, Typeface.BOLD)
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelLarge)
+            setPadding(6.dp(), 0, 0, 0)
+        }
+        val balancePill = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 16.dp().toFloat()
+                setColor(pillSurface)
+            }
+            setPadding(10.dp(), 6.dp(), 12.dp(), 6.dp())
+            addView(ImageView(context).apply {
+                setImageResource(R.drawable.ic_channel_points_black_24)
+                imageTintList = android.content.res.ColorStateList.valueOf(primaryColor)
+                layoutParams = LinearLayout.LayoutParams(16.dp(), 16.dp())
+            })
+            addView(balanceValueView)
+        }
+
         dialogContent.addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, 8.dp())
+            setPadding(0, 0, 0, 14.dp())
             addView(TextView(context).apply {
                 text = getString(R.string.channel_points_rewards_title)
-                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_HeadlineSmall)
-                layoutParams = LinearLayout.LayoutParams(
-                    0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1f
-                )
+                setTypeface(typeface, Typeface.BOLD)
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleLarge)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
-            addView(closeButton)
+            addView(balancePill)
         })
+
         val scrollContent = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -1076,38 +1323,59 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
+        val activitySlot = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = if (useWidePanels) {
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.08f)
+            } else {
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            }
+        }
+        var activePollTimerView: TextView? = null
+        var activePollProgressBar: android.widget.ProgressBar? = null
+        var activePredictionStatusView: TextView? = null
+        var activePredictionProgressBar: android.widget.ProgressBar? = null
+        var activePredictionForMeta: Prediction? = null
+        fun renderActivitySlot() {
+            activitySlot.removeAllViews()
+            activePollTimerView = null
+            activePollProgressBar = null
+            activePredictionStatusView = null
+            activePredictionProgressBar = null
+            activePredictionForMeta = null
+            viewModel.poll.value?.let { currentPoll ->
+                activitySlot.addView(
+                    createChannelPointsPollCard(
+                        poll = currentPoll,
+                        onTimerViewCreated = { timerView -> activePollTimerView = timerView },
+                        onProgressBarCreated = { progressBar -> activePollProgressBar = progressBar },
+                    )
+                )
+            }
+            getChannelPointsDialogPrediction()?.let { currentPrediction ->
+                activePredictionForMeta = currentPrediction
+                activitySlot.addView(
+                    createChannelPointsPredictionCard(
+                        prediction = currentPrediction,
+                        compact = useCompactPrediction && !useWidePanels,
+                        onStatusBadgeCreated = { statusView -> activePredictionStatusView = statusView },
+                        onProgressBarCreated = { progressBar -> activePredictionProgressBar = progressBar },
+                    )
+                )
+            }
+            activitySlot.isGone = activitySlot.childCount == 0
+        }
+        renderActivitySlot()
+        content.addView(activitySlot)
+
         val rewardsContent = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             if (useWidePanels) {
-                layoutParams = LinearLayout.LayoutParams(
-                    0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1f
-                ).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                     leftMargin = 12.dp()
                 }
             }
         }
-        prediction?.let {
-            val predictionView = createChannelPointsPredictionCard(it, compact = useCompactPrediction && !useWidePanels)
-            if (useWidePanels) {
-                content.addView(predictionView.apply {
-                    layoutParams = LinearLayout.LayoutParams(
-                        0,
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        1.08f
-                    )
-                })
-            } else {
-                content.addView(predictionView)
-            }
-        }
-        rewardsContent.addView(TextView(context).apply {
-            text = balanceText
-            setTypeface(typeface, Typeface.BOLD)
-            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyLarge)
-            setPadding(0, 0, 0, 10.dp())
-        })
         val rewardsContainer = GridLayout(context).apply {
             columnCount = tileColumns
             useDefaultMargins = false
@@ -1120,53 +1388,156 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
         rewardsContent.addView(rewardsContainer)
         content.addView(rewardsContent)
         scrollContent.addView(content)
-        dialogContent.addView(ScrollView(context).apply {
-            isFillViewport = true
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            if (isWideViewport) {
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    landscapeScrollableHeight
-                )
-            } else {
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            }
-            addView(scrollContent)
-        })
-        val builder = context.getAlertDialogBuilder()
-            .setView(dialogContent)
+
         if (rewards.isEmpty()) {
             rewardsContainer.addView(TextView(context).apply {
                 text = getString(R.string.channel_points_rewards_unavailable)
                 setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
-                setTextColor(MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.LTGRAY))
+                setTextColor(onSurfaceVariant)
                 layoutParams = GridLayout.LayoutParams().apply {
                     width = GridLayout.LayoutParams.WRAP_CONTENT
                     columnSpec = GridLayout.spec(0, 2)
                 }
             })
         }
-        if (currentChatSource().equals(AppConstants.KICK, true) &&
+
+        val isKickOwnerWithScopes = currentChatSource().equals(AppConstants.KICK, true) &&
             rewardsUiHelper.isKickRewardsOwnerChannel() &&
             rewardsUiHelper.hasAnyKickScope("channel:rewards:read", "channel:rewards:write")
-        ) {
-            builder
-                .setPositiveButton(getString(R.string.kick_manage_rewards)) { _, _ ->
-                    rewardsUiHelper.openRewardsManager()
+
+        dialogContent.addView(ScrollView(context).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            layoutParams = if (isWideViewport) {
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, landscapeScrollableHeight)
+            } else {
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            }
+            addView(scrollContent)
+        })
+
+        val dialog: android.app.Dialog = if (isWideViewport) {
+            val builder = context.getAlertDialogBuilder().setView(dialogContent)
+            if (isKickOwnerWithScopes) {
+                builder
+                    .setPositiveButton(getString(R.string.kick_manage_rewards)) { _, _ ->
+                        rewardsUiHelper.openRewardsManager()
+                    }
+                    .setNeutralButton(getString(R.string.kick_manage_redemptions)) { _, _ ->
+                        rewardsUiHelper.openRedemptionsManager()
+                    }
+            }
+            builder.show().also { shown ->
+                shown.window?.setLayout(dialogWidth, landscapeHeightLimit)
+            }
+        } else {
+            com.google.android.material.bottomsheet.BottomSheetDialog(context).apply {
+                if (isKickOwnerWithScopes) {
+                    scrollContent.addView(LinearLayout(context).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, 12.dp(), 0, 4.dp())
+                        addView(com.google.android.material.button.MaterialButton(
+                            context,
+                            null,
+                            com.google.android.material.R.attr.materialButtonTonalStyle,
+                        ).apply {
+                            text = getString(R.string.kick_manage_rewards)
+                            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                                marginEnd = 6.dp()
+                            }
+                            setOnClickListener {
+                                dismiss()
+                                rewardsUiHelper.openRewardsManager()
+                            }
+                        })
+                        addView(com.google.android.material.button.MaterialButton(
+                            context,
+                            null,
+                            com.google.android.material.R.attr.materialButtonTonalStyle,
+                        ).apply {
+                            text = getString(R.string.kick_manage_redemptions)
+                            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                                marginStart = 6.dp()
+                            }
+                            setOnClickListener {
+                                dismiss()
+                                rewardsUiHelper.openRedemptionsManager()
+                            }
+                        })
+                    })
                 }
-                .setNeutralButton(getString(R.string.kick_manage_redemptions)) { _, _ ->
-                    rewardsUiHelper.openRedemptionsManager()
-                }
+                setContentView(dialogContent)
+                behavior.skipCollapsed = true
+                behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+                show()
+            }
         }
-        val dialog = builder.show()
-        closeButton.setOnClickListener {
-            dialog.dismiss()
-        }
+
         channelPointsDialog = dialog
+        val liveUpdateJob = viewLifecycleOwner.lifecycleScope.launch {
+            launch {
+                viewModel.channelPointsBalance.collectLatest { balance ->
+                    if (isAdded) balanceValueView.text = formatBalanceValue(balance)
+                }
+            }
+            launch {
+                var skippedInitial = false
+                kotlinx.coroutines.flow.combine(
+                    viewModel.prediction,
+                    viewModel.latestPrediction,
+                    viewModel.poll,
+                ) { pred, latest, poll -> Triple(pred, latest, poll) }.collectLatest {
+                    if (!skippedInitial) {
+                        skippedInitial = true
+                        return@collectLatest
+                    }
+                    if (isAdded) renderActivitySlot()
+                }
+            }
+            launch {
+                viewModel.predictionSecondsLeft.collectLatest {
+                    val currentPrediction = activePredictionForMeta
+                    if (isAdded && currentPrediction != null) {
+                        activePredictionStatusView?.text = buildChannelPointsPredictionStatusBadgeText(currentPrediction)
+                    }
+                }
+            }
+            launch {
+                viewModel.pollSecondsLeft.collectLatest { seconds ->
+                    val timerView = activePollTimerView ?: return@collectLatest
+                    if (!isAdded) return@collectLatest
+                    val pollActive = viewModel.poll.value?.isActive() == true
+                    if (pollActive && seconds != null && seconds > 0) {
+                        timerView.isVisible = true
+                        timerView.text = getString(R.string.remaining_time, DateUtils.formatElapsedTime(seconds.toLong()))
+                    } else {
+                        timerView.isVisible = false
+                    }
+                }
+            }
+            launch {
+                viewModel.pollProgress.collectLatest { fraction ->
+                    val bar = activePollProgressBar ?: return@collectLatest
+                    if (!isAdded) return@collectLatest
+                    bar.isVisible = fraction != null
+                    if (fraction != null) {
+                        bar.progress = (fraction * 1000f).roundToInt().coerceIn(0, 1000)
+                    }
+                }
+            }
+            launch {
+                viewModel.predictionProgress.collectLatest { fraction ->
+                    val bar = activePredictionProgressBar ?: return@collectLatest
+                    if (!isAdded) return@collectLatest
+                    bar.isVisible = fraction != null
+                    if (fraction != null) {
+                        bar.progress = (fraction * 1000f).roundToInt().coerceIn(0, 1000)
+                    }
+                }
+            }
+        }
         dialog.setOnDismissListener {
+            liveUpdateJob.cancel()
             if (channelPointsDialog === dialog) {
                 channelPointsDialog = null
             }
@@ -1179,10 +1550,6 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                 })
             }
         }
-        dialog.window?.setLayout(
-            dialogWidth,
-            if (isWideViewport) landscapeHeightLimit else WindowManager.LayoutParams.WRAP_CONTENT
-        )
         dialog.window?.decorView?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             if (channelPointsDialog === dialog && (resources.displayMetrics.widthPixels > resources.displayMetrics.heightPixels) != isWideViewport) {
                 rebuildChannelPointsDialogAfterLayoutChange()
@@ -1898,8 +2265,7 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                             viewModel.hidePoll.collectLatest {
                                 if (it) {
                                     pollLayout.visibility = View.GONE
-                                    viewModel.pollSecondsLeft.value = null
-                                    viewModel.pollTimer?.cancel()
+                                    pollChoices.removeAllViews()
                                     viewModel.pollClosed = true
                                     viewModel.hidePoll.value = false
                                 }
@@ -1908,44 +2274,44 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     }
                     pollClose.setOnClickListener {
                         pollLayout.visibility = View.GONE
-                        viewModel.pollSecondsLeft.value = null
-                        viewModel.pollTimer?.cancel()
                         viewModel.pollClosed = true
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.poll.collectLatest { poll ->
-                                if (poll != null) {
-                                    if (!viewModel.pollClosed) {
-                                            when (poll.status) {
-                                                "ACTIVE" -> {
-                                                    pollLayout.visibility = View.VISIBLE
-                                                    pollTitle.text = getString(R.string.poll_title, poll.title)
-                                                    pollChoices.text = pollPredictionUiHelper.buildKickPollChoicesText(poll, clickable = true)
-                                                pollChoices.movementMethod = LinkMovementMethod.getInstance()
-                                                pollStatus.visibility = View.VISIBLE
-                                                }
-                                                "COMPLETED", "TERMINATED" -> {
-                                                    pollLayout.visibility = View.VISIBLE
-                                                    pollTitle.text = getString(R.string.poll_title, poll.title)
-                                                    pollChoices.text = pollPredictionUiHelper.buildKickPollChoicesText(poll, clickable = false)
-                                                pollChoices.movementMethod = null
-                                                pollStatus.visibility = View.GONE
-                                                viewModel.pollSecondsLeft.value = null
-                                                viewModel.pollTimer?.cancel()
-                                                viewModel.startPollTimeout(
-                                                    delayMs = poll.resultDisplayMilliseconds?.toLong() ?: 20_000L
-                                                ) {
-                                                    pollLayout.visibility = View.GONE
-                                                }
-                                            }
-                                            else -> {
-                                                pollLayout.visibility = View.GONE
-                                                pollChoices.movementMethod = null
-                                                viewModel.pollSecondsLeft.value = null
-                                                viewModel.pollTimer?.cancel()
-                                                viewModel.pollClosed = true
-                                            }
+                                if (poll == null) {
+                                    pollLayout.visibility = View.GONE
+                                    pollChoices.removeAllViews()
+                                    return@collectLatest
+                                }
+                                if (!viewModel.pollClosed) {
+                                    when {
+                                        poll.isActive() -> {
+                                            pollLayout.visibility = View.VISIBLE
+                                            pollPredictionUiHelper.styleBannerCard(pollLayout, pollStatus, active = true)
+                                            pollTitle.text = poll.title?.takeIf { it.isNotBlank() } ?: getString(R.string.poll_title, "")
+                                            pollPredictionUiHelper.populatePollChoiceButtons(pollChoices, poll, clickable = true)
+                                            pollStatus.visibility = View.VISIBLE
+                                        }
+                                        poll.isEnded() -> {
+                                            pollLayout.visibility = View.VISIBLE
+                                            pollPredictionUiHelper.styleBannerCard(pollLayout, pollStatus, active = false)
+                                            pollTitle.text = poll.title?.takeIf { it.isNotBlank() } ?: getString(R.string.poll_title, "")
+                                            pollPredictionUiHelper.populatePollChoiceButtons(pollChoices, poll, clickable = false)
+                                            pollStatus.visibility = View.GONE
+                                            viewModel.pollSecondsLeft.value = null
+                                            viewModel.pollTimer?.cancel()
+                                            viewModel.startPollTimeout(
+                                                delayMs = poll.resultDisplayMilliseconds?.toLong() ?: 20_000L
+                                            )
+                                        }
+                                        else -> {
+                                            pollLayout.visibility = View.GONE
+                                            pollChoices.removeAllViews()
+                                            viewModel.pollSecondsLeft.value = null
+                                            viewModel.pollProgress.value = null
+                                            viewModel.pollTimer?.cancel()
+                                            viewModel.pollClosed = true
                                         }
                                     }
                                 }
@@ -1966,12 +2332,20 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.pollProgress.collectLatest { fraction ->
+                                pollProgressBar.isVisible = fraction != null
+                                if (fraction != null) {
+                                    pollProgressBar.progress = (fraction * 1000f).roundToInt().coerceIn(0, 1000)
+                                }
+                            }
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.hidePrediction.collectLatest {
                                 if (it) {
                                     predictionLayout.visibility = View.GONE
-                                    predictionOutcomes.movementMethod = null
-                                    viewModel.predictionSecondsLeft.value = null
-                                    viewModel.predictionTimer?.cancel()
+                                    predictionOutcomes.removeAllViews()
                                     viewModel.predictionClosed = true
                                     viewModel.hidePrediction.value = false
                                 }
@@ -1980,66 +2354,68 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                     }
                     predictionClose.setOnClickListener {
                         predictionLayout.visibility = View.GONE
-                        predictionOutcomes.movementMethod = null
-                        viewModel.predictionSecondsLeft.value = null
-                        viewModel.predictionTimer?.cancel()
                         viewModel.predictionClosed = true
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
                             viewModel.prediction.collectLatest { prediction ->
-                                if (prediction != null) {
-                                    if (!viewModel.predictionClosed) {
-                                        when (prediction.status) {
-                                            "ACTIVE" -> {
-                                                predictionLayout.visibility = View.VISIBLE
-                                                predictionTitle.text = getString(R.string.prediction_title, prediction.title)
-                                                predictionOutcomes.text = pollPredictionUiHelper.buildKickPredictionOutcomesText(prediction, clickable = true)
-                                                predictionOutcomes.movementMethod = LinkMovementMethod.getInstance()
-                                                predictionStatus.visibility = View.VISIBLE
-                                            }
-                                            "LOCKED" -> {
-                                                predictionLayout.visibility = View.VISIBLE
-                                                predictionTitle.text = getString(R.string.prediction_title, prediction.title)
-                                                predictionOutcomes.text = pollPredictionUiHelper.buildKickPredictionOutcomesText(prediction, clickable = false)
-                                                predictionOutcomes.movementMethod = null
-                                                viewModel.predictionSecondsLeft.value = null
-                                                viewModel.predictionTimer?.cancel()
-                                                viewModel.startPredictionTimeout { predictionLayout.visibility = View.GONE }
-                                                predictionStatus.visibility = View.VISIBLE
-                                                predictionStatus.text = getString(R.string.prediction_locked)
-                                            }
-                                            "CANCELED", "CANCEL_PENDING", "RESOLVED", "RESOLVE_PENDING" -> {
-                                                predictionLayout.visibility = View.VISIBLE
-                                                predictionTitle.text = getString(R.string.prediction_title, prediction.title)
-                                                predictionOutcomes.text = pollPredictionUiHelper.buildKickPredictionOutcomesText(prediction, clickable = false)
-                                                predictionOutcomes.movementMethod = null
-                                                viewModel.predictionSecondsLeft.value = null
-                                                viewModel.predictionTimer?.cancel()
-                                                viewModel.startPredictionTimeout { predictionLayout.visibility = View.GONE }
-                                                if (prediction.status == "RESOLVED" || prediction.status == "RESOLVE_PENDING") {
-                                                    val resultText = buildResolvedPredictionResultText(prediction)
-                                                    if (resultText != null) {
-                                                        predictionStatus.visibility = View.VISIBLE
-                                                        predictionStatus.text = resultText
-                                                    } else {
-                                                        predictionStatus.visibility = View.GONE
-                                                    }
-                                                } else {
+                                if (prediction == null) {
+                                    predictionLayout.visibility = View.GONE
+                                    predictionOutcomes.removeAllViews()
+                                    return@collectLatest
+                                }
+                                if (!viewModel.predictionClosed) {
+                                    when {
+                                        prediction.isActive() -> {
+                                            predictionLayout.visibility = View.VISIBLE
+                                            pollPredictionUiHelper.styleBannerCard(predictionLayout, predictionStatus, active = true)
+                                            predictionTitle.text = prediction.title?.takeIf { it.isNotBlank() }
+                                                ?: getString(R.string.channel_points_prediction_fallback_title)
+                                            pollPredictionUiHelper.populatePredictionOutcomeButtons(predictionOutcomes, prediction, clickable = true)
+                                            predictionStatus.visibility = View.VISIBLE
+                                        }
+                                        prediction.isLocked() -> {
+                                            predictionLayout.visibility = View.VISIBLE
+                                            pollPredictionUiHelper.styleBannerCard(predictionLayout, predictionStatus, active = false)
+                                            predictionTitle.text = prediction.title?.takeIf { it.isNotBlank() }
+                                                ?: getString(R.string.channel_points_prediction_fallback_title)
+                                            pollPredictionUiHelper.populatePredictionOutcomeButtons(predictionOutcomes, prediction, clickable = false)
+                                            viewModel.predictionSecondsLeft.value = null
+                                            viewModel.predictionTimer?.cancel()
+                                            viewModel.startPredictionTimeout()
+                                            predictionStatus.visibility = View.VISIBLE
+                                            predictionStatus.text = getString(R.string.prediction_locked)
+                                        }
+                                        prediction.isCanceled() || prediction.isResolved() -> {
+                                            predictionLayout.visibility = View.VISIBLE
+                                            pollPredictionUiHelper.styleBannerCard(predictionLayout, predictionStatus, active = false)
+                                            predictionTitle.text = prediction.title?.takeIf { it.isNotBlank() }
+                                                ?: getString(R.string.channel_points_prediction_fallback_title)
+                                            pollPredictionUiHelper.populatePredictionOutcomeButtons(predictionOutcomes, prediction, clickable = false)
+                                            viewModel.predictionSecondsLeft.value = null
+                                            viewModel.predictionTimer?.cancel()
+                                            viewModel.startPredictionTimeout()
+                                            if (prediction.isResolved()) {
+                                                val resultText = buildResolvedPredictionResultText(prediction)
+                                                if (resultText != null) {
                                                     predictionStatus.visibility = View.VISIBLE
-                                                    predictionStatus.text = getString(R.string.prediction_refunded)
+                                                    predictionStatus.text = resultText
+                                                } else {
+                                                    predictionStatus.visibility = View.GONE
                                                 }
-                                            }
-                                            else -> {
-                                                predictionLayout.visibility = View.GONE
-                                                predictionOutcomes.movementMethod = null
-                                                viewModel.predictionSecondsLeft.value = null
-                                                viewModel.predictionTimer?.cancel()
-                                                viewModel.predictionClosed = true
+                                            } else {
+                                                predictionStatus.visibility = View.VISIBLE
+                                                predictionStatus.text = getString(R.string.prediction_refunded)
                                             }
                                         }
+                                        else -> {
+                                            predictionLayout.visibility = View.GONE
+                                            predictionOutcomes.removeAllViews()
+                                            viewModel.predictionSecondsLeft.value = null
+                                            viewModel.predictionTimer?.cancel()
+                                            viewModel.predictionClosed = true
+                                        }
                                     }
-                                    viewModel.prediction.value = null
                                 }
                             }
                         }
@@ -2052,6 +2428,16 @@ class ChatFragment : BaseNetworkFragment(), MessageClickedDialog.OnButtonClickLi
                                     if (it <= 0) {
                                         viewModel.predictionSecondsLeft.value = null
                                     }
+                                }
+                            }
+                        }
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.predictionProgress.collectLatest { fraction ->
+                                predictionProgressBar.isVisible = fraction != null
+                                if (fraction != null) {
+                                    predictionProgressBar.progress = (fraction * 1000f).roundToInt().coerceIn(0, 1000)
                                 }
                             }
                         }

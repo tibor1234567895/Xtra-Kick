@@ -848,6 +848,8 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="kick_prediction_vote_minimum">Minimum bahis: %1$s</string>
     <string name="kick_prediction_vote_current_stake">Bu sonuçtaki mevcut bahsiniz: %1$s</string>
     <string name="kick_prediction_vote_only_selected">Yalnızca seçtiğiniz sonuca ekleme yapabilirsiniz</string>
+    <string name="kick_poll_tap_to_vote">Oy vermek için bir seçeneğe dokunun</string>
+    <string name="kick_prediction_tap_to_bet">Bahis yapmak için bir sonuca dokunun</string>
     <string name="prediction_outcome_compact">%%%1$d: %2$s</string>
     <string name="prediction_outcome_compact_winner">Kazanan: %%%1$d: %2$s</string>
     <string name="download_settings">İndirmeler</string>

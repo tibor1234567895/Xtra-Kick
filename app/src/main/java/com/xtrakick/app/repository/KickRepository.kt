@@ -2443,6 +2443,13 @@ class KickRepository @Inject constructor(
         return realtimeEventParsers.parseKickLivestreamViewerCount(eventName, messageJson)
     }
 
+    suspend fun getKickWebPoll(channelSlug: String): Poll? = withContext(Dispatchers.IO) {
+        val normalizedChannelSlug = channelSlug.trim().takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("channel slug is required")
+        val url = "https://kick.com/api/v2/channels/${urlEncode(normalizedChannelSlug)}/polls"
+        realtimeEventParsers.parseKickWebPollResponse(executeKickWebSessionRequest(url, requireAuth = false))
+    }
+
     suspend fun voteKickWebPoll(
         channelSlug: String,
         choiceId: Int,

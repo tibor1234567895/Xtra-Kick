@@ -61,6 +61,7 @@ class KickCentrifugoChatWebSocketTest {
                 "chatroom_123",
                 "channel.456",
                 "channel_456",
+                "predictions-channel-456",
                 "drops_category_7"
             ),
             channels
@@ -99,6 +100,7 @@ class KickCentrifugoChatWebSocketTest {
                 "chatroom_123",
                 "channel.456",
                 "channel_456",
+                "predictions-channel-456",
                 "drops_category_7",
                 "private-channelpoints-999",
                 "private-999"
