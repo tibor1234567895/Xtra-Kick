@@ -14,13 +14,13 @@ class ReleaseVersionTest(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.cache = Path(self.directory.name) / "version.json"
 
-    def test_ci_runs_advance_and_rerunning_the_same_run_keeps_its_code(self):
-        self.assertEqual(213, version.ci_code(92))
-        self.assertEqual(214, version.ci_code(93))
-        self.assertEqual(version.ci_code(92), version.ci_code(92))
-        for run in (0, -1, version.MAX_VERSION_CODE):
-            with self.assertRaises(ValueError):
-                version.ci_code(run)
+    @patch.object(version, "published_code", side_effect=[237, 237, 238, version.MAX_VERSION_CODE])
+    def test_ci_code_advances_only_after_a_published_release(self, published):
+        self.assertEqual(238, version.ci_code())
+        self.assertEqual(238, version.ci_code())
+        self.assertEqual(239, version.ci_code())
+        with self.assertRaises(ValueError):
+            version.ci_code()
 
     @patch.object(version, "published_code", return_value=213)
     def test_repeated_local_builds_reuse_the_published_code(self, published):

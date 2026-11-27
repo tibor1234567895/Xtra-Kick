@@ -86,7 +86,7 @@ jobs:
     - name: Prepare release version
       id: version
       run: |
-        code=$(python3 -B gradle/release_version.py ci --run-number "$GITHUB_RUN_NUMBER" --output build/release-version.json)
+        code=$(python3 -B gradle/release_version.py ci --output build/release-version.json)
         echo "code=$code" >> "$GITHUB_OUTPUT"
 
     - name: Build Release with Gradle

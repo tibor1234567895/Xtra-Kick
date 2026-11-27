@@ -41,7 +41,13 @@ def write_metadata(path, code):
 
 
 def fetch_text(url):
-    request = Request(url, headers={"User-Agent": "Xtra-Kick-release-version"})
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Xtra-Kick-release-version",
+            "Cache-Control": "no-cache",
+        },
+    )
     with urlopen(request, timeout=5) as response:
         return response.read(128 * 1024).decode("utf-8")
 
@@ -76,10 +82,8 @@ def local_code(cache, offline=False):
     return read_metadata(cache.read_text(encoding="utf-8"))
 
 
-def ci_code(run_number):
-    if run_number < 1:
-        raise ValueError("Workflow run number must be positive")
-    return validate_code(LEGACY_VERSION_CODE + run_number)
+def ci_code():
+    return validate_code(published_code() + 1)
 
 
 def main():
@@ -89,12 +93,11 @@ def main():
     local.add_argument("--cache", required=True, type=Path)
     local.add_argument("--offline", action="store_true")
     ci = modes.add_parser("ci")
-    ci.add_argument("--run-number", required=True, type=int)
     ci.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     try:
         if args.mode == "ci":
-            code = ci_code(args.run_number)
+            code = ci_code()
             write_metadata(args.output, code)
         else:
             code = local_code(args.cache, args.offline)
