@@ -1,0 +1,163 @@
+name: Android compatibility
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Compatibility matrix and APK type
+        type: choice
+        options: [smoke, routine, extended, release]
+        default: routine
+      apis:
+        description: Optional comma-separated APIs 26–37 or 37-16k
+        type: string
+      suite:
+        description: Instrumentation suite
+        type: choice
+        options: [auto, smoke, functional]
+        default: auto
+  workflow_call:
+    inputs:
+      profile:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: android-compatibility-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.workflow != 'Build' }}
+
+jobs:
+  plan:
+    if: toJSON(github.event.repository.private) == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      suite: ${{ steps.matrix.outputs.suite }}
+      minified: ${{ steps.matrix.outputs.minified }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - id: matrix
+        env:
+          PROFILE: ${{ inputs.profile || 'extended' }}
+          APIS: ${{ github.workflow == 'Android compatibility' && inputs.apis || '' }}
+          SUITE: ${{ github.workflow == 'Android compatibility' && inputs.suite || 'auto' }}
+        run: python3 -B gradle/compatibility_matrix.py --profile "$PROFILE" --apis "$APIS" --suite "$SUITE"
+      - name: Check repository artifact headroom
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B gradle/check_artifact_headroom.py
+
+  apks:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact-id: ${{ steps.transfer.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: true
+      - name: Ensure Android SDK platform is installed
+        run: test -f "$ANDROID_HOME/platforms/android-37.0/android.jar" || sdkmanager 'platforms;android-37.0'
+      - name: Compile shared application and instrumentation APKs
+        env:
+          MINIFIED: ${{ needs.plan.outputs.minified }}
+        run: |
+          mkdir qa-apks
+          if [[ "$MINIFIED" == true ]]; then
+            ./gradlew :app:assembleQaRelease -PqaReleaseBuild=true -PqaVersionCode=1
+            cp app/build/outputs/apk/qaRelease/app-qaRelease.apk qa-apks/previous.apk
+            ./gradlew :app:assembleQaRelease :qa:assembleDebug -PqaReleaseBuild=true -PqaVersionCode=2
+            cp app/build/outputs/apk/qaRelease/app-qaRelease.apk qa-apks/app.apk
+          else
+            ./gradlew :app:assembleDebug :qa:assembleDebug -PqaEmulatorBuild=true -PTARGET_ABI=x86_64
+            cp app/build/outputs/apk/debug/app-debug.apk qa-apks/app.apk
+          fi
+          cp qa/build/outputs/apk/debug/qa-debug.apk qa-apks/test.apk
+          test "$(du -sb qa-apks | cut -f1)" -le 85000000
+      - id: transfer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compatibility-apks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qa-apks/*.apk
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  emulator:
+    needs: [plan, apks]
+    name: Android API ${{ matrix.name }} (${{ needs.plan.outputs.suite }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.apks.outputs.artifact-id }}
+          path: qa-apks
+      - name: Enable KVM and record the runner configuration
+        env:
+          IMAGE: ${{ matrix.image }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir qa-diagnostics
+          printf 'revision=%s\nimage=system-images;android-%s;%s;x86_64\n' \
+            "$GITHUB_SHA" "$IMAGE" "$TARGET" > qa-diagnostics/runner.txt
+          uname -sr >> qa-diagnostics/runner.txt
+          test -c /dev/kvm
+          sudo chown "$(id -u)" /dev/kvm
+          python3 -B gradle/emulator_test.py --check-kvm
+      - name: Run isolated Android tests
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          API: ${{ matrix.sdk }}
+          PAGE_SIZE: ${{ matrix.page_size }}
+          SUITE: ${{ needs.plan.outputs.suite }}
+          MINIFIED: ${{ needs.plan.outputs.minified }}
+        with:
+          api-level: ${{ matrix.image }}
+          system-image-api-level: ${{ matrix.image }}
+          target: ${{ matrix.target }}
+          arch: x86_64
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          emulator-boot-timeout: 420
+          disable-animations: true
+          emulator-options: -no-window -accel on -no-snapshot -gpu swiftshader -no-audio -no-boot-anim -camera-back none -camera-front none -no-metrics
+          script: >-
+            set --;
+            if test "$MINIFIED" = true; then set -- "$@" --previous qa-apks/previous.apk; fi;
+            if test "$PAGE_SIZE" != 0; then set -- "$@" --native-page-size "$PAGE_SIZE"; fi;
+            python3 -B gradle/emulator_test.py --serial "$ANDROID_SERIAL" --api "$API"
+            --app qa-apks/app.apk --test qa-apks/test.apk --suite "$SUITE" --diagnostics qa-diagnostics "$@"
+      - name: Upload bounded failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-failure-${{ github.run_id }}-${{ github.run_attempt }}-api-${{ matrix.name }}
+          path: qa-diagnostics/
+          if-no-files-found: warn
+          retention-days: 1

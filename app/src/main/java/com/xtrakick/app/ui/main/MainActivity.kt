@@ -33,6 +33,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.OptIn
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
@@ -194,6 +195,7 @@ class MainActivity : BaseStateActivity() {
     lateinit var shownNotificationsRepository: ShownNotificationsRepository
 
     private lateinit var prefs: SharedPreferences
+    private var updatePromptDialog: AlertDialog? = null
     private var updateDownloadDialog: AppUpdateDialogHelper.UpdateDownloadDialog? = null
     var settingsResultLauncher: ActivityResultLauncher<Intent>? = null
     var loginResultLauncher: ActivityResultLauncher<Intent>? = null
@@ -393,8 +395,8 @@ class MainActivity : BaseStateActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.updateInfo.collectLatest { updateInfo ->
                     if (updateInfo != null) {
-                        viewModel.consumeUpdateInfo()
-                        AppUpdateDialogHelper.showUpdateDialog(
+                        if (updatePromptDialog?.isShowing == true) return@collectLatest
+                        updatePromptDialog = AppUpdateDialogHelper.showUpdateDialog(
                             context = this@MainActivity,
                             updateInfo = updateInfo,
                             onUpdate = {
@@ -434,6 +436,12 @@ class MainActivity : BaseStateActivity() {
                                 tokenPrefs().edit {
                                     putLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, updateInfo.updatedAt)
                                     putLong(AppConstants.UPDATE_LAST_CHECKED, updateInfo.updatedAt)
+                                }
+                            },
+                            onDismiss = { dismissed ->
+                                if (updatePromptDialog === dismissed) {
+                                    updatePromptDialog = null
+                                    viewModel.consumeUpdateInfo()
                                 }
                             }
                         )
@@ -755,6 +763,9 @@ class MainActivity : BaseStateActivity() {
         if (isFinishing && playerFragment?.shouldContinuePlaybackInBackground() != true) {
             playerFragment?.close()
         }
+        val promptDialog = updatePromptDialog
+        updatePromptDialog = null
+        promptDialog?.dismiss()
         updateDownloadDialog?.dismiss()
         updateDownloadDialog = null
         super.onDestroy()

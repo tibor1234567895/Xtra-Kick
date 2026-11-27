@@ -19,6 +19,9 @@ kotlin {
 }
 
 android {
+    val qaReleaseBuild = providers.gradleProperty("qaReleaseBuild").orNull == "true"
+    val qaEmulatorBuild = providers.gradleProperty("qaEmulatorBuild").orNull == "true" || qaReleaseBuild
+
     val dotEnv = rootProject.file(".env").takeIf { it.exists() }?.readLines()
         ?.asSequence()
         ?.mapNotNull { line ->
@@ -91,7 +94,8 @@ android {
     // Only hard-fail when a release artifact was actually asked for; a missing release keystore
     // must not block debug builds or IDE sync.
     val releaseTaskRequested = gradle.startParameter.taskNames.any {
-        it.contains("Release", ignoreCase = false) || it.endsWith("release", ignoreCase = true)
+        it.substringAfterLast(':').replace("qaRelease", "", ignoreCase = true)
+            .contains("release", ignoreCase = true)
     }
 
     val releaseSigningConfigured = releaseKeystoreFile.exists() &&
@@ -121,7 +125,7 @@ android {
         }
     }
 
-    if (localDebugKeystoreFile.exists() &&
+    if (!qaEmulatorBuild && localDebugKeystoreFile.exists() &&
         localDebugStorePassword.isNotEmpty() &&
         localDebugKeyAlias.isNotEmpty() &&
         localDebugKeyPassword.isNotEmpty()
@@ -154,15 +158,16 @@ android {
             ndk {
                 abiFilters += targetAbis ?: listOf("arm64-v8a")
             }
-            if (!normalDebugPackage) {
+            if (!normalDebugPackage || qaEmulatorBuild) {
                 applicationIdSuffix = ".test"
                 versionNameSuffix = "-TEST"
             }
-            buildConfigField("String", "KICK_CLIENT_ID", "\"$kickClientId\"")
-            buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
-            buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$kickOAuthBackendBaseUrl\"")
-            buildConfigField("String", "KICK_OAUTH_BACKEND_HMAC_SECRET", "\"$kickOAuthBackendHmacSecret\"")
-            buildConfigField("String", "KICK_VIEWER_CLIENT_TOKEN", "\"$kickViewerClientToken\"")
+            val backendUrl = if (qaEmulatorBuild) "https://kickauth.example.invalid" else kickOAuthBackendBaseUrl
+            buildConfigField("String", "KICK_CLIENT_ID", if (qaEmulatorBuild) "\"\"" else "\"$kickClientId\"")
+            buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", if (qaEmulatorBuild) "\"\"" else "\"$googleWebClientId\"")
+            buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"$backendUrl\"")
+            buildConfigField("String", "KICK_OAUTH_BACKEND_HMAC_SECRET", if (qaEmulatorBuild) "\"\"" else "\"$kickOAuthBackendHmacSecret\"")
+            buildConfigField("String", "KICK_VIEWER_CLIENT_TOKEN", if (qaEmulatorBuild) "\"\"" else "\"$kickViewerClientToken\"")
         }
         release {
             ndk {
@@ -189,6 +194,24 @@ android {
             buildConfigField("String", "KICK_OAUTH_BACKEND_HMAC_SECRET", "\"$kickOAuthBackendHmacSecret\"")
             buildConfigField("String", "KICK_VIEWER_CLIENT_TOKEN", "\"$kickViewerClientToken\"")
         }
+        if (qaReleaseBuild) {
+            create("qaRelease") {
+                initWith(getByName("release"))
+                applicationIdSuffix = ".test"
+                versionNameSuffix = "-QA"
+                signingConfig = signingConfigs.getByName("debug")
+                ndk.abiFilters.clear()
+                ndk.abiFilters += "x86_64"
+                buildConfigField("String", "KICK_CLIENT_ID", "\"\"")
+                buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"\"")
+                buildConfigField("String", "KICK_OAUTH_BACKEND_BASE_URL", "\"https://kickauth.example.invalid\"")
+                buildConfigField("String", "KICK_OAUTH_BACKEND_HMAC_SECRET", "\"\"")
+                buildConfigField("String", "KICK_VIEWER_CLIENT_TOKEN", "\"\"")
+            }
+        }
+    }
+    if (qaReleaseBuild) {
+        sourceSets.getByName("qaRelease").kotlin.directories.add("src/release/java")
     }
     buildFeatures {
         buildConfig = true
@@ -206,6 +229,7 @@ android {
     }
     lint {
         checkReleaseBuilds = false
+        error += setOf("NewApi", "InlinedApi")
         disable += listOf(
             "AlwaysShowAction",
             "AndroidGradlePluginVersion",
@@ -238,6 +262,13 @@ android {
 }
 
 androidComponents {
+    onVariants(selector().withBuildType("qaRelease")) { variant ->
+        val code = providers.gradleProperty("qaVersionCode").orElse("2").map { value ->
+            requireNotNull(value.toIntOrNull()?.takeIf { it in 1..2 }) { "qaVersionCode must be 1 or 2" }
+        }
+        variant.outputs.forEach { it.versionCode.set(code) }
+    }
+
     onVariants(selector().withBuildType("release")) { variant ->
         val python = if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3"
         val arguments = listOf(

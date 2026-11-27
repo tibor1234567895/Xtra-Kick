@@ -8,8 +8,10 @@ import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
 import android.content.pm.Signature
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import android.os.Parcel
@@ -53,6 +55,7 @@ import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
+import org.robolectric.shadows.ShadowApplicationPackageManager
 import org.robolectric.shadows.ShadowIntent
 import java.io.File
 
@@ -139,7 +142,10 @@ class MainActivityIntentTest {
     }
 
     @Test
-    @Config(sdk = [26, 27, 28, 29, 30, 31, 32, 33])
+    @Config(
+        sdk = [26, 27, 28, 29, 30, 31, 32, 33],
+        shadows = [LegacyArchivePackageManager::class],
+    )
     @Suppress("DEPRECATION")
     fun updateArchiveVerificationRequiresNewerVersionAndMatchingSignerOnOlderAndroid() {
         val context = RuntimeEnvironment.getApplication()
@@ -157,6 +163,12 @@ class MainActivityIntentTest {
                 signatures = arrayOf(signature)
             }
             manager.setPackageArchiveInfo(archive.absolutePath, candidate)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val modernOnly = context.packageManager.getPackageArchiveInfo(archive.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+                assertNotNull(modernOnly)
+                assertNull(modernOnly?.signingInfo)
+                assertNull(modernOnly?.signatures)
+            }
             verifyAppUpdate(context, archive)
 
             candidate.signatures = arrayOf(Signature(byteArrayOf(4, 5, 6)))
@@ -169,6 +181,12 @@ class MainActivityIntentTest {
             manager.setPackageArchiveInfo(archive.absolutePath, candidate)
             val sameVersion = assertThrows(UpdateInstallException::class.java) { verifyAppUpdate(context, archive) }
             assertTrue(sameVersion.message.orEmpty().contains("not newer"))
+
+            candidate.versionCode = 11
+            candidate.packageName = "example.different.app"
+            manager.setPackageArchiveInfo(archive.absolutePath, candidate)
+            val wrongPackage = assertThrows(UpdateInstallException::class.java) { verifyAppUpdate(context, archive) }
+            assertTrue(wrongPackage.message.orEmpty().contains("package does not match"))
         } finally {
             archive.delete()
         }
@@ -387,6 +405,22 @@ class MainActivityIntentTest {
             Intent.CREATOR.createFromParcel(parcel).apply { setExtrasClassLoader(Stream::class.java.classLoader) }
         } finally {
             parcel.recycle()
+        }
+    }
+
+    @Implements(className = "android.app.ApplicationPackageManager", isInAndroidSdk = false)
+    class LegacyArchivePackageManager : ShadowApplicationPackageManager() {
+        @Implementation
+        @Suppress("DEPRECATION")
+        override fun getPackageArchiveInfo(archiveFilePath: String, flags: Int): PackageInfo? {
+            val archive = super.getPackageArchiveInfo(archiveFilePath, flags) ?: return null
+            if (flags and PackageManager.GET_SIGNATURES != 0) return archive
+
+            // Affected package parsers returned no archive signingInfo on Android 9–13.
+            return PackageInfo().apply {
+                packageName = archive.packageName
+                versionCode = archive.versionCode
+            }
         }
     }
 

@@ -20,6 +20,7 @@ import android.widget.ImageButton
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.SearchView
 import androidx.core.app.ActivityCompat
@@ -780,6 +781,7 @@ class SettingsActivity : BaseStateActivity() {
 
     class AdvancedSettingsFragment : MaterialPreferenceFragment() {
         private val viewModel: SettingsViewModel by activityViewModels()
+        private var updatePromptDialog: AlertDialog? = null
         private var updateDownloadDialog: AppUpdateDialogHelper.UpdateDownloadDialog? = null
         private var backupResultLauncher: ActivityResultLauncher<Intent>? = null
         private var restoreResultLauncher: ActivityResultLauncher<Intent>? = null
@@ -958,11 +960,11 @@ class SettingsActivity : BaseStateActivity() {
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
                     viewModel.updateCheckResult.collectLatest { result ->
-                        viewModel.consumeUpdateCheckResult()
                         when (result) {
                             is AppUpdateCheckResult.UpdateAvailable -> {
+                                if (updatePromptDialog?.isShowing == true) return@collectLatest
                                 val updateInfo = result.info
-                                AppUpdateDialogHelper.showUpdateDialog(
+                                updatePromptDialog = AppUpdateDialogHelper.showUpdateDialog(
                                     context = requireContext(),
                                     updateInfo = updateInfo,
                                     onUpdate = {
@@ -1003,13 +1005,21 @@ class SettingsActivity : BaseStateActivity() {
                                             putLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, updateInfo.updatedAt)
                                             putLong(AppConstants.UPDATE_LAST_CHECKED, updateInfo.updatedAt)
                                         }
+                                    },
+                                    onDismiss = { dismissed ->
+                                        if (updatePromptDialog === dismissed) {
+                                            updatePromptDialog = null
+                                            viewModel.consumeUpdateCheckResult()
+                                        }
                                     }
                                 )
                             }
                             AppUpdateCheckResult.UpToDate -> {
+                                viewModel.consumeUpdateCheckResult()
                                 Toast.makeText(requireContext(), R.string.no_updates_found, Toast.LENGTH_LONG).show()
                             }
                             AppUpdateCheckResult.Failed -> {
+                                viewModel.consumeUpdateCheckResult()
                                 Toast.makeText(requireContext(), R.string.update_check_failed, Toast.LENGTH_LONG).show()
                             }
                         }
@@ -1042,6 +1052,9 @@ class SettingsActivity : BaseStateActivity() {
         }
 
         override fun onDestroyView() {
+            val promptDialog = updatePromptDialog
+            updatePromptDialog = null
+            promptDialog?.dismiss()
             updateDownloadDialog?.dismiss()
             updateDownloadDialog = null
             super.onDestroyView()

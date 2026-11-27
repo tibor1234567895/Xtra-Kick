@@ -23,4 +23,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Xtra"
-include(":app")
+include(":app", ":qa")

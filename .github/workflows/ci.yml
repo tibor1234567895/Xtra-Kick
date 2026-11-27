@@ -3,29 +3,66 @@ name: CI
 on:
   pull_request:
     branches: [main]
-  workflow_call:
+  push:
+    branches: [main]
+  workflow_call: {}
 
-concurrency:
-  group: ci-android-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
+  actions: read
 
 jobs:
+  scope:
+    if: toJSON(github.event.repository.private) == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      level: ${{ steps.diff.outputs.scope }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 -B gradle/ci_scope.py --base "$BASE"
+
   android:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    needs: scope
+    if: needs.scope.outputs.level != 'docs'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    concurrency:
+      group: android-checks-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Setup Java
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
         with:
           java-version: '21'
           distribution: 'temurin'
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6.4.1
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
+          cache-cleanup: on-success
+      - name: Ensure Android SDK platform is installed
+        run: test -f "$ANDROID_HOME/platforms/android-37.0/android.jar" || sdkmanager 'platforms;android-37.0'
       - name: Run Gradle script tests
         run: python3 -B -m unittest discover -s gradle
       - name: Run Android unit tests, lint, and detekt
         timeout-minutes: 20
-        run: ./gradlew testDebugUnitTest lint detekt --build-cache
+        run: ./gradlew :app:testDebugUnitTest :app:lintDebug :qa:lintDebug :app:detekt --build-cache
+
+  compatibility:
+    needs: scope
+    if: needs.scope.outputs.level != 'docs' && (github.event_name == 'pull_request' || github.event_name == 'push')
+    uses: ./.github/workflows/compatibility.yml
+    with:
+      profile: ${{ needs.scope.outputs.level == 'small' && 'smoke' || 'routine' }}

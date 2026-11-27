@@ -2,6 +2,7 @@ package com.xtrakick.app.repository
 
 import android.content.Context
 import android.net.Uri
+import android.util.AndroidRuntimeException
 import android.util.Base64
 import android.util.Log
 import android.webkit.CookieManager
@@ -7048,7 +7049,7 @@ class KickRepository @Inject constructor(
 
     private fun persistWebResponseCookies(setCookies: List<String>) {
         if (setCookies.isEmpty()) return
-        val cookieManager = CookieManager.getInstance()
+        val cookieManager = websiteCookieManager() ?: return
         setCookies.forEach { raw ->
             val entry = raw
                 .substringBefore(';')
@@ -7123,11 +7124,18 @@ class KickRepository @Inject constructor(
     }
 
     private fun getKickCookieHeader(): String? {
-        val cookieManager = CookieManager.getInstance()
+        val cookieManager = websiteCookieManager() ?: return null
         val headers = sequenceOf("https://kick.com", "https://web.kick.com")
             .mapNotNull { url -> cookieManager.getCookie(url)?.takeIf { it.isNotBlank() } }
             .toList()
         return AuthStateHelper.selectKickWebsiteCookieHeader(*headers.toTypedArray())
+    }
+
+    private fun websiteCookieManager(): CookieManager? = try {
+        CookieManager.getInstance()
+    } catch (_: AndroidRuntimeException) {
+        // Android throws this when no usable WebView provider is installed.
+        null
     }
 
     private fun hasKickWebsiteSessionCookie(): Boolean {

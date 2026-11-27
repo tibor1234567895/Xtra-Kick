@@ -4,24 +4,45 @@ name: Build
 # `gh workflow run Build`. Merges/pushes to main no longer trigger releases.
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish after compatibility and regression checks pass
+        type: boolean
+        default: true
 
 # Keep another dispatch from interrupting an asset promotion.
 concurrency:
-  group: android-release
-  cancel-in-progress: false
+  group: ${{ inputs.publish && 'android-release' || format('android-build-only-{0}', github.ref) }}
+  cancel-in-progress: ${{ !inputs.publish }}
 
 jobs:
   checks:
+    if: inputs.publish && toJSON(github.event.repository.private) == 'false'
     name: Android checks
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
+      actions: read
+
+  compatibility:
+    if: inputs.publish && toJSON(github.event.repository.private) == 'false'
+    uses: ./.github/workflows/compatibility.yml
+    permissions:
+      contents: read
+      actions: read
+    with:
+      profile: release
 
   build:
-    needs: checks
-    runs-on: ubuntu-latest
+    if: toJSON(github.event.repository.private) == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read
+      actions: read
+    outputs:
+      code: ${{ steps.version.outputs.code }}
+      artifact-id: ${{ steps.transfer.outputs.artifact-id }}
     env:
       ORG_GRADLE_PROJECT_KICK_CLIENT_ID: ${{ secrets.KICK_CLIENT_ID }}
       ORG_GRADLE_PROJECT_KICK_OAUTH_BACKEND_BASE_URL: ${{ secrets.KICK_OAUTH_BACKEND_BASE_URL }}
@@ -35,27 +56,31 @@ jobs:
       ORG_GRADLE_PROJECT_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
     steps:
     - name: Checkout sources
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        fetch-depth: 50
-        filter: blob:none
-        fetch-tags: true
-    - name: Recover a pending release
+        persist-credentials: false
+    - name: Check repository artifact headroom
       env:
         GH_TOKEN: ${{ github.token }}
-      run: python3 -B gradle/publish_release.py --recover
+      run: python3 -B gradle/check_artifact_headroom.py
     - name: Setup Java
-      uses: actions/setup-java@v6
+      uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
       with:
         java-version: '21'
         distribution: 'temurin'
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v6.4.1
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      with:
+        cache-read-only: true
+    - name: Ensure Android SDK platform is installed
+      run: test -f "$ANDROID_HOME/platforms/android-37.0/android.jar" || sdkmanager 'platforms;android-37.0'
 
     # Required: without it the release signing config is absent and the build fails by
     # design, rather than silently falling back to the debug key as it used to.
     - name: Decode release keystore
-      run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > app/release-keystore.jks
+      env:
+        RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      run: printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > app/release-keystore.jks
 
     - name: Prepare release version
       id: version
@@ -64,15 +89,7 @@ jobs:
         echo "code=$code" >> "$GITHUB_OUTPUT"
 
     - name: Build Release with Gradle
-      run: ./gradlew assembleRelease -PreleaseVersionCode=${{ steps.version.outputs.code }} --build-cache --parallel
-
-    - name: Upload R8 mapping artifact
-      uses: actions/upload-artifact@v7.0.2
-      with:
-        name: mapping-b${{ steps.version.outputs.code }}
-        path: app/build/outputs/mapping/release/mapping.txt
-        retention-days: 90
-        if-no-files-found: error
+      run: ./gradlew :app:assembleRelease -PreleaseVersionCode=${{ steps.version.outputs.code }} --build-cache --parallel
 
     - name: Verify release signature
       run: |
@@ -104,6 +121,60 @@ jobs:
         print(f"Verified both ARM architectures: {sorted(libraries['arm64-v8a'])}")
         PY
 
+    - name: Stage verified APK and build metadata
+      run: |
+        mkdir release-transfer
+        cp app/build/outputs/apk/release/app-release.apk release-transfer/
+        cp build/release-version.json app/build/outputs/mapping/release/mapping.txt release-transfer/
+        (cd release-transfer && sha256sum app-release.apk release-version.json mapping.txt > SHA256SUMS)
+        test "$(du -sb release-transfer | cut -f1)" -le 70000000
+
+    - name: Upload compiled release APK
+      id: transfer
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: compiled-release-b${{ steps.version.outputs.code }}-${{ github.run_attempt }}
+        path: release-transfer/
+        retention-days: 1
+        if-no-files-found: error
+
+  publish:
+    needs: [build, checks, compatibility]
+    if: inputs.publish && needs.build.result == 'success' && needs.checks.result == 'success' && needs.compatibility.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        fetch-depth: 50
+        filter: blob:none
+        fetch-tags: true
+        persist-credentials: false
+    - name: Download verified release APK
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      with:
+        artifact-ids: ${{ needs.build.outputs.artifact-id }}
+        path: release-transfer
+    - name: Verify transferred release files
+      working-directory: release-transfer
+      run: sha256sum -c SHA256SUMS
+    - name: Recover a pending release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 -B gradle/publish_release.py --recover
+    - name: Upload R8 mapping artifact
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: mapping-b${{ needs.build.outputs.code }}
+        path: release-transfer/mapping.txt
+        retention-days: 90
+        if-no-files-found: error
+        overwrite: true
+
     - name: Generate release notes
       run: |
         git fetch --tags --force
@@ -120,9 +191,10 @@ jobs:
     - name: Publish release
       env:
         GH_TOKEN: ${{ github.token }}
+        RELEASE_CODE: ${{ needs.build.outputs.code }}
       run: |
-        python3 -B gradle/publish_release.py "${{ steps.version.outputs.code }}" "$GITHUB_SHA" notes.txt \
-          app/build/outputs/apk/release/app-release.apk build/release-version.json || \
+        python3 -B gradle/publish_release.py "$RELEASE_CODE" "$GITHUB_SHA" notes.txt \
+          release-transfer/app-release.apk release-transfer/release-version.json || \
           python3 -B gradle/publish_release.py --recover --required
 
     - name: Recover interrupted publication
@@ -140,7 +212,7 @@ jobs:
           echo "VIRUSTOTAL_API_KEY not set; skipping VirusTotal submission."
           exit 0
         fi
-        APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
+        APK_FILE=release-transfer/app-release.apk
         echo "Submitting $APK_FILE to VirusTotal..."
         curl --silent --show-error --request POST \
           --url "https://www.virustotal.com/api/v3/files" \
