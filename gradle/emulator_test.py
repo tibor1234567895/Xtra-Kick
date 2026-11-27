@@ -234,12 +234,20 @@ class Emulator:
         flags = ["-t", "-r"] if replace else ["-t"]
         if not replace:
             cleanup.callback(self.cleanup, self.adb, "uninstall", package)
-        result = self.adb("install", *flags, path, timeout=120)
-        output = decoded(result.stdout)
-        if result.returncode or "Success" not in output.splitlines():
-            self.results.append(("install " + path.name, output))
+        output = ""
+        for attempt in range(2):
+            result = self.adb("install", *flags, path, timeout=120)
+            output = decoded(result.stdout)
+            if not result.returncode and "Success" in output.splitlines():
+                break
             if "INSTALL_FAILED_" in output and "INSUFFICIENT_STORAGE" not in output:
+                self.results.append(("install " + path.name, output))
                 raise TestFailure(f"Android rejected {path.name}.")
+            if attempt == 0:
+                time.sleep(2)
+                self.adb("wait-for-device", timeout=30)
+                continue
+            self.results.append(("install " + path.name, output))
             raise InfrastructureFailure(f"ADB could not install {path.name}.")
         info = self.read("dumpsys", "package", package)
         if not re.search(rf"\bversionCode={version}\b", info):

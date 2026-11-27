@@ -5,7 +5,12 @@ import json
 import os
 
 APIS = tuple(range(26, 38))
-PROFILES = {"smoke": (26,), "routine": (26, 30, 33, 37), "extended": APIS, "release": (*APIS, "37-16k")}
+PROFILES = {
+    "smoke": (26,),
+    "routine": (26, 30, 33, 36),
+    "extended": (*APIS, "37-16k"),
+    "release": (26, 30, 33, 36),
+}
 
 
 def select(profile, apis, suite):

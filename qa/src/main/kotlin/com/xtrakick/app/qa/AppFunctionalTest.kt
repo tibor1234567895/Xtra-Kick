@@ -4,6 +4,8 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.Until
 import java.util.regex.Pattern
 import org.junit.Assert.assertTrue
@@ -33,11 +35,15 @@ class AppFunctionalTest {
         openImportPicker()
         val fixture = By.text("xtrakick-qa-playback.mp4").pkg(documentsUi)
         val document = app.device.findObject(fixture) ?: run {
-            app.requireObject(By.desc("Show roots").pkg(documentsUi)).click()
-            app.requireObject(By.text("Downloads").pkg(documentsUi)).click()
+            clickRetryingStale(By.desc("Show roots").pkg(documentsUi))
+            clickRetryingStale(By.text("Downloads").pkg(documentsUi))
             app.requireObject(fixture)
         }
-        document.click()
+        try {
+            document.click()
+        } catch (_: StaleObjectException) {
+            clickRetryingStale(fixture)
+        }
 
         val importedVideo = app.requireObject(app.id("title").hasAncestor(app.id("recyclerView")))
         importedVideo.click()
@@ -69,17 +75,33 @@ class AppFunctionalTest {
         app.requireObject(By.pkg(documentsUi).depth(0))
     }
 
+    private fun clickRetryingStale(selector: BySelector) {
+        repeat(3) { attempt ->
+            try {
+                app.requireObject(selector).click()
+                return
+            } catch (error: StaleObjectException) {
+                if (attempt == 2) throw error
+                app.device.waitForIdle(1_000L)
+            }
+        }
+    }
+
     private fun showPlayerControls() {
         val playPause = app.id("playPause")
-        // Dismiss Android's first-time immersive fullscreen confirmation if shown.
-        app.device.findObject(By.res("android", "ok").text("GOT IT"))?.click()
-            ?: app.device.findObject(By.text("GOT IT"))?.click()
-        // Opening or rotating the player can expose its auto-shown controls as the video appears.
-        val video = app.requireObject(app.id("dragView"))
-        if (app.device.wait(Until.hasObject(playPause), 1_500L) == true) return
-        val bounds = video.visibleBounds
-        // Tap the video gesture surface away from the central play/pause button.
-        app.device.click(bounds.centerX(), bounds.top + bounds.height() / 4)
+        // Opening, rotating, or leaving PiP can auto-show/fade controls right as a single tap arrives;
+        // retry tapping the gesture surface until the controls settle visibly on screen.
+        repeat(4) {
+            app.dismissSystemDialogs()
+            app.device.findObject(By.res("android", "ok").text("GOT IT"))?.click()
+                ?: app.device.findObject(By.text("GOT IT"))?.click()
+            if (app.device.wait(Until.hasObject(playPause), 1_500L) == true) return
+            val video = app.requireObject(app.id("dragView"))
+            val bounds = video.visibleBounds
+            // Tap the video gesture surface away from the central play/pause button.
+            app.device.click(bounds.centerX(), bounds.top + bounds.height() / 4)
+            if (app.device.wait(Until.hasObject(playPause), 2_000L) == true) return
+        }
         app.requireObject(playPause)
     }
 

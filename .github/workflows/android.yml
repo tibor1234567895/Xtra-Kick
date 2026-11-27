@@ -186,7 +186,7 @@ jobs:
       run: |
         git fetch --tags --force
         if git rev-parse refs/tags/latest >/dev/null 2>&1; then
-          git log refs/tags/latest..HEAD --format="%s%n%b" > notes.txt
+          git log refs/tags/latest..HEAD --format="%s%n%b" -- app/src/main/ gradle/libs.versions.toml > notes.txt
         fi
         if [ ! -s notes.txt ]; then
           git log -n 1 --format="%s%n%b" > notes.txt

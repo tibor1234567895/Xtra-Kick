@@ -7,9 +7,9 @@ class TestCompatibilityMatrix(unittest.TestCase):
     def test_default_profiles(self):
         for profile, expected, suite in (
             ("smoke", [26], "smoke"),
-            ("routine", [26, 30, 33, 37], "functional"),
-            ("extended", list(range(26, 38)), "functional"),
-            ("release", [*range(26, 38), 37], "functional"),
+            ("routine", [26, 30, 33, 36], "functional"),
+            ("extended", [*range(26, 38), 37], "functional"),
+            ("release", [26, 30, 33, 36], "functional"),
         ):
             with self.subTest(profile=profile):
                 matrix, selected_suite, minified = select(profile, "", "auto")

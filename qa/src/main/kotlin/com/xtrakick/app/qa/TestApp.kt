@@ -33,8 +33,16 @@ internal class TestApp {
 
     fun label(name: String): BySelector = By.text(string(name)).pkg(context.packageName)
 
-    fun requireObject(selector: BySelector): UiObject2 =
-        checkNotNull(device.wait(Until.findObject(selector), UI_TIMEOUT_MS)) { "Missing UI element: $selector" }
+    fun dismissSystemDialogs() {
+        // Dismiss transient emulator System UI / launcher ANR dialogs ("Wait") if they cover the app.
+        device.findObject(By.res("android", "aerr_wait"))?.click()
+    }
+
+    fun requireObject(selector: BySelector): UiObject2 {
+        device.wait(Until.findObject(selector), 3_000L)?.let { return it }
+        dismissSystemDialogs()
+        return checkNotNull(device.wait(Until.findObject(selector), UI_TIMEOUT_MS)) { "Missing UI element: $selector" }
+    }
 
     fun await(message: String, condition: () -> Boolean) {
         check(device.wait(Condition<UiDevice, Boolean> { condition() }, UI_TIMEOUT_MS) == true) { message }
