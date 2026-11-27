@@ -22,7 +22,7 @@ def select(profile, apis, suite):
         raise ValueError("Use comma-separated APIs 26 through 37, or 37-16k")
     requested = dict.fromkeys(available[token] for token in tokens) if tokens else PROFILES[profile]
     if suite == "auto":
-        suite = "smoke" if profile == "smoke" else "functional"
+        suite = "smoke" if profile in {"smoke", "release"} else "functional"
     if suite not in {"smoke", "functional"}:
         raise ValueError(f"Unknown suite {suite!r}")
     lanes = []

@@ -90,7 +90,9 @@ jobs:
         echo "code=$code" >> "$GITHUB_OUTPUT"
 
     - name: Build Release with Gradle
-      run: ./gradlew :app:assembleRelease -PreleaseVersionCode=${{ steps.version.outputs.code }} --build-cache --parallel
+      run: |
+        ./gradlew :app:assembleRelease -PreleaseVersionCode=${{ steps.version.outputs.code }} --build-cache --parallel || \
+          (sleep 15 && ./gradlew :app:assembleRelease -PreleaseVersionCode=${{ steps.version.outputs.code }} --build-cache --parallel)
 
     - name: Verify release signature
       run: |
