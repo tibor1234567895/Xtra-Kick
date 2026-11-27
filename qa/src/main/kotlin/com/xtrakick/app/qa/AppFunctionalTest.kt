@@ -71,6 +71,9 @@ class AppFunctionalTest {
 
     private fun showPlayerControls() {
         val playPause = app.id("playPause")
+        // Dismiss Android's first-time immersive fullscreen confirmation if shown.
+        app.device.findObject(By.res("android", "ok").text("GOT IT"))?.click()
+            ?: app.device.findObject(By.text("GOT IT"))?.click()
         // Opening or rotating the player can expose its auto-shown controls as the video appears.
         val video = app.requireObject(app.id("dragView"))
         if (app.device.wait(Until.hasObject(playPause), 1_500L) == true) return
@@ -96,12 +99,23 @@ class AppFunctionalTest {
     }
 
     private fun hasPinnedActivity(): Boolean {
-        // Android 8 calls the pinned root "Stack #4". Later releases name the windowing mode.
-        val pinned = Regex("(?:\\bStack #4:|(?:windowing)?mode=pinned\\b)", RegexOption.IGNORE_CASE)
+        // Android 8 calls the pinned root "Stack #4:"; later releases report mode=pinned / PinnedStack.
+        val pinnedHeader = Regex("(?:\\bStack #4:|(?:windowing)?mode=pinned\\b|\\bPinnedStack\\b)", RegexOption.IGNORE_CASE)
+        val sectionBoundary = Regex("^\\s*(?:Display #|Stack #|RootTask #|TaskDisplayArea\\b)")
         val component = "${TestApp.APP_PACKAGE}/"
         val tasks = app.device.executeShellCommand("dumpsys activity activities")
-        return tasks.lineSequence().windowed(size = 8, step = 1, partialWindows = true).any { lines ->
-            pinned.containsMatchIn(lines.first()) && lines.any { component in it }
+        var inPinnedSection = false
+        var pinnedIndent = Int.MAX_VALUE
+        for (line in tasks.lineSequence()) {
+            val indent = line.indexOfFirst { !it.isWhitespace() }.let { if (it < 0) Int.MAX_VALUE else it }
+            if (pinnedHeader.containsMatchIn(line)) {
+                inPinnedSection = true
+                pinnedIndent = indent
+            } else if (inPinnedSection && indent <= pinnedIndent && sectionBoundary.containsMatchIn(line)) {
+                inPinnedSection = false
+            }
+            if (inPinnedSection && component in line) return true
         }
+        return false
     }
 }

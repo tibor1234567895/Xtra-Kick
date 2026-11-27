@@ -95,6 +95,35 @@ class InstrumentationResultTest(unittest.TestCase):
             emulator.verify(26, 4096)
             self.assertEqual(emulator.configuration["device_page_size"], "4096")
 
+    def test_go_offline_retries_transient_adb_root_failure(self):
+        from contextlib import ExitStack
+        emulator = Emulator("adb", "emulator-5554")
+        uids = iter(["2000", "0"])
+
+        def fake_read(*args):
+            if args == ("id", "-u"):
+                return next(uids)
+            if args[:2] == ("settings", "get"):
+                return "1"
+            return ""
+
+        adb_calls = []
+
+        def fake_adb(*args, timeout=30):
+            adb_calls.append(args)
+            if args == ("root",) and adb_calls.count(("root",)) == 1:
+                return result("adb: unable to connect for root: closed", return_code=1)
+            return result("restarting adbd as root")
+
+        with ExitStack() as cleanup, \
+                patch("emulator_test.time.sleep"), \
+                patch.object(emulator, "read", side_effect=fake_read), \
+                patch.object(emulator, "adb", side_effect=fake_adb), \
+                patch.object(emulator, "shell", return_value=result("")) as shell:
+            emulator.go_offline(cleanup)
+        self.assertEqual(adb_calls.count(("root",)), 2)
+        shell.assert_any_call("settings", "put", "secure", "immersive_mode_confirmations", "confirmed")
+
     def test_pidof_can_include_a_zombie_after_force_stop(self):
         emulator = Emulator("adb", "emulator-5554")
         with patch.object(emulator, "shell", side_effect=[

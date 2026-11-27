@@ -192,11 +192,23 @@ class Emulator:
 
     def go_offline(self, cleanup):
         if self.read("id", "-u") != "0":
-            checked(self.adb("root"), "Rooting disposable emulator")
-            checked(self.adb("wait-for-device", timeout=45), "Reconnecting after adb root")
+            last_error = None
+            for attempt in range(3):
+                root = self.adb("root")
+                if root.returncode == 0:
+                    checked(self.adb("wait-for-device", timeout=45), "Reconnecting after adb root")
+                    break
+                last_error = decoded(root.stdout).strip()
+                if attempt < 2:
+                    time.sleep(2)
+                    self.adb("wait-for-device", timeout=30)
+            else:
+                raise InfrastructureFailure(f"Rooting disposable emulator failed: {redacted(last_error or '')[:500]}")
             if self.read("id", "-u") != "0":
                 raise InfrastructureFailure("A rootable AOSP or Google APIs image is required for network isolation.")
             cleanup.callback(self.cleanup, self.adb, "unroot")
+        # Suppress Android's first-time fullscreen "Viewing full screen / GOT IT" overlay.
+        self.shell("settings", "put", "secure", "immersive_mode_confirmations", "confirmed")
         for command in ("iptables", "ip6tables"):
             chain = "XTRAKICK_QA"
             self.read(command, "-N", chain)
