@@ -7,7 +7,7 @@ class TestCompatibilityMatrix(unittest.TestCase):
     def test_default_profiles(self):
         for profile, expected, suite in (
             ("smoke", [26], "smoke"),
-            ("routine", [26, 30, 33, 36], "functional"),
+            ("routine", [26, 30, 33, 36], "smoke"),
             ("extended", [*range(26, 38), 37], "functional"),
             ("release", [26, 30, 33, 36], "smoke"),
         ):
