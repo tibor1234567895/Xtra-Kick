@@ -60,13 +60,23 @@ internal class TestApp {
         val welcomeTitle = label("welcome_title")
         val guest = id("btnContinueGuest")
         requireObject(welcomeTitle)
-        val button = device.findObject(guest) ?: run {
-            val sheet = requireObject(By.scrollable(true).pkg(context.packageName).hasDescendant(welcomeTitle))
-            checkNotNull(sheet.scrollUntil(Direction.DOWN, Until.findObject(guest))) {
-                "The welcome dialog does not expose its Continue as Guest button"
+        val safeBottom = device.displayHeight - (device.displayHeight / 10)
+        var button = device.findObject(guest)?.takeIf {
+            it.visibleBounds.height() > 0 && it.visibleBounds.bottom <= safeBottom
+        }
+        repeat(5) {
+            if (button != null) return@repeat
+            val x = device.displayWidth / 2
+            device.swipe(x, (device.displayHeight * 3) / 4, x, device.displayHeight / 4, 12)
+            device.waitForIdle(2_000L)
+            button = device.findObject(guest)?.takeIf {
+                it.visibleBounds.height() > 0 && it.visibleBounds.bottom <= safeBottom
             }
         }
-        button.click()
+        val target = checkNotNull(button ?: device.findObject(guest)) {
+            "The welcome dialog does not expose its Continue as Guest button"
+        }
+        target.click()
         check(device.wait(Until.gone(welcomeTitle), UI_TIMEOUT_MS) == true) { "The welcome dialog did not close" }
     }
 

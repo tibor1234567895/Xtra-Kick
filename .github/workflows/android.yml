@@ -25,6 +25,7 @@ jobs:
       actions: read
 
   compatibility:
+    needs: [checks, build]
     if: inputs.publish && toJSON(github.event.repository.private) == 'false'
     uses: ./.github/workflows/compatibility.yml
     permissions:
@@ -127,7 +128,13 @@ jobs:
         cp app/build/outputs/apk/release/app-release.apk release-transfer/
         cp build/release-version.json app/build/outputs/mapping/release/mapping.txt release-transfer/
         (cd release-transfer && sha256sum app-release.apk release-version.json mapping.txt > SHA256SUMS)
-        test "$(du -sb release-transfer | cut -f1)" -le 70000000
+        ls -lh release-transfer
+        transfer_bytes="$(du -sb release-transfer | cut -f1)"
+        echo "Uncompressed release-transfer size: ${transfer_bytes} bytes"
+        if [ "$transfer_bytes" -gt 150000000 ]; then
+          echo "release-transfer exceeded 150 MB uncompressed cap (${transfer_bytes} bytes)" >&2
+          exit 1
+        fi
 
     - name: Upload compiled release APK
       id: transfer

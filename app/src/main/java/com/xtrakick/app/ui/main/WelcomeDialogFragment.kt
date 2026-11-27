@@ -6,6 +6,11 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
+import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.xtrakick.app.databinding.DialogWelcomeOnboardingBinding
 import com.xtrakick.app.util.AppConstants
@@ -27,8 +32,24 @@ class WelcomeDialogFragment : BottomSheetDialogFragment() {
         return binding.root
     }
 
+    override fun onStart() {
+        super.onStart()
+        (dialog as? BottomSheetDialog)?.behavior?.apply {
+            skipCollapsed = true
+            state = BottomSheetBehavior.STATE_EXPANDED
+        }
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        binding.root.clipToPadding = false
+        val basePaddingBottom = binding.root.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { target, insets ->
+            val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            target.updatePadding(bottom = basePaddingBottom + navBars.bottom)
+            insets
+        }
 
         binding.btnSignIn.setOnClickListener {
             markCompleted()

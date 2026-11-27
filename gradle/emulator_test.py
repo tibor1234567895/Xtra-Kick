@@ -164,12 +164,18 @@ class Emulator:
             raise InfrastructureFailure(f"Expected API {api}, found {self.configuration['ro.build.version.sdk']}.")
         if self.configuration["ro.product.cpu.abi"] != "x86_64":
             raise InfrastructureFailure("Emulator primary ABI must be x86_64.")
-        # Android 8 images have no getconf. The process mapping reports the actual kernel page size.
-        mapping = self.read("grep", "-m1", "^KernelPageSize:", "/proc/self/smaps")
-        size = re.fullmatch(r"KernelPageSize:\s+(\d+)\s+kB", mapping)
-        if not size:
-            raise InfrastructureFailure("Could not read the Android guest kernel page size.")
-        self.configuration["device_page_size"] = str(int(size[1]) * 1024)
+        # Prefer getconf PAGE_SIZE so emulated 16 KB x86_64 images (google_apis_ps16k) report 16384
+        # rather than the underlying 4 KB x86_64 kernel page size; fall back to smaps on API 26-28.
+        page_result = self.shell("getconf", "PAGE_SIZE")
+        raw_page = decoded(page_result.stdout).strip()
+        if page_result.returncode == 0 and raw_page.isdecimal():
+            self.configuration["device_page_size"] = raw_page
+        else:
+            mapping = self.read("grep", "-m1", "^KernelPageSize:", "/proc/self/smaps")
+            size = re.fullmatch(r"KernelPageSize:\s+(\d+)\s+kB", mapping)
+            if not size:
+                raise InfrastructureFailure("Could not read the Android guest page size.")
+            self.configuration["device_page_size"] = str(int(size[1]) * 1024)
         if page_size and self.configuration["device_page_size"] != str(page_size):
             raise InfrastructureFailure(f"Expected page size {page_size}, found {self.configuration['device_page_size']}.")
         if self.read("getprop", "sys.boot_completed") != "1":

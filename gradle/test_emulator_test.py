@@ -60,6 +60,41 @@ class ApkMetadataTest(unittest.TestCase):
 
 
 class InstrumentationResultTest(unittest.TestCase):
+    def test_verify_uses_getconf_page_size_for_emulated_16k_and_falls_back_to_smaps(self):
+        props = {
+            "ro.build.version.sdk": "37",
+            "ro.build.version.release": "17",
+            "ro.build.version.security_patch": "2026-08-05",
+            "ro.product.cpu.abi": "x86_64",
+            "ro.product.cpu.abilist": "x86_64,arm64-v8a",
+            "ro.kernel.qemu": "1",
+            "ro.boot.qemu": "1",
+            "ro.build.version.extensions.s": "",
+            "ro.build.version.extensions.t": "",
+            "sys.boot_completed": "1",
+        }
+        emulator = Emulator("adb", "emulator-5554")
+
+        def fake_read(*args):
+            if args[0] == "getprop":
+                return props[args[1]]
+            if args[0] == "date":
+                return "11-27 20:00:00.000"
+            if args[0] == "grep":
+                return "KernelPageSize:        4 kB"
+            raise AssertionError(f"Unexpected read: {args}")
+
+        with patch.object(emulator, "read", side_effect=fake_read), \
+                patch.object(emulator, "shell", return_value=result("16384\n")):
+            emulator.verify(37, 16384)
+            self.assertEqual(emulator.configuration["device_page_size"], "16384")
+
+        props["ro.build.version.sdk"] = "26"
+        with patch.object(emulator, "read", side_effect=fake_read), \
+                patch.object(emulator, "shell", return_value=result("getconf: not found", return_code=127)):
+            emulator.verify(26, 4096)
+            self.assertEqual(emulator.configuration["device_page_size"], "4096")
+
     def test_pidof_can_include_a_zombie_after_force_stop(self):
         emulator = Emulator("adb", "emulator-5554")
         with patch.object(emulator, "shell", side_effect=[
