@@ -857,6 +857,9 @@ Bunlar, dosyaları saklayarak sildiğiniz indirmelerdir. Android bu klasörü do
     <string name="downloading_update_progress">Güncelleme indiriliyor. %1$s / %2$s</string>
     <string name="downloading_update">Güncelleme indiriliyor.</string>
     <string name="update_download_failed">Güncelleme indirilemedi.</string>
+    <string name="update_install_failed">Güncelleme yüklenemedi.</string>
+    <string name="update_check_failed">Güncellemeler kontrol edilemedi. Bağlantınızı kontrol edip tekrar deneyin.</string>
+    <string name="update_install_permission_required">Uygulama içi güncelleme için bilinmeyen uygulamaları yüklemeye izin verin.</string>
     <string name="chat_settings">Sohbet</string>
     <string name="debug_settings">Hata ayıklama</string>
     <string name="download_threads">İndirme iş parçacıkları</string>

@@ -8,10 +8,13 @@ import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
+import android.content.pm.Signature
+import android.net.Uri
 import android.os.Bundle
 import android.os.Looper
 import android.os.Parcel
 import android.os.Parcelable
+import android.provider.Settings
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.core.content.IntentCompat
@@ -25,13 +28,21 @@ import com.xtrakick.app.ui.player.IvsPlayerService
 import com.xtrakick.app.ui.player.MediaButtonReceiver
 import com.xtrakick.app.util.AppConstants
 import com.xtrakick.app.util.AppUpdateResultReceiver
+import com.xtrakick.app.util.UpdateInstallException
+import com.xtrakick.app.util.apkSigners
+import com.xtrakick.app.util.clearPendingInstallConfirmationForTests
+import com.xtrakick.app.util.clearPendingUpdateDownload
+import com.xtrakick.app.util.consumePendingUpdateDownloadIfPermitted
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.isSystemInstallerIntent
 import com.xtrakick.app.util.observeAppUpdateResults
+import com.xtrakick.app.util.savePendingUpdateDownload
+import com.xtrakick.app.util.verifyAppUpdate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -43,6 +54,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.shadows.ShadowIntent
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], application = Application::class, shadows = [MainActivityIntentTest.Android13Intent::class])
@@ -92,14 +104,19 @@ class MainActivityIntentTest {
         val installer = RuntimeEnvironment.getApplication().packageManager.packageInstaller
         val sessionId = installer.createSession(PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL))
         installerResult(PackageInstaller.STATUS_PENDING_USER_ACTION, confirmIntent, sessionId)
+        // Simulate a fresh process where only the persisted URI backup exists.
+        clearPendingInstallConfirmationForTests()
         val activity = Robolectric.buildActivity(InstallerObserverActivity::class.java).setup().get()
         Shadows.shadowOf(Looper.getMainLooper()).idle()
         assertEquals(component, Shadows.shadowOf(activity).nextStartedActivity?.component)
         assertFalse(activity.packageManager.getReceiverInfo(ComponentName(activity, AppUpdateResultReceiver::class.java), 0).exported)
 
-        installerResult(PackageInstaller.STATUS_PENDING_USER_ACTION, confirmIntent, sessionId)
+        val confirmWithParcelable = Intent(confirmIntent).putExtra("oem_bundle", Bundle().apply { putString("k", "v") })
+        installerResult(PackageInstaller.STATUS_PENDING_USER_ACTION, confirmWithParcelable, sessionId)
         Shadows.shadowOf(Looper.getMainLooper()).idle()
-        assertEquals(component, Shadows.shadowOf(activity).nextStartedActivity?.component)
+        val startedInProcess = Shadows.shadowOf(activity).nextStartedActivity
+        assertEquals(component, startedInProcess?.component)
+        assertEquals("v", startedInProcess?.getBundleExtra("oem_bundle")?.getString("k"))
 
         installer.abandonSession(sessionId)
         installerResult(PackageInstaller.STATUS_PENDING_USER_ACTION, confirmIntent, sessionId)
@@ -108,6 +125,113 @@ class MainActivityIntentTest {
 
         installerResult(PackageInstaller.STATUS_FAILURE, sessionId = sessionId)
         assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test fun apkSignersFallsBackToLegacySignaturesWhenSigningInfoIsNullOnAndroid13() {
+        val signature = Signature(ByteArray(32) { it.toByte() })
+        @Suppress("DEPRECATION")
+        val archiveInfo = PackageInfo().apply {
+            signingInfo = null
+            signatures = arrayOf(signature)
+        }
+
+        assertEquals(setOf(signature), apkSigners(archiveInfo))
+    }
+
+    @Test
+    @Config(sdk = [26, 27, 28, 29, 30, 31, 32, 33])
+    @Suppress("DEPRECATION")
+    fun updateArchiveVerificationRequiresNewerVersionAndMatchingSignerOnOlderAndroid() {
+        val context = RuntimeEnvironment.getApplication()
+        val manager = Shadows.shadowOf(context.packageManager)
+        val signature = Signature(byteArrayOf(1, 2, 3))
+        val installed = manager.getInternalMutablePackageInfo(context.packageName).apply {
+            versionCode = 10
+            signatures = arrayOf(signature)
+        }
+        val archive = File.createTempFile("update-verification", ".apk", context.cacheDir)
+        try {
+            val candidate = PackageInfo().apply {
+                packageName = installed.packageName
+                versionCode = 11
+                signatures = arrayOf(signature)
+            }
+            manager.setPackageArchiveInfo(archive.absolutePath, candidate)
+            verifyAppUpdate(context, archive)
+
+            candidate.signatures = arrayOf(Signature(byteArrayOf(4, 5, 6)))
+            manager.setPackageArchiveInfo(archive.absolutePath, candidate)
+            val wrongSigner = assertThrows(UpdateInstallException::class.java) { verifyAppUpdate(context, archive) }
+            assertTrue(wrongSigner.message.orEmpty().contains("signing certificate"))
+
+            candidate.signatures = arrayOf(signature)
+            candidate.versionCode = 10
+            manager.setPackageArchiveInfo(archive.absolutePath, candidate)
+            val sameVersion = assertThrows(UpdateInstallException::class.java) { verifyAppUpdate(context, archive) }
+            assertTrue(sameVersion.message.orEmpty().contains("not newer"))
+        } finally {
+            archive.delete()
+        }
+    }
+
+    @Test fun isSystemInstallerIntentAllowsUnknownSourcesOnlyForOwnPackage() {
+        val activity = Robolectric.buildActivity(InstallerObserverActivity::class.java).get()
+        val settingsComponent = ComponentName("com.android.settings", "com.android.settings.Settings\$ManageExternalSourcesActivity")
+        val appInfo = ApplicationInfo().apply {
+            packageName = settingsComponent.packageName
+            flags = ApplicationInfo.FLAG_SYSTEM
+        }
+        val activityInfo = ActivityInfo().apply {
+            packageName = settingsComponent.packageName
+            name = settingsComponent.className
+            applicationInfo = appInfo
+        }
+        val packageInfo = PackageInfo().apply {
+            packageName = settingsComponent.packageName
+            applicationInfo = appInfo
+            activities = arrayOf(activityInfo)
+        }
+        Shadows.shadowOf(RuntimeEnvironment.getApplication().packageManager).apply {
+            installPackage(packageInfo)
+            addOrUpdateActivity(activityInfo)
+        }
+
+        val ownUnknownSources = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.fromParts("package", activity.packageName, null)
+        ).apply { component = settingsComponent }
+        val foreignUnknownSources = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.fromParts("package", "com.example.other", null)
+        ).apply { component = settingsComponent }
+
+        assertTrue(activity.isSystemInstallerIntent(ownUnknownSources))
+        assertFalse(activity.isSystemInstallerIntent(foreignUnknownSources))
+    }
+
+    @Test fun pendingUpdateDownloadSurvivesProcessDeathWhenPermittedAndExpiresAfterTtl() {
+        val context = RuntimeEnvironment.getApplication()
+        val trustedUrl = "https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/app-release.apk"
+        context.clearPendingUpdateDownload()
+
+        // Untrusted URLs are never stored.
+        context.savePendingUpdateDownload("https://evil.example.com/app.apk", 123L, now = 1_000L)
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(true)
+        assertNull(context.consumePendingUpdateDownloadIfPermitted(now = 2_000L))
+
+        // Without install permission, pending download stays stored until granted or cleared.
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(false)
+        context.savePendingUpdateDownload(trustedUrl, 13_872_636L, now = 1_000L)
+        assertNull(context.consumePendingUpdateDownloadIfPermitted(now = 2_000L))
+
+        // Once permission is granted in a recreated process, pending download is consumed once.
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(true)
+        assertEquals(trustedUrl to 13_872_636L, context.consumePendingUpdateDownloadIfPermitted(now = 2_000L))
+        assertNull(context.consumePendingUpdateDownloadIfPermitted(now = 3_000L))
+
+        // Expired entries past TTL are cleared and ignored.
+        context.savePendingUpdateDownload(trustedUrl, 13_872_636L, now = 1_000L)
+        assertNull(context.consumePendingUpdateDownloadIfPermitted(now = 1_000L + 11 * 60 * 1000L))
     }
 
     @Test fun isSystemInstallerIntentRejectsUriGrantsAndChooserPayloads() {

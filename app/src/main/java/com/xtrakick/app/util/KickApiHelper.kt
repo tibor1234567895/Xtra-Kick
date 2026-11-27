@@ -37,6 +37,8 @@ import java.util.concurrent.ConcurrentHashMap
 object KickApiHelper {
 
     private val DIMENSION_PATTERN = Regex("""-\d+x\d+\.""")
+    private val KICK_STATIC_CHANNEL_THUMBNAIL_REGEX =
+        Regex("""^https://web\.kick\.com/api/v1/channels/\d+/thumbnail(?:\.[a-z0-9]+)?$""", RegexOption.IGNORE_CASE)
     private val SLUG_TRAILING_PAREN_REGEX = Regex("\\s*[\\[(][^\\])]*[\\])]$")
     private val SLUG_PUNCTUATION_REGEX = Regex("['\"!?:,.]")
     private val SLUG_SEPARATOR_REGEX = Regex("[\\s&/_+]+")
@@ -81,12 +83,8 @@ object KickApiHelper {
     }
 
     fun getTemplateUrl(url: String?, type: String): String? {
-        if (url.isNullOrBlank() || url.startsWith("https://files.kick.com/images/default-thumbnail")) {
-            return when (type) {
-                "game" -> "https://files.kick.com/images/default-thumbnail.png"
-                "video" -> "https://files.kick.com/images/default-thumbnail.png"
-                else -> null
-            }
+        if (url.isNullOrBlank() || url.startsWith("https://files.kick.com/images/default-thumbnail", ignoreCase = true)) {
+            return null
         }
         if (url.startsWith("https://kick.com/img/")) {
             return url
@@ -109,6 +107,24 @@ object KickApiHelper {
             url.contains("{width}") -> url.replace("{width}", width).replace("{height}", height)
             else -> url.replace(DIMENSION_PATTERN, "-${width}x${height}.")
         }
+    }
+
+    fun isStaticKickChannelThumbnailUrl(url: String?): Boolean {
+        val base = url?.trim()?.substringBefore('?')?.substringBefore('#')?.takeIf { it.isNotEmpty() } ?: return false
+        return KICK_STATIC_CHANNEL_THUMBNAIL_REGEX.matches(base)
+    }
+
+    fun buildKickChannelThumbnailUrl(channelId: String?): String? {
+        val id = channelId?.trim()?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) } ?: return null
+        return "https://web.kick.com/api/v1/channels/$id/thumbnail.jpeg?height=720"
+    }
+
+    fun deriveIvsVodThumbnailUrl(playbackUrl: String?): String? {
+        val base = playbackUrl?.trim()?.substringBefore('?')?.substringBefore('#')?.takeIf { it.isNotEmpty() } ?: return null
+        if (!base.startsWith("https://stream.kick.com/", ignoreCase = true)) return null
+        val suffix = "/media/hls/master.m3u8"
+        if (!base.endsWith(suffix, ignoreCase = true)) return null
+        return base.dropLast(suffix.length) + "/media/thumbnails/thumb1.jpg"
     }
 
     fun getDefaultProfilePicture(userId: String?, userLogin: String? = null): String {

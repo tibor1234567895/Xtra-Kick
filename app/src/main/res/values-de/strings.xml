@@ -855,6 +855,9 @@
     <string name="downloading_update_progress">Update wird heruntergeladen: %1$s / %2$s</string>
     <string name="downloading_update">Update wird heruntergeladen.</string>
     <string name="update_download_failed">Update-Download fehlgeschlagen.</string>
+    <string name="update_install_failed">Update konnte nicht installiert werden.</string>
+    <string name="update_check_failed">Updates konnten nicht geprüft werden. Prüfe deine Verbindung und versuche es erneut.</string>
+    <string name="update_install_permission_required">Erlaube die Installation unbekannter Apps für Updates in der App.</string>
     <string name="chat_settings">Chat</string>
     <string name="debug_settings">Debug</string>
     <string name="download_threads">Download-Threads</string>

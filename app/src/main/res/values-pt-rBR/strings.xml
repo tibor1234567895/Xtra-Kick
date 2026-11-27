@@ -857,6 +857,9 @@ São downloads que você removeu mantendo os arquivos. O Android oculta esta pas
     <string name="downloading_update_progress">Baixando atualização. %1$s / %2$s</string>
     <string name="downloading_update">Baixando atualização.</string>
     <string name="update_download_failed">Falha ao baixar a atualização.</string>
+    <string name="update_install_failed">Não foi possível instalar a atualização.</string>
+    <string name="update_check_failed">Não foi possível verificar atualizações. Verifique sua conexão e tente novamente.</string>
+    <string name="update_install_permission_required">Permita instalar apps desconhecidos para atualizar no app.</string>
     <string name="chat_settings">Chat</string>
     <string name="debug_settings">Depuração</string>
     <string name="download_threads">Threads de download</string>

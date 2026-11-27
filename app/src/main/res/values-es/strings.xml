@@ -862,6 +862,9 @@ Son descargas que eliminaste conservando los archivos. Android oculta esta carpe
     <string name="downloading_update_progress">Descargando actualización. %1$s / %2$s</string>
     <string name="downloading_update">Descargando actualización.</string>
     <string name="update_download_failed">Error al descargar la actualización.</string>
+    <string name="update_install_failed">No se pudo instalar la actualización.</string>
+    <string name="update_check_failed">No se pudieron buscar actualizaciones. Revisa tu conexión e inténtalo de nuevo.</string>
+    <string name="update_install_permission_required">Permite instalar apps desconocidas para actualizar desde la app.</string>
     <string name="chat_settings">Chat</string>
     <string name="debug_settings">Depuración</string>
     <string name="download_threads">Subprocesos de descarga</string>

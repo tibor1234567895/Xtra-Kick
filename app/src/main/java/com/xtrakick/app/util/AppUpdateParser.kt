@@ -37,28 +37,40 @@ internal fun isOfficialUpdateFeed(url: String): Boolean {
     return release == listOf("latest") || (release.size == 2 && release[0] == "tags" && release[1].isNotBlank())
 }
 
-internal suspend fun fetchAppUpdate(
+sealed interface AppUpdateCheckResult {
+    data class UpdateAvailable(val info: AppUpdateInfo) : AppUpdateCheckResult
+    data object UpToDate : AppUpdateCheckResult
+    data object Failed : AppUpdateCheckResult
+}
+
+internal suspend fun fetchAppUpdateResult(
     json: Json,
     configuredFeed: String,
     lastChecked: Long,
     skippedReleaseTime: Long = lastChecked,
     preferVersionCode: Boolean = !BuildConfig.DEBUG,
     loadText: suspend (String) -> String?,
-): AppUpdateInfo? {
+): AppUpdateCheckResult {
     val feed = configuredFeed.takeIf(::isOfficialUpdateFeed) ?: OFFICIAL_UPDATE_FEED
-    val response = loadText(feed)?.let { json.parseToJsonElement(it) as? JsonObject } ?: return null
-    val candidate = parseAppUpdateInfo(response, if (preferVersionCode) 0L else lastChecked) ?: return null
-    val remoteCode = try {
-        findReleaseVersionUrl(response)
-            ?.let { loadText(it) }
-            ?.let { json.parseToJsonElement(it) as? JsonObject }
-            ?.let(::extractReleaseVersionCode)
-    } catch (error: Exception) {
-        if (error is CancellationException) throw error
-        DiagnosticLogger.w("AppUpdate", "Could not load release version, using the release timestamp", error)
+    val responseText = loadText(feed) ?: return AppUpdateCheckResult.Failed
+    val response = (json.parseToJsonElement(responseText) as? JsonObject) ?: return AppUpdateCheckResult.Failed
+    val candidate = parseAppUpdateInfo(response, if (preferVersionCode) 0L else lastChecked)
+        ?: return if (preferVersionCode) AppUpdateCheckResult.Failed else AppUpdateCheckResult.UpToDate
+    val releaseVersionUrl = findReleaseVersionUrl(response)
+    val remoteCode = if (releaseVersionUrl != null) {
+        try {
+            loadText(releaseVersionUrl)
+                ?.let { json.parseToJsonElement(it) as? JsonObject }
+                ?.let(::extractReleaseVersionCode)
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            DiagnosticLogger.w("AppUpdate", "Could not load release version", error)
+            null
+        } ?: if (preferVersionCode) return AppUpdateCheckResult.Failed else null
+    } else {
         null
     }
-    return if (remoteCode != null) {
+    val selected = if (remoteCode != null) {
         candidate.takeIf {
             remoteCode > BuildConfig.VERSION_CODE &&
                 it.updatedAt > skippedReleaseTime &&
@@ -67,7 +79,24 @@ internal suspend fun fetchAppUpdate(
     } else {
         candidate.takeIf { it.updatedAt > maxOf(lastChecked, skippedReleaseTime) }
     }
+    return if (selected != null) AppUpdateCheckResult.UpdateAvailable(selected) else AppUpdateCheckResult.UpToDate
 }
+
+internal suspend fun fetchAppUpdate(
+    json: Json,
+    configuredFeed: String,
+    lastChecked: Long,
+    skippedReleaseTime: Long = lastChecked,
+    preferVersionCode: Boolean = !BuildConfig.DEBUG,
+    loadText: suspend (String) -> String?,
+): AppUpdateInfo? = (fetchAppUpdateResult(
+    json = json,
+    configuredFeed = configuredFeed,
+    lastChecked = lastChecked,
+    skippedReleaseTime = skippedReleaseTime,
+    preferVersionCode = preferVersionCode,
+    loadText = loadText,
+) as? AppUpdateCheckResult.UpdateAvailable)?.info
 
 /**
  * Self-contained plain OkHttp transport for update metadata/downloads so network-engine or
@@ -78,7 +107,16 @@ internal suspend fun <T> executeUpdateCall(
     url: String,
     block: suspend (Response) -> T,
 ): T = coroutineScope {
-    val call = okHttpClient.newCall(Request.Builder().url(url).build())
+    val request = Request.Builder()
+        .url(url)
+        .header("User-Agent", "Xtra-Kick/${BuildConfig.VERSION_NAME}")
+        .apply {
+            if (url.startsWith("https://api.github.com/")) {
+                header("Accept", "application/vnd.github+json")
+            }
+        }
+        .build()
+    val call = okHttpClient.newCall(request)
     val cancellationWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
         try {
             awaitCancellation()
@@ -100,7 +138,14 @@ internal suspend fun <T> executeUpdateCall(
 
 internal suspend fun fetchAppUpdateText(okHttpClient: OkHttpClient, url: String): String? =
     executeUpdateCall(okHttpClient, url) { response ->
-        if (response.isSuccessful) response.body.string() else null
+        if (response.isSuccessful) {
+            response.body.string()
+        } else {
+            runCatching {
+                DiagnosticLogger.w("AppUpdate", "Update metadata request failed: HTTP ${response.code} (${response.request.url.host})")
+            }
+            null
+        }
     }
 
 internal fun isTrustedUpdateUrl(url: String): Boolean {

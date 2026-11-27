@@ -870,6 +870,9 @@ These are downloads you removed while keeping the files. Android hides this fold
     <string name="downloading_update_progress">Downloading update. %1$s / %2$s</string>
     <string name="downloading_update">Downloading update.</string>
     <string name="update_download_failed">Update download failed.</string>
+    <string name="update_install_failed">Update couldn\'t be installed.</string>
+    <string name="update_check_failed">Couldn\'t check for updates. Check your connection and try again.</string>
+    <string name="update_install_permission_required">Allow installing unknown apps to update in-app.</string>
     <string name="chat_settings">Chat</string>
     <string name="debug_settings">Debug</string>
     <string name="download_threads">Download threads</string>

@@ -3,6 +3,7 @@ package com.xtrakick.app.ui.main
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.edit
@@ -17,10 +18,14 @@ import androidx.work.workDataOf
 import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.R
 import com.xtrakick.app.model.AppUpdateInfo
+import com.xtrakick.app.util.AppUpdateCheckResult
 import com.xtrakick.app.util.AppUpdateDownloader
+import com.xtrakick.app.util.CrashReports
+import com.xtrakick.app.util.OFFICIAL_UPDATE_FEED
 import com.xtrakick.app.util.UpdateDownloadProgress
-import com.xtrakick.app.util.fetchAppUpdate
+import com.xtrakick.app.util.fetchAppUpdateResult
 import com.xtrakick.app.util.fetchAppUpdateText
+import com.xtrakick.app.util.shouldForceAppUpdateCheck
 import com.xtrakick.app.model.VideoPosition
 import com.xtrakick.app.model.kick.auth.KickBackendIntrospectRequest
 import com.xtrakick.app.model.ui.Clip
@@ -165,6 +170,12 @@ class MainViewModel @Inject constructor(
     }
     val updateDownloadProgress: StateFlow<UpdateDownloadProgress?>
         get() = appUpdateDownloader.progress
+    @Volatile
+    private var updateCheckInFlight = false
+    @Volatile
+    private var checkedUpdatesSucceededThisSession = false
+    @Volatile
+    private var lastFailedUpdateCheckElapsedMs = 0L
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     fun consumeUpdateInfo() {
@@ -661,44 +672,112 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun checkUpdates(url: String, lastInstallTime: Long, skippedReleaseTime: Long = lastInstallTime) {
-        viewModelScope.launch(Dispatchers.IO) {
-            if (BuildConfig.DEBUG && applicationContext.prefs().getBoolean(AppConstants.DEBUG_MOCK_UPDATE_AVAILABLE, false)) {
-                val mockTime = System.currentTimeMillis() + 86_400_000L
-                if (mockTime > maxOf(lastInstallTime, skippedReleaseTime)) {
-                    val mockInfo = AppUpdateInfo(
-                        downloadUrl = "https://github.com/tibor1234567895/Xtra-Kick/releases/latest",
-                        size = 25_000_000L,
-                        updatedAt = mockTime,
-                        releaseTitle = "v99.0.0 (Debug Test Update)",
-                        releaseNotes = "### Simulated Release Notes\n- Verified in-app updater startup checks\n- Verified Remind Me Later and Skip actions"
-                    )
-                    updateInfo.emit(mockInfo)
-                    KickApiHelper.checkedUpdates = true
-                    return@launch
-                }
-            }
-            val updateInfoResult: AppUpdateInfo? = try {
-                fetchAppUpdate(
-                    json = json,
-                    configuredFeed = url,
-                    lastChecked = lastInstallTime,
-                    skippedReleaseTime = skippedReleaseTime,
-                ) { feedUrl ->
-                    fetchAppUpdateText(okHttpClient, feedUrl)
-                }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                if (e is java.io.IOException) {
-                    DiagnosticLogger.w("MainViewModel", "checkUpdates network non-fatal error: ${e.message ?: e.javaClass.simpleName}")
-                } else {
-                    DiagnosticLogger.e("MainViewModel", "checkUpdates failed", e)
-                }
-                null
-            }
-            updateInfo.emit(updateInfoResult)
+    fun checkUpdatesIfNeeded(
+        bypassFailureCooldown: Boolean = false,
+        now: Long = System.currentTimeMillis(),
+        elapsedRealtimeMs: Long = SystemClock.elapsedRealtime(),
+    ) {
+        if (updateCheckInFlight) return
+        val prefs = applicationContext.prefs()
+        if (!prefs.getBoolean(AppConstants.UPDATE_CHECK_ENABLED, true)) return
+        val lastFailure = lastFailedUpdateCheckElapsedMs
+        if (!bypassFailureCooldown && lastFailure > 0L && elapsedRealtimeMs - lastFailure in 0L until FAILED_UPDATE_CHECK_RETRY_MS) {
+            return
         }
+
+        val frequencyDays = prefs.getString(AppConstants.UPDATE_CHECK_FREQUENCY, "1")?.toLongOrNull() ?: 1L
+        val frequencyMs = frequencyDays * 86_400_000L
+
+        updateCheckInFlight = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val tokenPrefs = applicationContext.tokenPrefs()
+                val lastCheckTimestamp = tokenPrefs.getLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, 0L)
+                val lastForcedCheck = tokenPrefs.getLong(AppConstants.UPDATE_LAST_FORCED_CHECK_TIMESTAMP, 0L)
+                val dueCheck = if (frequencyDays <= 0L) {
+                    !checkedUpdatesSucceededThisSession
+                } else {
+                    lastCheckTimestamp == 0L || now < lastCheckTimestamp || now - lastCheckTimestamp >= frequencyMs
+                }
+                val hasPendingCrash = CrashReports.hasPending(applicationContext)
+                val forcedCheck = shouldForceAppUpdateCheck(hasPendingCrash, lastForcedCheck, now)
+                if (!dueCheck && !forcedCheck) return@launch
+
+                val skippedReleaseTime = tokenPrefs.getLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, 0L)
+                val lastInstallTime = tokenPrefs.getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
+                val configuredUrl = prefs.getString(AppConstants.UPDATE_URL, null) ?: OFFICIAL_UPDATE_FEED
+
+                if (BuildConfig.DEBUG && prefs.getBoolean(AppConstants.DEBUG_MOCK_UPDATE_AVAILABLE, false)) {
+                    val mockTime = now + 86_400_000L
+                    if (mockTime > maxOf(lastInstallTime, skippedReleaseTime)) {
+                        val mockInfo = AppUpdateInfo(
+                            downloadUrl = "https://github.com/tibor1234567895/Xtra-Kick/releases/latest",
+                            size = 25_000_000L,
+                            updatedAt = mockTime,
+                            releaseTitle = "v99.0.0 (Debug Test Update)",
+                            releaseNotes = "### Simulated Release Notes\n- Verified in-app updater startup checks\n- Verified Remind Me Later and Skip actions"
+                        )
+                        recordSuccessfulUpdateCheck(tokenPrefs, now, forcedCheck)
+                        updateInfo.emit(mockInfo)
+                        return@launch
+                    }
+                }
+
+                val result = try {
+                    fetchAppUpdateResult(
+                        json = json,
+                        configuredFeed = configuredUrl,
+                        lastChecked = lastInstallTime,
+                        skippedReleaseTime = skippedReleaseTime,
+                    ) { feedUrl ->
+                        fetchAppUpdateText(okHttpClient, feedUrl)
+                    }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    if (e is java.io.IOException) {
+                        DiagnosticLogger.w("MainViewModel", "checkUpdates network non-fatal error: ${e.message ?: e.javaClass.simpleName}")
+                    } else {
+                        DiagnosticLogger.e("MainViewModel", "checkUpdates failed", e)
+                    }
+                    AppUpdateCheckResult.Failed
+                }
+
+                when (result) {
+                    is AppUpdateCheckResult.UpdateAvailable -> {
+                        recordSuccessfulUpdateCheck(tokenPrefs, now, forcedCheck)
+                        updateInfo.emit(result.info)
+                    }
+                    AppUpdateCheckResult.UpToDate -> {
+                        recordSuccessfulUpdateCheck(tokenPrefs, now, forcedCheck)
+                    }
+                    AppUpdateCheckResult.Failed -> {
+                        lastFailedUpdateCheckElapsedMs = elapsedRealtimeMs
+                    }
+                }
+            } finally {
+                updateCheckInFlight = false
+            }
+        }
+    }
+
+    private fun recordSuccessfulUpdateCheck(
+        tokenPrefs: android.content.SharedPreferences,
+        now: Long,
+        forcedCheck: Boolean,
+    ) {
+        tokenPrefs.edit {
+            putLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, now)
+            if (forcedCheck) {
+                putLong(AppConstants.UPDATE_LAST_FORCED_CHECK_TIMESTAMP, now)
+            }
+        }
+        checkedUpdatesSucceededThisSession = true
+        lastFailedUpdateCheckElapsedMs = 0L
         KickApiHelper.checkedUpdates = true
+    }
+
+    companion object {
+        private const val FAILED_UPDATE_CHECK_RETRY_MS = 5 * 60 * 1000L
     }
 
     fun downloadUpdate(url: String, expectedSize: Long?) = appUpdateDownloader.start(url, expectedSize)

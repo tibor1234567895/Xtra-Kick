@@ -51,6 +51,7 @@ import com.xtrakick.app.BuildConfig
 import com.xtrakick.app.service.FcmDeliveryWorker
 import com.xtrakick.app.R
 import com.xtrakick.app.SettingsNavGraphDirections
+import com.xtrakick.app.util.AppUpdateCheckResult
 import com.xtrakick.app.util.AppUpdateDialogHelper
 import com.xtrakick.app.databinding.ActivitySettingsBinding
 import com.xtrakick.app.model.kick.KickEventSubscription
@@ -73,10 +74,13 @@ import com.xtrakick.app.util.KickApiHelper
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.applyTheme
 import com.xtrakick.app.util.chat.ChatBackgroundUtils
+import com.xtrakick.app.util.clearPendingUpdateDownload
+import com.xtrakick.app.util.consumePendingUpdateDownloadIfPermitted
 import com.xtrakick.app.util.getAlertDialogBuilder
 import com.xtrakick.app.util.getProxyPassword
 import com.xtrakick.app.util.observeAppUpdateResults
 import com.xtrakick.app.util.prefs
+import com.xtrakick.app.util.savePendingUpdateDownload
 import com.xtrakick.app.util.setProxyPassword
 import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.appbar.AppBarLayout
@@ -779,9 +783,18 @@ class SettingsActivity : BaseStateActivity() {
         private var updateDownloadDialog: AppUpdateDialogHelper.UpdateDownloadDialog? = null
         private var backupResultLauncher: ActivityResultLauncher<Intent>? = null
         private var restoreResultLauncher: ActivityResultLauncher<Intent>? = null
+        private var unknownAppSourcesLauncher: ActivityResultLauncher<Intent>? = null
 
         override fun onCreate(savedInstanceState: Bundle?) {
             super.onCreate(savedInstanceState)
+            unknownAppSourcesLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+                val pending = requireContext().consumePendingUpdateDownloadIfPermitted()
+                if (pending != null) {
+                    viewModel.downloadUpdate(pending.first, pending.second)
+                } else {
+                    requireContext().clearPendingUpdateDownload()
+                }
+            }
             backupResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
                 if (result.resultCode == Activity.RESULT_OK) {
                     result.data?.data?.let {
@@ -944,49 +957,61 @@ class SettingsActivity : BaseStateActivity() {
             }
             viewLifecycleOwner.lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
-                    viewModel.updateInfo.collectLatest { updateInfo ->
-                        viewModel.consumeUpdateInfo()
-                        if (updateInfo != null) {
-                            AppUpdateDialogHelper.showUpdateDialog(
-                                context = requireContext(),
-                                updateInfo = updateInfo,
-                                onUpdate = {
-                                    if (BuildConfig.DEBUG || requireContext().prefs().getBoolean(AppConstants.UPDATE_USE_BROWSER, false)) {
-                                        try {
-                                            val intent = Intent(Intent.ACTION_VIEW, updateInfo.downloadUrl.toUri()).apply {
-                                                addCategory(Intent.CATEGORY_BROWSABLE)
-                                            }
-                                            startActivity(intent)
-                                        } catch (e: ActivityNotFoundException) {
-                                            Toast.makeText(requireContext(), R.string.no_browser_found, Toast.LENGTH_LONG).show()
-                                        }
-                                    } else {
-                                        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-                                            !requireContext().packageManager.canRequestPackageInstalls()
-                                        ) {
+                    viewModel.updateCheckResult.collectLatest { result ->
+                        viewModel.consumeUpdateCheckResult()
+                        when (result) {
+                            is AppUpdateCheckResult.UpdateAvailable -> {
+                                val updateInfo = result.info
+                                AppUpdateDialogHelper.showUpdateDialog(
+                                    context = requireContext(),
+                                    updateInfo = updateInfo,
+                                    onUpdate = {
+                                        if (BuildConfig.DEBUG || requireContext().prefs().getBoolean(AppConstants.UPDATE_USE_BROWSER, false)) {
                                             try {
-                                                val intent = Intent(
-                                                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                                    Uri.parse("package:${requireContext().packageName}")
-                                                )
+                                                val intent = Intent(Intent.ACTION_VIEW, updateInfo.downloadUrl.toUri()).apply {
+                                                    addCategory(Intent.CATEGORY_BROWSABLE)
+                                                }
                                                 startActivity(intent)
-                                                return@showUpdateDialog
-                                            } catch (_: ActivityNotFoundException) {
+                                            } catch (e: ActivityNotFoundException) {
+                                                Toast.makeText(requireContext(), R.string.no_browser_found, Toast.LENGTH_LONG).show()
                                             }
+                                        } else if (!requireContext().packageManager.canRequestPackageInstalls()) {
+                                            requireContext().savePendingUpdateDownload(updateInfo.downloadUrl, updateInfo.size)
+                                            Toast.makeText(
+                                                requireContext(),
+                                                R.string.update_install_permission_required,
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                            try {
+                                                unknownAppSourcesLauncher?.launch(
+                                                    Intent(
+                                                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                                        Uri.fromParts("package", requireContext().packageName, null)
+                                                    )
+                                                )
+                                            } catch (_: ActivityNotFoundException) {
+                                                requireContext().clearPendingUpdateDownload()
+                                                viewModel.downloadUpdate(updateInfo.downloadUrl, updateInfo.size)
+                                            }
+                                        } else {
+                                            viewModel.downloadUpdate(updateInfo.downloadUrl, updateInfo.size)
                                         }
-                                        viewModel.downloadUpdate(updateInfo.downloadUrl, updateInfo.size)
+                                    },
+                                    onRemindLater = {},
+                                    onSkip = {
+                                        requireContext().tokenPrefs().edit {
+                                            putLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, updateInfo.updatedAt)
+                                            putLong(AppConstants.UPDATE_LAST_CHECKED, updateInfo.updatedAt)
+                                        }
                                     }
-                                },
-                                onRemindLater = {},
-                                onSkip = {
-                                    requireContext().tokenPrefs().edit {
-                                        putLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, updateInfo.updatedAt)
-                                        putLong(AppConstants.UPDATE_LAST_CHECKED, updateInfo.updatedAt)
-                                    }
-                                }
-                            )
-                        } else {
-                            Toast.makeText(requireContext(), R.string.no_updates_found, Toast.LENGTH_LONG).show()
+                                )
+                            }
+                            AppUpdateCheckResult.UpToDate -> {
+                                Toast.makeText(requireContext(), R.string.no_updates_found, Toast.LENGTH_LONG).show()
+                            }
+                            AppUpdateCheckResult.Failed -> {
+                                Toast.makeText(requireContext(), R.string.update_check_failed, Toast.LENGTH_LONG).show()
+                            }
                         }
                     }
                 }
@@ -1006,6 +1031,13 @@ class SettingsActivity : BaseStateActivity() {
                         }
                     }
                 }
+            }
+        }
+
+        override fun onResume() {
+            super.onResume()
+            requireContext().consumePendingUpdateDownloadIfPermitted()?.let { (url, size) ->
+                viewModel.downloadUpdate(url, size)
             }
         }
 
@@ -1625,19 +1657,17 @@ class SettingsActivity : BaseStateActivity() {
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.update_preferences, rootKey)
             findPreference<SwitchPreferenceCompat>("update_check_enabled")?.setOnPreferenceChangeListener { _, newValue ->
-                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-                    newValue == true &&
+                if (newValue == true &&
                     !requireContext().prefs().getBoolean(AppConstants.UPDATE_USE_BROWSER, false) &&
                     !requireContext().packageManager.canRequestPackageInstalls()
                 ) {
                     try {
                         val intent = Intent(
                             Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                            Uri.parse("package:${requireContext().packageName}")
+                            Uri.fromParts("package", requireContext().packageName, null)
                         )
                         startActivity(intent)
-                    } catch (e: ActivityNotFoundException) {
-
+                    } catch (_: ActivityNotFoundException) {
                     }
                 }
                 true
@@ -1648,7 +1678,7 @@ class SettingsActivity : BaseStateActivity() {
                 }
             }
             findPreference<SwitchPreferenceCompat>("update_use_browser")?.setOnPreferenceChangeListener { _, newValue ->
-                val switchingToInAppUpdates = Build.VERSION.SDK_INT == Build.VERSION_CODES.UPSIDE_DOWN_CAKE && newValue == false
+                val switchingToInAppUpdates = newValue == false
                 if (switchingToInAppUpdates &&
                     requireContext().prefs().getBoolean(AppConstants.UPDATE_CHECK_ENABLED, true) &&
                     !requireContext().packageManager.canRequestPackageInstalls()
@@ -1656,11 +1686,10 @@ class SettingsActivity : BaseStateActivity() {
                     try {
                         val intent = Intent(
                             Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                            Uri.parse("package:${requireContext().packageName}")
+                            Uri.fromParts("package", requireContext().packageName, null)
                         )
                         startActivity(intent)
-                    } catch (e: ActivityNotFoundException) {
-
+                    } catch (_: ActivityNotFoundException) {
                     }
                 }
                 true

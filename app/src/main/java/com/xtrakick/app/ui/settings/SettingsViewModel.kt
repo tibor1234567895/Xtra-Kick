@@ -14,9 +14,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.xtrakick.app.db.AppDatabase
 import com.xtrakick.app.model.AppUpdateInfo
+import com.xtrakick.app.util.AppUpdateCheckResult
 import com.xtrakick.app.util.AppUpdateDownloader
 import com.xtrakick.app.util.UpdateDownloadProgress
-import com.xtrakick.app.util.fetchAppUpdate
+import com.xtrakick.app.util.fetchAppUpdateResult
 import com.xtrakick.app.util.fetchAppUpdateText
 import com.xtrakick.app.model.ui.OfflineVideo
 import com.xtrakick.app.repository.NotificationUsersRepository
@@ -73,7 +74,7 @@ class SettingsViewModel @Inject constructor(
     private val json: Json,
 ) : ViewModel() {
 
-    val updateInfo = MutableSharedFlow<AppUpdateInfo?>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val updateCheckResult = MutableSharedFlow<AppUpdateCheckResult>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private val appUpdateDownloader by lazy {
         AppUpdateDownloader(applicationContext, okHttpClient, viewModelScope, "SettingsViewModel")
     }
@@ -81,8 +82,8 @@ class SettingsViewModel @Inject constructor(
         get() = appUpdateDownloader.progress
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    fun consumeUpdateInfo() {
-        updateInfo.resetReplayCache()
+    fun consumeUpdateCheckResult() {
+        updateCheckResult.resetReplayCache()
     }
 
     /** Result of scanning app storage for download files with no matching library entry. */
@@ -516,12 +517,12 @@ class SettingsViewModel @Inject constructor(
                         releaseTitle = "v99.0.0 (Debug Test Update)",
                         releaseNotes = "### Simulated Release Notes\n- Verified in-app updater startup checks\n- Verified Remind Me Later and Skip actions"
                     )
-                    updateInfo.emit(mockInfo)
+                    updateCheckResult.emit(AppUpdateCheckResult.UpdateAvailable(mockInfo))
                     return@launch
                 }
             }
-            val updateInfoResult: AppUpdateInfo? = try {
-                fetchAppUpdate(
+            val result: AppUpdateCheckResult = try {
+                fetchAppUpdateResult(
                     json = json,
                     configuredFeed = url,
                     lastChecked = lastInstallTime,
@@ -532,9 +533,9 @@ class SettingsViewModel @Inject constructor(
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 DiagnosticLogger.e("SettingsViewModel", "checkUpdates failed", e)
-                null
+                AppUpdateCheckResult.Failed
             }
-            updateInfo.emit(updateInfoResult)
+            updateCheckResult.emit(result)
         }
     }
 

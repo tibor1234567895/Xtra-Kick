@@ -274,6 +274,7 @@ class KickRepository @Inject constructor(
     private val websiteSearchCache = boundedCache<Pair<Long, KickWebsiteSearchResponse>>()
     private val typesenseSearchCache = boundedCache<Pair<Long, KickTypesenseResult>>()
     private val videoPagesCache = boundedCache<Pair<Long, KickVideoPage>>()
+    private val webVideoThumbnailsCache = boundedCache<Pair<Long, List<WebVideoThumbnail>>>()
     private val categorySlugById = ConcurrentHashMap<String, String>()
     private val categorySlugByName = ConcurrentHashMap<String, String>()
     private val categoryIdBySlug = ConcurrentHashMap<String, String>()
@@ -3124,6 +3125,7 @@ class KickRepository @Inject constructor(
                 channelId = channelId,
                 limit = limit,
                 cursor = cursor,
+                enrichThumbnails = false,
             ) ?: break
             collected += page.videos
             cursor = page.nextCursor
@@ -3136,13 +3138,14 @@ class KickRepository @Inject constructor(
         channelId: String? = null,
         limit: Int = 30,
         cursor: String? = null,
+        enrichThumbnails: Boolean = true,
     ): KickVideoPage? {
         val normalizedSlug = channelSlug.trim().lowercase(Locale.ROOT)
         fun cachedChannel(): KickChannelResponse? =
             channelCache[normalizedSlug]?.second
                 ?: channelId?.trim()?.takeIf { it.isNotBlank() }?.let { channelCache[it]?.second }
 
-        val cacheKey = "$normalizedSlug:$channelId:$limit:${cursor.orEmpty()}"
+        val cacheKey = "$normalizedSlug:$channelId:$limit:${cursor.orEmpty()}:$enrichThumbnails"
         videoPagesCache[cacheKey]?.let { (cachedAt, page) ->
             if (System.currentTimeMillis() - cachedAt <= livestreamCacheTtlMs) {
                 val cachedLogo = cachedChannel()?.user?.profileImage?.takeIf { it.isNotBlank() }
@@ -3179,18 +3182,23 @@ class KickRepository @Inject constructor(
         }
         if (raw != null) {
             val root = runCatching { json.parseToJsonElement(raw) }.getOrNull()
-            if (root != null && extractVideoArrays(root).isNotEmpty()) {
+            val arrays = root?.let(::extractVideoArrays).orEmpty()
+            if (root != null && arrays.isNotEmpty()) {
                 val cached = cachedChannel()
                 val login = cached?.slug ?: channelSlug
                 val channelName = cached?.user?.username ?: cached?.slug ?: channelSlug
                 val channelLogo = cached?.user?.profileImage
+                val webThumbnails = if (enrichThumbnails) {
+                    getWebThumbnailsForPage(arrays, cached?.id?.toString() ?: channelId)
+                } else emptyList()
                 val parsed = parseVideos(
                     roots = listOf(root),
                     channelId = channelId,
                     channelLogin = login,
                     channelName = channelName,
                     channelLogo = channelLogo,
-                    limit = pageSize
+                    limit = pageSize,
+                    webThumbnails = webThumbnails,
                 )
                 return KickVideoPage(
                     videos = parsed,
@@ -3200,6 +3208,98 @@ class KickRepository @Inject constructor(
         }
 
         return null
+    }
+
+    private fun String?.toNumericIdOrNull(): String? =
+        this?.trim()?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
+
+    private fun JsonObject.isLiveFlag(): Boolean =
+        primitiveOrNull("is_live").equals("true", ignoreCase = true)
+
+    private fun extractRawVideoThumbnail(item: JsonObject): String? =
+        extractImageUrl(item.objOrNull("thumbnail"))
+            ?: item.primitiveOrNull("preview_thumbnail_url")
+            ?: item.primitiveOrNull("thumbnail_url")
+
+    private fun JsonObject.needsVodThumbnail(thumbnail: String? = extractRawVideoThumbnail(this)): Boolean =
+        !isLiveFlag() && (
+            thumbnail.isNullOrBlank() || KickApiHelper.isStaticKickChannelThumbnailUrl(thumbnail) ||
+                thumbnail.startsWith("https://files.kick.com/images/default-thumbnail", ignoreCase = true)
+            )
+
+    private suspend fun getWebThumbnailsForPage(
+        arrays: List<JsonArray>,
+        fallbackChannelId: String?,
+    ): List<WebVideoThumbnail> {
+        val videos = arrays.asSequence().flatMap { it.asSequence() }.filterIsInstance<JsonObject>()
+        if (videos.none { it.needsVodThumbnail() }) return emptyList()
+        val numericChannelId = videos.firstNotNullOfOrNull { it.primitiveOrNull("channel_id").toNumericIdOrNull() }
+            ?: fallbackChannelId.toNumericIdOrNull()
+            ?: return emptyList()
+        return getWebChannelVideoThumbnails(numericChannelId)
+    }
+
+    private data class WebVideoThumbnail(
+        val startTimeMillis: Long,
+        val title: String?,
+        val durationSeconds: Long?,
+        val url: String,
+    )
+
+    private fun List<WebVideoThumbnail>.resolveWebVideoThumbnail(
+        startTime: String?,
+        title: String?,
+        durationSeconds: String?,
+    ): String? {
+        if (isEmpty()) return null
+        val startTimeMillis = startTime?.let(KickApiHelper::parseIso8601DateUTC) ?: return null
+        val exactMatches = filter { it.startTimeMillis == startTimeMillis }
+        if (exactMatches.isNotEmpty()) return exactMatches.singleOrNull()?.url
+        val expectedTitle = title?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val duration = durationSeconds?.toLongOrNull() ?: return null
+        return singleOrNull {
+            kotlin.math.abs(it.startTimeMillis - startTimeMillis) <= 120_000L &&
+                expectedTitle.equals(it.title, ignoreCase = true) &&
+                it.durationSeconds != null && kotlin.math.abs(it.durationSeconds - duration) <= 5L
+        }?.url
+    }
+
+    private suspend fun getWebChannelVideoThumbnails(numericChannelId: String): List<WebVideoThumbnail> {
+        val now = System.currentTimeMillis()
+        webVideoThumbnailsCache[numericChannelId]?.let { (cachedAt, cached) ->
+            if (now - cachedAt <= livestreamCacheTtlMs) {
+                return cached
+            }
+        }
+        val url = "https://web.kick.com/api/v1/channels/${urlEncode(numericChannelId)}/videos"
+        val raw = try {
+            getRaw(url, isKickWeb = true)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            return emptyList()
+        }
+        val root = runCatching { json.parseToJsonElement(raw) }.getOrNull() as? JsonObject ?: return emptyList()
+        val data = root.arrayOrNull("data") ?: return emptyList()
+        val entries = data.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            if (obj.isLiveFlag()) return@mapNotNull null
+            val thumb = extractImageUrl(obj.objOrNull("thumbnail"))
+                ?.takeUnless(KickApiHelper::isStaticKickChannelThumbnailUrl)
+                ?: return@mapNotNull null
+            val startTimeMillis = normalizeDate(obj.primitiveOrNull("start_time") ?: obj.primitiveOrNull("created_at"))
+                ?.let(KickApiHelper::parseIso8601DateUTC) ?: return@mapNotNull null
+            WebVideoThumbnail(
+                startTimeMillis = startTimeMillis,
+                title = (obj.primitiveOrNull("title") ?: obj.primitiveOrNull("session_title"))?.trim(),
+                durationSeconds = obj.firstLongOrNull("duration_seconds", "length_seconds", "duration")
+                    ?.takeIf { it >= 0L },
+                url = thumb,
+            )
+        }
+        return entries.also {
+            webVideoThumbnailsCache[numericChannelId] = System.currentTimeMillis() to it
+        }
     }
 
     suspend fun getChannelClips(channelSlug: String, channelId: String? = null, limit: Int = 20): List<Clip> {
@@ -3517,6 +3617,7 @@ class KickRepository @Inject constructor(
         channelName: String?,
         channelLogo: String?,
         limit: Int,
+        webThumbnails: List<WebVideoThumbnail> = emptyList(),
     ): List<Video> {
         val arrays = roots.asSequence().flatMap { root ->
             extractVideoArrays(root).asSequence()
@@ -3537,13 +3638,23 @@ class KickRepository @Inject constructor(
                 val createdAt = item.primitiveOrNull("created_at")
                     ?: item.primitiveOrNull("start_time")
                     ?: item.primitiveOrNull("published_at")
-                val thumbnail = extractImageUrl(item.objOrNull("thumbnail"))
-                    ?: item.primitiveOrNull("preview_thumbnail_url")
-                    ?: item.primitiveOrNull("thumbnail_url")
+                val startTime = normalizeDate(item.primitiveOrNull("start_time"))
+                val uploadDate = normalizeDate(createdAt)
+                val videoUrl = extractKickVideoUrl(item)
+                val duration = videoDurationSeconds(item)
+                val rawThumbnail = extractRawVideoThumbnail(item)
+                val thumbnail = if (item.needsVodThumbnail(rawThumbnail)) {
+                    webThumbnails.resolveWebVideoThumbnail(
+                        startTime = startTime ?: uploadDate,
+                        title = title,
+                        durationSeconds = duration,
+                    ) ?: KickApiHelper.deriveIvsVodThumbnailUrl(videoUrl) ?: rawThumbnail
+                } else {
+                    rawThumbnail
+                }
                 val viewCount = item.intOrNull("views")
                     ?: item.intOrNull("view_count")
                     ?: item.intOrNull("viewer_count")
-                val duration = videoDurationSeconds(item)
                 val category = item.arrayOrNull("categories")?.firstNotNullOfOrNull { categoryElement ->
                     (categoryElement as? JsonObject)?.let { categoryObject ->
                         Triple(
@@ -3592,12 +3703,12 @@ class KickRepository @Inject constructor(
                 Video(
                     id = id,
                     source = AppConstants.KICK,
-                    url = extractKickVideoUrl(item),
+                    url = videoUrl,
                     channelId = videoChannelId,
                     channelLogin = videoChannelLogin,
                     channelName = videoChannelName,
                     title = title,
-                    uploadDate = normalizeDate(createdAt),
+                    uploadDate = uploadDate,
                     thumbnailUrl = thumbnail,
                     viewCount = viewCount,
                     type = "ARCHIVE",
@@ -4747,6 +4858,12 @@ class KickRepository @Inject constructor(
             if ((livestream?.isMature ?: fallback?.isMature) == true) add("18+")
             (livestream?.tags ?: fallback?.tags)?.filter { it.isNotBlank() }?.let(::addAll)
         }.distinct().ifEmpty { null }
+        val rawThumbnail = livestream?.thumbnail?.imageUrl ?: fallback?.thumbnail?.imageUrl
+        val resolvedThumbnail = rawThumbnail
+            ?.takeIf { it.isNotBlank() }
+            ?.takeUnless { it.contains("://stream.kick.com/", ignoreCase = true) }
+            ?.takeUnless { it.startsWith("https://files.kick.com/images/default-thumbnail", ignoreCase = true) }
+            ?: channel.id?.toString()?.takeIf { livestream != null }?.let(KickApiHelper::buildKickChannelThumbnailUrl)
         return Stream(
             id = (livestream?.id ?: fallback?.id)?.toString(),
             source = AppConstants.KICK,
@@ -4761,7 +4878,7 @@ class KickRepository @Inject constructor(
             title = livestream?.title ?: fallback?.title,
             viewerCount = livestream?.viewerCount ?: fallback?.viewerCount,
             startedAt = normalizeDate(livestream?.createdAt ?: fallback?.createdAt),
-            thumbnailUrl = livestream?.thumbnail?.imageUrl ?: fallback?.thumbnail?.imageUrl,
+            thumbnailUrl = resolvedThumbnail,
             profileImageUrl = channel.user?.profileImage,
             tags = combinedTags,
             eventTitle = eventTitle,

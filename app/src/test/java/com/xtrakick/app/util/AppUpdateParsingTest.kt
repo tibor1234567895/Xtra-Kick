@@ -454,4 +454,55 @@ class AppUpdateParsingTest {
         ) { releaseWithoutVersion }
         assertNull(fallbackRejectedByTimestamp)
     }
+
+    @Test
+    fun fetchAppUpdateResultDistinguishesFailedFromUpToDate() = runBlocking {
+        val target = "https://github.com/tibor1234567895/Xtra-Kick/releases/download/latest/"
+        val failedOnNull = fetchAppUpdateResult(
+            json = json,
+            configuredFeed = OFFICIAL_UPDATE_FEED,
+            lastChecked = 0L,
+        ) { null }
+        assertEquals(AppUpdateCheckResult.Failed, failedOnNull)
+
+        val upToDate = fetchAppUpdateResult(
+            json = json,
+            configuredFeed = OFFICIAL_UPDATE_FEED,
+            lastChecked = 0L,
+            preferVersionCode = true,
+        ) { url ->
+            if (url == OFFICIAL_UPDATE_FEED) """
+                {"published_at":"2026-11-18T12:00:00Z","assets":[
+                    {"name":"app-release.apk","browser_download_url":"${target}app-release.apk"},
+                    {"name":"release-version.json","browser_download_url":"${target}release-version.json"}
+                ]}
+            """ else """{"versionCode":${BuildConfig.VERSION_CODE}}"""
+        }
+        assertEquals(AppUpdateCheckResult.UpToDate, upToDate)
+
+        // When release-version.json is advertised but fails to load on release builds, report Failed (not UpToDate).
+        val failedOnVersionFetch = fetchAppUpdateResult(
+            json = json,
+            configuredFeed = OFFICIAL_UPDATE_FEED,
+            lastChecked = Long.MAX_VALUE,
+            preferVersionCode = true,
+        ) { url ->
+            if (url == OFFICIAL_UPDATE_FEED) """
+                {"published_at":"2026-11-18T12:00:00Z","assets":[
+                    {"name":"app-release.apk","browser_download_url":"${target}app-release.apk"},
+                    {"name":"release-version.json","browser_download_url":"${target}release-version.json"}
+                ]}
+            """ else null
+        }
+        assertEquals(AppUpdateCheckResult.Failed, failedOnVersionFetch)
+
+        // When a release payload has no usable APK asset on release builds, report Failed (not UpToDate).
+        val failedOnMissingApk = fetchAppUpdateResult(
+            json = json,
+            configuredFeed = OFFICIAL_UPDATE_FEED,
+            lastChecked = 0L,
+            preferVersionCode = true,
+        ) { """{"published_at":"2026-11-18T12:00:00Z","assets":[]}""" }
+        assertEquals(AppUpdateCheckResult.Failed, failedOnMissingApk)
+    }
 }

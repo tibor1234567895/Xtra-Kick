@@ -21,6 +21,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.util.Rational
 import android.view.Menu
@@ -85,8 +86,6 @@ import com.xtrakick.app.ui.player.PlayerFragment
 import com.xtrakick.app.ui.top.TopStreamsFragmentDirections
 import com.xtrakick.app.util.AuthStateHelper
 import com.xtrakick.app.util.AppConstants
-import com.xtrakick.app.util.CrashReports
-import com.xtrakick.app.util.shouldForceAppUpdateCheck
 import com.xtrakick.app.util.DiagnosticLogger
 import com.xtrakick.app.util.KickOAuthConfig
 import com.xtrakick.app.util.KickApiHelper
@@ -95,9 +94,12 @@ import com.xtrakick.app.util.KickLinkRouter
 import com.xtrakick.app.util.NotificationPermissionHelper
 import com.xtrakick.app.util.applyTheme
 import com.xtrakick.app.util.cancelLiveNotificationsPollingWork
+import com.xtrakick.app.util.clearPendingUpdateDownload
+import com.xtrakick.app.util.consumePendingUpdateDownloadIfPermitted
 import com.xtrakick.app.util.enqueueLiveNotificationsPollingWork
 import com.xtrakick.app.util.observeAppUpdateResults
 import com.xtrakick.app.util.prefs
+import com.xtrakick.app.util.savePendingUpdateDownload
 import com.xtrakick.app.util.tokenPrefs
 import com.google.android.material.color.MaterialColors
 import com.xtrakick.app.repository.KickRepository
@@ -192,11 +194,20 @@ class MainActivity : BaseStateActivity() {
     lateinit var shownNotificationsRepository: ShownNotificationsRepository
 
     private lateinit var prefs: SharedPreferences
-    private var checkedUpdatesOnLaunch = false
     private var updateDownloadDialog: AppUpdateDialogHelper.UpdateDownloadDialog? = null
     var settingsResultLauncher: ActivityResultLauncher<Intent>? = null
     var loginResultLauncher: ActivityResultLauncher<Intent>? = null
     var logoutResultLauncher: ActivityResultLauncher<Intent>? = null
+    private val unknownAppSourcesLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        val pending = consumePendingUpdateDownloadIfPermitted()
+        if (pending != null) {
+            viewModel.downloadUpdate(pending.first, pending.second)
+        } else {
+            clearPendingUpdateDownload()
+        }
+    }
     private val notificationPermissionLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
@@ -336,49 +347,14 @@ class MainActivity : BaseStateActivity() {
                 && networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 && networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         viewModel.isNetworkAvailable.value = isNetworkAvailableOnCreate
-        fun checkUpdatesIfNeeded() {
-            if (checkedUpdatesOnLaunch) return
-            if (!prefs.getBoolean(AppConstants.UPDATE_CHECK_ENABLED, true)) return
-            checkedUpdatesOnLaunch = true
-
-            val frequencyDays = prefs.getString(AppConstants.UPDATE_CHECK_FREQUENCY, "1")?.toLongOrNull() ?: 1L
-            val frequencyMs = frequencyDays * 86_400_000L
-            val lastCheckTimestamp = tokenPrefs().getLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, 0L)
-            val now = System.currentTimeMillis()
-            val lastForcedCheck = tokenPrefs().getLong(AppConstants.UPDATE_LAST_FORCED_CHECK_TIMESTAMP, 0L)
-            val dueCheck = frequencyDays <= 0L || lastCheckTimestamp + frequencyMs < now
-
-            lifecycleScope.launch {
-                val hasPendingCrash = withContext(Dispatchers.IO) {
-                    CrashReports.hasPending(applicationContext)
-                }
-                val forcedCheck = shouldForceAppUpdateCheck(hasPendingCrash, lastForcedCheck, now)
-                if (dueCheck || forcedCheck) {
-                    tokenPrefs().edit {
-                        putLong(AppConstants.UPDATE_LAST_CHECK_TIMESTAMP, now)
-                        if (forcedCheck) {
-                            putLong(AppConstants.UPDATE_LAST_FORCED_CHECK_TIMESTAMP, now)
-                        }
-                    }
-                    val skippedReleaseTime = tokenPrefs().getLong(AppConstants.UPDATE_SKIPPED_RELEASE_TIME, 0L)
-                    val lastInstallTime = tokenPrefs().getLong(AppConstants.UPDATE_LAST_INSTALL_TIME, 0L)
-
-                    viewModel.checkUpdates(
-                        prefs.getString(AppConstants.UPDATE_URL, null) ?: "https://api.github.com/repos/tibor1234567895/Xtra-Kick/releases/tags/latest",
-                        lastInstallTime,
-                        skippedReleaseTime,
-                    )
-                } else {
-                    checkedUpdatesOnLaunch = false
-                }
-            }
-        }
         if (isNetworkAvailableOnCreate) {
             viewModel.startKickValidationIfNeeded(this)
-            checkUpdatesIfNeeded()
         } else if (!initialized) {
             initialized = true
             Toast.makeText(this, R.string.no_connection, Toast.LENGTH_SHORT).show()
+        }
+        if (networkCapabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) {
+            viewModel.checkUpdatesIfNeeded()
         }
         initNavigation()
         Looper.myQueue().addIdleHandler {
@@ -405,7 +381,7 @@ class MainActivity : BaseStateActivity() {
                             }
                             if (isNetworkAvailable) {
                                 viewModel.startKickValidationIfNeeded(this@MainActivity)
-                                checkUpdatesIfNeeded()
+                                viewModel.checkUpdatesIfNeeded(bypassFailureCooldown = true)
                             }
                         }
                         viewModel.checkNetworkStatus.value = false
@@ -430,6 +406,24 @@ class MainActivity : BaseStateActivity() {
                                         startActivity(intent)
                                     } catch (e: ActivityNotFoundException) {
                                         Toast.makeText(this@MainActivity, R.string.no_browser_found, Toast.LENGTH_LONG).show()
+                                    }
+                                } else if (!packageManager.canRequestPackageInstalls()) {
+                                    savePendingUpdateDownload(updateInfo.downloadUrl, updateInfo.size)
+                                    Toast.makeText(
+                                        this@MainActivity,
+                                        R.string.update_install_permission_required,
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                    try {
+                                        unknownAppSourcesLauncher.launch(
+                                            Intent(
+                                                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                                Uri.fromParts("package", packageName, null)
+                                            )
+                                        )
+                                    } catch (_: ActivityNotFoundException) {
+                                        clearPendingUpdateDownload()
+                                        viewModel.downloadUpdate(updateInfo.downloadUrl, updateInfo.size)
                                     }
                                 } else {
                                     viewModel.downloadUpdate(updateInfo.downloadUrl, updateInfo.size)
@@ -658,8 +652,20 @@ class MainActivity : BaseStateActivity() {
         setNavBarColor(newConfig.orientation == Configuration.ORIENTATION_PORTRAIT)
     }
 
+    override fun onStart() {
+        super.onStart()
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) {
+            viewModel.checkUpdatesIfNeeded()
+        }
+    }
+
     override fun onResume() {
         super.onResume()
+        consumePendingUpdateDownloadIfPermitted()?.let { (url, size) ->
+            viewModel.downloadUpdate(url, size)
+        }
         kickFollowSync.setFollowingVisible(navController.currentDestination?.id in listOf(R.id.followPagerFragment, R.id.followMediaFragment))
         kickFollowSync.requestSync()
         hasUserLeaveHint = false

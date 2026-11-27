@@ -36,6 +36,13 @@
         <intent>
             <action android:name="android.content.pm.action.CONFIRM_PERMISSIONS" />
         </intent>
+        <intent>
+            <action android:name="android.content.pm.action.CONFIRM_PRE_APPROVAL" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.MANAGE_UNKNOWN_APP_SOURCES" />
+            <data android:scheme="package" />
+        </intent>
     </queries>
 
     <application
